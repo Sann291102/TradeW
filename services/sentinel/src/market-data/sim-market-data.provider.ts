@@ -1,0 +1,144 @@
+import { Injectable } from '@nestjs/common';
+import {
+  Candle,
+  CandleInterval,
+  MarketBreadth,
+  MarketDataProvider,
+  NewsItem,
+  OptionChainEntry,
+  Quote,
+} from '@tradew/types';
+
+/**
+ * Deterministic simulation provider — the default MarketDataProvider
+ * (locked decision Q6). Candles are generated with a symbol-seeded random
+ * walk so the same symbol+window always yields the same series, which keeps
+ * Sentinel's signal computations reproducible in dev and tests.
+ *
+ * Swappable later for historical-replay, free NSE/BSE/screener sources, or
+ * Dhan — Sentinel never knows which implementation is behind the interface.
+ */
+@Injectable()
+export class SimMarketDataProvider implements MarketDataProvider {
+  readonly name = 'simulation';
+
+  private seededRandom(seed: number): () => number {
+    let s = seed % 2147483647;
+    if (s <= 0) s += 2147483646;
+    return () => {
+      s = (s * 16807) % 2147483647;
+      return (s - 1) / 2147483646;
+    };
+  }
+
+  private seedFor(symbol: string): number {
+    let h = 0;
+    for (const c of symbol) h = (h * 31 + c.charCodeAt(0)) | 0;
+    return Math.abs(h) + 1;
+  }
+
+  private basePriceFor(symbol: string): number {
+    if (symbol.includes('BANKNIFTY')) return 52700;
+    if (symbol.includes('NIFTY')) return 24850;
+    return 500 + (this.seedFor(symbol) % 3000);
+  }
+
+  async getCandles(symbol: string, interval: CandleInterval, from: Date, to: Date): Promise<Candle[]> {
+    const intervalMs: Record<CandleInterval, number> = {
+      '1m': 60_000,
+      '5m': 300_000,
+      '15m': 900_000,
+      '1h': 3_600_000,
+      '1d': 86_400_000,
+    };
+    const step = intervalMs[interval];
+    const count = Math.min(500, Math.max(1, Math.floor((to.getTime() - from.getTime()) / step)));
+    const rand = this.seededRandom(this.seedFor(symbol) + Math.floor(from.getTime() / step));
+    const candles: Candle[] = [];
+    let price = this.basePriceFor(symbol);
+    let oi = 1_000_000 + Math.floor(rand() * 500_000);
+
+    for (let i = 0; i < count; i++) {
+      const drift = (rand() - 0.5) * 0.004 * price;
+      const open = price;
+      const close = Math.max(1, price + drift);
+      const high = Math.max(open, close) * (1 + rand() * 0.002);
+      const low = Math.min(open, close) * (1 - rand() * 0.002);
+      const volume = Math.floor(50_000 + rand() * 150_000 * (1 + (rand() > 0.9 ? 2 : 0)));
+      oi = Math.max(100_000, oi + Math.floor((rand() - 0.5) * 40_000));
+      candles.push({
+        timestamp: new Date(from.getTime() + i * step),
+        open,
+        high,
+        low,
+        close,
+        volume,
+        openInterest: oi,
+      });
+      price = close;
+    }
+    return candles;
+  }
+
+  async getQuote(symbol: string): Promise<Quote> {
+    const to = new Date();
+    const from = new Date(to.getTime() - 2 * 86_400_000);
+    const candles = await this.getCandles(symbol, '1h', from, to);
+    const last = candles[candles.length - 1];
+    const prev = candles[candles.length - 2] ?? last;
+    return {
+      symbol,
+      lastPrice: last.close,
+      change: last.close - prev.close,
+      changePercent: ((last.close - prev.close) / prev.close) * 100,
+      volume: last.volume,
+      timestamp: last.timestamp,
+    };
+  }
+
+  async getOptionChain(symbol: string, expiry?: Date): Promise<OptionChainEntry[]> {
+    const quote = await this.getQuote(symbol);
+    const rand = this.seededRandom(this.seedFor(symbol + 'chain'));
+    const atm = Math.round(quote.lastPrice / 50) * 50;
+    const chain: OptionChainEntry[] = [];
+    const exp = expiry ?? new Date(Date.now() + 7 * 86_400_000);
+    for (let i = -5; i <= 5; i++) {
+      const strike = atm + i * 50;
+      const proximity = 1 - Math.abs(i) / 6;
+      chain.push({
+        strike,
+        expiry: exp,
+        callOI: Math.floor(200_000 * proximity * (0.7 + rand() * 0.6)),
+        putOI: Math.floor(200_000 * proximity * (0.7 + rand() * 0.6)),
+        callVolume: Math.floor(60_000 * proximity * rand()),
+        putVolume: Math.floor(60_000 * proximity * rand()),
+        callIV: 12 + rand() * 10 + Math.abs(i),
+        putIV: 12 + rand() * 10 + Math.abs(i),
+      });
+    }
+    return chain;
+  }
+
+  async getMarketBreadth(): Promise<MarketBreadth> {
+    const rand = this.seededRandom(Math.floor(Date.now() / 3_600_000));
+    const advances = Math.floor(800 + rand() * 1200);
+    return {
+      advances,
+      declines: Math.floor(2200 - advances * 0.8),
+      unchanged: 120,
+      vix: 11 + rand() * 12,
+    };
+  }
+
+  async getNews(symbols?: string[], sinceHours = 24): Promise<NewsItem[]> {
+    // simulation returns an empty feed; real providers (NSE/BSE/screener/Dhan)
+    // plug in behind the same interface later
+    void symbols;
+    void sinceHours;
+    return [];
+  }
+
+  async healthCheck(): Promise<boolean> {
+    return true;
+  }
+}
