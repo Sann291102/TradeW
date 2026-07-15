@@ -48,6 +48,106 @@ async function main() {
     }
   }
   console.log('Seeded TradeW prototype instruments and quotes');
+
+  await seedPlans();
+}
+
+// Subscription plans + capability grants (entitlement architecture, Q7).
+// Grants use the capability keys from @tradew/types (Capability enum).
+async function seedPlans() {
+  const plans: {
+    code: string;
+    name: string;
+    description: string;
+    trialDays: number;
+    graceDays: number;
+    grants: { capability: string; quotaMetric?: string; quotaLimit?: number; quotaPeriod?: 'DAY' | 'MONTH' }[];
+  }[] = [
+    {
+      code: 'free',
+      name: 'Free',
+      description: 'Paper trading with a realistic virtual account.',
+      trialDays: 0,
+      graceDays: 0,
+      grants: [{ capability: 'paper_trading' }],
+    },
+    {
+      code: 'tradew_pro',
+      name: 'TradeW Pro',
+      description: 'AI Research and the Neural Brain on top of paper trading.',
+      trialDays: 14,
+      graceDays: 3,
+      grants: [
+        { capability: 'paper_trading' },
+        { capability: 'ai_research', quotaMetric: 'ai_requests', quotaLimit: 200, quotaPeriod: 'DAY' },
+        { capability: 'neural_brain', quotaMetric: 'ai_requests', quotaLimit: 200, quotaPeriod: 'DAY' },
+      ],
+    },
+    {
+      code: 'sentinel_pro',
+      name: 'Sentinel Pro',
+      description: 'The Sentinel AI intelligence desk with advanced market intelligence.',
+      trialDays: 7,
+      graceDays: 3,
+      grants: [
+        { capability: 'paper_trading' },
+        { capability: 'sentinel', quotaMetric: 'sentinel_requests', quotaLimit: 500, quotaPeriod: 'DAY' },
+        { capability: 'advanced_market_intelligence' },
+        { capability: 'neural_brain', quotaMetric: 'ai_requests', quotaLimit: 300, quotaPeriod: 'DAY' },
+      ],
+    },
+    {
+      code: 'tradew_ultimate',
+      name: 'TradeW Ultimate',
+      description: 'Everything: Sentinel, AI Research, portfolio intelligence and premium agents.',
+      trialDays: 7,
+      graceDays: 5,
+      grants: [
+        { capability: 'paper_trading' },
+        { capability: 'sentinel', quotaMetric: 'sentinel_requests', quotaLimit: 2000, quotaPeriod: 'DAY' },
+        { capability: 'ai_research', quotaMetric: 'ai_requests', quotaLimit: 1000, quotaPeriod: 'DAY' },
+        { capability: 'neural_brain', quotaMetric: 'ai_requests', quotaLimit: 1000, quotaPeriod: 'DAY' },
+        { capability: 'advanced_market_intelligence' },
+        { capability: 'portfolio_intelligence' },
+        { capability: 'premium_agents' },
+      ],
+    },
+    {
+      code: 'enterprise',
+      name: 'Enterprise',
+      description: 'Organization plan — unmetered capabilities, custom terms.',
+      trialDays: 0,
+      graceDays: 15,
+      grants: [
+        { capability: 'paper_trading' },
+        { capability: 'sentinel' },
+        { capability: 'ai_research' },
+        { capability: 'neural_brain' },
+        { capability: 'advanced_market_intelligence' },
+        { capability: 'portfolio_intelligence' },
+        { capability: 'premium_agents' },
+      ],
+    },
+  ];
+
+  for (const p of plans) {
+    const plan = await prisma.plan.upsert({
+      where: { code: p.code },
+      update: { name: p.name, description: p.description, trialDays: p.trialDays, graceDays: p.graceDays, active: true },
+      create: { code: p.code, name: p.name, description: p.description, trialDays: p.trialDays, graceDays: p.graceDays },
+    });
+    await prisma.planGrant.deleteMany({ where: { planId: plan.id } });
+    await prisma.planGrant.createMany({
+      data: p.grants.map((g) => ({
+        planId: plan.id,
+        capability: g.capability,
+        quotaMetric: g.quotaMetric ?? null,
+        quotaLimit: g.quotaLimit ?? null,
+        quotaPeriod: g.quotaPeriod ?? null,
+      })),
+    });
+  }
+  console.log(`Seeded ${plans.length} subscription plans with capability grants`);
 }
 
 main().finally(() => prisma.$disconnect());
