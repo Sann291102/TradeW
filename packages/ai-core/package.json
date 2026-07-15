@@ -1,0 +1,15 @@
+{
+  "name": "@tradew/ai-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TradeW shared AI foundation — Neural Brain, Memory, Knowledge Graph, RAG, Research, Providers, Prompts, Tools, Agent SDK. Every TradeW AI product (Sentinel, TradeW AI Research, future agents) depends on this package and only this package for intelligence primitives.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.2"
+  }
+}
