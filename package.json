@@ -1,0 +1,23 @@
+{
+  "name": "tradew",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TradeW monorepo — trading platform, AI foundation (ai-core), and premium intelligence products",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:api": "npm run build -w @tradew/api",
+    "build:web": "npm run build -w @tradew/web",
+    "dev:api": "npm run start:dev -w @tradew/api",
+    "dev:web": "npm run dev -w @tradew/web",
+    "db:generate": "npm run generate -w @tradew/database",
+    "db:migrate": "npm run migrate -w @tradew/database"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

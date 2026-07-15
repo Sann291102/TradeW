@@ -1,0 +1,20 @@
+{
+  "name": "@tradew/database",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Single Prisma schema + migration history — the one schema owner for Postgres (ARCHITECTURE.md §1.4)",
+  "scripts": {
+    "generate": "prisma generate --schema prisma/schema.prisma",
+    "migrate": "prisma migrate dev --schema prisma/schema.prisma",
+    "migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
+    "seed": "ts-node prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  }
+}

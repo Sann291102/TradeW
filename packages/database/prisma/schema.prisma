@@ -1,0 +1,165 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum InstrumentType {
+  INDEX
+  OPTION
+  EQUITY
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  FILLED
+  REJECTED
+}
+
+model User {
+  id                 String           @id @default(uuid())
+  email              String           @unique
+  passwordHash       String
+  country            String           @default("IN")
+  experienceLevel    String?
+  optionsFamiliarity String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  orders             Order[]
+  trades             Trade[]
+  positions          Position[]
+  refreshTokens      RefreshToken[]
+  preferences        UserPreference[]
+  auditEvents        AuditEvent[]
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model UserPreference {
+  id        String   @id @default(uuid())
+  userId    String
+  key       String
+  value     Json
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, key])
+  @@index([userId])
+}
+
+model AuditEvent {
+  id        String   @id @default(uuid())
+  userId    String?
+  eventType String
+  ip        String?
+  userAgent String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([eventType, createdAt])
+}
+
+model Instrument {
+  id             String         @id @default(uuid())
+  symbol         String         @unique
+  displayName    String
+  type           InstrumentType
+  exchange       String
+  underlying     String?
+  expiryDate     DateTime?
+  strikePrice    Decimal?       @db.Decimal(12, 2)
+  optionType     String?
+  lotSize        Int            @default(1)
+  tickSize       Decimal        @default(0.05) @db.Decimal(10, 2)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  quotes         Quote[]
+  orders         Order[]
+  trades         Trade[]
+  positions      Position[]
+}
+
+model Quote {
+  id             String     @id @default(uuid())
+  instrumentId   String
+  ltp            Decimal    @db.Decimal(12, 2)
+  previousClose  Decimal?   @db.Decimal(12, 2)
+  updatedAt      DateTime   @updatedAt
+  createdAt      DateTime   @default(now())
+  instrument     Instrument @relation(fields: [instrumentId], references: [id])
+
+  @@index([instrumentId])
+}
+
+model Order {
+  id             String      @id @default(uuid())
+  userId         String
+  instrumentId   String
+  side           OrderSide
+  quantity       Int
+  status         OrderStatus @default(FILLED)
+  requestedPrice Decimal?    @db.Decimal(12, 2)
+  fillPrice      Decimal     @db.Decimal(12, 2)
+  slippage       Decimal     @db.Decimal(12, 2)
+  charges        Decimal     @db.Decimal(12, 2)
+  createdAt      DateTime    @default(now())
+  user           User        @relation(fields: [userId], references: [id])
+  instrument     Instrument  @relation(fields: [instrumentId], references: [id])
+  trade          Trade?
+
+  @@index([userId, createdAt])
+}
+
+model Trade {
+  id           String     @id @default(uuid())
+  orderId      String     @unique
+  userId       String
+  instrumentId String
+  side         OrderSide
+  quantity     Int
+  fillPrice    Decimal    @db.Decimal(12, 2)
+  charges      Decimal    @db.Decimal(12, 2)
+  createdAt    DateTime   @default(now())
+  order        Order      @relation(fields: [orderId], references: [id])
+  user         User       @relation(fields: [userId], references: [id])
+  instrument   Instrument @relation(fields: [instrumentId], references: [id])
+
+  @@index([userId, createdAt])
+}
+
+model Position {
+  id           String     @id @default(uuid())
+  userId       String
+  instrumentId String
+  quantity     Int
+  avgPrice     Decimal    @db.Decimal(12, 2)
+  realizedPnl  Decimal    @default(0) @db.Decimal(12, 2)
+  updatedAt    DateTime   @updatedAt
+  createdAt    DateTime   @default(now())
+  user         User       @relation(fields: [userId], references: [id])
+  instrument   Instrument @relation(fields: [instrumentId], references: [id])
+
+  @@unique([userId, instrumentId])
+  @@index([userId])
+}
