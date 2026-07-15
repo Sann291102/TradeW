@@ -1,10 +1,12 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
 }
 
 enum InstrumentType {
@@ -38,6 +40,9 @@ model User {
   refreshTokens      RefreshToken[]
   preferences        UserPreference[]
   auditEvents        AuditEvent[]
+  subscriptions         Subscription[]
+  entitlementOverrides  EntitlementOverride[]
+  journalEntries        JournalEntry[]
 }
 
 model RefreshToken {
@@ -162,4 +167,235 @@ model Position {
 
   @@unique([userId, instrumentId])
   @@index([userId])
+}
+
+// ============================================================================
+// Subscription & Entitlements (ARCHITECTURE decision Q7, 2026-07-16)
+// Auth, subscription, billing, entitlements, usage and permissions are
+// separate concerns. Billing providers integrate later ONLY through the
+// SubscriptionLifecycle interface — nothing else mutates these tables.
+// ============================================================================
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  GRACE
+  CANCELED
+  EXPIRED
+}
+
+enum QuotaPeriod {
+  DAY
+  MONTH
+  BILLING_CYCLE
+}
+
+model Plan {
+  id            String         @id @default(uuid())
+  code          String         @unique // 'free' | 'tradew_pro' | 'sentinel_pro' | 'tradew_ultimate' | 'enterprise'
+  name          String
+  description   String         @default("")
+  trialDays     Int            @default(0)
+  graceDays     Int            @default(0)
+  active        Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  grants        PlanGrant[]
+  subscriptions Subscription[]
+}
+
+model PlanGrant {
+  id          String       @id @default(uuid())
+  planId      String
+  capability  String // e.g. 'sentinel', 'ai_research', 'neural_brain'
+  quotaMetric String?
+  quotaLimit  Int?
+  quotaPeriod QuotaPeriod?
+  plan        Plan         @relation(fields: [planId], references: [id])
+
+  @@unique([planId, capability])
+}
+
+model Subscription {
+  id               String             @id @default(uuid())
+  userId           String
+  organizationId   String? // future org/team subscriptions
+  planId           String
+  status           SubscriptionStatus @default(ACTIVE)
+  startedAt        DateTime           @default(now())
+  expiresAt        DateTime?
+  trialEndsAt      DateTime?
+  canceledAt       DateTime?
+  billingProvider  String             @default("none")
+  billingReference String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  user             User               @relation(fields: [userId], references: [id])
+  plan             Plan               @relation(fields: [planId], references: [id])
+
+  @@index([userId, status])
+  @@index([status, expiresAt])
+}
+
+model EntitlementOverride {
+  id         String    @id @default(uuid())
+  userId     String
+  capability String
+  granted    Boolean
+  reason     String
+  grantedBy  String
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, capability])
+}
+
+model UsageCounter {
+  id        String   @id @default(uuid())
+  userId    String
+  metric    String // e.g. 'ai_requests', 'research_runs'
+  periodKey String // e.g. '2026-07-16' (day) or '2026-07' (month)
+  used      Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, metric, periodKey])
+}
+
+// ============================================================================
+// AI Foundation — Memory Engine + Knowledge Graph (packages/ai-core contracts)
+// pgvector on the existing Postgres (locked Q4: no external vector DB).
+// The embedding column is dimension-flexible; embeddingModel/Dim record what
+// produced it so mixed-provider embeddings are never compared to each other.
+// ============================================================================
+
+model MemoryRecord {
+  id              String                 @id @default(uuid())
+  summary         String
+  content         String
+  sourceKind      String // research|document|chart|indicator|conversation|market_report|trading_journal|task_output|observation|system
+  sourceReference String?
+  sourceProvider  String?
+  confidence      Float                  @default(0.5)
+  tags            String[]               @default([])
+  entities        Json                   @default("[]")
+  userId          String? // null = global/shared knowledge
+  namespace       String                 @default("global")
+  staleAfter      DateTime?
+  metadata        Json?
+  embedding       Unsupported("vector")?
+  embeddingModel  String?
+  embeddingDim    Int?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  relationsFrom   MemoryRelation[]       @relation("MemoryRelationFrom")
+  relationsTo     MemoryRelation[]       @relation("MemoryRelationTo")
+
+  @@index([namespace, userId])
+  @@index([createdAt])
+}
+
+model MemoryRelation {
+  id        String       @id @default(uuid())
+  fromId    String
+  toId      String
+  relation  String       @default("related")
+  createdAt DateTime     @default(now())
+  from      MemoryRecord @relation("MemoryRelationFrom", fields: [fromId], references: [id])
+  to        MemoryRecord @relation("MemoryRelationTo", fields: [toId], references: [id])
+
+  @@unique([fromId, toId, relation])
+  @@index([toId])
+}
+
+model GraphNode {
+  id         String      @id @default(uuid())
+  entityType String // 'symbol' | 'sector' | 'concept' | 'event' | 'pattern' | ...
+  entityId   String      @unique // canonical id, e.g. 'NSE:RELIANCE', 'concept:bull-trap'
+  label      String?
+  properties Json        @default("{}")
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  edgesFrom  GraphEdge[] @relation("GraphEdgeFrom")
+  edgesTo    GraphEdge[] @relation("GraphEdgeTo")
+
+  @@index([entityType])
+}
+
+model GraphEdge {
+  id         String    @id @default(uuid())
+  fromId     String
+  toId       String
+  relation   String // 'mentions' | 'belongs_to_sector' | 'derived_from' | 'supports' | 'contradicts' | ...
+  weight     Float     @default(1)
+  properties Json      @default("{}")
+  createdAt  DateTime  @default(now())
+  from       GraphNode @relation("GraphEdgeFrom", fields: [fromId], references: [id])
+  to         GraphNode @relation("GraphEdgeTo", fields: [toId], references: [id])
+
+  @@index([fromId, relation])
+  @@index([toId, relation])
+}
+
+// ============================================================================
+// Sentinel — observations (compliance audit trail) + trading journal
+// Every user-visible Sentinel output traces back to logged, evidenced
+// observations (SENTINEL.md §6). Sentinel never blocks or delays orders.
+// ============================================================================
+
+model SentinelObservation {
+  id         String   @id @default(uuid())
+  userId     String? // null = market-wide observation not tied to a user
+  agent      String // 'market-technical' | 'emotion' | 'trap-safety' | 'compliance-audit' | 'orchestrator'
+  category   String // SEBI-relevant label assigned by the Compliance & Audit agent
+  pattern    String? // e.g. 'bull_trap', 'low_volume_breakout', 'revenge_trading'
+  symbol     String?
+  content    String // observation text (evidence -> pattern -> soft suggestion)
+  evidence   Json     @default("[]")
+  confidence Float    @default(0.5)
+  surfaced   Boolean  @default(false) // whether the orchestrator surfaced it to the user
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([agent, createdAt])
+  @@index([symbol, createdAt])
+}
+
+model JournalEntry {
+  id           String   @id @default(uuid())
+  userId       String
+  mood         String? // 'focused' | 'anxious' | 'confident' | 'frustrated' | ...
+  content      String
+  flaggedByAi  Boolean  @default(false)
+  aiAnnotation String?
+  tags         String[] @default([])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+}
+
+// ============================================================================
+// News Event Intelligence — 13-category financial news event classification
+// (NVIDIA AI Model Distillation blueprint; served by any LlmProvider, incl.
+// a distilled student model on NVIDIA NIM, selected purely by config)
+// ============================================================================
+
+model NewsEvent {
+  id           String   @id @default(uuid())
+  headline     String
+  source       String
+  url          String?
+  publishedAt  DateTime
+  symbols      String[] @default([])
+  eventType    String // one of the 13 standardized event categories
+  classifiedBy String // provider/model that produced the label
+  confidence   Float?
+  raw          Json?
+  createdAt    DateTime @default(now())
+
+  @@index([eventType, publishedAt])
+  @@index([publishedAt])
 }
