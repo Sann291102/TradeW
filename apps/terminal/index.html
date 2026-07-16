@@ -348,6 +348,20 @@ body[data-theme="dark"] .sosCard{background:rgba(19,30,51,.5)}
 .sosCard.open .xp{max-height:300px}
 .sosCard .xp ul{margin:9px 0 0;padding-left:15px;font-size:11.5px;color:var(--muted);line-height:1.65}
 .sosCard .why{font-size:11px;font-weight:700;color:var(--teal);margin-top:9px;display:inline-block}
+.navDot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-left:6px;background:transparent;vertical-align:middle;transition:background .3s}
+.navDot.on{background:var(--green);animation:pulse 1.8s infinite}
+.sentModalOv{position:fixed;inset:0;background:rgba(4,8,16,.6);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:999;opacity:0;pointer-events:none;transition:opacity .2s ease}
+.sentModalOv.show{opacity:1;pointer-events:auto}
+.sentModal{width:340px;max-width:92vw;background:var(--card);border:1px solid var(--border2);border-radius:16px;padding:22px;box-shadow:var(--shadow)}
+.sentModal h3{font-size:16px;margin-bottom:4px}
+.sentModal p.sub{font-size:11.5px;color:var(--muted);margin-bottom:14px;line-height:1.5}
+.sentModal input{margin-bottom:9px}
+.sentModal .err{color:var(--red);font-size:11.5px;margin:-3px 0 9px}
+.sentModal .btnRow{display:flex;gap:8px;margin-top:6px}
+.sentModal button.primary{flex:1;background:var(--teal);color:#08131f;font-weight:700;border-radius:9px;padding:10px;border:none;cursor:pointer}
+.sentModal button.ghost{background:none;border:1px solid var(--border2);border-radius:9px;padding:10px 12px;color:var(--muted);cursor:pointer}
+.sentModal .switch{text-align:center;margin-top:12px;font-size:11.5px;color:var(--muted)}
+.sentModal .switch a{color:var(--teal);cursor:pointer;font-weight:600}
 .fRow{display:flex;gap:8px;align-items:flex-start;font-size:11.5px;line-height:1.5;padding:3px 0}
 .fRow .fd{width:6px;height:6px;border-radius:50%;flex-shrink:0;margin-top:5px}
 .fRow .fd.ok{background:var(--green)}.fRow .fd.watch{background:var(--grad1)}
@@ -563,7 +577,7 @@ body[data-theme="dark"] .ttab.on{background:var(--teal);color:#fff;border-color:
     Research</button>
   <button class="nbtn" data-v="sentinel">
     <svg viewBox="0 0 24 24" width="15" height="15"><path d="M12 3l7 3v6c0 5-3.2 7.7-7 9-3.8-1.3-7-4-7-9V6z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    Sentinel</button>
+    Sentinel<span id="sentNavDot" class="navDot" title="Sentinel is actively monitoring"></span></button>
   <div id="navR">
     <div class="f"><div class="l">Margin avail.</div><div class="v num" id="fCash">—</div></div>
     <div class="f"><div class="l">Day P&L</div><div class="v num" id="fDay">—</div></div>
@@ -2082,21 +2096,61 @@ function renderTraps(traps){
 function renderTimeline(obs){return obs.length?obs.map(o=>
   `<div class="timelineRow"><span class="d ${o.kind}"></span><div><div>${o.txt}</div><div class="tm">${new Date(o.t).toLocaleTimeString()}</div></div></div>`).join("")
   :'<div class="empty">No agent activity yet this session.</div>';}
-/* ---- Sentinel: LIVE backend bridge (services/sentinel, port 4010) ----
-   Sends this session's real trades to the Sentinel backend and merges its
-   observations/synthesis into the workspace. Falls back to the built-in
-   simulation transparently when the backend is offline. */
-const SENT_API="http://localhost:4010",SENT_TOKEN="dev-sentinel-token";
+/* =================================================================
+   [v0.7] Real identity + entitlements + Neural Brain bridge.
+   Sentinel now goes through services/api (the single public ingress,
+   ARCHITECTURE.md §1) with a real JWT and a real entitlement check —
+   never a direct, unauthenticated call to services/sentinel. Access to
+   the workspace is gated on the 'sentinel' capability from the
+   sentinel_pro / tradew_ultimate plans (locked entitlement architecture).
+================================================================= */
+const API_BASE=(window.TRADEW_API_BASE||"http://localhost:4000").replace(/\/$/,"");
+const AUTH_KEY="tradew_auth_v1";
+let auth={accessToken:null,refreshToken:null,email:null,capabilities:null,checked:false};
+try{const s=localStorage.getItem(AUTH_KEY);if(s)Object.assign(auth,JSON.parse(s),{capabilities:null,checked:false});}catch(e){}
+function persistAuth(){try{localStorage.setItem(AUTH_KEY,JSON.stringify({accessToken:auth.accessToken,refreshToken:auth.refreshToken,email:auth.email}));}catch(e){}}
+function isEntitled(cap){return Array.isArray(auth.capabilities)&&auth.capabilities.includes(cap);}
+async function apiFetch(path,opts={},retry=true){
+  const headers=Object.assign({"content-type":"application/json"},opts.headers||{});
+  if(auth.accessToken)headers.authorization="Bearer "+auth.accessToken;
+  const res=await fetch(API_BASE+path,Object.assign({},opts,{headers}));
+  if(res.status===401&&retry&&auth.refreshToken){if(await refreshAuthToken())return apiFetch(path,opts,false);}
+  return res;}
+async function refreshAuthToken(){
+  try{
+    const res=await fetch(API_BASE+"/auth/refresh",{method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({refreshToken:auth.refreshToken})});
+    if(!res.ok){signOutLocal();return false;}
+    const d=await res.json();auth.accessToken=d.accessToken;auth.refreshToken=d.refreshToken;persistAuth();return true;
+  }catch(e){return false;}}
+function signOutLocal(){auth={accessToken:null,refreshToken:null,email:null,capabilities:null,checked:true};persistAuth();sentLive.ok=false;}
+async function authLogin(email,password){
+  const res=await fetch(API_BASE+"/auth/login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({email,password})});
+  if(!res.ok){const d=await res.json().catch(()=>({}));throw new Error(d.message||"Invalid email or password.");}
+  const d=await res.json();auth.accessToken=d.accessToken;auth.refreshToken=d.refreshToken;auth.email=d.user.email;persistAuth();
+  await refreshEntitlements();}
+async function authSignup(email,password){
+  const res=await fetch(API_BASE+"/auth/signup",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({email,password})});
+  if(!res.ok){const d=await res.json().catch(()=>({}));throw new Error(d.message||"Could not create account.");}
+  const d=await res.json();auth.accessToken=d.accessToken;auth.refreshToken=d.refreshToken;auth.email=d.user.email;persistAuth();
+  await refreshEntitlements();}
+async function refreshEntitlements(){
+  if(!auth.accessToken){auth.capabilities=[];auth.checked=true;return;}
+  try{const res=await apiFetch("/entitlements/me");
+    auth.capabilities=res.ok?(await res.json()).capabilities||[]:[];auth.checked=true;
+  }catch(e){auth.capabilities=[];auth.checked=true;}}
+
 let sentLive={ok:false,checked:false,synth:null,obs:[],busy:false};
 async function fetchSentinelLive(){
-  if(sentLive.busy)return;sentLive.busy=true;
+  if(sentLive.busy)return;
+  if(!auth.accessToken||!auth.checked||!isEntitled("sentinel")){sentLive.ok=false;return;}
+  sentLive.busy=true;
   try{
     const recentTrades=journal.slice(0,20).map((j,idx)=>({
       id:String(idx),symbol:j.name,side:j.side,quantity:j.qty,fillPrice:j.px,
       realizedPnl:j.realized||undefined,createdAt:new Date(j.t).toISOString()}));
-    const r=await fetch(`${SENT_API}/observe`,{method:"POST",
-      headers:{"content-type":"application/json","x-service-token":SENT_TOKEN},
-      body:JSON.stringify({userId:"terminal-local",symbol:selSym||"NIFTY",recentTrades})});
+    const r=await apiFetch("/sentinel/observe",{method:"POST",
+      body:JSON.stringify({symbol:selSym||"NIFTY",clientTrades:recentTrades,clientPositions:[]})});
     if(!r.ok)throw new Error(r.status);
     const d=await r.json();
     const changed=!sentLive.ok||JSON.stringify(d.synthesis)!==JSON.stringify(sentLive.synth)||d.observations.length!==sentLive.obs.length;
@@ -2106,16 +2160,102 @@ async function fetchSentinelLive(){
     if(wasOk&&view==="sentinel")render();}
   finally{sentLive.busy=false;}}
 function sentLiveChip(){
-  if(!sentLive.checked)return"";
+  const pill=(bg,fg,txt)=>`<span style="display:inline-flex;align-items:center;gap:5px;margin-left:10px;padding:3px 9px;border-radius:99px;background:${bg};color:${fg};font-size:10.5px;font-weight:700;letter-spacing:.4px">${txt}</span>`;
+  if(!auth.accessToken)return pill("var(--border)","var(--faint)","○ SIGN IN TO ACTIVATE");
+  if(!auth.checked)return pill("var(--border)","var(--faint)","… VERIFYING ACCESS");
+  if(!isEntitled("sentinel"))return pill("var(--amber-bg)","var(--amber)","🔒 UPGRADE REQUIRED");
   return sentLive.ok
-    ?`<span style="display:inline-flex;align-items:center;gap:5px;margin-left:10px;padding:3px 9px;border-radius:99px;background:var(--green-bg);color:var(--green);font-size:10.5px;font-weight:700;letter-spacing:.4px">● LIVE · Sentinel backend connected</span>`
-    :`<span style="display:inline-flex;align-items:center;gap:5px;margin-left:10px;padding:3px 9px;border-radius:99px;background:var(--amber-bg);color:var(--amber);font-size:10.5px;font-weight:700;letter-spacing:.4px">● SIM · backend offline</span>`;}
+    ?pill("var(--green-bg)","var(--green)","● LIVE · Neural Brain connected")
+    :pill("var(--amber-bg)","var(--amber)","● Backend offline · local intelligence active");}
 function sentLiveSynthCard(){
   if(!sentLive.ok||!sentLive.synth)return"";
   const s=sentLive.synth;
   return`<div class="trapCard popIn" style="border-color:var(--teal)"><span class="tag" style="background:var(--teal)">${s.pattern.replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase())}</span><div class="body">
     <b>Live synthesis · confidence ${(s.confidence*100).toFixed(0)}%</b><p>${s.content}</p>
     <div class="ev">Real Sentinel backend · evidence persisted by Compliance &amp; Audit · ${new Date().toLocaleTimeString()}</div></div></div>`;}
+
+/* ---- entitlement gate + auth modal ---- */
+function sentAuthGate(kind){
+  const cfg={
+    signin:{t:"Sign in to activate Sentinel",
+      b:"Sentinel is a premium AI Safety Operating System tied to your TradeW account and subscription plan. Sign in or create an account to continue.",
+      cta:"Sign in / Create account",act:"openAuthModal('login')"},
+    verifying:{t:"Verifying your access…",b:"Checking your subscription entitlements with TradeW's servers.",cta:null},
+    upgrade:{t:"Sentinel is a premium feature",
+      b:`Signed in as <b>${auth.email||"your account"}</b>. Your current plan doesn't include Sentinel yet. Upgrade to <b>Sentinel Pro</b> or <b>TradeW Ultimate</b> to unlock the full 24-engine, 125-feature AI Safety Operating System.<br><br>New accounts start on the Free plan — ask an admin to activate your subscription, or sign in with a demo account that already has Sentinel Pro active.`,
+      cta:"Check access again",act:"refreshEntitlements().then(render)"}};
+  const c=cfg[kind];
+  return`<div class="sosBanner lv1 riseIn" style="flex-direction:column;align-items:flex-start;gap:12px;padding:28px 26px">
+    <div style="display:flex;align-items:center;gap:12px"><div class="ic" style="width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--grad1),var(--grad2));color:#fff;font-weight:800;font-size:15px">S</div>
+    <b style="font-size:15.5px">${c.t}</b></div>
+    <p style="font-size:12.5px;color:var(--muted);line-height:1.65;max-width:600px">${c.b}</p>
+    ${c.cta?`<button onclick="${c.act}" style="background:var(--teal);color:#08131f;font-weight:700;border-radius:10px;padding:10px 18px;font-size:12.5px">${c.cta}</button>`:""}
+  </div>`;}
+let authModalMode="login";
+window.openAuthModal=mode=>{authModalMode=mode||"login";updateAuthModalUI();
+  $("sentAuthErr").style.display="none";$("sentAuthEmail").value="";$("sentAuthPass").value="";
+  $("sentAuthModal").classList.add("show");};
+window.closeAuthModal=()=>$("sentAuthModal").classList.remove("show");
+window.toggleAuthMode=()=>{authModalMode=authModalMode==="login"?"signup":"login";updateAuthModalUI();};
+function updateAuthModalUI(){const login=authModalMode==="login";
+  $("sentAuthTitle").textContent=login?"Sign in to Sentinel":"Create your TradeW account";
+  $("sentAuthSubmit").textContent=login?"Sign in":"Create account";
+  $("sentAuthSwitch").innerHTML=login?'No account? <a onclick="toggleAuthMode()">Create one</a>':'Already have an account? <a onclick="toggleAuthMode()">Sign in</a>';}
+window.submitAuthModal=async()=>{
+  const email=$("sentAuthEmail").value.trim(),pass=$("sentAuthPass").value,errEl=$("sentAuthErr");
+  errEl.style.display="none";
+  if(!email||pass.length<6){errEl.textContent="Enter a valid email and a password of at least 6 characters.";errEl.style.display="block";return;}
+  const btn=$("sentAuthSubmit");btn.disabled=true;btn.textContent="Please wait…";
+  try{if(authModalMode==="login")await authLogin(email,pass);else await authSignup(email,pass);
+    closeAuthModal();fetchSentinelLive();if(view==="sentinel")render();updateSentNavDot();
+  }catch(e){errEl.textContent=e.message||"Something went wrong.";errEl.style.display="block";}
+  finally{btn.disabled=false;updateAuthModalUI();}};
+const SENT_AUTH_MODAL_HTML=`<div id="sentAuthModal" class="sentModalOv">
+  <div class="sentModal">
+    <h3 id="sentAuthTitle">Sign in to Sentinel</h3>
+    <p class="sub">Real account, real entitlements — Sentinel Pro / TradeW Ultimate unlock the live AI Safety Operating System.</p>
+    <div id="sentAuthErr" class="err" style="display:none"></div>
+    <input id="sentAuthEmail" type="email" placeholder="you@example.com" autocomplete="username">
+    <input id="sentAuthPass" type="password" placeholder="Password (min 6 characters)" autocomplete="current-password">
+    <div class="btnRow"><button class="ghost" onclick="closeAuthModal()">Cancel</button>
+    <button class="primary" id="sentAuthSubmit" onclick="submitAuthModal()">Sign in</button></div>
+    <div class="switch" id="sentAuthSwitch">No account? <a onclick="toggleAuthMode()">Create one</a></div>
+  </div></div>`;
+
+/* ---- Neural Brain explanations (real, entitlement-gated) ---- */
+let sosLast=null;
+async function sentExplain(question,contextText){
+  aiOpen=true;$("aiDock").classList.add("show");
+  aiHistory.push({who:"me",txt:question});aiRenderMsgs();
+  aiHistory.push({who:"ai",txt:'<span class="aiTyping"><span></span><span></span><span></span></span>'});aiRenderMsgs();
+  let answer,tag="";
+  if(auth.accessToken&&isEntitled("sentinel")){
+    try{
+      const res=await apiFetch("/sentinel/explain",{method:"POST",body:JSON.stringify({question,context:contextText||""})});
+      if(res.ok){const d=await res.json();answer=d.answer;
+        tag=d.live?'<span style="font-size:9.5px;color:var(--teal);font-weight:700;margin-right:6px">● NEURAL BRAIN</span>'
+                   :'<span style="font-size:9.5px;color:var(--faint);font-weight:700;margin-right:6px">○ NO PROVIDER CONFIGURED</span>';
+      }else if(res.status===403){answer="Your plan doesn't include Sentinel's AI explanations yet. Upgrade to Sentinel Pro or TradeW Ultimate to unlock this.";}
+      else throw new Error(String(res.status));
+    }catch(e){answer="Sentinel's explanation service is unreachable right now."+(contextText?" Here's the evidence behind this reading:\n"+contextText:"");}
+  }else if(!auth.accessToken){
+    answer="Sign in to get a contextual explanation from Sentinel's Neural Brain."+(contextText?"\n\nFor now, here's the evidence behind this reading:\n"+contextText:"");
+  }else{
+    answer="Activate Sentinel (Sentinel Pro or TradeW Ultimate) to unlock AI explanations."+(contextText?"\n\nFor now, here's the evidence behind this reading:\n"+contextText:"");}
+  aiHistory.pop();aiHistory.push({who:"ai",txt:tag+answer.replace(/\n/g,"<br>")});aiRenderMsgs();}
+window.sentExplainSignal=id=>{const m=(sosLast?.M||[]).find(x=>x.id===id);if(!m)return;
+  sentExplain(`Explain in simple terms: ${m.name} says "${m.hl}" — why, and what should I be aware of? (education only)`,m.ev.join("\n"));};
+window.sentExplainGroup=id=>{const g=(sosLast?.FG||[]).find(x=>x.id===id);if(!g)return;
+  sentExplain(`Explain what the ${g.name} safety module watches for and what its current readings mean for me, as education not advice.`,
+    g.f.map(f=>`${f.n}: ${f.s}${f.d?" — "+f.d:""}`).join("\n"));};
+
+/* ---- continuous operation during market hours (IST, Mon-Fri 9:15-15:30) ---- */
+function isMarketHoursIST(){
+  const ist=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"}));
+  const day=ist.getDay();if(day===0||day===6)return false;
+  const mins=ist.getHours()*60+ist.getMinutes();return mins>=555&&mins<=930;}
+function updateSentNavDot(){const el=$("sentNavDot");if(!el)return;
+  el.classList.toggle("on",Boolean(auth.accessToken&&isEntitled("sentinel")&&isMarketHoursIST()));}
 function pageSentinel(){
   fetchSentinelLive();
   const traps=scanTraps(),stats=sentJournalStats(),refl=sentReflections(stats),obs=sentObsFeed(traps);
@@ -2155,11 +2295,18 @@ function pageSentinel(){
     <td style="text-align:left;font-size:12px;color:var(--muted)">${sentNote(j,idx,journal)}</td>
     <td class="num ${cls(j.realized)}">${j.realized?sgn(j.realized)+fmt(j.realized):"—"}</td></tr>`).join("")}</table>`
     :'<div class="empty">Your trades will appear here, each annotated with Sentinel\'s read on the emotional context around it.</div>'}</div>`;}
+/* Runs continuously during market hours for entitled users regardless of
+   which tab is open (called from the main tick loop, not just on-view) —
+   sosCompute()'s internal diffing still pushes bell notifications and
+   timeline entries even when we don't re-render the DOM. Only re-renders
+   when the user is actually looking at the Sentinel workspace. */
 function updSentinel(tickN){
+  if(!auth.accessToken||!isEntitled("sentinel"))return;
   fetchSentinelLive();
   const os=sosCompute();
-  const key=os.M.map(m=>m.id+m.level).join()+"|"+journal.length+"|"+os.cl;
-  if(key!==px.sentKey)render();}
+  if(view==="sentinel"){sosLast=os;
+    const key=os.M.map(m=>m.id+m.level).join()+"|"+journal.length+"|"+os.cl;
+    if(key!==px.sentKey)render();}}
 
 /* =================================================================
    [v0.6] Sentinel OS — institutional AI Safety Operating System.
@@ -2322,7 +2469,7 @@ function sosFeatPanel(g){const open=sosOpen.has("fg_"+g.id);
     <div class="sub">${flag?`${flag} needs attention · `:""}${watch?`${watch} watching · `:""}${g.f.length-flag-watch} clear</div>
     <div class="meter"><i style="width:${Math.round((g.f.length-flag)/g.f.length*100)}%"></i></div>
     <div class="xp">${g.f.map(f=>`<div class="fRow"><span class="fd ${f.s}"></span><span><span class="fn">${f.n}</span>${f.d?`<span class="ft">${f.d}</span>`:""}</span></div>`).join("")}
-      <a class="why" onclick="event.stopPropagation();askAi('Explain what the ${g.name} safety module watches for and what its current readings mean for me as education, not advice')">Explain this module ↗</a></div></div>`;}
+      <a class="why" onclick="event.stopPropagation();sentExplainGroup('${g.id}')">Explain this module ↗</a></div></div>`;}
 function sosCompute(){
   const sym=insts[selSym]?selSym:"NIFTY",S=sosInd(sym)||sosInd("NIFTY"),vix=insts.INDIAVIX.ltp;
   const traps=scanTraps(),stats=sentJournalStats(),dkey=new Date().toDateString();
@@ -2451,10 +2598,14 @@ function sosCard(m){const open=sosOpen.has(m.id);
     <div class="hl">${m.hl}</div>
     <div class="meter"><i style="width:${(m.conf*100).toFixed(0)}%"></i></div>
     <div class="xp">${m.ev.length?`<ul>${m.ev.map(e=>`<li>${e}</li>`).join("")}</ul>`:""}
-      <a class="why" onclick="event.stopPropagation();askAi('Explain in simple terms: ${m.name.replace(/'/g,"")} says ${m.hl.replace(/'/g,"").replace(/"/g,"")} — why, and what should I be aware of? (education only)')">Explain this decision ↗</a></div></div>`;}
+      <a class="why" onclick="event.stopPropagation();sentExplainSignal('${m.id}')">Explain this decision ↗</a></div></div>`;}
 function pageSentinelOS(){
+  if(!auth.accessToken)return sentAuthGate("signin");
+  if(!auth.checked)return sentAuthGate("verifying");
+  if(!isEntitled("sentinel"))return sentAuthGate("upgrade");
   fetchSentinelLive();
   const os=sosCompute();
+  sosLast=os;
   px.sentKey=os.M.map(m=>m.id+m.level).join()+"|"+journal.length+"|"+os.cl;
   const grp=g=>os.M.filter(m=>m.grp===g);
   const warnCt=g=>grp(g).filter(m=>m.level==="warn"||m.level==="risk").length;
@@ -2465,7 +2616,7 @@ function pageSentinelOS(){
   <div class="sosBanner lv${os.cl} riseIn">
     <div class="ic" style="width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--grad1),var(--grad2));color:#fff;font-weight:800;font-size:15px;flex-shrink:0;animation:softPulse 2.6s infinite">S</div>
     <div class="msg"><b>Sentinel OS · ${os.cLabel}${sentLiveChip()}</b>
-    <p>${os.dc} day on ${insts[os.sym]?insts[os.sym].name:os.sym} · ${os.M.length} intelligence engines · ${os.featTotal} automatic safety features running${os.featFlag?` · ${os.featFlag} flagged`:""} · composite caution ${os.caution}/100. Observation and education only — never trade directions.</p></div>
+    <p>${os.dc} day on ${insts[os.sym]?insts[os.sym].name:os.sym} · ${os.M.length} intelligence engines · ${os.featTotal} automatic safety features running${os.featFlag?` · ${os.featFlag} flagged`:""} · composite caution ${os.caution}/100 · ${isMarketHoursIST()?"continuously monitoring live":"market closed — showing last computed state"}. Observation and education only — never trade directions.</p></div>
     <span class="lv">${os.cLabel}</span></div>
   ${sentLiveSynthCard()}
   <div class="sosGaugeRow riseIn">
@@ -2617,6 +2768,10 @@ setInterval(()=>{try{
   checkPending();settleExpired();checkAlerts();
   if(tickN%45===0)genNews();
   if(tickN%5===0){eqCurve.push(Math.round(acct.cash+unrealized()));if(eqCurve.length>500)eqCurve.shift();}
+  // Sentinel operates continuously during market hours for entitled users,
+  // independent of which tab is open — not gated to view==="sentinel".
+  if(tickN%6===0&&isMarketHoursIST())updSentinel(tickN);
+  if(tickN%10===0)updateSentNavDot();
   if(needsRebuild&&!tkState){needsRebuild=false;render();}
   else{
     if(view==="home")updHome(tickN);
@@ -2630,12 +2785,13 @@ setInterval(()=>{try{
       else if(subTab==="news")updNews();}
     else if(view==="screener")updScreener(tickN);
     else if(view==="positions")updPositions();
-    else if(view==="portfolio")updPortfolio(tickN);
-    else if(view==="sentinel"&&tickN%6===0)updSentinel(tickN);}
+    else if(view==="portfolio")updPortfolio(tickN);}
   updStrip();updFunds();updWatch();
   if(tkState)tkEst();
 }catch(err){console.error("tick error:",err);}},1000);
-buildStrip();render();renderBell();updClock();liveInit();
+document.body.insertAdjacentHTML("beforeend",SENT_AUTH_MODAL_HTML);
+if(auth.accessToken)refreshEntitlements().then(()=>{updateSentNavDot();if(view==="sentinel")render();});
+buildStrip();render();renderBell();updClock();liveInit();updateSentNavDot();
 </script>
 </body>
 </html>

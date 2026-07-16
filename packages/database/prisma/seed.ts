@@ -1,4 +1,5 @@
 import { PrismaClient, InstrumentType } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 const expiry = new Date('2026-07-30T00:00:00.000Z');
@@ -150,4 +151,35 @@ async function seedPlans() {
   console.log(`Seeded ${plans.length} subscription plans with capability grants`);
 }
 
-main().finally(() => prisma.$disconnect());
+/**
+ * Demo account with an already-active Sentinel Pro subscription, so the
+ * live Sentinel OS can be verified end to end without building a billing
+ * flow first. Real signups start on the Free plan, per the entitlement
+ * architecture — this account is the one exception, seeded deliberately.
+ */
+async function seedDemoAccount() {
+  const email = 'founder@tradew.local';
+  const passwordHash = await bcrypt.hash('sentinel-demo', 10);
+  const user = await prisma.user.upsert({
+    where: { email },
+    update: {},
+    create: { email, passwordHash },
+  });
+
+  const plan = await prisma.plan.findUnique({ where: { code: 'sentinel_pro' } });
+  if (!plan) throw new Error('sentinel_pro plan must be seeded before the demo account');
+
+  const existing = await prisma.subscription.findFirst({
+    where: { userId: user.id, planId: plan.id, status: 'ACTIVE' },
+  });
+  if (!existing) {
+    await prisma.subscription.create({
+      data: { userId: user.id, planId: plan.id, status: 'ACTIVE', billingProvider: 'none' },
+    });
+  }
+  console.log(`Seeded demo account ${email} (password: sentinel-demo) with an active Sentinel Pro subscription`);
+}
+
+main()
+  .then(seedDemoAccount)
+  .finally(() => prisma.$disconnect());
