@@ -2028,15 +2028,53 @@ function renderTraps(traps){
 function renderTimeline(obs){return obs.length?obs.map(o=>
   `<div class="timelineRow"><span class="d ${o.kind}"></span><div><div>${o.txt}</div><div class="tm">${new Date(o.t).toLocaleTimeString()}</div></div></div>`).join("")
   :'<div class="empty">No agent activity yet this session.</div>';}
+/* ---- Sentinel: LIVE backend bridge (services/sentinel, port 4010) ----
+   Sends this session's real trades to the Sentinel backend and merges its
+   observations/synthesis into the workspace. Falls back to the built-in
+   simulation transparently when the backend is offline. */
+const SENT_API="http://localhost:4010",SENT_TOKEN="dev-sentinel-token";
+let sentLive={ok:false,checked:false,synth:null,obs:[],busy:false};
+async function fetchSentinelLive(){
+  if(sentLive.busy)return;sentLive.busy=true;
+  try{
+    const recentTrades=journal.slice(0,20).map((j,idx)=>({
+      id:String(idx),symbol:j.name,side:j.side,quantity:j.qty,fillPrice:j.px,
+      realizedPnl:j.realized||undefined,createdAt:new Date(j.t).toISOString()}));
+    const r=await fetch(`${SENT_API}/observe`,{method:"POST",
+      headers:{"content-type":"application/json","x-service-token":SENT_TOKEN},
+      body:JSON.stringify({userId:"terminal-local",symbol:selSym||"NIFTY",recentTrades})});
+    if(!r.ok)throw new Error(r.status);
+    const d=await r.json();
+    const changed=!sentLive.ok||JSON.stringify(d.synthesis)!==JSON.stringify(sentLive.synth)||d.observations.length!==sentLive.obs.length;
+    sentLive.ok=true;sentLive.checked=true;sentLive.synth=d.synthesis;sentLive.obs=d.observations;
+    if(changed&&view==="sentinel")render();
+  }catch(e){const wasOk=sentLive.ok;sentLive.ok=false;sentLive.checked=true;
+    if(wasOk&&view==="sentinel")render();}
+  finally{sentLive.busy=false;}}
+function sentLiveChip(){
+  if(!sentLive.checked)return"";
+  return sentLive.ok
+    ?`<span style="display:inline-flex;align-items:center;gap:5px;margin-left:10px;padding:3px 9px;border-radius:99px;background:var(--green-bg);color:var(--green);font-size:10.5px;font-weight:700;letter-spacing:.4px">● LIVE · Sentinel backend connected</span>`
+    :`<span style="display:inline-flex;align-items:center;gap:5px;margin-left:10px;padding:3px 9px;border-radius:99px;background:var(--amber-bg);color:var(--amber);font-size:10.5px;font-weight:700;letter-spacing:.4px">● SIM · backend offline</span>`;}
+function sentLiveSynthCard(){
+  if(!sentLive.ok||!sentLive.synth)return"";
+  const s=sentLive.synth;
+  return`<div class="trapCard popIn" style="border-color:var(--teal)"><span class="tag" style="background:var(--teal)">${s.pattern.replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase())}</span><div class="body">
+    <b>Live synthesis · confidence ${(s.confidence*100).toFixed(0)}%</b><p>${s.content}</p>
+    <div class="ev">Real Sentinel backend · evidence persisted by Compliance &amp; Audit · ${new Date().toLocaleTimeString()}</div></div></div>`;}
 function pageSentinel(){
+  fetchSentinelLive();
   const traps=scanTraps(),stats=sentJournalStats(),refl=sentReflections(stats),obs=sentObsFeed(traps);
+  if(sentLive.ok&&sentLive.obs.length){
+    for(const o of sentLive.obs.slice(0,4))obs.unshift({t:Date.now(),kind:o.agent==="orchestrator"?"warn":"info",txt:`[live · ${o.agent}] ${o.content}`});
+    obs.length=Math.min(obs.length,9);}
   const tradesToday=journal.filter(j=>new Date(j.t).toDateString()===new Date().toDateString()).length;
   const flagged=traps.length,adherence=Math.max(40,100-flagged*9-Math.min(30,Math.max(0,tradesToday-6)*4));
   const delta=Math.round((hash("delta"+tradesToday+flagged)-.5)*10);
   px.sentKey=traps.map(t=>t.tag+t.sym).join(",")+"|"+journal.length;
   return`
   <div class="sentHero riseIn"><div class="ic" style="font-size:15px;font-weight:800;color:#fff">S</div>
-    <div><h1>Sentinel is watching, not judging.</h1>
+    <div><h1>Sentinel is watching, not judging.${sentLiveChip()}</h1>
     <p>Four specialised agents observe the market and your own trading behaviour — Sentinel only speaks up when the evidence is worth pausing for.</p></div>
     <div class="obs">Observation only · Not financial advice</div></div>
   <div class="agentRow riseIn">
@@ -2044,7 +2082,7 @@ function pageSentinel(){
     <div class="agentCard"><div class="nm">Emotion Intelligence</div><div class="st"><span class="d"></span>Observing</div></div>
     <div class="agentCard"><div class="nm">Trap &amp; Safety Intelligence</div><div class="st"><span class="d"></span>${traps.length?"Synthesizing":"Observing"}</div></div>
     <div class="agentCard"><div class="nm">Compliance &amp; Audit</div><div class="st"><span class="d"></span>Logging</div></div></div>
-  <div id="trapZone" class="riseIn">${renderTraps(traps)}</div>
+  <div id="trapZone" class="riseIn">${sentLiveSynthCard()}${renderTraps(traps)}</div>
   <div class="card riseIn lift"><h2>AI Reflection Cards <small>· journaling prompts</small></h2>
     <div class="reflGrid">${refl.map(r=>`<div class="reflCard"><span class="cat">${r.cat}</span><p>${r.txt}</p>
       <a onclick="askAi('Reflect with me on ${r.cat}')">Reflect with AI ↗</a></div>`).join("")}</div></div>
@@ -2064,6 +2102,7 @@ function pageSentinel(){
     <td class="num ${cls(j.realized)}">${j.realized?sgn(j.realized)+fmt(j.realized):"—"}</td></tr>`).join("")}</table>`
     :'<div class="empty">Your trades will appear here, each annotated with Sentinel\'s read on the emotional context around it.</div>'}</div>`;}
 function updSentinel(tickN){const traps=scanTraps();
+  fetchSentinelLive();
   const key=traps.map(t=>t.tag+t.sym).join(",")+"|"+journal.length;
   if(key!==px.sentKey)render();}
 
