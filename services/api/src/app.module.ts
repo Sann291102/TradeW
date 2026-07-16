@@ -6,6 +6,7 @@ import { EntitlementsModule } from './entitlements/entitlements.module';
 import { InstrumentsModule } from './instruments/instruments.module';
 import { MarketDataModule } from './market-data/market-data.module';
 import { SimModule } from './sim/sim.module';
+import { SentinelModule } from './sentinel/sentinel.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -17,6 +18,7 @@ import { HealthController } from './health.controller';
     InstrumentsModule,
     MarketDataModule,
     SimModule,
+    SentinelModule,
   ],
   controllers: [HealthController],
 })

@@ -10,9 +10,17 @@ import { PrismaClient } from '@prisma/client';
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
-    await this.$connect();
+    // Lazy/fault-tolerant connect: Sentinel's observation pipeline is fully
+    // functional without persistence (ComplianceService already tolerates
+    // write failures and logs the audit gap loudly). An internal intelligence
+    // service must not crash-loop because the database is briefly away.
+    try {
+      await this.$connect();
+    } catch (err) {
+      console.warn(`[sentinel] database unavailable at boot — running without persistence: ${err}`);
+    }
   }
   async onModuleDestroy() {
-    await this.$disconnect();
+    await this.$disconnect().catch(() => undefined);
   }
 }
