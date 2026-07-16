@@ -16,6 +16,7 @@ import {
 } from '../domain';
 import { EmotionIntelligenceService } from '../intelligence/emotion-intelligence.service';
 import { MarketIntelligenceService } from '../intelligence/market-intelligence.service';
+import { NewsIntelligenceService } from '../intelligence/news-intelligence.service';
 import { TrapIntelligenceService } from '../intelligence/trap-intelligence.service';
 
 /**
@@ -38,6 +39,7 @@ export class SentinelOrchestratorService {
     private readonly market: MarketIntelligenceService,
     private readonly emotion: EmotionIntelligenceService,
     private readonly traps: TrapIntelligenceService,
+    private readonly news: NewsIntelligenceService,
     private readonly compliance: ComplianceService,
   ) {
     this.providers = createProviderManager(loadProvidersConfigFromEnv());
@@ -52,6 +54,7 @@ export class SentinelOrchestratorService {
       ...this.market.signals(snapshot),
       ...this.emotion.signals(trades),
       ...this.traps.signals(snapshot, trades),
+      ...(await this.news.signals(symbol)),
     ];
 
     const triggered = signals.filter((s) => s.triggered);

@@ -46,3 +46,4 @@ export * from './tools/interfaces';
 export * from './tools/impl';
 export * from './agents/interfaces';
 export * from './agents/impl';
+export * from './news/news-event-classifier';
