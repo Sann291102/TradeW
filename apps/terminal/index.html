@@ -304,6 +304,54 @@ table.t{width:100%;border-collapse:collapse;font-size:13px}
 .wsChip .d{width:6px;height:6px;border-radius:50%;background:var(--border2)}
 .wsChip.on{color:var(--teal)}.wsChip.on .d{background:var(--teal)}
 
+/* -- Sentinel OS v0.6 — institutional AI Safety Operating System -- */
+.sosBanner{display:flex;align-items:center;gap:14px;padding:15px 18px;border-radius:15px;margin-bottom:14px;
+  border:1px solid var(--border2);background:rgba(255,255,255,.55);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+body[data-theme="dark"] .sosBanner{background:rgba(19,30,51,.55)}
+.sosBanner .lv{font-size:10px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;border-radius:8px;padding:5px 11px;white-space:nowrap;color:#fff}
+.sosBanner.lv0{border-color:rgba(8,153,129,.45)}.sosBanner.lv0 .lv{background:var(--green)}
+.sosBanner.lv1{border-color:rgba(91,110,232,.45)}.sosBanner.lv1 .lv{background:var(--grad1)}
+.sosBanner.lv2{border-color:rgba(232,147,12,.5)}.sosBanner.lv2 .lv{background:var(--amber)}
+.sosBanner.lv3{border-color:rgba(228,87,61,.55)}.sosBanner.lv3 .lv{background:var(--red)}
+.sosBanner .msg{font-size:12.5px;line-height:1.5}.sosBanner .msg b{font-size:13px}
+.sosBanner .msg p{color:var(--muted);font-size:11.5px;margin-top:1px}
+.sosGaugeRow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.gauge{--p:50;--gc:var(--teal);display:flex;gap:12px;align-items:center;padding:13px 15px;border-radius:14px;
+  border:1px solid var(--border);background:rgba(255,255,255,.5);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  transition:transform .18s ease,box-shadow .18s ease}
+body[data-theme="dark"] .gauge{background:rgba(19,30,51,.5)}
+.gauge:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
+.gauge .ring{width:54px;height:54px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  background:conic-gradient(var(--gc) calc(var(--p)*1%),var(--border) 0);transition:background .8s ease}
+.gauge .ring .in{width:40px;height:40px;border-radius:50%;background:var(--card);display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:800}
+.gauge .lbl{min-width:0}.gauge .lbl .t{font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--faint)}
+.gauge .lbl .s{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.4}
+.sosSec{display:flex;align-items:center;gap:8px;margin:2px 2px 8px;font-size:10.5px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:var(--faint)}
+.sosSec .ct{background:var(--teal-bg);color:var(--teal);border-radius:99px;padding:2px 8px;font-size:10px}
+.sosGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:10px;margin-bottom:15px}
+.sosCard{border:1px solid var(--border);border-radius:13px;padding:12px 14px;cursor:pointer;position:relative;
+  background:rgba(255,255,255,.5);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+body[data-theme="dark"] .sosCard{background:rgba(19,30,51,.5)}
+.sosCard:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--border2)}
+.sosCard.warn{border-color:rgba(232,147,12,.5)}.sosCard.risk{border-color:rgba(228,87,61,.55)}
+.sosCard .hd{display:flex;align-items:center;gap:7px}
+.sosCard .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;animation:pulse 2.2s infinite}
+.sosCard.ok .dot{background:var(--green)}.sosCard.watch .dot{background:var(--grad1)}
+.sosCard.warn .dot{background:var(--amber)}.sosCard.risk .dot{background:var(--red)}
+.sosCard .nm{font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--faint);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sosCard .cf{margin-left:auto;font-size:9.5px;font-weight:700;color:var(--faint);white-space:nowrap}
+.sosCard .hl{font-size:12px;font-weight:600;margin-top:7px;line-height:1.45}
+.sosCard .meter{height:4px;border-radius:99px;background:var(--border);margin-top:9px;overflow:hidden}
+.sosCard .meter i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--grad1),var(--grad2));transition:width .7s ease}
+.sosCard .xp{max-height:0;overflow:hidden;transition:max-height .3s ease}
+.sosCard.open .xp{max-height:300px}
+.sosCard .xp ul{margin:9px 0 0;padding-left:15px;font-size:11.5px;color:var(--muted);line-height:1.65}
+.sosCard .why{font-size:11px;font-weight:700;color:var(--teal);margin-top:9px;display:inline-block}
+.sos3{display:grid;grid-template-columns:1.25fr 1fr 1fr;gap:10px;margin-bottom:15px}
+@media(max-width:920px){.sosGaugeRow{grid-template-columns:repeat(2,1fr)}.sos3{grid-template-columns:1fr}}
+@media(max-width:560px){.sosGaugeRow{grid-template-columns:1fr}.sosGrid{grid-template-columns:1fr}}
+
 /* -- Sentinel workspace -- */
 .sentinelShell{background:linear-gradient(180deg,var(--sentinel-bg),var(--bg) 340px)}
 body[data-theme="dark"] .sentinelShell{background:var(--sentinel-bg)}
@@ -2101,10 +2149,199 @@ function pageSentinel(){
     <td style="text-align:left;font-size:12px;color:var(--muted)">${sentNote(j,idx,journal)}</td>
     <td class="num ${cls(j.realized)}">${j.realized?sgn(j.realized)+fmt(j.realized):"—"}</td></tr>`).join("")}</table>`
     :'<div class="empty">Your trades will appear here, each annotated with Sentinel\'s read on the emotional context around it.</div>'}</div>`;}
-function updSentinel(tickN){const traps=scanTraps();
+function updSentinel(tickN){
   fetchSentinelLive();
-  const key=traps.map(t=>t.tag+t.sym).join(",")+"|"+journal.length;
+  const os=sosCompute();
+  const key=os.M.map(m=>m.id+m.level).join()+"|"+journal.length+"|"+os.cl;
   if(key!==px.sentKey)render();}
+
+/* =================================================================
+   [v0.6] Sentinel OS — institutional AI Safety Operating System.
+   24 always-on intelligence modules computed from the live session
+   (bars, VIX, journal, positions, news) + the real Sentinel backend.
+   Observation-only: caution levels and education, never buy/sell.
+================================================================= */
+function sosEma(a,p){const k=2/(p+1);let e=a[0];for(let i=1;i<a.length;i++)e=a[i]*k+e*(1-k);return e;}
+function sosRsi(cl,p=14){if(cl.length<p+1)return 50;let g=0,l=0;
+  for(let i=cl.length-p;i<cl.length;i++){const d=cl[i]-cl[i-1];if(d>=0)g+=d;else l-=d;}
+  if(!l)return 100;return 100-100/(1+(g/p)/(l/p));}
+function sosInd(sym){const i=insts[sym];if(!i)return null;i.ensureBars();
+  const b=i.barsTF(5).slice(-60);if(b.length<27)return null;
+  const cl=b.map(x=>x.c),last=b[b.length-1],w=b.slice(-13,-1),w2=b.slice(-26,-13);
+  const hi=Math.max(...w.map(x=>x.h)),lo=Math.min(...w.map(x=>x.l));
+  const hi2=Math.max(...w2.map(x=>x.h)),lo2=Math.min(...w2.map(x=>x.l));
+  const av=w.reduce((a,x)=>a+x.v,0)/w.length;
+  const atr=b.slice(-14).reduce((a,x)=>a+(x.h-x.l),0)/14;
+  return{last,e20:sosEma(cl,20),e50:sosEma(cl,50),rsi:sosRsi(cl),hi,lo,hi2,lo2,av,
+    atrPct:atr/last.c*100,volR:last.v/av,hh:hi>hi2,hl:lo>lo2};}
+const sosOpen=new Set();window.sosToggle=id=>{sosOpen.has(id)?sosOpen.delete(id):sosOpen.add(id);render();};
+let sosPrev={},sosTl=[];
+function sosCompute(){
+  const sym=insts[selSym]?selSym:"NIFTY",S=sosInd(sym)||sosInd("NIFTY"),vix=insts.INDIAVIX.ltp;
+  const traps=scanTraps(),stats=sentJournalStats(),dkey=new Date().toDateString();
+  const tradesToday=journal.filter(j=>new Date(j.t).toDateString()===dkey).length;
+  const moods=journal.slice(0,12).map((j,x)=>journalMood(j,x,journal));
+  const frus=moods.filter(m=>m==="Frustrated").length;
+  const M=[];const add=(id,grp,name,level,conf,hl,ev)=>{const m={id,grp,name,level,conf,hl,ev};M.push(m);
+    const p=sosPrev[id];if(p&&p!==level){sosTl.unshift({t:Date.now(),kind:level==="risk"||level==="warn"?"warn":"info",
+      txt:`${name}: ${p.toUpperCase()} → ${level.toUpperCase()} — ${hl}`});if(sosTl.length>14)sosTl.pop();}
+    sosPrev[id]=level;return m;};
+  /* --- shared scores --- */
+  const ts=S?Math.max(4,Math.min(100,Math.round(Math.abs(S.e20-S.e50)/(S.last.c*.002)*38+(S.rsi>58||S.rsi<42?22:0)))):40;
+  const volScore=Math.min(100,Math.round(vix*3.6+(S?S.atrPct*55:16)));
+  const liqScore=Math.max(5,Math.min(100,Math.round((S?S.volR:1)*55)));
+  /* --- MARKET INTELLIGENCE --- */
+  let dc="Tradable";if(vix>19||volScore>82)dc="Sit Out";else if(ts>=60&&volScore<72)dc="Trend";
+  else if(ts<25&&volScore<40)dc="Quiet";else if(ts<25)dc="Choppy";else if(liqScore<42)dc="Selective";else if(ts<46)dc="Range";
+  add("dayclass","mkt","Day Classification",dc==="Sit Out"?"risk":dc==="Choppy"?"warn":dc==="Trend"||dc==="Tradable"?"ok":"watch",
+    .6+ts/500+((100-volScore)/500),`${dc} day`,
+    [`Trend strength ${ts}/100 · RSI(14) ${S?S.rsi.toFixed(0):"—"}`,`Volatility score ${volScore}/100 · India VIX ${fmt(vix)}`,`Participation ${liqScore}/100 vs 12-bar average volume`]);
+  add("structure","mkt","Market Structure AI",S?(S.hh&&S.hl?"ok":!S.hh&&!S.hl?"warn":"watch"):"watch",.72,
+    S?(S.hh&&S.hl?"Higher highs & higher lows — constructive":!S.hh&&!S.hl?"Lower highs & lows — distributive":"Mixed swings — no clean structure"):"Building bars…",
+    S?[`Swing high ${fmt(S.hi)} vs prior ${fmt(S.hi2)}`,`Swing low ${fmt(S.lo)} vs prior ${fmt(S.lo2)}`,`${sym} last ${fmt(S.last.c)}`]:[]);
+  add("trend","mkt","Trend Strength Score",ts>=60?"ok":ts>=35?"watch":"warn",.55+ts/250,
+    `${ts}/100 — ${ts>=60?"established trend":ts>=35?"developing bias":"no meaningful trend"}`,
+    S?[`EMA20 ${fmt(S.e20)} vs EMA50 ${fmt(S.e50)}`,`RSI(14) at ${S.rsi.toFixed(1)}`]:[]);
+  add("volx","mkt","Volatility Intelligence",vix>18?"risk":vix>15?"warn":"ok",.8,
+    `VIX ${fmt(vix)} — ${vix>18?"elevated: expect wide swings":vix>15?"above calm range":"calm regime"}`,
+    [`Realized range ${S?S.atrPct.toFixed(2):"—"}% per 5-min bar`,`Wider spreads and slippage likely when VIX > 16`]);
+  add("liquidity","mkt","Liquidity Detection",liqScore<40?"warn":"ok",.62,
+    `${liqScore}/100 — ${liqScore<40?"thin participation, moves can overshoot":"normal participation"}`,
+    [`Last bar volume ${(S?S.volR*100:100).toFixed(0)}% of recent average`]);
+  const gapR=hash("gap"+dkey+sym);add("gap","mkt","Gap Risk Analyzer",gapR>.8||vix>18?"warn":"ok",.55,
+    gapR>.8||vix>18?"Overnight gap risk above normal":"Overnight gap risk normal",
+    [`Gap propensity model: ${(gapR*100).toFixed(0)}th percentile day`,`VIX regime factor ${fmt(vix)}`]);
+  const hrs=new Date().getHours()+new Date().getMinutes()/60;
+  const phase=hrs<9.25?"Pre-open":hrs<10.5?"Opening drive":hrs<13.5?"Midday balance":hrs<15?"Afternoon positioning":hrs<15.5?"Closing hour":"Market closed";
+  add("session","mkt","Session Intelligence",phase==="Opening drive"||phase==="Closing hour"?"watch":"ok",.85,
+    `${phase}`,[`Opening/closing phases carry the widest ranges and most traps`,`Statistically calmer execution mid-session`]);
+  const recentNews=newsFeed.filter(n=>Date.now()-n.t<35*60000).length;
+  add("newsrisk","mkt","News Risk Detection",recentNews>5?"warn":"ok",.6,
+    `${recentNews} headline${recentNews===1?"":"s"} in the last 35 min${recentNews>5?" — headline-driven tape":""}`,
+    newsFeed.slice(0,3).map(n=>n.txt.slice(0,90)));
+  const wd=new Date().getDay();
+  add("econ","mkt","Economic Event Detection",wd===4?"watch":"ok",.7,
+    wd===4?"Weekly index option expiry today":"No major scheduled events in this session",
+    [wd===4?"Expiry days show pin risk and sharp premium decay":"Watch for unscheduled announcements",`Event calendar checked ${new Date().toLocaleTimeString()}`]);
+  /* --- TRAP & SAFETY NETS --- */
+  add("trapengine","trap","Trap Detection Engine",traps.length>=2?"risk":traps.length?"warn":"ok",.66+Math.min(.3,traps.length*.12),
+    traps.length?`${traps.length} composite trap signal${traps.length===1?"":"s"} active`:"No corroborated trap patterns",
+    traps.map(t=>`${t.tag} — ${insts[t.sym]?insts[t.sym].name:t.sym}`));
+  const fbo=traps.find(t=>t.tag==="Low-Volume Breakout"||t.tag==="Bull Trap");
+  add("fakebo","trap","Fake Breakout Detection",fbo?"warn":"ok",.68,
+    fbo?`${fbo.tag} flagged on ${insts[fbo.sym]?insts[fbo.sym].name:fbo.sym}`:"Breakouts confirming with volume so far",fbo?[fbo.txt]:[]);
+  const fbd=traps.find(t=>t.tag==="Bear Trap");
+  add("fakebd","trap","Fake Breakdown Detection",fbd?"warn":"ok",.68,
+    fbd?`Bear-trap characteristics on ${insts[fbd.sym]?insts[fbd.sym].name:fbd.sym}`:"No failed-breakdown pattern detected",fbd?[fbd.txt]:[]);
+  const sweepHi=S&&S.last.h>S.hi&&S.last.c<S.hi,sweepLo=S&&S.last.l<S.lo&&S.last.c>S.lo;
+  add("stophunt","trap","Stop Hunt Detection",sweepHi||sweepLo?"warn":"ok",.6,
+    sweepHi?"Wick swept above range highs then closed back inside":sweepLo?"Wick swept below range lows then reclaimed":"No stop-run wicks at obvious levels",
+    S?[`Range ${fmt(S.lo)}–${fmt(S.hi)}, last bar H ${fmt(S.last.h)} / L ${fmt(S.last.l)} / C ${fmt(S.last.c)}`]:[]);
+  add("premtrap","trap","Premium Trap Detection",wd===4&&vix>15?"warn":"ok",.58,
+    wd===4&&vix>15?"Expiry + elevated IV — option premium decay risk high":"No unusual premium-decay setup",
+    [`Option buyers pay for volatility: IV crush after events hits premiums hardest`,wd===4?"Expiry-day theta decay accelerates after midday":"Next weekly expiry: Thursday"]);
+  /* --- TRADER & BEHAVIOUR --- */
+  add("emotion","you","Emotion Detection",frus>=2?"risk":frus?"warn":"ok",.6+Math.min(.3,frus*.15),
+    frus?`${frus} frustration-tagged trade${frus===1?"":"s"} recently`:"Emotional state reads steady",
+    [`Last ${moods.length} trades: ${moods.slice(0,6).join(", ")||"none yet"}`]);
+  let unrl=0;try{unrl=unrealized();}catch(e){}
+  const dayPnl=acct.realized+unrl,ddPct=dayPnl/START*100;
+  add("capital","you","Capital Protection Engine",ddPct<-1.5?"risk":ddPct<-.6?"warn":"ok",.82,
+    `Day P&L ${sgn(dayPnl)}₹${fmt(Math.abs(dayPnl),0)} (${sgn(ddPct)}${Math.abs(ddPct).toFixed(2)}%)`,
+    [`Realized ${sgn(acct.realized)}₹${fmt(Math.abs(acct.realized),0)} · Unrealized ${sgn(unrl)}₹${fmt(Math.abs(unrl),0)}`,ddPct<-1.5?"Beyond a 1.5% daily drawdown, decision quality measurably degrades — consider stepping back":"Daily loss guard reference: −1.5% of capital"]);
+  const avgSz=journal.slice(0,6).reduce((a,j)=>a+j.qty*j.px,0)/Math.max(1,Math.min(6,journal.length));
+  const lastSz=journal[0]?journal[0].qty*journal[0].px:0,szX=avgSz?lastSz/avgSz:1;
+  add("sizing","you","Position Sizing AI",szX>2.2?"risk":szX>1.6?"warn":"ok",.64,
+    journal.length<3?"Learning your baseline size…":`Last trade ${szX.toFixed(1)}x your recent average size`,
+    journal.length?[`Recent average ₹${fmt(avgSz,0)} vs last ₹${fmt(lastSz,0)}`,"Sudden size jumps are the earliest emotion signal"]:[]);
+  const eq=Math.max(10,100-stats.afterLossTotal*14-frus*12-(traps.length?10:0));
+  add("entryq","you","Entry Quality Score",eq<50?"warn":"ok",.6,
+    journal.length<3?"Score forms after a few trades":`${eq}/100 — ${eq>=70?"patient, planned entries":eq>=50?"acceptable, watch re-entries":"rushed entries detected"}`,
+    [`Re-entries after losses this session: ${stats.afterLossTotal}`,`Frustration-tagged entries: ${frus}`]);
+  add("exitint","you","Exit Intelligence",stats.total>=3&&stats.winRate<40?"warn":"ok",.62,
+    stats.total?`${stats.winRate.toFixed(0)}% win rate on ${stats.total} closed trade${stats.total===1?"":"s"}`:"No closed trades yet this session",
+    stats.afterLossTotal>=2?[`Win rate after a loss: ${stats.afterLossWinRate.toFixed(0)}% vs ${stats.winRate.toFixed(0)}% overall — cooling-off periods help`]:["Exit pattern review appears after more closed trades"]);
+  const open=Object.keys(positions).filter(k=>positions[k].qty);
+  let noti=0,maxNoti=0;for(const k of open){try{const p=positions[k],n=Math.abs(p.qty)*markPx(p.c)*(p.c.lot||1);noti+=n;maxNoti=Math.max(maxNoti,n);}catch(e){}}
+  const expo=noti/START*100,conc=noti?maxNoti/noti*100:0;
+  add("portrisk","you","Portfolio Risk Monitor",expo>60?"risk":expo>35?"warn":"ok",.78,
+    open.length?`${open.length} open position${open.length===1?"":"s"} · ${expo.toFixed(0)}% of capital deployed`:"No open positions",
+    open.length?[`Largest position = ${conc.toFixed(0)}% of deployed capital`,`Notional ₹${fmt(noti,0)} vs capital ₹${fmt(START,0)}`]:[]);
+  const worst=M.filter(m=>m.grp==="you"&&(m.level==="warn"||m.level==="risk"))[0];
+  add("coach","you","Behavioral Coaching",worst?"watch":"ok",.7,
+    worst?`Focus area: ${worst.name} — ${worst.hl}`:"No behavioural drift detected — keep doing what's working",
+    worst?["One improvement at a time beats fixing everything at once","Ask the AI dock to reflect on this pattern with you"]:["Sentinel coaches only when evidence appears"]);
+  const best=journal.filter(j=>j.realized>0).sort((a,b)=>b.realized-a.realized)[0];
+  const worstT=journal.filter(j=>j.realized<0).sort((a,b)=>a.realized-b.realized)[0];
+  add("replay","you","Learning & Replay Engine","ok",.66,
+    tradesToday?`${tradesToday} trade${tradesToday===1?"":"s"} captured for replay`:"Session replay builds as you trade",
+    [best?`Best: ${best.name} ${sgn(best.realized)}₹${fmt(best.realized,0)}`:"",worstT?`Toughest: ${worstT.name} ${sgn(worstT.realized)}₹${fmt(Math.abs(worstT.realized),0)}`:"","Every session becomes training data for your future self"].filter(Boolean));
+  /* --- composite caution + confidence + safety nets --- */
+  const riskN=M.filter(m=>m.level==="risk").length,warnN=M.filter(m=>m.level==="warn").length;
+  const caution=Math.min(100,Math.round(volScore*.32+riskN*16+warnN*7+(ddPct<0?Math.min(24,-ddPct*12):0)));
+  const cl_=caution>=72?3:caution>=52?2:caution>=32?1:0;
+  const cLabel=["Low caution","Moderate caution","Elevated caution","Defensive mode"][cl_];
+  add("safetynets","trap","Dynamic Safety Nets",cl_>=3?"risk":cl_===2?"warn":"ok",.75,
+    cl_>=2?"Tightened: smaller size, stronger confirmation, fewer trades":"Standard nets active",
+    [`Composite caution ${caution}/100 → ${cLabel}`,`${riskN} risk + ${warnN} watch signals across all modules`]);
+  const confid=Math.max(8,100-caution+ (dc==="Trend"||dc==="Tradable"?6:0));
+  add("confidence","trap","Confidence Score",confid>=60?"ok":confid>=40?"watch":"warn",.7,
+    `${confid}/100 environment confidence — ${confid>=60?"conditions readable":confid>=40?"mixed conditions":"low-conviction environment"}`,
+    [`Inverse of composite caution (${caution}/100), boosted on clean ${dc} days`]);
+  return{M,caution,cl:cl_,cLabel,dc,gauges:{health:Math.max(5,100-caution),vol:volScore,trend:ts,liq:liqScore},sym};}
+function sosGauge(t,v,sub,gc){return`<div class="gauge" style="--p:${v};--gc:${gc}">
+  <div class="ring"><div class="in">${v}</div></div>
+  <div class="lbl"><div class="t">${t}</div><div class="s">${sub}</div></div></div>`;}
+function sosCard(m){const open=sosOpen.has(m.id);
+  return`<div class="sosCard ${m.level}${open?" open":""}" onclick="sosToggle('${m.id}')">
+    <div class="hd"><span class="dot"></span><span class="nm">${m.name}</span><span class="cf">${(m.conf*100).toFixed(0)}%</span></div>
+    <div class="hl">${m.hl}</div>
+    <div class="meter"><i style="width:${(m.conf*100).toFixed(0)}%"></i></div>
+    <div class="xp">${m.ev.length?`<ul>${m.ev.map(e=>`<li>${e}</li>`).join("")}</ul>`:""}
+      <a class="why" onclick="event.stopPropagation();askAi('Explain in simple terms: ${m.name.replace(/'/g,"")} says ${m.hl.replace(/'/g,"").replace(/"/g,"")} — why, and what should I be aware of? (education only)')">Explain this decision ↗</a></div></div>`;}
+function pageSentinelOS(){
+  fetchSentinelLive();
+  const os=sosCompute();
+  px.sentKey=os.M.map(m=>m.id+m.level).join()+"|"+journal.length+"|"+os.cl;
+  const grp=g=>os.M.filter(m=>m.grp===g);
+  const warnCt=g=>grp(g).filter(m=>m.level==="warn"||m.level==="risk").length;
+  const obs=sentObsFeed(scanTraps());
+  if(sentLive.ok&&sentLive.obs.length){for(const o of sentLive.obs.slice(0,4))obs.unshift({t:Date.now(),kind:o.agent==="orchestrator"?"warn":"info",txt:`[live · ${o.agent}] ${o.content}`});obs.length=Math.min(obs.length,8);}
+  const gaugeCol=v=>v>=66?"var(--red)":v>=45?"var(--amber)":"var(--green)";
+  return`
+  <div class="sosBanner lv${os.cl} riseIn">
+    <div class="ic" style="width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--grad1),var(--grad2));color:#fff;font-weight:800;font-size:15px;flex-shrink:0;animation:softPulse 2.6s infinite">S</div>
+    <div class="msg"><b>Sentinel OS · ${os.cLabel}${sentLiveChip()}</b>
+    <p>${os.dc} day on ${insts[os.sym]?insts[os.sym].name:os.sym} · ${os.M.length} intelligence modules live · composite caution ${os.caution}/100. Observation and education only — never trade directions.</p></div>
+    <span class="lv">${os.cLabel}</span></div>
+  ${sentLiveSynthCard()}
+  <div class="sosGaugeRow riseIn">
+    ${sosGauge("Market Health",os.gauges.health,os.dc+" conditions","var(--teal)")}
+    ${sosGauge("Volatility",os.gauges.vol,"VIX "+fmt(insts.INDIAVIX.ltp),gaugeCol(os.gauges.vol))}
+    ${sosGauge("Trend Strength",os.gauges.trend,os.gauges.trend>=60?"Established":os.gauges.trend>=35?"Developing":"Weak","var(--grad1)")}
+    ${sosGauge("Liquidity",os.gauges.liq,os.gauges.liq<40?"Thin tape":"Normal participation","var(--grad2)")}</div>
+  <div class="sosSec riseIn">Market Intelligence <span class="ct">${grp("mkt").length} modules · ${warnCt("mkt")} flagged</span></div>
+  <div class="sosGrid riseIn">${grp("mkt").map(sosCard).join("")}</div>
+  <div class="sosSec riseIn">Trap Detection &amp; Safety Nets <span class="ct">${grp("trap").length} modules · ${warnCt("trap")} flagged</span></div>
+  <div class="sosGrid riseIn">${grp("trap").map(sosCard).join("")}</div>
+  <div class="sosSec riseIn">Trader &amp; Behavioural Intelligence <span class="ct">${grp("you").length} modules · ${warnCt("you")} flagged</span></div>
+  <div class="sosGrid riseIn">${grp("you").map(sosCard).join("")}</div>
+  <div class="sos3 riseIn">
+    <div class="card lift"><h2>Market State Timeline</h2>${sosTl.length?renderTimeline(sosTl):'<div class="empty">State changes appear here as modules shift levels during the session.</div>'}</div>
+    <div class="card lift"><h2>Observation Feed</h2>${renderTimeline(obs.slice(0,6))}</div>
+    <div class="card lift"><h2>Session Summary</h2>
+      <div class="sessStat"><span>Caution Level</span><span class="v" style="color:${os.cl>=2?"var(--amber)":"var(--teal)"}">${os.cLabel}</span></div>
+      <div class="sessStat"><span>Modules Flagged</span><span class="v">${os.M.filter(m=>m.level==="warn"||m.level==="risk").length}/${os.M.length}</span></div>
+      <div class="sessStat"><span>Trades Today</span><span class="v">${journal.filter(j=>new Date(j.t).toDateString()===new Date().toDateString()).length}</span></div>
+      <div class="sessStat"><span>Order Flow</span><span class="v" style="color:var(--green);font-size:11px">Never blocked</span></div></div></div>
+  <div class="card riseIn lift"><h2>Trading Journal <small>· mood-tagged by Sentinel</small></h2>
+    ${journal.length?`<table class="t"><tr><th>Instrument</th><th>Mood</th><th>Note</th><th></th></tr>
+    ${journal.slice(0,8).map((j,idx)=>`<tr><td><b>${j.name}</b><br><span style="font-size:10.5px;color:var(--faint)">${new Date(j.t).toLocaleString()}</span></td>
+    <td><span class="moodPill ${journalMood(j,idx,journal)}">${journalMood(j,idx,journal)}</span></td>
+    <td style="text-align:left;font-size:12px;color:var(--muted)">${sentNote(j,idx,journal)}</td>
+    <td class="num ${cls(j.realized)}">${j.realized?sgn(j.realized)+fmt(j.realized):"—"}</td></tr>`).join("")}</table>`
+    :'<div class="empty">Your trades will appear here, each annotated with Sentinel\'s read on the emotional context around it.</div>'}</div>
+  <div style="text-align:center;font-size:10.5px;color:var(--faint);padding:4px 0 14px">Sentinel observes, explains and protects. It never executes trades and never gives buy, sell, entry, exit or target advice.</div>`;}
 
 /* ---- Research: TradeW AI's deep-dive workspace ---- */
 let researchSym="RELIANCE",researchTab="overview";
@@ -2207,7 +2444,7 @@ function render(){renderWlTabs();buildWatch();
   const pg=$("pg");px={};
   pg.innerHTML=view==="home"?pageHome():view==="markets"?pageMarkets():view==="inst"?pageInst()
     :view==="screener"?pageScreener():view==="positions"?pagePositions():view==="orders"?pageOrders()
-    :view==="alerts"?pageAlerts():view==="sentinel"?pageSentinel():view==="research"?pageResearch():pagePortfolio();
+    :view==="alerts"?pageAlerts():view==="sentinel"?pageSentinelOS():view==="research"?pageResearch():pagePortfolio();
   $("content").classList.toggle("sentinelShell",view==="sentinel");
   if(view==="home")document.querySelectorAll("[data-spark]").forEach(c=>spark(c,c.dataset.spark));
   if(view==="inst"){updInstHead();
