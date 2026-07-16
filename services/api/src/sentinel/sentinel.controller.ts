@@ -52,6 +52,14 @@ export class SentinelController {
     return result;
   }
 
+  /** Knowledge Center — query surface over the Brain's accumulated memory. */
+  @Post('brain/search')
+  async brainSearch(@Req() req: AuthedRequest, @Body() body: { query: string; namespace?: string; limit?: number }) {
+    const result = await this.sentinel.brainSearch(req.user.sub, body.query, body.namespace, body.limit);
+    await this.entitlements.recordUsage(req.user.sub, 'ai_requests');
+    return result;
+  }
+
   @Get('observations')
   observations(@Req() req: AuthedRequest, @Query('limit') limit?: string) {
     return this.sentinel.observations(req.user.sub, limit ? Number(limit) : 50);

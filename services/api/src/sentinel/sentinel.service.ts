@@ -97,6 +97,19 @@ export class SentinelApiService {
     return res.json();
   }
 
+  /** Knowledge Center — query surface over the Brain's accumulated memory. */
+  async brainSearch(userId: string, query: string, namespace?: string, limit?: number) {
+    const res = await fetch(`${this.baseUrl}/brain/search`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({ query, userId, namespace, limit }),
+    }).catch((err) => {
+      throw new BadGatewayException(`Sentinel service unreachable: ${err.message}`);
+    });
+    if (!res.ok) throw new BadGatewayException(`Sentinel service error: ${res.status}`);
+    return res.json();
+  }
+
   async observations(userId: string, limit = 50) {
     const res = await fetch(`${this.baseUrl}/observations?userId=${encodeURIComponent(userId)}&limit=${limit}`, {
       headers: this.headers,

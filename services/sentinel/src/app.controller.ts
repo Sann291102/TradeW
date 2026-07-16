@@ -10,6 +10,7 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import { KnowledgeCenterService } from './brain/knowledge-center.service';
 import { ComplianceService } from './compliance/compliance.service';
 import { ObserveRequest } from './domain';
 import { ExplainService } from './explain/explain.service';
@@ -37,6 +38,7 @@ export class AppController {
     private readonly orchestrator: SentinelOrchestratorService,
     private readonly compliance: ComplianceService,
     private readonly explainSvc: ExplainService,
+    private readonly knowledgeCenter: KnowledgeCenterService,
   ) {}
 
   @Get('health')
@@ -63,5 +65,18 @@ export class AppController {
   @Post('explain')
   explain(@Body() body: { question: string; context?: string }) {
     return this.explainSvc.explain(body.question, body?.context);
+  }
+
+  /** Knowledge Center — query surface over everything the Brain has learned. */
+  @UseGuards(ServiceTokenGuard)
+  @Post('brain/search')
+  brainSearch(@Body() body: { query: string; userId?: string | null; namespace?: string; limit?: number }) {
+    return this.knowledgeCenter.search(body.query, { userId: body.userId, namespace: body.namespace, limit: body.limit });
+  }
+
+  @UseGuards(ServiceTokenGuard)
+  @Get('brain/stats')
+  brainStats() {
+    return this.knowledgeCenter.stats();
   }
 }
