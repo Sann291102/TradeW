@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { ComplianceService } from './compliance/compliance.service';
 import { ObserveRequest } from './domain';
+import { ExplainService } from './explain/explain.service';
 import { SentinelOrchestratorService } from './orchestrator/sentinel-orchestrator.service';
 
 /**
@@ -35,6 +36,7 @@ export class AppController {
   constructor(
     private readonly orchestrator: SentinelOrchestratorService,
     private readonly compliance: ComplianceService,
+    private readonly explainSvc: ExplainService,
   ) {}
 
   @Get('health')
@@ -54,5 +56,12 @@ export class AppController {
   @Get('observations')
   observations(@Query('userId') userId: string, @Query('limit') limit?: string) {
     return this.compliance.feed(userId, limit ? Number(limit) : 50);
+  }
+
+  /** Real Neural Brain explanation for a module/observation — never buy/sell language. */
+  @UseGuards(ServiceTokenGuard)
+  @Post('explain')
+  explain(@Body() body: { question: string; context?: string }) {
+    return this.explainSvc.explain(body.question, body?.context);
   }
 }

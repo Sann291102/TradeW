@@ -24,45 +24,72 @@ export class SentinelApiService {
     };
   }
 
-  async observe(userId: string, symbol?: string, context?: string) {
-    const since = new Date(Date.now() - 24 * 3_600_000);
-    const [trades, positions] = await Promise.all([
-      this.prisma.trade.findMany({
-        where: { userId, createdAt: { gte: since } },
-        include: { instrument: { select: { symbol: true } } },
-        orderBy: { createdAt: 'desc' },
-        take: 100,
-      }),
-      this.prisma.position.findMany({
-        where: { userId },
-        include: { instrument: { select: { symbol: true } } },
-      }),
-    ]);
+  async observe(
+    userId: string,
+    symbol?: string,
+    context?: string,
+    clientSupplied?: { clientTrades?: unknown[]; clientPositions?: unknown[] },
+  ) {
+    // Demo/paper-account bridge (see SentinelController.observe): a client
+    // that supplies its own recent trades/positions (apps/terminal's paper
+    // simulator) is trusted for THIS request only — never persisted, never
+    // treated as this user's real trading history elsewhere in the system.
+    const useClientData = Array.isArray(clientSupplied?.clientTrades) || Array.isArray(clientSupplied?.clientPositions);
 
-    const body = {
-      userId,
-      symbol,
-      context,
-      recentTrades: trades.map((t) => ({
+    let recentTrades: unknown[];
+    let positions: unknown[];
+    if (useClientData) {
+      recentTrades = Array.isArray(clientSupplied?.clientTrades) ? clientSupplied!.clientTrades!.slice(0, 100) : [];
+      positions = Array.isArray(clientSupplied?.clientPositions) ? clientSupplied!.clientPositions! : [];
+    } else {
+      const since = new Date(Date.now() - 24 * 3_600_000);
+      const [trades, dbPositions] = await Promise.all([
+        this.prisma.trade.findMany({
+          where: { userId, createdAt: { gte: since } },
+          include: { instrument: { select: { symbol: true } } },
+          orderBy: { createdAt: 'desc' },
+          take: 100,
+        }),
+        this.prisma.position.findMany({
+          where: { userId },
+          include: { instrument: { select: { symbol: true } } },
+        }),
+      ]);
+      recentTrades = trades.map((t) => ({
         id: t.id,
         symbol: t.instrument.symbol,
         side: t.side,
         quantity: t.quantity,
         fillPrice: Number(t.fillPrice),
         createdAt: t.createdAt.toISOString(),
-      })),
-      positions: positions.map((p) => ({
+      }));
+      positions = dbPositions.map((p) => ({
         symbol: p.instrument.symbol,
         quantity: p.quantity,
         avgPrice: Number(p.avgPrice),
         realizedPnl: Number(p.realizedPnl),
-      })),
-    };
+      }));
+    }
+
+    const body = { userId, symbol, context, recentTrades, positions };
 
     const res = await fetch(`${this.baseUrl}/observe`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify(body),
+    }).catch((err) => {
+      throw new BadGatewayException(`Sentinel service unreachable: ${err.message}`);
+    });
+    if (!res.ok) throw new BadGatewayException(`Sentinel service error: ${res.status}`);
+    return res.json();
+  }
+
+  /** Real Neural Brain explanation for a Sentinel observation/module — see services/sentinel's /explain. */
+  async explain(userId: string, question: string, context?: string) {
+    const res = await fetch(`${this.baseUrl}/explain`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({ userId, question, context }),
     }).catch((err) => {
       throw new BadGatewayException(`Sentinel service unreachable: ${err.message}`);
     });

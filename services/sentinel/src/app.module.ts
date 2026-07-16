@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AppController, ServiceTokenGuard } from './app.controller';
 import { ComplianceService } from './compliance/compliance.service';
+import { ExplainService } from './explain/explain.service';
 import { EmotionIntelligenceService } from './intelligence/emotion-intelligence.service';
 import { MARKET_DATA, MarketIntelligenceService } from './intelligence/market-intelligence.service';
 import { NewsIntelligenceService } from './intelligence/news-intelligence.service';
@@ -23,6 +24,7 @@ import { PrismaService } from './prisma.service';
     NewsIntelligenceService,
     ComplianceService,
     SentinelOrchestratorService,
+    ExplainService,
   ],
 })
 export class AppModule {}

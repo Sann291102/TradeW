@@ -21,9 +21,34 @@ export class SentinelController {
   ) {}
 
   @Post('observe')
-  async observe(@Req() req: AuthedRequest, @Body() body: { symbol?: string; context?: string }) {
-    const result = await this.sentinel.observe(req.user.sub, body?.symbol, body?.context);
+  async observe(
+    @Req() req: AuthedRequest,
+    @Body()
+    body: {
+      symbol?: string;
+      context?: string;
+      // Demo/paper-account bridge: apps/terminal runs its own client-side
+      // paper-trading simulator, so its trades never land in this service's
+      // Trade/Position tables. When supplied, these take priority over the
+      // DB-derived history for THIS call only — nothing is persisted from
+      // them. A real brokerage-linked account never sends these; its trades
+      // already live in Postgres and are read there instead.
+      clientTrades?: unknown[];
+      clientPositions?: unknown[];
+    },
+  ) {
+    const result = await this.sentinel.observe(req.user.sub, body?.symbol, body?.context, {
+      clientTrades: body?.clientTrades,
+      clientPositions: body?.clientPositions,
+    });
     await this.entitlements.recordUsage(req.user.sub, 'sentinel_requests');
+    return result;
+  }
+
+  @Post('explain')
+  async explain(@Req() req: AuthedRequest, @Body() body: { question: string; context?: string }) {
+    const result = await this.sentinel.explain(req.user.sub, body.question, body?.context);
+    await this.entitlements.recordUsage(req.user.sub, 'ai_requests');
     return result;
   }
 
