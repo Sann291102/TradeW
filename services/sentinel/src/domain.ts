@@ -66,6 +66,8 @@ export interface ObserveResponse {
   observations: SentinelObservationOut[];
   /** every computed signal, triggered or not (Agent Activity Timeline transparency) */
   signals: Signal[];
+  /** Market Context Engine's narrative for the active symbol — absent if the Brain is unavailable */
+  marketContext?: string;
 }
 
 export const SENTINEL_DISCLAIMER =

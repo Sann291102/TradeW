@@ -16,9 +16,13 @@ import {
 } from '@tradew/ai-core';
 import { AppController, ServiceTokenGuard } from './app.controller';
 import { ConceptLearningEngine } from './brain/concept-learning.service';
+import { HistoricalSimilarityService } from './brain/historical-similarity.service';
 import { KnowledgeCenterService } from './brain/knowledge-center.service';
+import { MarketContextService } from './brain/market-context.service';
+import { PatternRecognitionService } from './brain/pattern-recognition.service';
 import { PrismaKnowledgeGraph } from './brain/prisma-knowledge-graph';
 import { PrismaMemoryStore } from './brain/prisma-memory-store';
+import { ResearchTriggerService } from './brain/research-trigger.service';
 import {
   BASE_LEARNING_ENGINE,
   KNOWLEDGE_GRAPH,
@@ -103,6 +107,10 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
       inject: [PROVIDER_MANAGER, RETRIEVER, RESEARCH_ENGINE, ConceptLearningEngine],
     },
     KnowledgeCenterService,
+    PatternRecognitionService,
+    HistoricalSimilarityService,
+    MarketContextService,
+    ResearchTriggerService,
   ],
 })
 export class AppModule {}

@@ -6,6 +6,10 @@ import {
   createProviderManager,
   loadProvidersConfigFromEnv,
 } from '@tradew/ai-core';
+import { HistoricalSimilarityService } from '../brain/historical-similarity.service';
+import { MarketContextService } from '../brain/market-context.service';
+import { PatternRecognitionService } from '../brain/pattern-recognition.service';
+import { ResearchTriggerService } from '../brain/research-trigger.service';
 import { ComplianceService } from '../compliance/compliance.service';
 import {
   ObserveRequest,
@@ -41,6 +45,10 @@ export class SentinelOrchestratorService {
     private readonly traps: TrapIntelligenceService,
     private readonly news: NewsIntelligenceService,
     private readonly compliance: ComplianceService,
+    private readonly patternRecognition: PatternRecognitionService,
+    private readonly historicalSimilarity: HistoricalSimilarityService,
+    private readonly marketContext: MarketContextService,
+    private readonly researchTrigger: ResearchTriggerService,
   ) {
     this.providers = createProviderManager(loadProvidersConfigFromEnv());
   }
@@ -48,6 +56,10 @@ export class SentinelOrchestratorService {
   async observe(request: ObserveRequest): Promise<ObserveResponse> {
     const symbol = request.symbol ?? 'NIFTY';
     const trades = request.recentTrades ?? [];
+
+    // Continuous Research Engine: event-driven, fire-and-forget so it never
+    // adds latency to this response — enriches the Brain for next time.
+    void this.researchTrigger.researchIfUnfamiliar(symbol).catch(() => undefined);
 
     const snapshot = await this.market.snapshot(symbol);
     const signals: Signal[] = [
@@ -68,12 +80,30 @@ export class SentinelOrchestratorService {
       confidence: Math.min(1, 0.4 + s.weight),
     }));
 
+    // Pattern Recognition Engine: every triggered signal becomes durable,
+    // queryable knowledge — wrapped so a Brain hiccup never breaks /observe.
+    try {
+      await Promise.all(triggered.map((s) => this.patternRecognition.recordOccurrence(symbol, s, snapshot.lastPrice)));
+    } catch (err) {
+      this.logger.warn(`pattern recognition persistence failed (non-fatal): ${err}`);
+    }
+
     // composite gate: surface only when corroborating weight clears the bar
     const compositeWeight = triggered.reduce((sum, s) => sum + s.weight, 0);
     let synthesis: ObserveResponse['synthesis'] = null;
     if (compositeWeight >= SentinelOrchestratorService.SURFACE_THRESHOLD && triggered.length >= 2) {
       const dominant = [...triggered].sort((a, b) => b.weight - a.weight)[0];
-      const content = await this.compose(symbol, triggered, dominant);
+      let content = await this.compose(symbol, triggered, dominant);
+
+      // Historical Similarity Engine: append a frequency note when there's
+      // genuinely something to say — never a directional call.
+      try {
+        const hist = await this.historicalSimilarity.similarPast(symbol, dominant.name);
+        if (hist.occurrences > 0) content += ' ' + this.historicalSimilarity.describe(hist);
+      } catch (err) {
+        this.logger.warn(`historical similarity lookup failed (non-fatal): ${err}`);
+      }
+
       synthesis = {
         content,
         pattern: dominant.name,
@@ -93,7 +123,10 @@ export class SentinelOrchestratorService {
 
     await this.compliance.record(request.userId, observations, synthesis?.content ?? null);
 
-    return { synthesis, observations, signals };
+    // Market Context Engine: additive narrative, never blocks the response.
+    const marketContext = await this.marketContext.contextFor(symbol, snapshot).catch(() => undefined);
+
+    return { synthesis, observations, signals, marketContext };
   }
 
   /** evidence → pattern name → soft suggestion; never a directive. */
