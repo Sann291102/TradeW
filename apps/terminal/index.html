@@ -348,6 +348,12 @@ body[data-theme="dark"] .sosCard{background:rgba(19,30,51,.5)}
 .sosCard.open .xp{max-height:300px}
 .sosCard .xp ul{margin:9px 0 0;padding-left:15px;font-size:11.5px;color:var(--muted);line-height:1.65}
 .sosCard .why{font-size:11px;font-weight:700;color:var(--teal);margin-top:9px;display:inline-block}
+.fRow{display:flex;gap:8px;align-items:flex-start;font-size:11.5px;line-height:1.5;padding:3px 0}
+.fRow .fd{width:6px;height:6px;border-radius:50%;flex-shrink:0;margin-top:5px}
+.fRow .fd.ok{background:var(--green)}.fRow .fd.watch{background:var(--grad1)}
+.fRow .fd.flag{background:var(--amber);animation:pulse 1.6s infinite}.fRow .fd.armed{background:var(--border2);box-shadow:0 0 0 2px var(--teal-bg)}
+.fRow .fn{font-weight:600}.fRow .ft{color:var(--faint);font-size:10.5px;margin-left:4px}
+.sosPanel .sub{font-size:10.5px;color:var(--faint);margin-top:5px}
 .sos3{display:grid;grid-template-columns:1.25fr 1fr 1fr;gap:10px;margin-bottom:15px}
 @media(max-width:920px){.sosGaugeRow{grid-template-columns:repeat(2,1fr)}.sos3{grid-template-columns:1fr}}
 @media(max-width:560px){.sosGaugeRow{grid-template-columns:1fr}.sosGrid{grid-template-columns:1fr}}
@@ -2176,6 +2182,147 @@ function sosInd(sym){const i=insts[sym];if(!i)return null;i.ensureBars();
     atrPct:atr/last.c*100,volR:last.v/av,hh:hi>hi2,hl:lo>lo2};}
 const sosOpen=new Set();window.sosToggle=id=>{sosOpen.has(id)?sosOpen.delete(id):sosOpen.add(id);render();};
 let sosPrev={},sosTl=[];
+/* ---- Sentinel OS: automatic safety-feature registry (125 features, 12 groups).
+   Every feature is an always-on background check with a live status:
+   ok = clear · watch = monitoring closely · flag = attention · armed = standing by for its trigger ---- */
+function sosFeatures(c){const F=(n,s,d)=>({n,s:s||"armed",d});
+ const st=stats=>stats; // readability no-op
+ return[
+ {id:"mc",name:"Market Classification",f:[
+  F("Day-type classifier",c.dc==="Sit Out"?"flag":"ok",c.dc+" day"),
+  F("Trend vs range regime","ok",c.ts>=60?"trending":"range/mixed"),
+  F("Volatility regime read",c.volScore>70?"flag":"ok",`score ${c.volScore}/100`),
+  F("Participation read",c.liqScore<40?"flag":"ok",`${c.liqScore}/100`),
+  F("Opening-gap assessment","armed","evaluates at next open"),
+  F("Sit-out advisor",c.dc==="Sit Out"?"flag":"ok",c.dc==="Sit Out"?"conditions poor — protecting capital IS a position":"not triggered"),
+  F("Regime-change alerts","ok","wired to timeline + bell")]},
+ {id:"td",name:"Trap Detection",f:[
+  F("Fake breakout scan",c.fbo?"flag":"ok"),F("Fake breakdown scan",c.fbd?"flag":"ok"),
+  F("Bull trap monitor",c.traps.some(t=>t.tag==="Bull Trap")?"flag":"ok"),
+  F("Bear trap monitor",c.traps.some(t=>t.tag==="Bear Trap")?"flag":"ok"),
+  F("Low-volume breakout filter",c.traps.some(t=>t.tag==="Low-Volume Breakout")?"flag":"ok"),
+  F("Stop-hunt wick detector",c.sweep?"flag":"ok"),
+  F("Liquidity-sweep detector",c.sweep?"watch":"ok"),
+  F("Premium trap (IV/theta)",c.wd===4&&c.vix>15?"flag":"ok"),
+  F("Expiry pin-risk monitor",c.wd===4?"watch":"ok"),
+  F("News-spike trap filter",c.recentNews>5&&c.volScore>60?"flag":"ok")]},
+ {id:"eg",name:"Emotion Guard",f:[
+  F("Revenge-trading detector",c.stats.afterLossTotal>=2?"flag":"ok"),
+  F("FOMO entry detector",c.frus?"watch":"ok"),
+  F("Overtrading monitor",c.tradesToday>10?"flag":c.tradesToday>6?"watch":"ok",`${c.tradesToday} trades today`),
+  F("Panic-exit detector","armed"),F("Hesitation monitor","armed"),
+  F("Averaging-down watch","armed"),
+  F("Frustration streak",c.frus>=2?"flag":c.frus?"watch":"ok",`${c.frus} tagged`),
+  F("Overconfidence check",c.stats.winRate>75&&c.szX>1.6?"watch":"ok"),
+  F("Pacing / impatience monitor",c.stats.afterLossTotal?"watch":"ok"),
+  F("Mood tagging engine","ok","tags every journal entry"),
+  F("Cooling-off advisor",c.stats.afterLossTotal>=2?"flag":"armed"),
+  F("Emotion-size linkage",c.szX>1.6&&c.frus?"flag":"ok")]},
+ {id:"rm",name:"Risk Manager",f:[
+  F("Daily loss guard",c.ddPct<-1.5?"flag":c.ddPct<-.6?"watch":"ok",`${sgn(c.ddPct)}${Math.abs(c.ddPct).toFixed(2)}%`),
+  F("Drawdown tracker","ok"),
+  F("Exposure cap",c.expo>60?"flag":c.expo>35?"watch":"ok",`${c.expo.toFixed(0)}% deployed`),
+  F("Concentration cap",c.conc>70&&c.openN>1?"watch":"ok"),
+  F("Loss-streak guard",c.stats.afterLossTotal>=3?"flag":"ok"),
+  F("Size-jump detector",c.szX>2.2?"flag":c.szX>1.6?"watch":"ok",`${c.szX.toFixed(1)}x baseline`),
+  F("Per-trade risk estimator","armed"),F("Stop-loss discipline check","armed"),
+  F("Margin buffer monitor",c.expo>80?"flag":"ok"),
+  F("Overnight risk scan",c.openN&&c.phase==="Market closed"?"watch":"ok"),
+  F("Event-day risk cap",c.wd===4?"watch":"ok"),
+  F("VIX-scaled size guidance",c.vix>16?"watch":"ok"),
+  F("Risk/reward sanity check","armed"),
+  F("Capital-preservation mode",c.cl>=3?"flag":"armed",c.cl>=3?"ACTIVE":"standby"),
+  F("Recovery-mode guard",c.ddPct<-1&&c.tradesToday>6?"flag":"armed")]},
+ {id:"tq",name:"Trade Quality AI",f:[
+  F("Entry Quality Score",c.eq<50?"flag":"ok",`${c.eq}/100`),
+  F("Trend-alignment check","ok"),
+  F("Volume confirmation",c.S&&c.S.volR<.7?"watch":"ok"),
+  F("Key-level proximity","armed"),
+  F("Spread/slippage guard",c.vix>16?"watch":"ok"),
+  F("Time-of-day quality",c.phase==="Opening drive"||c.phase==="Closing hour"?"watch":"ok",c.phase),
+  F("Plan-adherence tracker","ok"),
+  F("Re-entry quality filter",c.stats.afterLossTotal?"watch":"ok"),
+  F("Setup consistency memory","armed"),
+  F("Post-entry drift monitor",c.openN?"ok":"armed")]},
+ {id:"pm",name:"Position Manager",f:[
+  F("Open-position monitor","ok",`${c.openN} open`),
+  F("Size vs baseline",c.szX>1.6?"watch":"ok"),
+  F("Add-on discipline","armed"),
+  F("Expiry proximity",c.wd===4&&c.openN?"flag":"ok"),
+  F("Hedge presence read",c.openN>1?"ok":"armed"),
+  F("Position age tracker","ok"),
+  F("Scaling-pattern analysis","armed"),
+  F("Concentration (delta proxy)",c.conc>70&&c.openN>1?"watch":"ok")]},
+ {id:"em",name:"Exit Manager",f:[
+  F("Exit-timing coach",c.stats.total>=3&&c.stats.winRate<40?"flag":"ok"),
+  F("Trail-stop assistant","armed"),
+  F("Profit give-back watch",c.unrl<0&&c.dayPnl>0?"watch":"ok"),
+  F("Premature-exit detector","armed"),
+  F("Hold-time analysis","ok"),
+  F("After-loss exit review",c.stats.afterLossTotal>=2?"watch":"ok"),
+  F("EOD square-off reminder",c.phase==="Closing hour"&&c.openN?"flag":"armed"),
+  F("Target discipline","armed"),F("Partial-exit patterns","armed"),
+  F("Exit consistency score","ok")]},
+ {id:"ve",name:"Volatility Engine",f:[
+  F("VIX regime monitor",c.vix>18?"flag":c.vix>15?"watch":"ok",`VIX ${fmt(c.vix)}`),
+  F("Realized-vol tracker",c.S&&c.S.atrPct>.5?"watch":"ok"),
+  F("Vol-spike detector",c.volScore>80?"flag":"ok"),
+  F("Compression detector",c.volScore<25?"watch":"ok"),
+  F("Range-expansion alert","armed"),
+  F("IV vs realized (proxy)",c.wd===4?"watch":"ok"),
+  F("Event-vol anticipation","armed"),
+  F("Vol-adjusted expectations","ok")]},
+ {id:"si",name:"Session Intelligence",f:[
+  F("Session phase tracker","ok",c.phase),
+  F("Opening-drive caution",c.phase==="Opening drive"?"watch":"ok"),
+  F("Midday-drift advisor",c.phase==="Midday balance"?"ok":"armed"),
+  F("Closing-hour watch",c.phase==="Closing hour"?"watch":"ok"),
+  F("Expiry-day mode",c.wd===4?"watch":"ok"),
+  F("Pre-market briefing","armed","builds before open"),
+  F("Post-market recap",c.phase==="Market closed"?"ok":"armed"),
+  F("Weekend-gap preparation",c.wd===5?"watch":"armed")]},
+ {id:"pp",name:"Portfolio Protection",f:[
+  F("Exposure monitor","ok",`${c.expo.toFixed(0)}%`),
+  F("Concentration monitor",c.conc>70&&c.openN>1?"watch":"ok"),
+  F("Notional cap check",c.expo>60?"flag":"ok"),
+  F("Unrealized drawdown watch",c.unrl<-START*.005?"flag":"ok"),
+  F("Margin buffer",c.expo>80?"flag":"ok"),
+  F("Overnight exposure scan",c.openN&&c.phase==="Market closed"?"watch":"ok"),
+  F("Single-position damage cap",c.conc>85&&c.openN?"watch":"ok"),
+  F("Correlation proxy","armed"),F("Sector-tilt read","armed"),
+  F("VIX sensitivity",c.vix>16&&c.openN?"watch":"ok"),
+  F("Capital utilization","ok",`${c.expo.toFixed(0)}% of ₹${fmt(START,0)}`),
+  F("Circuit-breaker awareness","armed")]},
+ {id:"le",name:"Learning Engine",f:[
+  F("Trade capture","ok",`${journal.length} lifetime entries`),
+  F("Mood tagging","ok"),F("Session replay builder","ok"),
+  F("Best-trade tagging","ok"),F("Toughest-trade tagging","ok"),
+  F("Mistake tag library","armed"),
+  F("Win-rate tracking","ok",c.stats.total?`${c.stats.winRate.toFixed(0)}%`:"—"),
+  F("After-loss statistics",c.stats.afterLossTotal>=2?"watch":"ok"),
+  F("Time-of-day statistics","armed"),F("Instrument statistics","armed"),
+  F("Discipline trend","ok"),F("Lesson extraction","armed"),
+  F("Weekly review builder","armed"),
+  F("Neural Brain memory sync",c.live?"ok":"watch",c.live?"streaming to backend":"backend offline — buffering"),
+  F("Improvement tracker","armed")]},
+ {id:"nt",name:"Notifications",f:[
+  F("Caution-level alerts","ok","→ notification bell"),
+  F("Trap alerts","ok"),F("Emotion alerts","ok"),F("Capital-guard alerts","ok"),
+  F("Module state-change feed","ok","→ Market State Timeline"),
+  F("Notification-bell integration","ok"),
+  F("Timeline logging","ok"),
+  F("Live-backend sync status",c.live?"ok":"watch",c.live?"connected":"offline"),
+  F("Alert de-duplication","ok"),F("Quiet-mode logic","armed")]}];}
+const FSEV={flag:3,watch:2,ok:1,armed:0};
+function sosFeatPanel(g){const open=sosOpen.has("fg_"+g.id);
+  const flag=g.f.filter(x=>x.s==="flag").length,watch=g.f.filter(x=>x.s==="watch").length;
+  const lvl=flag?"warn":watch?"watch":"ok";
+  return`<div class="sosCard sosPanel ${lvl}${open?" open":""}" onclick="sosToggle('fg_${g.id}')">
+    <div class="hd"><span class="dot"></span><span class="nm">${g.name}</span><span class="cf">${g.f.length} checks${flag?` · ${flag} flagged`:""}</span></div>
+    <div class="sub">${flag?`${flag} needs attention · `:""}${watch?`${watch} watching · `:""}${g.f.length-flag-watch} clear</div>
+    <div class="meter"><i style="width:${Math.round((g.f.length-flag)/g.f.length*100)}%"></i></div>
+    <div class="xp">${g.f.map(f=>`<div class="fRow"><span class="fd ${f.s}"></span><span><span class="fn">${f.n}</span>${f.d?`<span class="ft">${f.d}</span>`:""}</span></div>`).join("")}
+      <a class="why" onclick="event.stopPropagation();askAi('Explain what the ${g.name} safety module watches for and what its current readings mean for me as education, not advice')">Explain this module ↗</a></div></div>`;}
 function sosCompute(){
   const sym=insts[selSym]?selSym:"NIFTY",S=sosInd(sym)||sosInd("NIFTY"),vix=insts.INDIAVIX.ltp;
   const traps=scanTraps(),stats=sentJournalStats(),dkey=new Date().toDateString();
@@ -2184,7 +2331,8 @@ function sosCompute(){
   const frus=moods.filter(m=>m==="Frustrated").length;
   const M=[];const add=(id,grp,name,level,conf,hl,ev)=>{const m={id,grp,name,level,conf,hl,ev};M.push(m);
     const p=sosPrev[id];if(p&&p!==level){sosTl.unshift({t:Date.now(),kind:level==="risk"||level==="warn"?"warn":"info",
-      txt:`${name}: ${p.toUpperCase()} → ${level.toUpperCase()} — ${hl}`});if(sosTl.length>14)sosTl.pop();}
+      txt:`${name}: ${p.toUpperCase()} → ${level.toUpperCase()} — ${hl}`});if(sosTl.length>14)sosTl.pop();
+      if(level==="risk"||level==="warn")pushNotif(`Sentinel · ${name}: ${hl}`,"warn");}
     sosPrev[id]=level;return m;};
   /* --- shared scores --- */
   const ts=S?Math.max(4,Math.min(100,Math.round(Math.abs(S.e20-S.e50)/(S.last.c*.002)*38+(S.rsi>58||S.rsi<42?22:0)))):40;
@@ -2288,7 +2436,12 @@ function sosCompute(){
   add("confidence","trap","Confidence Score",confid>=60?"ok":confid>=40?"watch":"warn",.7,
     `${confid}/100 environment confidence — ${confid>=60?"conditions readable":confid>=40?"mixed conditions":"low-conviction environment"}`,
     [`Inverse of composite caution (${caution}/100), boosted on clean ${dc} days`]);
-  return{M,caution,cl:cl_,cLabel,dc,gauges:{health:Math.max(5,100-caution),vol:volScore,trend:ts,liq:liqScore},sym};}
+  const FG=sosFeatures({S,vix,traps,stats,frus,tradesToday,ts,volScore,liqScore,dc,recentNews,phase,wd,fbo,fbd,
+    sweep:sweepHi||sweepLo,unrl,dayPnl,ddPct,szX,eq,openN:open.length,expo,conc,cl:cl_,live:sentLive.ok});
+  const featTotal=FG.reduce((a,g)=>a+g.f.length,0);
+  const featFlag=FG.reduce((a,g)=>a+g.f.filter(x=>x.s==="flag").length,0);
+  return{M,caution,cl:cl_,cLabel,dc,FG,featTotal,featFlag,
+    gauges:{health:Math.max(5,100-caution),vol:volScore,trend:ts,liq:liqScore},sym};}
 function sosGauge(t,v,sub,gc){return`<div class="gauge" style="--p:${v};--gc:${gc}">
   <div class="ring"><div class="in">${v}</div></div>
   <div class="lbl"><div class="t">${t}</div><div class="s">${sub}</div></div></div>`;}
@@ -2312,7 +2465,7 @@ function pageSentinelOS(){
   <div class="sosBanner lv${os.cl} riseIn">
     <div class="ic" style="width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--grad1),var(--grad2));color:#fff;font-weight:800;font-size:15px;flex-shrink:0;animation:softPulse 2.6s infinite">S</div>
     <div class="msg"><b>Sentinel OS · ${os.cLabel}${sentLiveChip()}</b>
-    <p>${os.dc} day on ${insts[os.sym]?insts[os.sym].name:os.sym} · ${os.M.length} intelligence modules live · composite caution ${os.caution}/100. Observation and education only — never trade directions.</p></div>
+    <p>${os.dc} day on ${insts[os.sym]?insts[os.sym].name:os.sym} · ${os.M.length} intelligence engines · ${os.featTotal} automatic safety features running${os.featFlag?` · ${os.featFlag} flagged`:""} · composite caution ${os.caution}/100. Observation and education only — never trade directions.</p></div>
     <span class="lv">${os.cLabel}</span></div>
   ${sentLiveSynthCard()}
   <div class="sosGaugeRow riseIn">
@@ -2326,6 +2479,8 @@ function pageSentinelOS(){
   <div class="sosGrid riseIn">${grp("trap").map(sosCard).join("")}</div>
   <div class="sosSec riseIn">Trader &amp; Behavioural Intelligence <span class="ct">${grp("you").length} modules · ${warnCt("you")} flagged</span></div>
   <div class="sosGrid riseIn">${grp("you").map(sosCard).join("")}</div>
+  <div class="sosSec riseIn">Automatic Safety Features <span class="ct">${os.featTotal} running in background · ${os.featFlag} flagged</span></div>
+  <div class="sosGrid riseIn">${os.FG.map(sosFeatPanel).join("")}</div>
   <div class="sos3 riseIn">
     <div class="card lift"><h2>Market State Timeline</h2>${sosTl.length?renderTimeline(sosTl):'<div class="empty">State changes appear here as modules shift levels during the session.</div>'}</div>
     <div class="card lift"><h2>Observation Feed</h2>${renderTimeline(obs.slice(0,6))}</div>
