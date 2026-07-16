@@ -110,6 +110,17 @@ export class SentinelApiService {
     return res.json();
   }
 
+  /** Strategy Intelligence Framework — cross-symbol historical base rate for a pattern. */
+  async brainStrategy(pattern: string) {
+    const res = await fetch(`${this.baseUrl}/brain/strategy?pattern=${encodeURIComponent(pattern)}`, {
+      headers: this.headers,
+    }).catch((err) => {
+      throw new BadGatewayException(`Sentinel service unreachable: ${err.message}`);
+    });
+    if (!res.ok) throw new BadGatewayException(`Sentinel service error: ${res.status}`);
+    return res.json();
+  }
+
   async observations(userId: string, limit = 50) {
     const res = await fetch(`${this.baseUrl}/observations?userId=${encodeURIComponent(userId)}&limit=${limit}`, {
       headers: this.headers,

@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { KnowledgeCenterService } from './brain/knowledge-center.service';
+import { StrategyIntelligenceService } from './brain/strategy-intelligence.service';
 import { ComplianceService } from './compliance/compliance.service';
 import { ObserveRequest } from './domain';
 import { ExplainService } from './explain/explain.service';
@@ -39,6 +40,7 @@ export class AppController {
     private readonly compliance: ComplianceService,
     private readonly explainSvc: ExplainService,
     private readonly knowledgeCenter: KnowledgeCenterService,
+    private readonly strategyIntelligence: StrategyIntelligenceService,
   ) {}
 
   @Get('health')
@@ -78,5 +80,13 @@ export class AppController {
   @Get('brain/stats')
   brainStats() {
     return this.knowledgeCenter.stats();
+  }
+
+  /** Strategy Intelligence Framework — cross-symbol historical base rate for a pattern, sample-size gated. */
+  @UseGuards(ServiceTokenGuard)
+  @Get('brain/strategy')
+  async brainStrategy(@Query('pattern') pattern: string) {
+    const result = await this.strategyIntelligence.baseRateFor(pattern);
+    return { ...result, description: this.strategyIntelligence.describe(result) };
   }
 }

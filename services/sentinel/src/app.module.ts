@@ -19,10 +19,12 @@ import { ConceptLearningEngine } from './brain/concept-learning.service';
 import { HistoricalSimilarityService } from './brain/historical-similarity.service';
 import { KnowledgeCenterService } from './brain/knowledge-center.service';
 import { MarketContextService } from './brain/market-context.service';
+import { OutcomeLearningService } from './brain/outcome-learning.service';
 import { PatternRecognitionService } from './brain/pattern-recognition.service';
 import { PrismaKnowledgeGraph } from './brain/prisma-knowledge-graph';
 import { PrismaMemoryStore } from './brain/prisma-memory-store';
 import { ResearchTriggerService } from './brain/research-trigger.service';
+import { StrategyIntelligenceService } from './brain/strategy-intelligence.service';
 import {
   BASE_LEARNING_ENGINE,
   KNOWLEDGE_GRAPH,
@@ -111,6 +113,8 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
     HistoricalSimilarityService,
     MarketContextService,
     ResearchTriggerService,
+    OutcomeLearningService,
+    StrategyIntelligenceService,
   ],
 })
 export class AppModule {}

@@ -60,6 +60,12 @@ export class SentinelController {
     return result;
   }
 
+  /** Strategy Intelligence Framework — cross-symbol historical base rate for a pattern. */
+  @Get('brain/strategy')
+  async brainStrategy(@Query('pattern') pattern: string) {
+    return this.sentinel.brainStrategy(pattern);
+  }
+
   @Get('observations')
   observations(@Req() req: AuthedRequest, @Query('limit') limit?: string) {
     return this.sentinel.observations(req.user.sub, limit ? Number(limit) : 50);

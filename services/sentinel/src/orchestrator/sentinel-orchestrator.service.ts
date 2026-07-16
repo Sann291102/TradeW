@@ -8,6 +8,7 @@ import {
 } from '@tradew/ai-core';
 import { HistoricalSimilarityService } from '../brain/historical-similarity.service';
 import { MarketContextService } from '../brain/market-context.service';
+import { OutcomeLearningService } from '../brain/outcome-learning.service';
 import { PatternRecognitionService } from '../brain/pattern-recognition.service';
 import { ResearchTriggerService } from '../brain/research-trigger.service';
 import { ComplianceService } from '../compliance/compliance.service';
@@ -49,6 +50,7 @@ export class SentinelOrchestratorService {
     private readonly historicalSimilarity: HistoricalSimilarityService,
     private readonly marketContext: MarketContextService,
     private readonly researchTrigger: ResearchTriggerService,
+    private readonly outcomeLearning: OutcomeLearningService,
   ) {
     this.providers = createProviderManager(loadProvidersConfigFromEnv());
   }
@@ -60,6 +62,9 @@ export class SentinelOrchestratorService {
     // Continuous Research Engine: event-driven, fire-and-forget so it never
     // adds latency to this response — enriches the Brain for next time.
     void this.researchTrigger.researchIfUnfamiliar(symbol).catch(() => undefined);
+    // Continuous Learning from Outcomes: piggybacks on this same continuous
+    // cadence rather than a new scheduler — a small batch per call.
+    void this.outcomeLearning.evaluatePending(5).catch(() => undefined);
 
     const snapshot = await this.market.snapshot(symbol);
     const signals: Signal[] = [
