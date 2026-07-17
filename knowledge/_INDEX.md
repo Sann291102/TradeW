@@ -23,6 +23,7 @@ Debugging discoveries, bug resolutions, lessons learned — things that cost tim
 ## Research
 Research summaries and verified findings from trusted external sources.
 - [[Research/2026-07-17 - Sentinel Brain audit]] — end-to-end audit: every Brain component (PrismaMemoryStore, PrismaKnowledgeGraph, ConceptLearningEngine, Knowledge Center, pgvector) is fully implemented, not stubbed; the only gaps are operational (no local Postgres/docker-compose/.env yet)
+- [[Research/2026-07-17 - Oracle migration assessment]] — BLOCKER: Oracle standardization = full Prisma removal (Prisma has no Oracle provider); no SQL Server exists to replace; pgvector needs Oracle 23ai; decision required before any code
 
 ## Agents
 Agent responsibilities and roster notes (Sentinel, TradeW AI, Claude Code subagents), prompt improvements.
