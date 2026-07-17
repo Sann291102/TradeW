@@ -14,7 +14,7 @@ Architecture and project decisions, ADR-style — what was decided, why, what wa
 
 ## Patterns
 Reusable engineering patterns, workflow improvements, development standards.
-- (empty)
+- [[Patterns/2026-07-17 - Knowledge Workspace]] — in-app `/knowledge` vault viewer (services/api module + apps/web page): FS-backed, no DB, SSE live updates, snapshot-diff poller, dev-gated + authed
 
 ## Gotchas
 Debugging discoveries, bug resolutions, lessons learned — things that cost time once and shouldn't cost time twice.
