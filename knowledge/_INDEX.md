@@ -32,6 +32,7 @@ Agent responsibilities and roster notes (Sentinel, TradeW AI, Claude Code subage
 ## Plans
 Future implementation plans, milestones, strategy documentation.
 - [[Plans/2026-07-17 - Platform audit and implementation roadmap]] — full platform audit (endpoints, auth matrix, DB ownership, security findings, tech debt, production-readiness ratings) + prioritized build order + sprint plan
+- [[Plans/2026-07-17 - OCI Free Tier deployment]] — Oracle Cloud (host only, Postgres stays) deployment: Dockerfiles + prod compose + Caddy/SSL + backups + CI/CD for a single Ampere A1 arm64 VM; canonical design in infra/oci/README.md
 
 ## API
 API integration notes — auth quirks, rate limits, payload shapes, gotchas specific to a third-party API.
