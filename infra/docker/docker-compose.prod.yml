@@ -1,0 +1,150 @@
+# TradeW production stack — single Oracle Cloud Ampere A1 VM (arm64).
+# One reverse proxy is the only publicly exposed service; everything else talks
+# over the internal `tradew` network. Preserves the existing app architecture:
+# web + api + internal sentinel + Postgres/pgvector, plus a provisioned-but-not-
+# yet-consumed Redis and a one-shot migration runner.
+#
+#   docker compose -f infra/docker/docker-compose.prod.yml --env-file .env.prod up -d
+#
+# Images are pulled from a registry in production (set IMAGE_* in .env.prod via
+# CI); `build:` is provided so the same file also builds locally on the VM.
+
+name: tradew
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  caddy:
+    image: caddy:2
+    <<: *restart
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    depends_on: [web, api]
+    networks: [tradew]
+
+  web:
+    image: ${IMAGE_WEB:-tradew-web:local}
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: /api
+    <<: *restart
+    expose: ['3000']
+    networks: [tradew]
+
+  api:
+    image: ${IMAGE_API:-tradew-api:local}
+    build:
+      context: ../..
+      dockerfile: services/api/Dockerfile
+    <<: *restart
+    env_file: [../../.env.prod]
+    environment:
+      NODE_ENV: production
+      PORT: '4000'
+      SENTINEL_SERVICE_URL: http://sentinel:4010
+    expose: ['4000']
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      sentinel: { condition: service_started }
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [tradew]
+
+  sentinel:
+    image: ${IMAGE_SENTINEL:-tradew-sentinel:local}
+    build:
+      context: ../..
+      dockerfile: services/sentinel/Dockerfile
+    <<: *restart
+    env_file: [../../.env.prod]
+    environment:
+      NODE_ENV: production
+      PORT: '4010'
+      HOST: 0.0.0.0
+    expose: ['4010']
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4010/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [tradew]
+
+  # One-shot: applies Prisma migrations, then exits. Reuses the api image.
+  migrate:
+    image: ${IMAGE_API:-tradew-api:local}
+    build:
+      context: ../..
+      dockerfile: services/api/Dockerfile
+    command: ['npx', 'prisma', 'migrate', 'deploy', '--schema', '/repo/packages/database/prisma/schema.prisma']
+    env_file: [../../.env.prod]
+    restart: 'no'
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [tradew]
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    <<: *restart
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # 24GB VM: modest shared_buffers, room for the rest of the stack.
+    command:
+      - postgres
+      - '-c'
+      - 'shared_buffers=1GB'
+      - '-c'
+      - 'effective_cache_size=3GB'
+      - '-c'
+      - 'max_connections=100'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [tradew]
+
+  # Provisioned and ready, but NOT yet consumed by application code (no Redis
+  # client is wired in the app today). Here for when sessions/caching/queues
+  # are added. Not exposed publicly.
+  redis:
+    image: redis:7-alpine
+    <<: *restart
+    command: ['redis-server', '--save', '60', '1', '--appendonly', 'yes']
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [tradew]
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy-data:
+  caddy-config:
+
+networks:
+  tradew:
+    driver: bridge

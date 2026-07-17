@@ -1,0 +1,28 @@
+# Caddy — the single public entrypoint. Automatic HTTPS via Let's Encrypt
+# (needs ports 80 + 443 reachable and DOMAIN's DNS A record pointing at the VM).
+#
+# Same-origin routing avoids CORS: the browser calls /api/* on the same host,
+# Caddy strips the /api prefix and forwards to the API. The internal Sentinel
+# service is intentionally NOT routed here — only the API reaches it.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# API — handle_path strips the /api prefix (browser /api/auth/login -> api /auth/login).
+	handle_path /api/* {
+		reverse_proxy api:4000 {
+			# Server-Sent Events (the Knowledge Workspace live stream) need
+			# unbuffered streaming; Caddy flushes immediately by default.
+			flush_interval -1
+		}
+	}
+
+	# Everything else -> the Next.js web app.
+	handle {
+		reverse_proxy web:3000
+	}
+}
