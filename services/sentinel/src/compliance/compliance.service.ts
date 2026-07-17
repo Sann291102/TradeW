@@ -47,10 +47,17 @@ export class ComplianceService {
   }
 
   async feed(userId: string, limit = 50) {
-    return this.prisma.sentinelObservation.findMany({
-      where: { OR: [{ userId }, { userId: null }] },
-      orderBy: { createdAt: 'desc' },
-      take: Math.min(limit, 200),
-    });
+    try {
+      return await this.prisma.sentinelObservation.findMany({
+        where: { OR: [{ userId }, { userId: null }] },
+        orderBy: { createdAt: 'desc' },
+        take: Math.min(limit, 200),
+      });
+    } catch (err) {
+      // read path — degrade to an empty feed rather than a 500, matching
+      // every other Brain query surface (KnowledgeCenterService et al).
+      this.logger.warn(`observation feed lookup failed, returning empty feed: ${err}`);
+      return [];
+    }
   }
 }
