@@ -1,0 +1,106 @@
+/* ============================================================================
+ * TradeW design tokens — extracted VERBATIM from the canonical terminal
+ * (apps/terminal/index.html), which docs/design-reference/DESIGN-SYSTEM.md
+ * designates as the design system, not inspiration. Values here must match
+ * that file byte-for-byte; do not "improve" colors here — change the canonical
+ * reference first, then mirror it.
+ *
+ * Theme model (preserved from the canonical HTML): a light token set on :root
+ * and a dark override. Per the Genesis brief's "dark-first" principle, apps
+ * apply data-theme="dark" by default (see apps/web layout) — but BOTH sets are
+ * kept and toggleable so visual familiarity is preserved either way.
+ * ==========================================================================*/
+
+:root {
+  --bg: #f5f7fb;
+  --card: #ffffff;
+  --border: #e6eaf2;
+  --border2: #d7deea;
+  --text: #1c2536;
+  --muted: #6b7a99;
+  --faint: #95a3bd;
+  --teal: #0d9488;
+  --teal-bg: #e6f7f5;
+  --green: #089981;
+  --green-bg: #e8f6f3;
+  --red: #e4573d;
+  --red-bg: #fdeeea;
+  --amber: #e8930c;
+  --amber-bg: #fdf3e3;
+  --navy: #1a2b4a;
+  --hover: #f8fafd;
+  --shadow: 0 10px 30px rgba(16, 24, 40, 0.14);
+
+  /* focus ring, from the canonical input:focus rule (rgba of --teal light) */
+  --focus-ring: rgba(13, 148, 136, 0.35);
+
+  /* motion tokens — mirror GENESIS-V2-BLUEPRINT.md §3 duration budget */
+  --dur-micro: 150ms;
+  --dur-panel: 250ms;
+  --dur-route: 300ms;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* dark override — supports the attribute on :root (html) or on body, so it
+ * works whether the app sets it on <html> (our default) or on <body> (the
+ * original HTML's approach). */
+:root[data-theme='dark'],
+[data-theme='dark'] {
+  --bg: #0d1524;
+  --card: #131e33;
+  --border: #1e2c47;
+  --border2: #2a3a5c;
+  --text: #e2e8f0;
+  --muted: #8ea0c4;
+  --faint: #64769c;
+  --teal: #14b8a6;
+  --teal-bg: #12312f;
+  --green: #26a69a;
+  --green-bg: #0f2e2a;
+  --red: #ef5350;
+  --red-bg: #3a1f1e;
+  --amber: #f0a53c;
+  --amber-bg: #3a2d14;
+  --navy: #e2e8f0;
+  --hover: #182642;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --focus-ring: rgba(20, 184, 166, 0.4);
+}
+
+/* High-contrast theme (Milestone 3, Theme Engine) — a third explicit theme,
+ * not an OS media-query shim: pure black/white with saturated, maximally
+ * distinct market-direction colors. Meets WCAG AAA body-text contrast
+ * (white-on-black ≈ 21:1). Same token set as light/dark — nothing that
+ * consumes tokens needs to know this theme exists. */
+:root[data-theme='high-contrast'],
+[data-theme='high-contrast'] {
+  --bg: #000000;
+  --card: #0a0a0a;
+  --border: #ffffff;
+  --border2: #ffffff;
+  --text: #ffffff;
+  --muted: #d6d6d6;
+  --faint: #aaaaaa;
+  --teal: #00e5cc;
+  --teal-bg: #003630;
+  --green: #00e676;
+  --green-bg: #00291a;
+  --red: #ff5252;
+  --red-bg: #330000;
+  --amber: #ffca28;
+  --amber-bg: #332400;
+  --navy: #ffffff;
+  --hover: #1a1a1a;
+  --shadow: 0 0 0 1px #ffffff;
+  --focus-ring: rgba(0, 229, 204, 0.9);
+}
+
+/* Honor OS reduced-motion: collapse durations, keep state changes.
+ * (GENESIS-V2-BLUEPRINT.md §3, EXPLAINABILITY/accessibility §5) */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-micro: 0ms;
+    --dur-panel: 0ms;
+    --dur-route: 0ms;
+  }
+}

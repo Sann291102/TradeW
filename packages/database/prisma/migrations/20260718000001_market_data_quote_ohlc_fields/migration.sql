@@ -1,0 +1,7 @@
+-- AlterTable
+ALTER TABLE "Quote" ADD COLUMN     "ask" DECIMAL(12,2),
+ADD COLUMN     "bid" DECIMAL(12,2),
+ADD COLUMN     "high" DECIMAL(12,2),
+ADD COLUMN     "low" DECIMAL(12,2),
+ADD COLUMN     "open" DECIMAL(12,2),
+ADD COLUMN     "volume" BIGINT DEFAULT 0;

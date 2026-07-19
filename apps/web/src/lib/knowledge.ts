@@ -1,6 +1,4 @@
-import { api } from './api';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+import { api, API_URL } from './api';
 
 // Mirrors services/api/src/knowledge/knowledge.service.ts contracts.
 export type NodeType = 'dir' | 'file';

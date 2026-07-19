@@ -1,0 +1,85 @@
+ARCHIVED 2026-07-18 — Phase 1 Milestone 3 (Institutional Workspace).
+
+This is the original Milestone 2 `apps/web/src/components/terminal/TerminalWorkspace.tsx`
+— a static, non-resizable, non-movable 3-column CSS grid rendering the 8
+terminal panel components in a fixed arrangement. Superseded on `/trade` by
+`components/workspace/WorkspaceDock.tsx`, which renders the SAME panel
+CONTENT components (WatchlistPanel, ChartPanel, OrderTicketPanel, DepthPanel,
+BlotterPanel, OptionChainPanel, SentinelPanel, NewsPanel — all unchanged
+content-wise) inside a dynamic, store-driven dock: resizable columns/rows,
+collapsible/pinnable/closable/restorable panels, drag-to-move between zones,
+and 6 switchable layout presets, per Milestone 3's dockable-workspace brief.
+
+Preserved here per CLAUDE.md Rule 1 (never delete; archive superseded code).
+The panel components it renders were NOT deleted — they still live in
+components/terminal/panels/ and are the actual dock content today.
+
+------------------------------------------------------------------------------
+'use client';
+
+import dynamic from 'next/dynamic';
+import { Panel } from '@tradew/ui';
+import { WatchlistPanel } from './panels/WatchlistPanel';
+import { OrderTicketPanel } from './panels/OrderTicketPanel';
+import { DepthPanel } from './panels/DepthPanel';
+import { BlotterPanel } from './panels/BlotterPanel';
+import { SentinelPanel } from './panels/SentinelPanel';
+import { NewsPanel } from './panels/NewsPanel';
+
+/**
+ * Lazy-loaded heavy panels (performance brief: "Prepare lazy loading for Charts,
+ * Option Chain…"). Split into their own chunks; a skeleton Panel shows while
+ * loading. ssr:false because they're presentation-only client panels.
+ */
+const ChartPanel = dynamic(() => import('./panels/ChartPanel'), {
+  ssr: false,
+  loading: () => <Panel title="Chart" loading className="min-h-[280px]" />,
+});
+const OptionChainPanel = dynamic(() => import('./panels/OptionChainPanel'), {
+  ssr: false,
+  loading: () => <Panel title="Option Chain" loading />,
+});
+
+/**
+ * TerminalWorkspace (Milestone 2, Step 6) — the trading workspace as a grid of
+ * component SLOTS: Chart, Watchlist, Order Ticket, Depth, blotter
+ * (Positions/Orders/Trades/Activity), Option Chain, News, Sentinel. The TradeW
+ * AI panel slot is the floating dock (shell/FloatingAI). Business logic is not
+ * implemented (milestone scope) — each panel renders mock/placeholder/empty
+ * content behind a stable component API.
+ *
+ * Responsive: 3-column desktop terminal → single column stacked on small
+ * screens. Heights use the viewport so the terminal fills the workspace like a
+ * real trading desk.
+ */
+export function TerminalWorkspace() {
+  return (
+    <div className="grid min-h-0 gap-3 p-3 lg:h-full lg:grid-cols-[240px_1fr_300px] lg:grid-rows-[minmax(0,1fr)]">
+      {/* left: watchlist (fills the rail height like a real desk) */}
+      <div className="hidden min-h-0 lg:block">
+        <WatchlistPanel className="h-full" />
+      </div>
+
+      {/* center: chart over blotter */}
+      <div className="grid min-h-0 grid-rows-[1fr_auto] gap-3">
+        <ChartPanel className="min-h-[280px]" />
+        <div className="grid gap-3 md:grid-cols-2">
+          <BlotterPanel className="min-h-[180px]" />
+          <OptionChainPanel className="min-h-[180px]" />
+        </div>
+      </div>
+
+      {/* right: ticket, depth, sentinel, news — scrolls independently if tall */}
+      <div className="grid min-h-0 auto-rows-min gap-3 lg:overflow-y-auto">
+        <OrderTicketPanel />
+        <DepthPanel />
+        <SentinelPanel />
+        <NewsPanel />
+        {/* watchlist also available here on tablet where the left rail is hidden */}
+        <div className="lg:hidden">
+          <WatchlistPanel />
+        </div>
+      </div>
+    </div>
+  );
+}

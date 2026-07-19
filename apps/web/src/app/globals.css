@@ -2,5 +2,36 @@
 @tailwind components;
 @tailwind utilities;
 
-body { background: #0f172a; color: #e2e8f0; }
-input, button, select { outline: none; }
+/* Design tokens (@tradew/ui/styles.css) are imported in layout.tsx before this
+ * file, so the CSS custom properties below already exist. */
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: theme('fontFamily.sans');
+  transition: background var(--dur-panel) var(--ease-standard);
+}
+
+/* tabular numerics for price/PnL columns (DESIGN-SYSTEM.md §2) */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Market ticker marquee (shell/Ticker.tsx). Two duplicated tracks translate by
+ * -100% for a seamless loop. Disabled under reduced-motion (the component also
+ * renders a static strip in that case). */
+@keyframes tw-ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+.tw-ticker {
+  animation: tw-ticker-scroll 32s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tw-ticker {
+    animation: none;
+  }
+}

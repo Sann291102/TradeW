@@ -12,9 +12,9 @@ async function upsertInstrument(data: any, ltp: string, prev: string) {
   });
   const existing = await prisma.quote.findFirst({ where: { instrumentId: instrument.id } });
   if (existing) {
-    await prisma.quote.update({ where: { id: existing.id }, data: { ltp, previousClose: prev } });
+    await prisma.quote.update({ where: { id: existing.id }, data: { ltp, previousClose: prev, source: 'simulated' } });
   } else {
-    await prisma.quote.create({ data: { instrumentId: instrument.id, ltp, previousClose: prev } });
+    await prisma.quote.create({ data: { instrumentId: instrument.id, ltp, previousClose: prev, source: 'simulated' } });
   }
   return instrument;
 }
@@ -27,6 +27,21 @@ async function main() {
   await upsertInstrument({
     symbol: 'BANKNIFTY', displayName: 'NIFTY BANK', type: InstrumentType.INDEX, exchange: 'NSE', lotSize: 1
   }, '52750.00', '52510.00');
+
+  // Milestone 4, Step 2 (Market Data): the Index Dashboard needs 5 indices;
+  // only NIFTY/BANKNIFTY existed. Data-only addition — existing Instrument
+  // model, no schema change.
+  await upsertInstrument({
+    symbol: 'FINNIFTY', displayName: 'NIFTY FIN SERVICE', type: InstrumentType.INDEX, exchange: 'NSE', lotSize: 1
+  }, '26480.90', '26396.70');
+
+  await upsertInstrument({
+    symbol: 'MIDCPNIFTY', displayName: 'NIFTY MIDCAP SELECT', type: InstrumentType.INDEX, exchange: 'NSE', lotSize: 1
+  }, '13120.50', '13074.60');
+
+  await upsertInstrument({
+    symbol: 'SENSEX', displayName: 'BSE SENSEX', type: InstrumentType.INDEX, exchange: 'BSE', lotSize: 1
+  }, '78250.60', '77848.50');
 
   const strikes = [24700, 24800, 24900, 52600, 52700, 52800];
   for (const strike of strikes) {

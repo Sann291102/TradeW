@@ -107,9 +107,16 @@ model Instrument {
 
 model Quote {
   id             String     @id @default(uuid())
-  instrumentId   String
+  instrumentId   String     @unique
   ltp            Decimal    @db.Decimal(12, 2)
   previousClose  Decimal?   @db.Decimal(12, 2)
+  open           Decimal?   @db.Decimal(12, 2)
+  high           Decimal?   @db.Decimal(12, 2)
+  low            Decimal?   @db.Decimal(12, 2)
+  bid            Decimal?   @db.Decimal(12, 2)
+  ask            Decimal?   @db.Decimal(12, 2)
+  volume         BigInt?    @default(0)
+  source         String     @default("simulated")
   updatedAt      DateTime   @updatedAt
   createdAt      DateTime   @default(now())
   instrument     Instrument @relation(fields: [instrumentId], references: [id])
