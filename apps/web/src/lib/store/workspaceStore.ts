@@ -75,12 +75,23 @@ function panel(kind: PanelKind, over: Partial<PanelState> = {}): PanelState {
  *  exactly once, matching M2's original static grid so the default view is familiar. */
 function defaultPanels(): PanelState[] {
   return [
-    panel('watchlist', { slot: 'left', order: 0 }),
+    // hidden by default (Phase 1 redesign) — the "Markets/watching" surface
+    // now lives on /markets, not duplicated in the Trade dock (avoids the
+    // "trading vs. browsing" confusion of two watchlist-shaped panels).
+    panel('watchlist', { slot: 'left', order: 0, visible: false }),
     panel('chart', { slot: 'main', order: 0 }),
     panel('blotter', { slot: 'auxA', order: 0 }),
-    panel('optionChain', { slot: 'auxB', order: 0 }),
-    panel('orderTicket', { slot: 'right', order: 0 }),
-    panel('depth', { slot: 'right', order: 1 }),
+    // hidden by default — Option Chain is now a tab inside the chart panel
+    // (ChartPanel.tsx's "Option Chain" view), not a separate stacked panel.
+    // The standalone panel/PanelKind still exists, restorable via "Closed".
+    panel('optionChain', { slot: 'auxB', order: 0, visible: false }),
+    // hidden by default (Phase 1 redesign) — index/trade workspaces observe
+    // and analyze first; order entry is a deliberate secondary action, not
+    // the default view. Still fully functional, restorable via "Closed" menu.
+    panel('orderTicket', { slot: 'right', order: 0, visible: false }),
+    // hidden by default — Market Depth is now a tab inside the chart panel
+    // (ChartPanel.tsx's "Depth" view), alongside Option Chain/Technicals.
+    panel('depth', { slot: 'right', order: 1, visible: false }),
     panel('sentinel', { slot: 'right', order: 2 }),
     panel('news', { slot: 'right', order: 3 }),
     panel('portfolio', { slot: 'right', order: 4, visible: false }),
@@ -137,6 +148,10 @@ function buildPresets(): LayoutPreset[] {
   for (const p of minimal) {
     if (p.kind !== 'chart' && p.kind !== 'watchlist') p.visible = false;
   }
+  // base now hides watchlist by default (see defaultPanels) — "Minimal" is
+  // explicitly the one preset defined as "chart + watchlist only", so it
+  // must force watchlist back on rather than inherit the hidden default.
+  find(minimal, 'watchlist').visible = true;
 
   const presets: Array<[string, string, PanelState[]]> = [
     ['scalping', 'Scalping', scalping],

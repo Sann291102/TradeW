@@ -152,3 +152,78 @@ export const PORTFOLIO_SUMMARY = {
   marginUsed: 86600,
   equity: 512840,
 };
+
+/* ------------------------- Market Workspace additions ------------------------- */
+
+export interface GlobalIndex {
+  symbol: string;
+  name: string;
+  ltp: number;
+  changePct: number;
+}
+
+/** World indices strip for the Market Workspace's "global markets" section. */
+export const GLOBAL_MARKETS: GlobalIndex[] = [
+  { symbol: 'DJI', name: 'Dow Jones', ltp: 42863.4, changePct: 0.31 },
+  { symbol: 'IXIC', name: 'Nasdaq', ltp: 19112.3, changePct: -0.18 },
+  { symbol: 'N225', name: 'Nikkei 225', ltp: 39523.6, changePct: 0.62 },
+  { symbol: 'HSI', name: 'Hang Seng', ltp: 17982.1, changePct: -0.44 },
+  { symbol: 'FTSE', name: 'FTSE 100', ltp: 8203.9, changePct: 0.12 },
+];
+
+export interface CommodityQuote {
+  symbol: string;
+  name: string;
+  unit: string;
+  ltp: number;
+  changePct: number;
+}
+
+/** MCX-traded commodities for the Market Workspace's commodities section. */
+export const COMMODITIES: CommodityQuote[] = [
+  { symbol: 'GOLD', name: 'Gold', unit: '10g', ltp: 71420, changePct: 0.42 },
+  { symbol: 'SILVER', name: 'Silver', unit: '1kg', ltp: 84650, changePct: -0.68 },
+  { symbol: 'CRUDEOIL', name: 'Crude Oil', unit: 'bbl', ltp: 5842, changePct: 1.15 },
+  { symbol: 'NATURALGAS', name: 'Natural Gas', unit: 'mmBtu', ltp: 231.4, changePct: -1.32 },
+  { symbol: 'COPPER', name: 'Copper', unit: '1kg', ltp: 812.3, changePct: 0.27 },
+];
+
+export type RiskSeverity = 'high' | 'medium';
+
+export interface RiskAlert {
+  id: string;
+  severity: RiskSeverity;
+  title: string;
+  detail: string;
+}
+
+/** High/medium-risk market alerts (observation-only, mirrors Sentinel's
+ *  disclaimer language — never a buy/sell instruction). */
+export const RISK_ALERTS: RiskAlert[] = [
+  { id: 'r1', severity: 'high', title: 'Elevated expiry-day volatility', detail: 'India VIX up sharply into today’s weekly expiry — wider-than-usual swings likely.' },
+  { id: 'r2', severity: 'medium', title: 'Thin liquidity in mid-caps', detail: 'Several mid-cap names showing below-average volume — wider spreads possible.' },
+];
+
+export interface EconomicEvent {
+  id: string;
+  time: string;
+  title: string;
+  impact: 'high' | 'medium' | 'low';
+  region: string;
+}
+
+/** Upcoming economic calendar events for the Market Workspace. */
+export const ECONOMIC_EVENTS: EconomicEvent[] = [
+  { id: 'e1', time: '11:00', title: 'India CPI (YoY)', impact: 'high', region: 'IN' },
+  { id: 'e2', time: '18:00', title: 'US Retail Sales', impact: 'medium', region: 'US' },
+  { id: 'e3', time: '19:30', title: 'Fed Speaker: Governor Waller', impact: 'medium', region: 'US' },
+  { id: 'e4', time: 'Tomorrow', title: 'India WPI Inflation', impact: 'low', region: 'IN' },
+];
+
+/** Sentinel's daily briefing summary shown on the Market Workspace landing
+ *  page — a condensed, observation-only preview of the full /sentinel page. */
+export const SENTINEL_BRIEFING = {
+  headline: 'Choppy, range-bound session expected around the weekly expiry.',
+  body: 'Elevated India VIX and thinning breadth suggest two-sided moves rather than a clean trend. No directional bias implied — this is an observation, not a signal.',
+  confidence: 0.62,
+};

@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { Card, Sparkline, cn } from '@tradew/ui';
 import { WATCHLIST } from '@/lib/mock/market';
 import { fmt, pct } from '@/lib/format';
@@ -14,18 +15,20 @@ export function WatchlistWidget() {
         {WATCHLIST.map((w) => {
           const up = w.changePct >= 0;
           return (
-            <li key={w.symbol} className="flex items-center gap-3 py-2">
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold text-text">{w.symbol}</div>
-                <div className="truncate text-[11px] text-faint">{w.name}</div>
-              </div>
-              <Sparkline data={w.spark} width={56} height={20} aria-label={`${w.symbol} trend`} />
-              <div className="w-20 text-right">
-                <div className="font-mono text-sm tabular-nums text-text">{fmt(w.ltp)}</div>
-                <div className={cn('font-mono text-[11px] tabular-nums', up ? 'text-up' : 'text-down')}>
-                  {pct(w.changePct)}
+            <li key={w.symbol}>
+              <Link href="/markets" className="flex items-center gap-3 rounded py-2 transition-colors duration-micro hover:bg-hover">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold text-text">{w.symbol}</div>
+                  <div className="truncate text-[11px] text-faint">{w.name}</div>
                 </div>
-              </div>
+                <Sparkline data={w.spark} width={56} height={20} aria-label={`${w.symbol} trend`} />
+                <div className="w-20 text-right">
+                  <div className="font-mono text-sm tabular-nums text-text">{fmt(w.ltp)}</div>
+                  <div className={cn('font-mono text-[11px] tabular-nums', up ? 'text-up' : 'text-down')}>
+                    {pct(w.changePct)}
+                  </div>
+                </div>
+              </Link>
             </li>
           );
         })}

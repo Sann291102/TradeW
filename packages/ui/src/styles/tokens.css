@@ -39,6 +39,47 @@
   --dur-panel: 250ms;
   --dur-route: 300ms;
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ---- v2 additions (Phase 1 redesign) — additive only, nothing above changed ---- */
+
+  /* glass + elevation; light-theme values here, dark/high-contrast override below */
+  --card-glass: rgba(255, 255, 255, 0.72);
+  --card-glass-2: rgba(255, 255, 255, 0.85);
+  --glass-blur: 14px;
+  --glass-border: rgba(28, 37, 54, 0.08);
+  --elev-1: 0 1px 3px rgba(16, 24, 40, 0.06);
+  --elev-2: 0 4px 10px rgba(16, 24, 40, 0.08);
+  --elev-3: var(--shadow);
+  --elev-4: 0 20px 50px rgba(16, 24, 40, 0.2);
+  --glow-teal: 0 0 24px rgba(13, 148, 136, 0.35);
+  --glow-up: 0 0 24px rgba(8, 153, 129, 0.35);
+  --glow-down: 0 0 24px rgba(228, 87, 61, 0.35);
+
+  /* typography scale — theme-invariant, defined once on :root and inherited by
+   * every theme (dark/high-contrast only override color tokens, not these) */
+  --fs-2xs: 11px;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+  --fs-md: 15px;
+  --fs-lg: 18px;
+  --fs-xl: 22px;
+  --fs-2xl: 28px;
+  --fs-3xl: 36px;
+  --lh-tight: 1.15;
+  --lh-normal: 1.45;
+  --tracking-tight: -0.01em;
+  --tracking-wide: 0.04em;
+
+  /* icon sizing — theme-invariant */
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 20px;
+
+  /* motion v2 — theme-invariant; --dur-tick is zeroed in the
+   * prefers-reduced-motion block below alongside the existing durations */
+  --dur-tick: 600ms;
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 /* dark override — supports the attribute on :root (html) or on body, so it
@@ -65,6 +106,19 @@
   --hover: #182642;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
   --focus-ring: rgba(20, 184, 166, 0.4);
+
+  /* v2 additions — dark-theme glass + elevation + glow overrides */
+  --card-glass: rgba(19, 30, 51, 0.72);
+  --card-glass-2: rgba(19, 30, 51, 0.85);
+  --glass-blur: 14px;
+  --glass-border: rgba(226, 232, 240, 0.08);
+  --elev-1: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --elev-2: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --elev-3: var(--shadow);
+  --elev-4: 0 24px 60px rgba(0, 0, 0, 0.6);
+  --glow-teal: 0 0 24px rgba(20, 184, 166, 0.45);
+  --glow-up: 0 0 24px rgba(38, 166, 154, 0.45);
+  --glow-down: 0 0 24px rgba(239, 83, 80, 0.45);
 }
 
 /* High-contrast theme (Milestone 3, Theme Engine) — a third explicit theme,
@@ -93,6 +147,21 @@
   --hover: #1a1a1a;
   --shadow: 0 0 0 1px #ffffff;
   --focus-ring: rgba(0, 229, 204, 0.9);
+
+  /* v2 additions — high-contrast: glass degrades to solid (translucency would
+   * break AAA contrast), elevation becomes outline-based, glow becomes a
+   * saturated outline ring instead of a soft blur */
+  --card-glass: var(--card);
+  --card-glass-2: var(--card);
+  --glass-blur: 0px;
+  --glass-border: #ffffff;
+  --elev-1: 0 0 0 1px #ffffff;
+  --elev-2: 0 0 0 1px #ffffff;
+  --elev-3: var(--shadow);
+  --elev-4: 0 0 0 2px #ffffff;
+  --glow-teal: 0 0 0 2px #00e5cc;
+  --glow-up: 0 0 0 2px #00e676;
+  --glow-down: 0 0 0 2px #ff5252;
 }
 
 /* Honor OS reduced-motion: collapse durations, keep state changes.
@@ -102,5 +171,6 @@
     --dur-micro: 0ms;
     --dur-panel: 0ms;
     --dur-route: 0ms;
+    --dur-tick: 0ms;
   }
 }

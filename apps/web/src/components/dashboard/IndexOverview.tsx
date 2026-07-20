@@ -1,10 +1,12 @@
 'use client';
 
-import { Sparkline, Badge, cn } from '@tradew/ui';
+import Link from 'next/link';
+import { Sparkline, Badge, Surface, AnimatedNumber, cn } from '@tradew/ui';
 import { INDEX_QUOTES } from '@/lib/mock/market';
 import { DASHBOARD_INDEX_SYMBOLS } from '@/lib/marketData';
 import { useLiveQuotes } from '@/lib/hooks/useLiveQuotes';
 import { fmt, pct, sign } from '@/lib/format';
+import { logChartClick } from '@/lib/analytics';
 
 /**
  * IndexOverview — the headline index cards from the canonical home (`.ovGrid`).
@@ -37,17 +39,23 @@ export function IndexOverview() {
         {rows.map((q) => {
           const up = q.change >= 0;
           return (
-            <div key={q.symbol} className="rounded-card border border-border bg-card p-3 shadow-card">
-              <div className="text-[11px] font-semibold text-muted">{q.name}</div>
-              <div className="mt-1 font-mono text-lg font-bold tabular-nums text-text">{fmt(q.ltp)}</div>
-              <div className={cn('font-mono text-xs tabular-nums', up ? 'text-up' : 'text-down')}>
-                {sign(q.change)}
-                {fmt(Math.abs(q.change))} ({pct(q.changePct)})
-              </div>
-              <div className="mt-2">
-                <Sparkline data={q.spark} width={140} height={28} className="w-full" aria-label={`${q.name} trend`} />
-              </div>
-            </div>
+            <Link key={q.symbol} href={`/trade?symbol=${q.symbol}`} onClick={() => logChartClick(q.symbol, 'dashboard_index_card')}>
+              <Surface elevation={2} interactive className="p-3">
+                <div className="text-[11px] font-semibold text-muted">{q.name}</div>
+                <AnimatedNumber
+                  value={q.ltp}
+                  format={fmt}
+                  className="mt-1 block px-0 text-lg font-bold text-text"
+                />
+                <div className={cn('font-mono text-xs tabular-nums', up ? 'text-up' : 'text-down')}>
+                  {sign(q.change)}
+                  {fmt(Math.abs(q.change))} ({pct(q.changePct)})
+                </div>
+                <div className="mt-2">
+                  <Sparkline data={q.spark} width={140} height={28} className="w-full" aria-label={`${q.name} trend`} />
+                </div>
+              </Surface>
+            </Link>
           );
         })}
       </div>

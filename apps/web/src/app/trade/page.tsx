@@ -1,26 +1,24 @@
-import { WorkspaceTabs } from '@/components/workspace/WorkspaceTabs';
-import { WorkspaceDock } from '@/components/workspace/WorkspaceDock';
+import { Suspense } from 'react';
+import { TradeWorkspace } from '@/components/trade/TradeWorkspace';
 
 export const metadata = { title: 'Trade — TradeW Terminal' };
 
 /**
- * Trade workspace (Milestone 3) — the institutional dockable trading desk:
- * multiple workspace tabs, each with its own resizable/movable/collapsible
- * panel arrangement, switchable layout presets, and closed-panel restore.
- * See components/workspace/WorkspaceDock.tsx and WORKSPACE-SHELL.md.
- *
- * Superseded the M2 static grid (components/terminal/TerminalWorkspace.tsx,
- * now a deprecation stub; full original archived per Rule 1). The Sprint-0
- * order-entry form is archived at archive/web-trade-sprint0-page.tsx.txt —
- * its backend wiring returns to the Order Ticket / Blotter panels later.
+ * Trade page — a single integrated instrument workspace (Phase 1 redesign),
+ * not a dock of movable panels. Previously rendered `WorkspaceTabs` +
+ * `WorkspaceDock` (Milestone 3's dockable trading desk); superseded per
+ * explicit feedback that the dock's chrome (drag handles, pin/pop-out/
+ * collapse/close, multi-workspace tabs, empty drop zones) read as bolted-on
+ * "addon" widgets rather than one page. That dock infrastructure is untouched
+ * and still available — see components/workspace/ and WORKSPACE-SHELL.md —
+ * just not used on this route anymore (never deleted, per repo Rule 1). The
+ * M2 static grid before that is archived at
+ * archive/web-terminal-workspace-static-grid.tsx.txt.
  */
 export default function TradePage() {
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <WorkspaceTabs />
-      <div className="min-h-0 flex-1">
-        <WorkspaceDock />
-      </div>
-    </div>
+    <Suspense fallback={<div className="p-4 text-sm text-faint">Loading…</div>}>
+      <TradeWorkspace />
+    </Suspense>
   );
 }

@@ -43,6 +43,11 @@ const preset: Partial<Config> = {
         },
         navy: 'var(--navy)',
         hover: 'var(--hover)',
+        // v2 — glass surfaces (explicit rgba tokens; opacity modifiers don't
+        // apply to var(...) colors, so glass needs its own token per theme)
+        cardGlass: 'var(--card-glass)',
+        cardGlass2: 'var(--card-glass-2)',
+        glassBorder: 'var(--glass-border)',
       },
       fontFamily: {
         sans: [
@@ -65,17 +70,58 @@ const preset: Partial<Config> = {
       },
       boxShadow: {
         card: 'var(--shadow)',
+        // v2 — progressive elevation ramp for "glass + elevation hierarchy"
+        elev1: 'var(--elev-1)',
+        elev2: 'var(--elev-2)',
+        elev3: 'var(--elev-3)',
+        elev4: 'var(--elev-4)',
+        glowTeal: 'var(--glow-teal)',
+        glowUp: 'var(--glow-up)',
+        glowDown: 'var(--glow-down)',
+      },
+      backdropBlur: {
+        glass: 'var(--glass-blur)',
+      },
+      // v2 typography scale — deliberately NOT named xs/sm/base/lg/xl/2xl/3xl:
+      // those are Tailwind's own default fontSize keys, and theme.extend
+      // would silently override every existing text-sm/text-lg/etc. class
+      // already used across the app. Prefixed so it's additive-only.
+      fontSize: {
+        fs2xs: 'var(--fs-2xs)',
+        fsXs: 'var(--fs-xs)',
+        fsSm: 'var(--fs-sm)',
+        fsBase: 'var(--fs-base)',
+        fsMd: 'var(--fs-md)',
+        fsLg: 'var(--fs-lg)',
+        fsXl: 'var(--fs-xl)',
+        fs2xl: 'var(--fs-2xl)',
+        fs3xl: 'var(--fs-3xl)',
+      },
+      lineHeight: {
+        tight2: 'var(--lh-tight)',
+        normal2: 'var(--lh-normal)',
+      },
+      letterSpacing: {
+        tightTrack: 'var(--tracking-tight)',
+        wideTrack: 'var(--tracking-wide)',
+      },
+      spacing: {
+        icon_sm: 'var(--icon-sm)',
+        icon_md: 'var(--icon-md)',
+        icon_lg: 'var(--icon-lg)',
       },
       borderRadius: {
         card: '12px',
       },
       transitionTimingFunction: {
         standard: 'var(--ease-standard)',
+        spring: 'var(--ease-spring)',
       },
       transitionDuration: {
         micro: 'var(--dur-micro)',
         panel: 'var(--dur-panel)',
         route: 'var(--dur-route)',
+        tick: 'var(--dur-tick)',
       },
       ringColor: {
         focus: 'var(--focus-ring)',

@@ -186,3 +186,17 @@ export const LayoutIcon = (p: IconProps) => (
     <path d="M3.5 9.5h17M9 9.5V20" />
   </svg>
 );
+
+/* -------------------------- Option Chain quick actions ------------------- */
+
+export const BookmarkIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M6 4h12v16l-6-4-6 4V4z" strokeLinejoin="round" />
+  </svg>
+);
+export const LayersIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M12 3l8 4-8 4-8-4 8-4z" strokeLinejoin="round" />
+    <path d="M4 12l8 4 8-4M4 16l8 4 8-4" strokeLinejoin="round" />
+  </svg>
+);

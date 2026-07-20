@@ -2,6 +2,7 @@ import { type HTMLAttributes, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
 import { Skeleton } from './Skeleton';
 import { EmptyState } from './EmptyState';
+import { ELEVATION_SHADOW, type SurfaceElevation } from './Surface';
 
 export interface PanelProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'> {
   title?: ReactNode;
@@ -21,6 +22,12 @@ export interface PanelProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'
    *  panel keeps its slot but takes minimal vertical space. Distinct from
    *  `loading`/`empty`, which describe body CONTENT state, not visibility. */
   collapsed?: boolean;
+  /** v2: opt into the elevation ramp instead of the default single
+   *  `--shadow`. Omit to keep existing behavior unchanged. */
+  elevation?: SurfaceElevation;
+  /** v2: opt into a translucent/blurred glass surface instead of solid
+   *  `--card`. Omit to keep existing behavior unchanged. */
+  glass?: boolean;
 }
 
 /**
@@ -42,6 +49,8 @@ export function Panel({
   scroll = true,
   bodyClassName,
   collapsed = false,
+  elevation,
+  glass = false,
   className,
   children,
   ...props
@@ -50,7 +59,9 @@ export function Panel({
     <section
       aria-expanded={!collapsed}
       className={cn(
-        'flex min-h-0 flex-col overflow-hidden rounded-card border border-border bg-card shadow-card',
+        'flex min-h-0 flex-col overflow-hidden rounded-card border',
+        glass ? 'border-glassBorder bg-cardGlass backdrop-blur-glass' : 'bg-card border-border',
+        elevation != null ? ELEVATION_SHADOW[elevation] : 'shadow-card',
         collapsed && 'flex-none',
         className,
       )}

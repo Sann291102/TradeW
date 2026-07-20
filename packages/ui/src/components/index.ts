@@ -13,3 +13,5 @@ export { Sparkline, type SparklineProps } from './Sparkline';
 export { Skeleton } from './Skeleton';
 export { EmptyState, type EmptyStateProps } from './EmptyState';
 export { IconButton, type IconButtonProps } from './IconButton';
+export { Surface, ELEVATION_SHADOW, type SurfaceProps, type SurfaceElevation } from './Surface';
+export { AnimatedNumber, type AnimatedNumberProps } from './AnimatedNumber';

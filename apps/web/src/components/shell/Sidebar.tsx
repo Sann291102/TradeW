@@ -88,11 +88,11 @@ export function Sidebar() {
       )}
       style={{ width }}
     >
-      {/* brand */}
+      {/* brand — clicking the wordmark always returns to the Market Workspace landing page */}
       <div className="flex h-14 shrink-0 items-center gap-2 px-4">
-        <span className="text-lg font-extrabold text-navy">
+        <Link href="/dashboard" className="text-lg font-extrabold text-navy transition-opacity hover:opacity-80">
           Trade<span className="text-teal">W</span>
-        </span>
+        </Link>
         {!collapsed && (
           <Badge tone="warning" className="px-1.5 py-0 text-[9px]">
             PAPER

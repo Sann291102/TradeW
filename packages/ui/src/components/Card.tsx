@@ -1,5 +1,6 @@
 import { forwardRef, type HTMLAttributes, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
+import { ELEVATION_SHADOW, type SurfaceElevation } from './Surface';
 
 export interface CardProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'> {
   /** Optional header row title (renders the canonical `h2` treatment).
@@ -11,6 +12,12 @@ export interface CardProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'>
   icon?: ReactNode;
   /** Optional right-aligned header actions. */
   actions?: ReactNode;
+  /** v2: opt into the elevation ramp instead of the default single
+   *  `--shadow`. Omit to keep existing behavior unchanged. */
+  elevation?: SurfaceElevation;
+  /** v2: opt into a translucent/blurred glass surface instead of solid
+   *  `--card`. Omit to keep existing behavior unchanged. */
+  glass?: boolean;
 }
 
 /**
@@ -20,7 +27,7 @@ export interface CardProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'>
  * renders a plain surface.
  */
 export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
-  { title, subtitle, icon, actions, className, children, ...props },
+  { title, subtitle, icon, actions, elevation, glass = false, className, children, ...props },
   ref,
 ) {
   const hasHeader = title != null || icon != null || actions != null;
@@ -28,8 +35,10 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
     <div
       ref={ref}
       className={cn(
-        'bg-card border border-border rounded-card px-[18px] py-4 shadow-card',
+        'rounded-card border px-[18px] py-4',
         'transition-colors duration-panel ease-standard',
+        glass ? 'border-glassBorder bg-cardGlass backdrop-blur-glass' : 'bg-card border-border',
+        elevation != null ? ELEVATION_SHADOW[elevation] : 'shadow-card',
         className,
       )}
       {...props}

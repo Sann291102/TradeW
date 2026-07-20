@@ -59,6 +59,10 @@ From the user's list, plus what the mockup shows is already built around them:
 
 Sentinel is a full nav-level workspace (not a dock overlay like TradeW AI): top alert callout cards → AI Reflection Cards row → three-column footer (Agent Activity Timeline / Observation Feed / Session Summary) → Trading Journal below the fold. Shares the same top bar/sidebar chrome as every other workspace (design system §3).
 
+**Unified with the shared shell (Phase 1 redesign).** Before this pass, `/sentinel/page.tsx` rendered its own duplicate header/nav and raw hex colors, bypassing both the root layout's `AppFrame` and the design-token system — a violation of the paragraph above. It's now a thin composition (`apps/web/src/app/sentinel/page.tsx`) over token-based components in `apps/web/src/components/sentinel/` (`AlertCallout`, `ReflectionCards`, `AgentTimeline`, `ObservationFeed`, `SessionSummary`, `TradingJournal`, `DemoModeBanner`), with data/refresh/journal logic extracted to `apps/web/src/lib/sentinel/useSentinel.ts` — both live endpoints (`POST /sentinel/observe`, `POST /sentinel/journal`) and the offline demo-mode fallback are unchanged, just relocated.
+
+There are deliberately **two** Sentinel surfaces, sharing constants from `apps/web/src/lib/sentinel/types.ts` (`AGENT_LABEL`, `AGENT_COLOR`, `OBSERVATION_ONLY_DISCLAIMER`) so they never drift: the full `/sentinel` page above is the **entitled experience**; `terminal/panels/SentinelPanel.tsx` is a **locked/upgrade teaser** shown in the `/trade` dock for non-entitled users (per `SUBSCRIPTIONS.md` §4) — it intentionally renders no live observation content.
+
 ## 6. Compliance guardrails (non-negotiable)
 
 - Sentinel **never blocks or delays an order** — it observes and comments in parallel with the normal order flow (ARCHITECTURE.md §3), it is not a gate in that flow.
