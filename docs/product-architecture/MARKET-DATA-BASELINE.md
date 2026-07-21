@@ -1,5 +1,23 @@
 # Market Data Baseline — Post-Migration 1
 
+> **Superseded in part, 2026-07-21.** Phase 1 of
+> [`DHAN-MARKET-DATA-INTEGRATION.md`](DHAN-MARKET-DATA-INTEGRATION.md) has been
+> implemented. The following sections below are now historical rather than
+> current:
+>
+> - **§2** — endpoint list is unchanged, but the note that every read
+>   "re-enriches and persists" no longer applies. Reads are pure.
+> - **§4** — 17 instruments became 2,933 (190 indices + 2,730 NSE equities + the
+>   12 original options), all but the options carrying real Dhan security IDs.
+> - **§5 / §7** — the two divergent simulators are gone. One engine now lives in
+>   `@tradew/market-data`; both originals are preserved under `archive/`. The
+>   High-severity duplicate-simulator debt is resolved.
+> - **§6** — "no live provider" still holds, but the *architecture* for one is
+>   in place: `services/market-data` is now a real ingestion runtime.
+>
+> §1, §3 (no WebSocket push to clients yet) and §8 remain accurate. Update this
+> document at the end of Migration 2 rather than patching it further.
+
 Status: **stabilization checkpoint, binding reference.** Captures the exact state of the Market Data domain after Migration 1 (Quote revision), before Migration 2 (Candle) begins. Governed by [`MARKET-DATA-ARCHITECTURE.md`](MARKET-DATA-ARCHITECTURE.md) (the long-term schema review this migration executed against) and [`TRADEW-OS.md`](TRADEW-OS.md). Update this document at the end of every future Market Data migration — it is the point-in-time source of truth for "what actually exists today," not the aspirational target.
 
 ---
@@ -174,4 +192,9 @@ Designed as the swappable contract locked in decision Q6 — simulation today, r
 
 ## Next step
 
-Migration 2 (`Candle`) is next in sequence. Per §7's flagged debt, the Migration 2 design pass should explicitly decide how (or whether) `services/sentinel`'s in-memory `SimMarketDataProvider.getCandles()` gets reconciled with the new persisted `Candle` table, rather than leaving two disagreeing candle sources in production.
+**Update 2026-07-21:** a Dhan integration plan now exists — [`DHAN-MARKET-DATA-INTEGRATION.md`](DHAN-MARKET-DATA-INTEGRATION.md) — written against the DhanHQ v2 docs. Two things there change the sequencing assumed below:
+
+1. **The live provider cannot be a drop-in swap.** Dhan's Market Quote REST API is capped at 1 request/second account-wide, so §5a's per-request `enrich()` model is structurally incompatible with it. Live quotes must arrive over Dhan's WebSocket feed into a separate ingestor, with `services/api` reads becoming pure cache reads. That is an architectural inversion, not a provider substitution.
+2. **Two phases are unblocked today** and worth doing before Migration 2: syncing the Dhan scrip master (gives `Instrument` a broker-agnostic `securityId`, and closes the no-`EQUITY`-seeded gap in §4), and collapsing the duplicate simulators in §5/§7 behind the `MarketDataProvider` interface. Neither calls Dhan's API, and both are prerequisites for a clean cutover.
+
+Migration 2 (`Candle`) remains next in the *schema* sequence. Per §7's flagged debt, the Migration 2 design pass should explicitly decide how (or whether) `services/sentinel`'s in-memory `SimMarketDataProvider.getCandles()` gets reconciled with the new persisted `Candle` table, rather than leaving two disagreeing candle sources in production.
