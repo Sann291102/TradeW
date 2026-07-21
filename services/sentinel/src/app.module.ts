@@ -17,6 +17,9 @@ import {
 import { AppController, ServiceTokenGuard } from './app.controller';
 import { ConceptLearningEngine } from './brain/concept-learning.service';
 import { HistoricalSimilarityService } from './brain/historical-similarity.service';
+import { ConceptGraphService } from './brain/ontology/concept-graph.service';
+import { ConceptReinforcementService } from './brain/ontology/concept-reinforcement.service';
+import { OntologyLoaderService, resolveKnowledgeBaseDir } from './brain/ontology/ontology-loader.service';
 import { KnowledgeCenterService } from './brain/knowledge-center.service';
 import { MarketContextService } from './brain/market-context.service';
 import { OutcomeLearningService } from './brain/outcome-learning.service';
@@ -40,7 +43,7 @@ import { EmotionIntelligenceService } from './intelligence/emotion-intelligence.
 import { MARKET_DATA, MarketIntelligenceService } from './intelligence/market-intelligence.service';
 import { NewsIntelligenceService } from './intelligence/news-intelligence.service';
 import { TrapIntelligenceService } from './intelligence/trap-intelligence.service';
-import { SimMarketDataProvider } from './market-data/sim-market-data.provider';
+import { SimulatedMarketDataProvider } from '@tradew/market-data';
 import { SentinelOrchestratorService } from './orchestrator/sentinel-orchestrator.service';
 import { PrismaService } from './prisma.service';
 
@@ -56,7 +59,18 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
     ServiceTokenGuard,
     // MarketDataProvider is injected by token — swapping simulation for
     // historical/NSE/BSE/Dhan later changes only this one binding (Q6).
-    { provide: MARKET_DATA, useClass: SimMarketDataProvider },
+    //
+    // Now backed by the shared implementation in @tradew/market-data. Sentinel
+    // previously carried its own simulator with hardcoded price anchors, which
+    // disagreed with the one behind /market-data/* for the same symbol at the
+    // same instant — High-severity debt in MARKET-DATA-BASELINE.md §7. Both
+    // services now compute from one engine. The old file is preserved at
+    // archive/sentinel-sim-market-data.provider.ts.txt per CLAUDE.md Rule 1.
+    //
+    // No anchor resolver is supplied: Sentinel must keep working when the
+    // database is away (see PrismaService), so it uses the provider's
+    // deterministic fallback anchors rather than depending on Instrument rows.
+    { provide: MARKET_DATA, useFactory: () => new SimulatedMarketDataProvider() },
     MarketIntelligenceService,
     EmotionIntelligenceService,
     TrapIntelligenceService,
@@ -108,6 +122,20 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
         }),
       inject: [PROVIDER_MANAGER, RETRIEVER, RESEARCH_ENGINE, ConceptLearningEngine],
     },
+
+    // ---- Sentinel Concept Knowledge Graph (the reasoning ontology) ----
+    // Separate from the GraphNode/GraphEdge entity graph above: that one
+    // records what co-occurred, this one records what things mean. See
+    // docs/product-architecture/SENTINEL-KNOWLEDGE-GRAPH.md.
+    ConceptGraphService,
+    ConceptReinforcementService,
+    {
+      // The loader reads from disk and needs the knowledge-base path resolved
+      // once at boot rather than on every call.
+      provide: OntologyLoaderService,
+      useFactory: () => new OntologyLoaderService(resolveKnowledgeBaseDir()),
+    },
+
     KnowledgeCenterService,
     PatternRecognitionService,
     HistoricalSimilarityService,

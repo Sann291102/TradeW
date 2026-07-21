@@ -28,9 +28,26 @@ export class TickPipelineService implements OnModuleDestroy {
   /** instrumentId -> latest tick awaiting persistence. */
   private pending = new Map<string, { tick: MarketTick; instrumentId: string }>();
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Guards against overlapping flushes. Writing thousands of rows can take
+   * longer than the flush interval; without this, a slow flush would be joined
+   * by the next one and the database would see ever-increasing concurrency
+   * under exactly the conditions where it is already struggling.
+   */
+  private flushing = false;
 
-  private stats = { received: 0, unresolved: 0, persisted: 0, flushes: 0, errors: 0 };
+  /** instrumentId -> last persisted price, for change detection. */
+  private lastPersisted = new Map<string, string>();
+
+  private stats = { received: 0, unresolved: 0, persisted: 0, skippedUnchanged: 0, flushes: 0, overlaps: 0, errors: 0 };
   private lastUnresolvedWarnAt = 0;
+
+  /**
+   * Upserts issued concurrently per flush. Postgres handles this comfortably
+   * while a fully sequential loop cannot keep up with a wide universe, and an
+   * unbounded Promise.all over thousands of rows would exhaust the pool.
+   */
+  private static readonly WRITE_CONCURRENCY = 25;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -90,33 +107,65 @@ export class TickPipelineService implements OnModuleDestroy {
 
   /** Write every pending instrument's latest tick. */
   async flush(): Promise<number> {
+    if (this.flushing) {
+      this.stats.overlaps++;
+      return 0;
+    }
     if (this.pending.size === 0) return 0;
+
+    this.flushing = true;
     const batch = [...this.pending.values()];
     this.pending = new Map();
     this.stats.flushes++;
 
     let written = 0;
-    for (const { tick, instrumentId } of batch) {
-      try {
-        const data = this.toQuoteData(tick);
-        // Quote.instrumentId is unique, so this is a genuine upsert rather
-        // than find-then-write — no read-modify-write race between flushes.
-        // `ltp` is non-nullable on create; a tick that carries no price (an
-        // OI-only packet, say) would otherwise fail the insert, so it seeds
-        // from whatever price the tick does have.
-        await this.prisma.quote.upsert({
-          where: { instrumentId },
-          update: data,
-          create: { ...data, instrumentId, ltp: data.ltp ?? new Prisma.Decimal(tick.previousClose ?? 0) },
-        });
-        written++;
-      } catch (err) {
-        this.stats.errors++;
-        this.logger.warn(`quote write failed for ${tick.ref.symbol}: ${err instanceof Error ? err.message : String(err)}`);
+    try {
+      // Chunked concurrency rather than a sequential loop or an unbounded
+      // Promise.all — see WRITE_CONCURRENCY.
+      for (let i = 0; i < batch.length; i += TickPipelineService.WRITE_CONCURRENCY) {
+        const chunk = batch.slice(i, i + TickPipelineService.WRITE_CONCURRENCY);
+        const results = await Promise.all(chunk.map((entry) => this.writeOne(entry)));
+        written += results.filter(Boolean).length;
       }
+    } finally {
+      this.flushing = false;
     }
+
     this.stats.persisted += written;
     return written;
+  }
+
+  private async writeOne({ tick, instrumentId }: { tick: MarketTick; instrumentId: string }): Promise<boolean> {
+    try {
+      const data = this.toQuoteData(tick);
+
+      // Skip instruments whose price has not moved since the last write. Real
+      // feeds are sparse — most instruments are idle most of the time — so this
+      // removes the bulk of the write volume without losing anything: Quote is
+      // a snapshot, and re-writing an identical snapshot changes nothing but
+      // updatedAt.
+      const fingerprint = `${data.ltp?.toString() ?? ''}|${data.volume?.toString() ?? ''}`;
+      if (this.lastPersisted.get(instrumentId) === fingerprint) {
+        this.stats.skippedUnchanged++;
+        return false;
+      }
+
+      // Quote.instrumentId is unique, so this is a genuine upsert rather than
+      // find-then-write — no read-modify-write race between flushes. `ltp` is
+      // non-nullable on create; a tick carrying no price (an OI-only packet,
+      // say) would otherwise fail the insert.
+      await this.prisma.quote.upsert({
+        where: { instrumentId },
+        update: data,
+        create: { ...data, instrumentId, ltp: data.ltp ?? new Prisma.Decimal(tick.previousClose ?? 0) },
+      });
+      this.lastPersisted.set(instrumentId, fingerprint);
+      return true;
+    } catch (err) {
+      this.stats.errors++;
+      this.logger.warn(`quote write failed for ${tick.ref.symbol}: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
   }
 
   /**

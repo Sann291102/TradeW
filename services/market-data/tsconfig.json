@@ -13,5 +13,11 @@
     "incremental": true,
     "strict": true,
     "skipLibCheck": true
-  }
+  },
+  // Build only the service. Without this, `nest build` also compiles scripts/,
+  // which shifts the inferred rootDir up a level and emits dist/src/main.js
+  // instead of dist/main.js — breaking `start:prod`. Scripts are typechecked
+  // separately via tsconfig.scripts.json.
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "scripts"]
 }
