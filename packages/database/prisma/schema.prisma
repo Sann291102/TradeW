@@ -86,23 +86,60 @@ model AuditEvent {
 }
 
 model Instrument {
-  id             String         @id @default(uuid())
-  symbol         String         @unique
-  displayName    String
-  type           InstrumentType
-  exchange       String
-  underlying     String?
-  expiryDate     DateTime?
-  strikePrice    Decimal?       @db.Decimal(12, 2)
-  optionType     String?
-  lotSize        Int            @default(1)
-  tickSize       Decimal        @default(0.05) @db.Decimal(10, 2)
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-  quotes         Quote[]
-  orders         Order[]
-  trades         Trade[]
-  positions      Position[]
+  id          String         @id @default(uuid())
+  /// Platform-canonical lookup key. Deliberately kept globally unique so
+  /// findUnique({ where: { symbol } }) — used by /market-data/quote-by-symbol —
+  /// keeps working. The broker-native symbol lives in `tradingSymbol`.
+  symbol      String         @unique
+  displayName String
+  type        InstrumentType
+  exchange    String
+  underlying  String?
+  expiryDate  DateTime?
+  strikePrice Decimal?       @db.Decimal(12, 2)
+  optionType  String?
+  lotSize     Int            @default(1)
+  tickSize    Decimal        @default(0.05) @db.Decimal(10, 2)
+
+  // ---- Broker identity (DHAN-MARKET-DATA-INTEGRATION.md §5, Phase 1) ----
+  // Every Dhan REST call and WebSocket subscription addresses an instrument by
+  // (exchangeSegment, securityId), never by symbol — so without these columns
+  // no Dhan request can be constructed at all. Nullable because the pre-existing
+  // seeded rows predate any broker mapping and must keep working unmapped.
+  /// Dhan exchange-standard security ID.
+  securityId           String?
+  /// NSE_EQ | NSE_FNO | BSE_EQ | BSE_FNO | MCX_COMM | IDX_I
+  exchangeSegment      String?
+  isin                 String?
+  /// Exchange-defined instrument class: EQUITY | INDEX | OPTIDX | OPTSTK | FUTIDX | ...
+  dhanInstrument       String?
+  series               String?
+  /// M (monthly) | W (weekly), derivatives only.
+  expiryFlag           String?
+  /// Broker-native trading symbol, which is NOT unique across exchanges.
+  tradingSymbol        String?
+  /// Underlying's securityId for derivatives, as a plain reference (not an FK —
+  /// the underlying may not be imported under the current segment allowlist).
+  underlyingSecurityId String?
+
+  /// Soft-delete flag. Delisted instruments are deactivated, never removed —
+  /// CLAUDE.md Rule 1, and Order/Trade/Position rows reference them forever.
+  active           Boolean   @default(true)
+  /// Provenance of the metadata above: 'dhan-scrip-master' | 'seed'.
+  metadataSource   String?
+  metadataSyncedAt DateTime?
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  quotes    Quote[]
+  orders    Order[]
+  trades    Trade[]
+  positions Position[]
+
+  @@unique([exchangeSegment, securityId])
+  @@index([exchangeSegment])
+  @@index([active])
+  @@index([isin])
 }
 
 model Quote {
@@ -343,6 +380,161 @@ model GraphEdge {
 
   @@index([fromId, relation])
   @@index([toId, relation])
+}
+
+// ============================================================================
+// Sentinel Concept Knowledge Graph — the reasoning ontology
+// Canonical source of truth is YAML under knowledge-base/ at the repo root;
+// these tables are its runtime projection (SENTINEL-KNOWLEDGE-GRAPH.md §3).
+//
+// Distinct from GraphNode/GraphEdge above, which is an *entity* graph — it
+// records that a symbol and a pattern co-occurred. This is a *concept* graph:
+// every edge states how two ideas relate, which is what makes it reasonable
+// over. The two are bridged by ConceptObservation.symbol, not by a join.
+//
+// Reseed contract: the seeder rewrites only columns marked "canonical" below
+// and never touches learned* / *Count / observations. That separation is what
+// lets the ontology be regenerated from YAML without destroying what Sentinel
+// learned at runtime.
+// ============================================================================
+
+model ConceptNode {
+  // ---- canonical, projected from YAML on every reseed ----
+  id             String   @id @default(uuid())
+  conceptId      String   @unique // stable slug, e.g. 'liquidity-sweep'
+  domain         String // one of the 15 in brain/ontology/domains.ts
+  name           String
+  aliases        String[] @default([])
+  status         String   @default("canonical") // canonical | proposed | deprecated
+  maturity       String   @default("established") // established | emerging | contested
+  confidence     Float    @default(0.7)
+  summary        String
+  definition     String
+  explainer      String // the text users actually read
+  observableWhen String[] @default([])
+  examples       Json     @default("[]")
+  sources        String[] @default([])
+  tags           String[] @default([])
+
+  // Plain slug references, not FKs — a concept may name its successor before
+  // that successor has been authored, and a FK would make seed order matter.
+  supersededBy String?
+  supersedes   String?
+
+  // ---- provenance ----
+  origin     String  @default("canonical") // canonical (from YAML) | learned (runtime-proposed)
+  sourcePath String? // knowledge-base/<domain>/<id>.yaml
+  checksum   String? // sha256 of the YAML doc; lets reseed skip untouched rows
+
+  // ---- runtime learning, never written by the seeder ----
+  observationCount Int       @default(0)
+  lastObservedAt   DateTime?
+
+  // Populated once an embedding provider is configured; unset today, in which
+  // case concept search falls back to text match (same gap as MemoryRecord).
+  embedding      Unsupported("vector")?
+  embeddingModel String?
+  embeddingDim   Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  edgesFrom    ConceptEdge[]        @relation("ConceptEdgeFrom")
+  edgesTo      ConceptEdge[]        @relation("ConceptEdgeTo")
+  observations ConceptObservation[]
+
+  @@index([domain])
+  @@index([status, confidence])
+  @@index([origin])
+}
+
+model ConceptEdge {
+  id       String  @id @default(uuid())
+  fromId   String
+  toId     String
+  relation String // closed vocabulary — brain/ontology/relations.ts
+  note     String?
+
+  // canonical prior authored in YAML — rewritten by reseed
+  weight Float @default(0.7)
+
+  // runtime-derived; reseed must never overwrite these four
+  learnedWeight  Float?
+  supportCount   Int       @default(0)
+  refuteCount    Int       @default(0)
+  lastObservedAt DateTime?
+
+  origin     String @default("canonical") // canonical | learned
+  status     String @default("canonical") // canonical | proposed | deprecated
+  confidence Float  @default(0.7)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  from ConceptNode @relation("ConceptEdgeFrom", fields: [fromId], references: [id])
+  to   ConceptNode @relation("ConceptEdgeTo", fields: [toId], references: [id])
+
+  @@unique([fromId, toId, relation])
+  @@index([fromId, relation])
+  @@index([toId, relation])
+  @@index([origin, status])
+}
+
+/// Append-only log of the graph meeting reality. Never updated, never deleted —
+/// learned weights are derived from these rows, so mutating one would rewrite
+/// history that a past explanation already cited.
+model ConceptObservation {
+  id       String  @id @default(uuid())
+  conceptId String // FK to ConceptNode.id (not the slug)
+  edgeId   String? // set when the observation is about a relation, not a concept
+  symbol   String? // bridge to the entity graph / market data
+  outcome  String // confirmed | refuted | inconclusive
+  strength Float   @default(0.5)
+  context  Json    @default("{}")
+
+  /// SentinelObservation.id that produced this, for audit traceability.
+  observationId String?
+  namespace     String  @default("global")
+
+  observedAt DateTime @default(now())
+
+  concept ConceptNode @relation(fields: [conceptId], references: [id])
+
+  @@index([conceptId, observedAt])
+  @@index([edgeId])
+  @@index([symbol, observedAt])
+}
+
+/// Human review queue. Runtime learning proposes here; a person promotes the
+/// entry into YAML; the next reseed makes it canonical. Sentinel never edits
+/// the canonical source files itself.
+model ConceptPromotion {
+  id String @id @default(uuid())
+
+  /// Service-computed stable key. A composite @@unique cannot dedupe these
+  /// because Postgres treats NULLs as distinct and most columns are nullable.
+  dedupeKey String @unique
+
+  kind        String // concept | relation
+  conceptId   String? // proposed concept slug
+  fromConcept String?
+  toConcept   String?
+  relation    String?
+
+  rationale    String
+  evidence     Json   @default("{}")
+  supportCount Int    @default(0)
+  confidence   Float  @default(0)
+
+  status     String    @default("pending") // pending | approved | rejected | merged
+  reviewedBy String?
+  reviewedAt DateTime?
+  reviewNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, confidence])
 }
 
 // ============================================================================
