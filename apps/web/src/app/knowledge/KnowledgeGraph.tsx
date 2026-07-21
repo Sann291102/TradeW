@@ -131,10 +131,10 @@ export function KnowledgeGraph({
   };
 
   return (
-    <div className="p-2">
+    <div className="flex h-full flex-col p-2">
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        className="w-full select-none"
+        className="min-h-0 w-full flex-1 select-none"
         onMouseMove={onMove}
         onMouseUp={() => (dragRef.current = null)}
         onMouseLeave={() => {
@@ -191,7 +191,7 @@ export function KnowledgeGraph({
           );
         })}
       </svg>
-      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 px-2 text-[10px] text-[#64769c]">
+      <div className="mt-1 flex shrink-0 flex-wrap gap-x-3 gap-y-1 px-2 text-[10px] text-[#64769c]">
         {Object.entries(GROUP_COLORS)
           .filter(([g]) => nodes.some((n) => n.group === g))
           .map(([g, c]) => (
@@ -199,7 +199,7 @@ export function KnowledgeGraph({
               <span className="inline-block h-2 w-2 rounded-full" style={{ background: c }} /> {g}
             </span>
           ))}
-        <span className="ml-auto">drag nodes · hover to focus · click to open</span>
+        <span className="ml-auto">drag nodes · hover to focus · click to highlight</span>
       </div>
     </div>
   );

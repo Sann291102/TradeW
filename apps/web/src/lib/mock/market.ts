@@ -103,6 +103,77 @@ export const SECTORS: SectorTile[] = [
   { key: 'psu', name: 'PSU Bank', changePct: 0.73 },
 ];
 
+/** Representative constituents per sector, keyed by `SectorTile.key` — what
+ *  the Sector Heatmap tiles link into (Markets → Stocks, filtered). Mock
+ *  data (no per-sector constituent endpoint exists yet), same shape as
+ *  `TOP_GAINERS`/`TOP_LOSERS` so it's a data-source swap later, not a
+ *  component rewrite. */
+export const SECTOR_STOCKS: Record<string, MoverRow[]> = {
+  it: [
+    { symbol: 'TCS', name: 'Tata Consultancy Services', ltp: 4128.6, changePct: 0.92 },
+    { symbol: 'INFY', name: 'Infosys', ltp: 1876.5, changePct: 2.88 },
+    { symbol: 'HCLTECH', name: 'HCL Technologies', ltp: 1842.3, changePct: 0.64 },
+    { symbol: 'WIPRO', name: 'Wipro', ltp: 542.1, changePct: -0.28 },
+    { symbol: 'TECHM', name: 'Tech Mahindra', ltp: 1698.4, changePct: 1.15 },
+  ],
+  bank: [
+    { symbol: 'HDFCBANK', name: 'HDFC Bank', ltp: 1712.0, changePct: 1.36 },
+    { symbol: 'ICICIBANK', name: 'ICICI Bank', ltp: 1298.7, changePct: -0.42 },
+    { symbol: 'KOTAKBANK', name: 'Kotak Mahindra Bank', ltp: 1786.2, changePct: -0.55 },
+    { symbol: 'AXISBANK', name: 'Axis Bank', ltp: 1156.9, changePct: -1.08 },
+    { symbol: 'SBIN', name: 'State Bank of India', ltp: 842.7, changePct: 1.12 },
+  ],
+  auto: [
+    { symbol: 'MARUTI', name: 'Maruti Suzuki', ltp: 12480.5, changePct: 0.71 },
+    { symbol: 'TATAMOTORS', name: 'Tata Motors', ltp: 984.3, changePct: 3.42 },
+    { symbol: 'M&M', name: 'Mahindra & Mahindra', ltp: 2984.6, changePct: 0.38 },
+    { symbol: 'BAJAJ-AUTO', name: 'Bajaj Auto', ltp: 9542.1, changePct: -0.19 },
+    { symbol: 'EICHERMOT', name: 'Eicher Motors', ltp: 4812.9, changePct: 0.66 },
+  ],
+  pharma: [
+    { symbol: 'SUNPHARMA', name: 'Sun Pharma', ltp: 1786.4, changePct: 0.54 },
+    { symbol: 'DRREDDY', name: "Dr Reddy's Labs", ltp: 1298.2, changePct: 0.83 },
+    { symbol: 'CIPLA', name: 'Cipla', ltp: 1512.6, changePct: -0.11 },
+    { symbol: 'DIVISLAB', name: "Divi's Laboratories", ltp: 5842.3, changePct: 0.29 },
+    { symbol: 'LUPIN', name: 'Lupin', ltp: 2186.7, changePct: 0.72 },
+  ],
+  fmcg: [
+    { symbol: 'HINDUNILVR', name: 'HUL', ltp: 2388.2, changePct: -1.44 },
+    { symbol: 'ITC', name: 'ITC', ltp: 428.9, changePct: -0.36 },
+    { symbol: 'NESTLEIND', name: 'Nestle India', ltp: 2312.4, changePct: 0.18 },
+    { symbol: 'BRITANNIA', name: 'Britannia Industries', ltp: 4986.1, changePct: -0.52 },
+    { symbol: 'DABUR', name: 'Dabur India', ltp: 512.3, changePct: -0.24 },
+  ],
+  metal: [
+    { symbol: 'TATASTEEL', name: 'Tata Steel', ltp: 148.6, changePct: 1.42 },
+    { symbol: 'JSWSTEEL', name: 'JSW Steel', ltp: 942.8, changePct: 0.96 },
+    { symbol: 'HINDALCO', name: 'Hindalco Industries', ltp: 642.1, changePct: 1.68 },
+    { symbol: 'VEDL', name: 'Vedanta', ltp: 462.9, changePct: 0.87 },
+    { symbol: 'SAIL', name: 'Steel Authority of India', ltp: 128.4, changePct: 2.05 },
+  ],
+  energy: [
+    { symbol: 'RELIANCE', name: 'Reliance Industries', ltp: 2954.1, changePct: 1.94 },
+    { symbol: 'ONGC', name: 'Oil & Natural Gas Corp.', ltp: 268.7, changePct: 0.32 },
+    { symbol: 'NTPC', name: 'NTPC', ltp: 368.2, changePct: 0.48 },
+    { symbol: 'POWERGRID', name: 'Power Grid Corp.', ltp: 328.5, changePct: 0.21 },
+    { symbol: 'ADANIGREEN', name: 'Adani Green Energy', ltp: 1842.6, changePct: -0.63 },
+  ],
+  realty: [
+    { symbol: 'DLF', name: 'DLF', ltp: 812.4, changePct: -1.12 },
+    { symbol: 'GODREJPROP', name: 'Godrej Properties', ltp: 2648.9, changePct: -0.74 },
+    { symbol: 'OBEROIRLTY', name: 'Oberoi Realty', ltp: 1786.2, changePct: -0.85 },
+    { symbol: 'PRESTIGE', name: 'Prestige Estates', ltp: 1642.5, changePct: -1.28 },
+    { symbol: 'PHOENIXLTD', name: 'Phoenix Mills', ltp: 1786.8, changePct: -0.68 },
+  ],
+  psu: [
+    { symbol: 'SBIN', name: 'State Bank of India', ltp: 842.7, changePct: 1.12 },
+    { symbol: 'BANKBARODA', name: 'Bank of Baroda', ltp: 268.4, changePct: 0.58 },
+    { symbol: 'PNB', name: 'Punjab National Bank', ltp: 112.6, changePct: 0.92 },
+    { symbol: 'CANBK', name: 'Canara Bank', ltp: 108.2, changePct: 0.44 },
+    { symbol: 'UNIONBANK', name: 'Union Bank of India', ltp: 126.8, changePct: 0.65 },
+  ],
+};
+
 export const TRENDING: TrendingChip[] = [
   { symbol: 'TATAMOTORS', changePct: 3.4 },
   { symbol: 'INFY', changePct: 2.9 },

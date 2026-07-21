@@ -25,7 +25,7 @@ export function MarketContextPanel({ tags, dimensions }: { tags: string[]; dimen
         <p className="mb-5 text-[12.5px] text-muted">No active context signals right now.</p>
       )}
 
-      <dl className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+      <dl className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
         {dimensions.map((d) => (
           <div key={d.label} className="flex items-center justify-between rounded-lg bg-bg px-3 py-2.5">
             <dt className="text-[12.5px] text-muted">{d.label}</dt>

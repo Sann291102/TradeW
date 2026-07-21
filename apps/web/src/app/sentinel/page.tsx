@@ -9,7 +9,6 @@ import { LiveSafetyFeed } from '@/components/sentinel/LiveSafetyFeed';
 import { ContextualTraining } from '@/components/sentinel/ContextualTraining';
 import { SentinelTimeline } from '@/components/sentinel/SentinelTimeline';
 import { SentinelLocked } from '@/components/sentinel/SentinelLocked';
-import { DemoModeBanner } from '@/components/sentinel/DemoModeBanner';
 
 /**
  * Sentinel — Market Context Intelligence workspace.
@@ -30,7 +29,7 @@ import { DemoModeBanner } from '@/components/sentinel/DemoModeBanner';
  * see nav-config.tsx: it left no way to navigate back out).
  */
 export default function SentinelPage() {
-  const { data, demoMode, loading, refresh } = useSentinel();
+  const { data, demoMode, loading } = useSentinel();
   const status = useSessionStore((s) => s.status);
   const hasCapability = useSessionStore((s) => s.hasCapability);
 
@@ -51,18 +50,7 @@ export default function SentinelPage() {
 
   return (
     <div className="min-h-screen">
-      {demoMode && <DemoModeBanner />}
-
-      <main className="mx-auto max-w-[860px] space-y-5 p-5 sm:p-8">
-        <div className="flex items-center justify-end">
-          <button
-            onClick={() => void refresh()}
-            className="rounded-lg border border-border2 px-3 py-1.5 text-xs text-muted hover:bg-hover"
-          >
-            ⟳ Refresh
-          </button>
-        </div>
-
+      <main className="mx-auto max-w-[1440px] space-y-5 p-4 sm:p-6">
         <DayClassificationCard day={day} lastUpdated={lastUpdated} />
         <MarketContextPanel tags={tags} dimensions={dimensions} />
         <LiveSafetyFeed cards={safetyCards} />

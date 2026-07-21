@@ -10,4 +10,4 @@ The runtime for the **TradeW AI (Research)** pillar — replaces the earlier, mo
 
 **Hard boundary:** never calls `services/trading-engine`, never places an order. See ARCHITECTURE.md §4 and TRADEW-AI.md §4.
 
-**Status:** design-only, no code exists yet.
+**Status (corrected 2026-07-21):** this folder itself is still README-only, but the real TradeW AI agent/RAG/memory/provider logic (~1,697 lines) already exists in `packages/ai-core` — not here. Treat `packages/ai-core` as the actual implementation location until/unless it's extracted into this service.

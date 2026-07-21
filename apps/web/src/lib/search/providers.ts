@@ -18,6 +18,8 @@ import {
   PlusIcon,
 } from '@/components/shell/icons';
 import { INDEX_QUOTES, TICKER_EXTRA, WATCHLIST, TOP_GAINERS, TOP_LOSERS } from '@/lib/mock/market';
+import { FO_STOCK_UNIVERSE } from '@/lib/mock/foUniverse';
+import { ALL_NSE_INDICES } from '@/lib/mock/indices';
 import { LEARNING_CATEGORIES, LEARNING_PATHS } from '@/lib/mock/learning';
 import type { SearchContext, SearchProvider, SearchResult } from './types';
 
@@ -47,13 +49,18 @@ const navigationProvider: SearchProvider = {
 };
 
 // ---------------------------------------------------------------------------
-// Stocks — mock market data, deduplicated by symbol.
+// Stocks & indices — deduplicated by symbol/name. `FO_STOCK_UNIVERSE` (every
+// NSE F&O-eligible stock) and `ALL_NSE_INDICES` (every NSE index) make the
+// full real symbol universe searchable, not just the ~15 hand-picked
+// mock-priced entries — see lib/mock/foUniverse.ts and lib/mock/indices.ts.
 // ---------------------------------------------------------------------------
 const ALL_SYMBOLS = (() => {
   const map = new Map<string, string>();
   for (const q of [...INDEX_QUOTES, ...TICKER_EXTRA]) map.set(q.symbol, q.name);
   for (const w of WATCHLIST) map.set(w.symbol, w.name);
   for (const m of [...TOP_GAINERS, ...TOP_LOSERS]) map.set(m.symbol, m.name);
+  for (const s of FO_STOCK_UNIVERSE) map.set(s.symbol, s.name);
+  for (const idx of ALL_NSE_INDICES) if (!map.has(idx.name)) map.set(idx.name, idx.name);
   return Array.from(map.entries()).map(([symbol, name]) => ({ symbol, name }));
 })();
 
