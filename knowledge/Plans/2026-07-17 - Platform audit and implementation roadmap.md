@@ -273,7 +273,21 @@ Preserve existing working code; only extend. Ordered by (a) unblocking further w
 6. `@nestjs/swagger` on `services/api`.
 7. Test harness setup (Jest config + first auth test) — largest of this list, but highest-leverage.
 
+## Update 2026-07-21 — corrections and open items from a full platform re-audit
+
+A follow-on full-platform audit (code + docs + vault reconciliation) found this note's §12 Production Readiness Matrix has drifted in three places:
+
+- **`packages/ui` rating is stale.** Rated 🔴 Prototype/Placeholder here; [[../Patterns/2026-07-18 - packages-ui foundation (tokens, preset, transpilePackages)]] (the next day) shows it was built and is active — 16 real component/token files as of 2026-07-21. Re-rate 🟢.
+- **`packages/sdk`, `packages/shared` ratings still hold** — confirmed still README-only stubs as of 2026-07-21, no change.
+- **`services/tradew-ai` rating needs a caveat.** Rated 🔴 Prototype/Placeholder here, which is correct for that specific folder — but the real agent logic this rating implies is missing actually lives in `packages/ai-core` (~1,697 lines, real, substantive), which this note doesn't mention as a separate workspace at all. `packages/ai-core` should be added to this matrix as its own row: 🟢 Production Ready (design), matching [[../Research/2026-07-17 - Sentinel Brain audit]]'s assessment.
+
+**Unresolved, flag for whoever picks this up next:** §14's Sprint 1 (Jest test harness, `@nestjs/throttler` on auth endpoints, boot-time secret rejection) has **no confirming note anywhere in the vault** as of 2026-07-21 — no later note mentions tests being added, rate limiting landing, or secret validation being added, and the ground-truth code audit this session did not check for these specifically. Treat Sprint 1 as **not done** until directly verified, not as "probably done by now."
+
+Also newly discovered this session (not previously in this note): the repo uses **npm workspaces**, not pnpm/Turborepo — root `package.json`'s `"workspaces"` field lists `apps/*`, `services/*`, `packages/*` directly, no `pnpm-workspace.yaml` or `turbo.json` exists. If any future doc assumes pnpm/Turborepo tooling, that assumption is wrong.
+
 ## Related
 - [[../Research/2026-07-17 - Sentinel Brain audit]]
 - [[../Decisions/2026-07-17 - Obsidian Knowledge Layer adopted]]
+- [[../Patterns/2026-07-18 - packages-ui foundation (tokens, preset, transpilePackages)]]
+- [[../Plans/2026-07-21 - Full platform and product audit]]
 - [[../_INDEX.md]]

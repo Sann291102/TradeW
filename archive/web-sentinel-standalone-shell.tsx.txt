@@ -1,0 +1,76 @@
+'use client';
+
+import Link from 'next/link';
+import type { ReactNode } from 'react';
+import { cn, IconButton, Badge } from '@tradew/ui';
+import { useWorkspaceStore } from '@/lib/store/workspaceStore';
+import { useSessionStore } from '@/lib/store/sessionStore';
+import { initials } from '@/lib/format';
+import { ThemeMenu } from '../shell/ThemeMenu';
+import { NotificationCenter } from '../shell/NotificationCenter';
+import { BellIcon, SentinelIcon } from '../shell/icons';
+
+/**
+ * SentinelShell — the standalone presentation shell for `/sentinel`.
+ *
+ * Deliberately NOT the shared Sidebar/TopBar chrome every other route uses
+ * (see AppFrame.tsx's STANDALONE_ROUTES bypass). Per the redesign direction:
+ * Sentinel should never feel like one page inside a larger multi-product
+ * workspace — no Research/Trade/Learning links, no command palette trigger,
+ * no "Ask TradeW AI" entry point. Just a minimal branded header (identity +
+ * live status), the page content, and the two utility affordances a user
+ * still needs anywhere in the app: theme and notifications. Auth/session
+ * state is still the same shared `useSessionStore` — nothing about the
+ * underlying architecture changed, only what's rendered around it.
+ */
+export function SentinelShell({ children }: { children: ReactNode }) {
+  const setNotificationCenterOpen = useWorkspaceStore((s) => s.setNotificationCenterOpen);
+  const unread = useWorkspaceStore((s) => s.unreadCount());
+  const sessionUser = useSessionStore((s) => s.user);
+
+  return (
+    <div className="flex h-screen flex-col overflow-hidden bg-bg text-text">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-4 sm:px-6">
+        <SentinelIcon className="h-5 w-5 text-teal" aria-hidden="true" />
+        <span className="text-sm font-extrabold tracking-[0.14em]">SENTINEL</span>
+        <span className="flex items-center gap-1.5 rounded-full bg-up-bg px-2 py-0.5 text-[10px] font-bold tracking-wide text-up">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-up opacity-60" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-up" />
+          </span>
+          LIVE
+        </span>
+
+        <div className="ml-auto flex items-center gap-1.5">
+          <ThemeMenu />
+          <IconButton
+            aria-label={`Notifications${unread > 0 ? ` (${unread} unread)` : ''}`}
+            onClick={() => setNotificationCenterOpen(true)}
+          >
+            <BellIcon />
+            {unread > 0 && (
+              <Badge tone="negative" className="absolute -right-1 -top-1 min-w-[16px] justify-center px-1 py-0 text-[9px]">
+                {unread}
+              </Badge>
+            )}
+          </IconButton>
+          <Link
+            href={sessionUser ? '/profile' : '/login'}
+            aria-label={sessionUser ? `Profile — ${sessionUser.email}` : 'Sign in'}
+            title={sessionUser?.email}
+            className={cn(
+              'flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+              sessionUser ? 'bg-teal text-white' : 'border border-dashed border-border2 text-faint',
+            )}
+          >
+            {sessionUser ? initials(sessionUser.email) : '?'}
+          </Link>
+        </div>
+      </header>
+
+      <main className="min-h-0 flex-1 overflow-auto">{children}</main>
+
+      <NotificationCenter />
+    </div>
+  );
+}

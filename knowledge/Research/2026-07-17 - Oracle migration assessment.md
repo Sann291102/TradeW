@@ -88,7 +88,14 @@ Per the task's own sequencing ("only after the report is complete, begin impleme
 - Oracle support request (open, no plan): https://github.com/prisma/prisma/issues/2853
 - TypeORM supports Oracle (alternative ORM): https://www.pkgpulse.com/guides/typeorm-vs-prisma-2026
 
+## Update 2026-07-21 — resolution recorded
+
+This note's own status frontmatter (`blocked-pending-decision`) was never updated, but the decision was in fact made the same day this note was written: [[../Plans/2026-07-17 - OCI Free Tier deployment]] states plainly that "Oracle Cloud is the host only — Postgres stays the database (the earlier Oracle Database migration was explicitly rejected)." That is **Option A** from §7 above. The open question in §7 ("what is driving the Oracle requirement?") was never answered in writing anywhere in this vault — if a business/compliance mandate resurfaces, re-open this assessment rather than re-deriving it from scratch; the blast-radius and feature-mapping analysis above is still accurate as of 2026-07-21 (no Prisma/schema changes since this was written that would invalidate it).
+
+**Status is now: resolved — staying on Postgres.** Treat this note as historical rationale, not an open decision.
+
 ## Related
 - [[../Plans/2026-07-17 - Platform audit and implementation roadmap]]
 - [[../Research/2026-07-17 - Sentinel Brain audit]]
+- [[../Plans/2026-07-17 - OCI Free Tier deployment]]
 - [[../_INDEX.md]]

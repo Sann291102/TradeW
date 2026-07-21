@@ -55,3 +55,20 @@ export const BARE_ROUTES = ['/', '/login', '/signup'];
 export function isBareRoute(pathname: string): boolean {
   return BARE_ROUTES.includes(pathname);
 }
+
+/**
+ * Routes that render their own dedicated shell instead of the shared
+ * Sidebar/TopBar/Ticker/FloatingAI chrome. Reverted for `/sentinel` on
+ * 2026-07-21 — a first pass removed all chrome there (see archive/README.md
+ * for `SentinelShell.tsx`), but that left no way to navigate back out to the
+ * rest of the app, a dead end rather than "standalone." The Sidebar/TopBar
+ * now wrap `/sentinel` like every other route; the redesigned page content
+ * (Day Classification / Market Context / Live Safety Feed) is unaffected.
+ * Left this mechanism in place, empty, in case a real standalone-shell need
+ * comes up again.
+ */
+export const STANDALONE_ROUTES: string[] = [];
+
+export function isStandaloneRoute(pathname: string): boolean {
+  return STANDALONE_ROUTES.some((r) => pathname === r || pathname.startsWith(r + '/'));
+}

@@ -111,7 +111,14 @@ This was **not run** in this session (no Postgres available in this environment)
 
 The Sentinel Brain is not "partially stubbed" — it's **complete, real, defensively-coded application code that has never been run against a live database.** The 78% figure in the progress doc reflects unfinished *feature scope* (Portfolio Intelligence, semantic outcome labels), not unfinished *implementation* of the components audited here. Phase 2 (make it runnable) is pure ops: stand up Postgres+pgvector, apply the existing migration, set env vars. No code changes are needed to reach a working local Brain.
 
+## Update 2026-07-21 — blockers resolved
+
+Every blocker in §4 was operational, and per [[../Research/2026-07-18 - Backend audit (Milestone 4 Step 0)]] (one day later) they were in fact cleared: Postgres was stood up, migrations were applied live with **zero drift** (`prisma migrate status` clean against 3, later 5, migrations), and real row data exists (`User` 5 rows, `Instrument`/`Quote` 14 rows each, etc.). The verification curl sequence in §6 was still not confirmed as actually run — treat that specific sequence as still unverified even though the underlying DB is live. A ground-truth code pass on 2026-07-21 additionally confirmed `services/sentinel/src/brain/` remains real, substantive code (818 lines across 11 files) with no stubs — this audit's core conclusion holds.
+
+One correction to this note's own framing: `packages/ai-core` (referenced here as the Brain's dependency) is also where the *actual* TradeW AI agent logic lives (~1,697 lines) — not in `services/tradew-ai`, which remains a README-only stub. Any future work assuming `services/tradew-ai` has runnable code should check `packages/ai-core` first.
+
 ## Related
 - [[../_INDEX.md]]
 - [SENTINEL_BRAIN_PROGRESS.md](../../SENTINEL_BRAIN_PROGRESS.md)
 - [[../Decisions/2026-07-17 - Obsidian Knowledge Layer adopted]]
+- [[../Research/2026-07-18 - Backend audit (Milestone 4 Step 0)]]

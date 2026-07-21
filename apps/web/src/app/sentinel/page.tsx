@@ -1,38 +1,60 @@
 'use client';
 
 import { useSentinel } from '@/lib/sentinel/useSentinel';
-import { AlertCallout } from '@/components/sentinel/AlertCallout';
-import { ReflectionCards } from '@/components/sentinel/ReflectionCards';
-import { AgentTimeline } from '@/components/sentinel/AgentTimeline';
-import { ObservationFeed } from '@/components/sentinel/ObservationFeed';
-import { SessionSummary } from '@/components/sentinel/SessionSummary';
-import { TradingJournal } from '@/components/sentinel/TradingJournal';
+import { useSessionStore } from '@/lib/store/sessionStore';
+import { classifyDay, extractMarketContext, extractSafetyFeed, suggestedLesson } from '@/lib/sentinel/deriveContext';
+import { DayClassificationCard } from '@/components/sentinel/DayClassificationCard';
+import { MarketContextPanel } from '@/components/sentinel/MarketContextPanel';
+import { LiveSafetyFeed } from '@/components/sentinel/LiveSafetyFeed';
+import { ContextualTraining } from '@/components/sentinel/ContextualTraining';
+import { SentinelTimeline } from '@/components/sentinel/SentinelTimeline';
+import { SentinelLocked } from '@/components/sentinel/SentinelLocked';
 import { DemoModeBanner } from '@/components/sentinel/DemoModeBanner';
 
 /**
- * Sentinel workspace — layout per docs/product-architecture/SENTINEL.md §5:
- * alert callout → reflection cards → (agent timeline / observation feed /
- * session summary) → trading journal. Shares the same top bar/sidebar chrome
- * as every other workspace (the root layout's `AppFrame` already wraps this
- * route) — this page no longer renders its own duplicate header. Observation
- * only: no buy/sell/entry/exit language anywhere.
+ * Sentinel — Market Context Intelligence workspace.
+ *
+ * Redesigned from first principles: this used to render an "AI dashboard"
+ * (AI Reflection Cards / Agent Activity Timeline / Observation Feed /
+ * Session Summary — archived to archive/, see archive/README.md) that
+ * exposed how the multi-agent backend reasons. It now answers five
+ * standing questions instead — what kind of day is this, what's the
+ * current market context, what should the trader watch, why, and (where
+ * genuinely derivable) which side has stronger confirmation — and shows
+ * only the conclusion, never the internal agent architecture producing it.
+ * Same backend, same auth, same entitlement gating (SUBSCRIPTIONS.md §4) —
+ * only the presentation changed.
+ *
+ * Shares the standard Sidebar/TopBar shell like every other workspace (a
+ * first pass rendered this with no chrome at all — reverted 2026-07-21,
+ * see nav-config.tsx: it left no way to navigate back out).
  */
 export default function SentinelPage() {
-  const { data, summary, journal, demoMode, loading, refresh, addJournal } = useSentinel();
+  const { data, demoMode, loading, refresh } = useSentinel();
+  const status = useSessionStore((s) => s.status);
+  const hasCapability = useSessionStore((s) => s.hasCapability);
 
   const observations = data?.observations ?? [];
   const signals = data?.signals ?? [];
+
+  const locked = status === 'authenticated' && !hasCapability('sentinel') && !demoMode;
+
+  if (locked) {
+    return <SentinelLocked />;
+  }
+
+  const day = classifyDay(signals);
+  const { tags, dimensions } = extractMarketContext(signals);
+  const safetyCards = extractSafetyFeed(observations, data?.synthesis ?? null);
+  const lesson = suggestedLesson(safetyCards);
+  const lastUpdated = loading ? 'refreshing…' : 'just now';
 
   return (
     <div className="min-h-screen">
       {demoMode && <DemoModeBanner />}
 
-      <main className="mx-auto max-w-[1200px] space-y-5 p-5">
-        <div className="flex items-center justify-end gap-3">
-          <span className="flex items-center gap-1.5 text-xs text-muted">
-            <span className={`inline-block h-2 w-2 rounded-full ${loading ? 'bg-amber' : 'bg-up'} animate-pulse`} />
-            {loading ? 'Synthesizing…' : 'Agent Desk: Observing'}
-          </span>
+      <main className="mx-auto max-w-[860px] space-y-5 p-5 sm:p-8">
+        <div className="flex items-center justify-end">
           <button
             onClick={() => void refresh()}
             className="rounded-lg border border-border2 px-3 py-1.5 text-xs text-muted hover:bg-hover"
@@ -41,20 +63,15 @@ export default function SentinelPage() {
           </button>
         </div>
 
-        <AlertCallout synthesis={data?.synthesis ?? null} />
-        <ReflectionCards observations={observations} />
-
-        <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <AgentTimeline signals={signals} />
-          <ObservationFeed observations={observations} />
-          <SessionSummary summary={summary} />
-        </section>
-
-        <TradingJournal journal={journal} onAdd={addJournal} />
+        <DayClassificationCard day={day} lastUpdated={lastUpdated} />
+        <MarketContextPanel tags={tags} dimensions={dimensions} />
+        <LiveSafetyFeed cards={safetyCards} />
+        <ContextualTraining title={lesson.title} blurb={lesson.blurb} />
+        <SentinelTimeline cards={safetyCards} />
 
         <p className="pb-6 text-center text-[11px] text-faint">
-          Sentinel observes, researches, remembers, teaches, explains and protects. It never executes trades and
-          never gives buy, sell, entry, exit or target recommendations.
+          Sentinel observes market context and behavior in parallel. It never executes trades and never gives buy,
+          sell, entry, exit or target recommendations.
         </p>
       </main>
     </div>

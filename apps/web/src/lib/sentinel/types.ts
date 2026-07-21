@@ -1,9 +1,15 @@
 /**
- * Shared Sentinel types + constants — used by both the full `/sentinel` page
- * (entitled experience) and the locked dock-panel teaser
- * (`terminal/panels/SentinelPanel.tsx`), so the two surfaces never drift on
- * agent labels/colors or the observation-only disclaimer. See
- * docs/product-architecture/SENTINEL.md §5.
+ * Shared Sentinel types + constants — the raw `ObserveResponse` shape both
+ * the full `/sentinel` page and the locked dock-panel teaser
+ * (`terminal/panels/SentinelPanel.tsx`) build on, so the two surfaces never
+ * drift on the observation-only disclaimer. See
+ * docs/product-architecture/SENTINEL.md §5 (pending a rewrite — see
+ * archive/README.md's 2026-07-21 entry).
+ *
+ * `AGENT_LABEL`/`AGENT_COLOR` below are kept for potential future
+ * developer-mode tooling but are deliberately NOT used by the redesigned
+ * production UI (`lib/sentinel/deriveContext.ts`'s `SOURCE_LABEL` replaces
+ * them there with neutral, non-implementation-revealing labels).
  */
 
 export type Synthesis = { content: string; pattern: string; confidence: number; disclaimer: string };
@@ -55,10 +61,10 @@ export const DEMO: ObserveResponse = {
       'Sentinel shares observations and educational context only. It is not investment advice and never recommends trades.',
   },
   observations: [
-    { agent: 'market-technical', category: 'market_structure_observation', pattern: 'elevated_vix', symbol: 'NIFTY', content: 'India VIX at 18.8 — elevated', evidence: ['India VIX at 18.8 — elevated'], confidence: 0.7 },
-    { agent: 'emotion', category: 'behavioral_pattern_observation', pattern: 'revenge_trading', symbol: 'NIFTY', content: '3 entries within 15 minutes of a losing exit in this session', evidence: [], confidence: 0.75 },
-    { agent: 'emotion', category: 'behavioral_pattern_observation', pattern: 'position_sizing_drift', symbol: 'NIFTY', content: 'Position sizing on the last trade was 2.3x your session average', evidence: [], confidence: 0.7 },
-    { agent: 'emotion', category: 'behavioral_pattern_observation', pattern: 'loss_streak', symbol: 'NIFTY', content: 'Longest losing streak this session: 3 trades', evidence: [], confidence: 0.7 },
+    { agent: 'market-technical', category: 'market_structure_observation', pattern: 'elevated_vix', symbol: 'NIFTY', content: 'India VIX at 18.8 — elevated', evidence: ['India VIX at 18.8 — elevated'], confidence: 0.7, createdAt: '2026-07-21T09:15:00+05:30' },
+    { agent: 'emotion', category: 'behavioral_pattern_observation', pattern: 'revenge_trading', symbol: 'NIFTY', content: '3 entries within 15 minutes of a losing exit in this session', evidence: ['3 entries within 15 min of a losing exit'], confidence: 0.75, createdAt: '2026-07-21T09:27:00+05:30' },
+    { agent: 'emotion', category: 'behavioral_pattern_observation', pattern: 'position_sizing_drift', symbol: 'NIFTY', content: 'Position sizing on the last trade was 2.3x your session average', evidence: ['Last trade 2.3x session average'], confidence: 0.7, createdAt: '2026-07-21T09:42:00+05:30' },
+    { agent: 'emotion', category: 'behavioral_pattern_observation', pattern: 'loss_streak', symbol: 'NIFTY', content: 'Longest losing streak this session: 3 trades', evidence: ['3 consecutive losing trades'], confidence: 0.7, createdAt: '2026-07-21T10:08:00+05:30' },
   ],
   signals: [
     { name: 'elevated_vix', agent: 'market-technical', triggered: true, weight: 0.3, evidence: ['India VIX at 18.8'] },

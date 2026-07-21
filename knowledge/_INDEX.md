@@ -26,7 +26,12 @@ Reusable engineering patterns, workflow improvements, development standards.
 
 ## Gotchas
 Debugging discoveries, bug resolutions, lessons learned — things that cost time once and shouldn't cost time twice.
-- (empty)
+- `packages/database/prisma/seed.ts`'s `seedDemoAccount()` throws `bcrypt.hash is not a function` — a pre-existing ts-node ESM/CJS interop bug, confirmed unrelated to any recent change via git diff, not yet fixed. See [[Patterns/2026-07-18 - Market Data Migration 1 executed (Quote revision, baseline established)]].
+- No ESLint config exists anywhere in the repo (pre-existing, not caused by any specific change) — confirmed during Market Data Migration 1.
+- `prisma migrate dev` refuses to run in a non-interactive/non-TTY shell, even with `--create-only` — hand-author migration SQL from `prisma migrate diff --script` output and apply with `prisma migrate deploy` instead. See [[Patterns/2026-07-18 - Market Data Migration 1 executed (Quote revision, baseline established)]].
+- Always diff a proposed Prisma migration against the **live DB** (`prisma migrate diff --from-url`), not just the schema file — schema.prisma can be edited ahead of any migration during a design conversation, silently drifting from what's actually applied.
+- Zustand stores with `persist` middleware need `skipHydration: true` + a manual `rehydrate()` in `useEffect` (deterministic seed data, no `Math.random()`/`Date.now()` before rehydration) to avoid SSR/client hydration mismatches. See [[Patterns/2026-07-18 - M3 dockable workspace (zustand store, dock engine, command palette)]].
+- A mount-only `useEffect` (e.g. in `AppFrame`) does not re-run on client-side route navigation — if "the action succeeded but the shell/UI didn't update," suspect a mount-only effect on a component that doesn't remount on navigation. See [[Patterns/2026-07-18 - M4 Step1 real auth session (sessionStore, AppFrame remount gotcha)]].
 
 ## Research
 Research summaries and verified findings from trusted external sources.
@@ -36,10 +41,11 @@ Research summaries and verified findings from trusted external sources.
 
 ## Agents
 Agent responsibilities and roster notes (Sentinel, TradeW AI, Claude Code subagents), prompt improvements.
-- (empty)
+- **Where the code actually lives (as of 2026-07-21):** TradeW AI's real agent/RAG/memory/provider logic is implemented in `packages/ai-core` (~1,697 lines) — not in `services/tradew-ai` or `agents/tradew-ai`, which remain README-only stubs. Sentinel's agents (Market & Technical Intelligence, Emotion Intelligence, Trap & Safety Intelligence, Compliance & Audit, Orchestrator) are real and live in `services/sentinel/src/{intelligence,compliance,orchestrator}/`. `agents/sentinel/` holds only a `definitions.json` config file, not source. Full agent roster and "never does" boundaries per agent are specified in `docs/product-architecture/TRADEW-AI.md`, `SENTINEL.md`, and `AGENT-ARCHITECTURE.md` (the cross-cutting naming/consolidation layer) — see [[Plans/2026-07-21 - Full platform and product audit]] for the reconciled summary.
 
 ## Plans
 Future implementation plans, milestones, strategy documentation.
+- [[Plans/2026-07-21 - Full platform and product audit]] — **start here.** Reconciles the engineering vault, all 21 product-architecture docs, a ground-truth code pass, and LLC-root consolidation history; lists corrections made to stale notes and open decisions still needing the user
 - [[Plans/2026-07-17 - Platform audit and implementation roadmap]] — full platform audit (endpoints, auth matrix, DB ownership, security findings, tech debt, production-readiness ratings) + prioritized build order + sprint plan
 - [[Plans/2026-07-17 - OCI Free Tier deployment]] — Oracle Cloud (host only, Postgres stays) deployment: Dockerfiles + prod compose + Caddy/SSL + backups + CI/CD for a single Ampere A1 arm64 VM; canonical design in infra/oci/README.md
 
