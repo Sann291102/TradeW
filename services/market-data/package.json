@@ -1,0 +1,30 @@
+{
+  "name": "@tradew/market-data-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Market data ingestion runtime. Owns the feed connection, writes Quote rows and the hot cache. Singleton by design — the broker feed connection set is a per-account resource. Never reached by apps/*.",
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main.js",
+    "scrip:sync": "ts-node -T --project tsconfig.scripts.json scripts/sync-scrip-master.ts"
+  },
+  "dependencies": {
+    "@nestjs/common": "^10.4.15",
+    "@nestjs/core": "^10.4.15",
+    "@nestjs/platform-express": "^10.4.15",
+    "@prisma/client": "^5.22.0",
+    "@tradew/market-data": "*",
+    "@tradew/types": "*",
+    "dotenv": "^16.4.5",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.4.8",
+    "@types/node": "^22.10.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  }
+}

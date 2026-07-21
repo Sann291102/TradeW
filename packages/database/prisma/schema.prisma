@@ -13,6 +13,11 @@ enum InstrumentType {
   INDEX
   OPTION
   EQUITY
+  /// Added with the scrip-master importer: the Dhan master classifies FUTIDX /
+  /// FUTSTK contracts, and without this value they would have to be mislabelled
+  /// as EQUITY or dropped. Not reachable under the default segment allowlist
+  /// (IDX_I + NSE_EQ) — it matters when F&O segments are enabled.
+  FUTURE
 }
 
 enum OrderSide {
