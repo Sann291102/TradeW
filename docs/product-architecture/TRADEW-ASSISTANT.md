@@ -53,7 +53,9 @@ Per the direction update (§5), the assistant is capable of opening and navigati
 
 ## 6. Auto-invoking Sentinel (premium reasoning)
 
-When an analysis intent needs premium institutional reasoning — "Analyze this chart" with full market/behavior/historical context, "Why is my P&L negative?" — and the user's entitlement allows it, TradeW AI **automatically escalates to Sentinel** without the user having to switch to the Sentinel workspace.
+**Scope (2026-07-21):** this flow applies platform-wide. The docked assistant is part of the shared shell, so it is available in every workspace — including Sentinel's, where a user is already looking at Sentinel's own output and the escalation is correspondingly less likely to add anything. A scope note briefly claimed the assistant was absent from Sentinel entirely, on the assumption Sentinel was becoming a standalone application; that direction was reversed the same day (`SENTINEL.md` §5, `TRADEW-OS.md` §1).
+
+When an analysis intent needs premium institutional reasoning — "Analyze this chart" with full market/behavior/historical context, "Why is my P&L negative?" — and the user's entitlement allows it, TradeW AI **automatically escalates to Sentinel** without the user having to switch to the Sentinel application.
 
 **This is orchestrated at the ingress, not a direct service call** (`TRADEW-OS.md` §2.4, and the architectural reconciliation this section exists to make explicit):
 

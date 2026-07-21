@@ -51,7 +51,7 @@ Cross-cutting systems that touch multiple pillars, each with its own doc:
 | 13 | Learning Hub Architecture | `LEARNING-HUB.md` |
 | 14 | Subscription System | `SUBSCRIPTIONS.md` |
 | 15 | TradingView Integration | `TRADINGVIEW-WORKSPACE.md` |
-| 16 | Dashboard Layout | `DESIGN-SYSTEM.md` §3 (existing Home/card-grid layout) — no change needed, Sentinel/Brain/Risk widgets already fit the existing card-grid pattern |
+| 16 | Dashboard Layout | `DESIGN-SYSTEM.md` §3 (existing Home/card-grid layout) — no change needed for Core Platform's own Risk/Brain-adjacent widgets. Sentinel surfaces on Home as a briefing card/widget linking into the `/sentinel` workspace, as one pillar among several (`SENTINEL.md` §5). |
 | 17 | Onboarding Flow | `ONBOARDING.md` |
 | 18 | Performance Strategy | §6 below |
 | 19 | Accessibility Checklist | §5 below |
@@ -73,7 +73,7 @@ Direction-update additions (2026-07-17), beyond the original 20:
 Framer Motion is a usability tool here, not decoration — it should communicate state change, not add visual noise on top of a dense trading terminal. Rules:
 
 - **Duration budget**: micro-interactions (hover, tab switch, tooltip) ≤150ms; panel/drawer/modal transitions 200–300ms; page/route transitions ≤350ms. A trading terminal is judged on speed-to-information — nothing should feel like it's making the user wait for a chart or the order book.
-- **What gets motion**: sidebar expand/collapse, docked AI panel open/close, drawer/modal enter-exit, skeleton-loader → content swap, watchlist row price-flash (color pulse on tick change — already implied by the existing HTML's `.up`/`.dn` classes and `pulse` keyframe), toast/notification enter-exit, route transitions between workspaces (Core/Research/Sentinel/Learning), search-result transitions.
+- **What gets motion**: sidebar expand/collapse, docked AI panel open/close, drawer/modal enter-exit, skeleton-loader → content swap, watchlist row price-flash (color pulse on tick change — already implied by the existing HTML's `.up`/`.dn` classes and `pulse` keyframe), toast/notification enter-exit, route transitions between shared workspaces (Core/Research/Sentinel/Learning), search-result transitions. Sentinel is one of these shared-shell route transitions like any other workspace (`SENTINEL.md` §5).
 - **What does NOT get motion**: live numeric ticks themselves (price/PnL values update instantly, no animated count-up — traders need the real number now, not an animated approach to it), anything on the order-submission critical path (confirm/submit buttons react immediately, no animation gating an action).
 - **Reduced motion**: honor `prefers-reduced-motion` — collapse all transition durations to near-zero, keep state changes but drop the animation, per the accessibility checklist (§5).
 - **Consistency**: one shared `packages/ui` motion-variants module (easing curves, duration tokens) — no per-component ad hoc `transition={{...}}` reinventing timing.
@@ -100,7 +100,7 @@ The brief asks for "UI → API Endpoint → Nest Service → Database Table → 
 ## 6. Performance strategy
 
 - **Real-time data path**: watchlist/chart/option-chain updates should not trigger full-page or full-list re-renders — row-level or cell-level updates only (the existing HTML's tick-level `.wrow` update pattern is the right granularity to preserve when porting to React).
-- **Code-splitting per workspace**: Core Platform, Research, Sentinel, Learning Hub, TradingView each lazy-load as separate route bundles — a user who never opens Learning Hub shouldn't pay its bundle cost.
+- **Code-splitting per workspace**: Core Platform, Research, Sentinel, Learning Hub and TradingView each lazy-load as separate route bundles within `apps/web` — a user who never opens Learning Hub shouldn't pay its bundle cost, and the same applies to Sentinel. Being one application does not mean one bundle; route-level splitting is how a shared shell stays cheap (`SENTINEL.md` §5).
 - **Skeleton loaders, not spinners**, for anything above ~150ms of expected latency (chart load, option chain fetch) — matches the existing "Skeleton loaders" motion guideline and keeps layout stable (no content-jump on load).
 - **AI assistant responses stream**, not wait-for-complete — TradeW AI/Sentinel responses render token-by-token where the underlying model call supports it, so the docked panel never shows a long blank wait.
 - **Knowledge Graph/pipeline work stays off the request path** — the Continuous Learning Pipeline (`CONTINUOUS-LEARNING-PIPELINE.md`) runs as background processing; no user-facing request ever blocks on a graph-validation pass.
@@ -119,7 +119,8 @@ Ordered by dependency, not by brief section order — each phase must leave the 
 | **5 — Research Vault + Knowledge Graph read surface** | Add `stage`/`validation_status` discriminator to the Brain (`RESEARCH-VAULT.md` §2); node-type taxonomy + read API on top of Sentinel's existing Brain (`KNOWLEDGE-GRAPH.md` §2) | none new — Sentinel Brain already exists; this is additive |
 | **6 — Continuous Learning Pipeline** | Validation Engine, Market/Research/Historical/News agent chain, n8n orchestration of the sequence (`CONTINUOUS-LEARNING-PIPELINE.md`, `AGENT-ARCHITECTURE.md` §3) | Phase 5 (needs Research Vault + graph to write into) |
 | **7 — Learning Hub v2 (self-updating)** | Lesson generation sourced from validated graph nodes (`LEARNING-HUB.md` §3) | Phase 4 + Phase 6 |
-| **8 — Sentinel subscription tiers + auto-invoke + explainability** | Full pricing UI (`SUBSCRIPTIONS.md` §3), Start Free Trial / Upgrade Plan gating; api-layer TradeW AI→Sentinel escalation (`TRADEW-ASSISTANT.md` §6); explainability block on premium responses (`EXPLAINABILITY.md`) | Phase 2 (entitlement) + Phase 5 (evidence to explain) |
+| **8 — Sentinel subscription tiers + auto-invoke + explainability** | Full pricing UI (`SUBSCRIPTIONS.md` §3), Start Free Trial / Upgrade Plan gating; api-layer TradeW AI→Sentinel escalation (`TRADEW-ASSISTANT.md` §6, Core Platform only); explainability block on premium responses (`EXPLAINABILITY.md`) | Phase 2 (entitlement) + Phase 5 (evidence to explain) |
+| ~~**8a — Sentinel standalone marketing site + application**~~ **(withdrawn 2026-07-21)** | Would have decoupled Sentinel's frontend from the shared shell — its own marketing site and its own minimal application shell replacing the shared Sidebar/TopBar. **Withdrawn the same day it was added**: it contradicted `TRADEW-OS.md` §1's one-ecosystem principle and was a misreading of the product vision. Sentinel is a workspace inside the shared shell (Phase 8), and its frontend needs no separate phase. A dedicated pre-auth *marketing page* remains fine and is a marketing deliverable, not an architecture phase. | — (withdrawn; no work implied) |
 | **9 — TradingView workspace** | `tv.tradew-setup.com` integration, SSO handoff (`TRADINGVIEW-WORKSPACE.md`) | Phase 1 (shared chrome must exist) |
 | **10 — Workspace continuity** | `workspace_session` layer, restore-on-return (`WORKSPACE-CONTINUITY.md`) | Phases 1–4 (needs surfaces/state worth restoring) |
 | **11 — n8n workflow build-out** | Implement the catalog in `N8N-WORKFLOWS.md` as usage from Phases 2–10 creates real triggers; n8n orchestrates agents, never holds logic (`AGENT-ARCHITECTURE.md` §3) | ongoing, per-phase — not a single big phase |

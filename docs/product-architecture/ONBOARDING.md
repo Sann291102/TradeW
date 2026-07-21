@@ -37,3 +37,19 @@ Not skippable end-to-end (per §1). Individual steps (Goals, Preferred Markets) 
 
 - `services/api` — new `onboarding_profile` table, gate on first login (redirect to onboarding if `completed_at` is null)
 - Sentinel (read-only) — risk profile seed
+
+## 7. Sentinel-originated signup — same flow, Sentinel-first landing (2026-07-21)
+
+A user may arrive from a dedicated Sentinel marketing page rather than the main site. That changes where they *land*, not what platform they join: they are onboarding onto TradeW, and Sentinel is the workspace they came for.
+
+```
+Signup → Welcome → Trading Experience → Goals → Preferred Markets → Risk Profile
+       → Workspace Setup → Platform Tour → Sentinel Introduction → /sentinel
+```
+
+- The flow is **§2's flow, unchanged** — every step still applies, because the user is joining the full platform and will have a sidebar with Dashboard, Markets, Trading, Portfolio and the rest.
+- **Workspace Setup** defaults `workspace_default` to `sentinel` for this entry path, so the user lands where they expected. That is the whole of the difference.
+- **Sentinel Introduction** (§4) is unchanged and still required before a live Sentinel session.
+- Still not skippable end-to-end (§5), still one `onboarding_profile` row (§3), with no fields left null on account of the entry point.
+
+> **Reversed direction, 2026-07-21.** This section previously specified a *separate, shorter* Sentinel-only onboarding that dropped Trading Experience, Goals, Preferred Markets, Workspace Setup and Platform Tour, on the grounds that "none of which exists inside the standalone Sentinel application." Sentinel is not a standalone application, so all of it does exist and none of it should be dropped — cutting those steps would have left Sentinel-originated users with a half-configured platform (`SENTINEL.md` §5, `TRADEW-OS.md` §1).

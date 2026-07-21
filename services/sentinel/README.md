@@ -12,4 +12,4 @@ The runtime for the **Sentinel (Safety Nets)** pillar — deliberately a separat
 
 **Hard boundary:** never blocks or delays an order — it observes and comments in parallel with the normal order flow, it is not a gate in it. Every observation is logged with evidence and a SEBI-relevant label by the Compliance & Audit agent.
 
-**Status:** design-only, no code exists yet.
+**Status (corrected 2026-07-21):** real, substantial code — not design-only. `src/` has 75 files including a fully implemented Persistent Knowledge Brain (`src/brain/`, ~78% of planned scope per `SENTINEL_BRAIN_PROGRESS.md`), compliance, explainability, intelligence, and orchestrator modules. Only Portfolio Intelligence remains unbuilt. Frontend note: this service is reached only through `services/api`, and that has never depended on how Sentinel is presented. Sentinel's frontend is the `/sentinel` workspace inside `apps/web`'s shared shell (`docs/product-architecture/SENTINEL.md` §5) — a 2026-07-21 direction change briefly proposed a standalone application instead and was reversed the same day, with no effect on this service either way.

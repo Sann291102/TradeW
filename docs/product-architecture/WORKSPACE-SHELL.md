@@ -2,6 +2,8 @@
 
 Status: **implemented (frontend-only), Phase 1 Milestone 3.** Governed by [`TRADEW-OS.md`](TRADEW-OS.md) §1 ("one continuous operating system, not a set of pages") and extends [`WORKSPACE-CONTINUITY.md`](WORKSPACE-CONTINUITY.md), whose client-local implementation lives here. No backend integration in this milestone — see §6 for the migration path.
 
+**Scope (2026-07-21):** this shell belongs to **every** workspace — Core Platform, TradeW AI, Sentinel and Learning Hub. Sentinel's `SentinelPanel` teaser (§4 below, in Core Platform's `/trade` dock) is a cross-sell into the Sentinel workspace, and the Sentinel workspace itself sits inside this same shell. A scope note briefly excluded Sentinel here on the assumption it was becoming a standalone product; that direction was reversed the same day (`SENTINEL.md` §5, `TRADEW-OS.md` §1).
+
 ## 1. Scope decision, stated up front
 
 "Dockable workspace" here means a **slot-based dock** — five zones (`left`, `main`, `auxA`, `auxB`, `right`) that panels move between, resize within, collapse, pin, close, and restore. It is **not** a free-floating, arbitrary-pixel-position window manager (that's a materially larger engineering scope — full multi-window docking like a native desktop app). Multi-monitor pop-out is intentionally **architecture only**: every panel carries a `detachable` flag and a disabled "Pop out" control, with no window-detach implementation, matching the milestone brief's own scoping for that item ("no implementation yet, only architecture support").

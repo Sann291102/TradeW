@@ -1,12 +1,8 @@
-# apps/terminal — THE TradeW app (Terminal v0.5)
+# apps/terminal — superseded static prototype (Terminal v0.5)
 
-**This is the application. One file: [`index.html`](index.html).**
+**Status (corrected 2026-07-21): historical reference only, superseded by `apps/web`.** This was originally documented as "THE TradeW app" — that framing is stale and incorrect. `apps/web` is the real, actively developed frontend (110+ real source files as of 2026-07-21); this folder is a single static `index.html` with no build step, kept for provenance per the repo's archive-don't-delete policy, not treated as canonical. Its Sentinel section in particular describes the old shared-workspace dashboard model (AI Reflection Cards, Agent Activity Timeline, Observation Feed, Session Summary) that both `apps/web` and `docs/product-architecture/SENTINEL.md` have since moved away from — see `SENTINEL.md` §5 for the current, binding Sentinel product model (a premium intelligence workspace inside the shared TradeW shell).
 
-Everything lives inside that single self-contained file — HTML, CSS and
-JavaScript for all workspaces: Core (Home / Markets / Trading / Portfolio /
-Option Chain / Alerts), TradeW AI (Research + AI dock) and the **Sentinel**
-workspace (agent cards, risk callouts, AI Reflection Cards, Agent Activity
-Timeline, Observation Feed, Session Summary, Trading Journal).
+One file: [`index.html`](index.html). Everything lived inside that single self-contained file — HTML, CSS and JavaScript for all workspaces: Core (Home / Markets / Trading / Portfolio / Option Chain / Alerts), TradeW AI (Research + AI dock) and the old Sentinel workspace layout described above.
 
 ## Run it
 

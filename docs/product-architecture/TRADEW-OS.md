@@ -10,7 +10,13 @@ It sits *above* `ARCHITECTURE.md` (which remains the binding technical service-b
 
 **TradeW is an AI-powered trading operating system — not an app, a chatbot, or a dashboard.** The benchmark experience is opening VS Code, Obsidian, or a Bloomberg Terminal: a single, coherent workspace a professional lives inside, not a broker website they visit. Concretely, this means:
 
-- **One workspace, many surfaces.** Core Platform, TradeW AI, Sentinel, Learning Hub, Research, TradingView are *surfaces of one OS*, sharing chrome, auth, state, and memory — never separate products bolted together (`README.md`'s "one app, N workspaces").
+- **One workspace, many surfaces. No exceptions.** Core Platform, TradeW AI, Sentinel, Learning Hub, Research, TradingView are *surfaces of one OS*, sharing chrome, auth, state, and memory — never separate products bolted together (`README.md`'s "one app, N workspaces"). The benchmark is Bloomberg Terminal, Microsoft 365, Adobe Creative Cloud, Notion: each contains many products and workspaces, and each is still experienced as **one ecosystem**. A user moving between Dashboard, Markets, Trading, Portfolio, Watchlists, Research, AI, Sentinel and Settings must never feel they have left the platform.
+
+  A surface may have its own workspace, layouts, screens and workflows where its job genuinely differs — Sentinel's does — but it lives inside the ecosystem and follows the same design language, navigation philosophy, authentication and user experience. **Sentinel is the platform's flagship premium intelligence workspace and the AI intelligence layer beneath the whole product, not a separate application.** It is one of the primary reasons users subscribe.
+
+  *(A 2026-07-21 direction change briefly made Sentinel an explicit exception here — its own marketing site and standalone application with no shared navigation. That was reversed on the same date as a misreading of the product vision; it was never executed in code. See `SENTINEL.md` §5.)*
+
+- **Marketing surface ≠ application architecture.** A dedicated Sentinel landing page, marketing site, domain or subdomain, and independent SEO and product marketing are all fine and expected — marketing reaches people who are not yet users. The rule binds from sign-in onward: once authenticated, Sentinel is experienced as part of TradeW. Never let a marketing decision propagate into the application's navigation, shell, or identity.
 - **The application is always alive.** Live data, ambient intelligence, and restored state mean the product is never a cold, empty page — it resumes (§ Workspace Continuity, `WORKSPACE-CONTINUITY.md`).
 - **Observation, never advice.** TradeW explains, reflects, and educates. It never issues buy/sell instructions and never places a trade on the user's behalf. This is a product identity, a compliance posture (SEBI/DPDP), and a hard architectural rule all at once — see §5.
 

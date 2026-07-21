@@ -6,6 +6,8 @@ Status: design, pre-implementation. Introduced by the Genesis v2 direction updat
 
 TradeW is an operating system, not a website — so it must **resume, not restart.** When a user returns, the workspace continues exactly where they left off. A cold, empty page on every visit is the single strongest tell that a product is "just another broker website," which `TRADEW-OS.md` §1 explicitly rejects.
 
+**Scope (2026-07-21):** this principle applies across the whole platform, Sentinel included. Because Sentinel is a workspace inside the same application, a user moving into it keeps the same session — open tabs, watchlists and charts are preserved, and Sentinel additionally resumes its own last-viewed observations rather than restarting cold. The `workspace_session` scope below (§2–3) therefore covers Sentinel as one more surface, not as a separate continuity domain. A scope note briefly split them apart on the assumption Sentinel was becoming a standalone application; that direction was reversed the same day (`SENTINEL.md` §5, `TRADEW-OS.md` §1).
+
 ## 2. What gets restored
 
 | State | Owned by | Notes |

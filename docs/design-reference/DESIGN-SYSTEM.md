@@ -31,9 +31,12 @@ Rule observed consistently: **green/red are reserved strictly for market-data di
 
 ## 3. Layout & navigation
 
+**Scope (2026-07-21):** this section governs **every** workspace — Core Platform, TradeW AI, Sentinel and Learning Hub. A scope note briefly excluded Sentinel here on the assumption it was becoming a standalone application; that direction was reversed the same day and the exclusion is withdrawn (`SENTINEL.md` §5, `TRADEW-OS.md` §1).
+
 - **Persistent left icon-rail sidebar** (collapsed by default to icons, expandable to icon+label): Home, Trading, Options, **Sentinel**, **Research**, Portfolio, Demo Trade, Explorer, with the user's avatar + name + mode ("Paper Trading") pinned at the bottom.
 - **Persistent top bar** on every page: current page name + live-status dot, then the index ticker strip (NIFTY 50, BANKNIFTY, SENSEX with inline % change, color-coded), then a right-aligned cluster: search (⌘-style shortcut hint), **Paper/Live toggle**, notification bell (with unread-count red dot), avatar.
-- This top bar + sidebar chrome is **shared across every workspace** (Core Platform, Research, Sentinel) — it's what makes the product feel like one app rather than three. Only the content area below/right of it changes per workspace.
+- This top bar + sidebar chrome is **shared across every workspace — Core Platform, TradeW AI/Research, Sentinel, and Learning Hub** — it's what makes them feel like one app rather than several. Only the content area below/right of it changes per workspace.
+- **Sentinel uses this chrome like every other workspace.** Its *content area* differs substantially, because market-context intelligence looks nothing like an order ticket — but the sidebar, top bar, tokens, typography and component inventory are the shared ones. A pre-auth Sentinel marketing site may have its own lightweight nav (logo, Product, How It Works, Pricing, FAQ, Start Free); that is a marketing surface, and it ends at sign-in.
 - Content areas use a **card grid** (2–3 columns on desktop), each card a rounded, bordered, dark-surface panel with an icon + title header row.
 - A **docked right-side panel** (≈420px) is the TradeW AI chat surface — present as an overlay on top of Core Platform pages (Home, Trading), not a separate route. A **floating circular gradient button** (bottom-right, sparkle icon) reopens it from anywhere it's been dismissed.
 
@@ -47,13 +50,12 @@ Rule observed consistently: **green/red are reserved strictly for market-data di
 | Tab bar | Portfolio (Holdings/Positions/Performance/Journal), Research (Overview/Fundamentals/.../Risk Factors) | underline-style active tab, horizontal scroll if overflow |
 | Donut chart | Sector Allocation | center label shows a summary count ("6 Sectors") |
 | Horizontal bar-in-row | Trending Sectors | label + thin bar + % value, bar length encodes magnitude |
-| Sentiment/category pill | Live News (positive/negative/neutral), Sentinel traps ("Bear Trap"), Journal moods (Focused/Anxious/Confident/Frustrated) | small rounded pill, color mapped to meaning, not decorative |
+| Sentiment/category pill | Live News (positive/negative/neutral), Journal moods (Focused/Anxious/Confident/Frustrated) | small rounded pill, color mapped to meaning, not decorative |
 | Confidence-scored insight card | Active AI Insights | headline + "X min ago · NN% confidence" |
 | Chat message bubble | TradeW AI dock | AI messages left-aligned with a small agent-icon avatar, user messages right-aligned; below each AI message, contextual quick-action chips ("Explain this chart", "Explain my portfolio", "Market pulse") |
-| Disclaimer footer | TradeW AI dock, Sentinel eyebrow copy | persistent small-text line ("TradeW AI shares observations only — never investment advice.") — **treat this as a required component, not optional copy** |
-| Reflection card | Sentinel | category pill ("Exit Discipline") + observation text + "Reflect with AI ↗" link |
-| Agent activity timeline | Sentinel | colored dot + observation text + timestamp, reverse-chronological |
-| Session summary stat list | Sentinel | label/value rows (Trades Today, Plan Adherence %, Discipline Δ, Flagged Events) |
+| Disclaimer footer | TradeW AI dock | persistent small-text line ("TradeW AI shares observations only — never investment advice.") — **treat this as a required component, not optional copy** |
+
+**Sentinel's components are part of this system** and are built from the tokens, typography and primitives above. Its workspace-specific set (Day Classification card, Market Context panel, Live Safety Feed cards with expandable "Why" panels, Contextual Training, Timeline) is *specified* in `docs/product-architecture/SENTINEL.md` §5 because it is domain-specific, in the same way any workspace's content components are — not because Sentinel sits outside this design system. A note briefly claimed the opposite while Sentinel was assumed to be a standalone product; that assumption was reversed (§3). The Reflection Card / Agent Activity Timeline / Session Summary components previously listed here were archived in the same-day Sentinel content redesign, which is unrelated to the shell question.
 | Chart toolbar | Trading, Options | symbol + live price/change, timeframe pill group (1m/5m/15m/1H/4H/1D/1W), Indicators button with count badge, Presets dropdown, layout-variant icons, AI sparkle shortcut, fullscreen |
 | Drawing tool rail | Trading (chart left edge) | cursor, trendline, horizontal line, rectangle, fib, text, ruler, eraser |
 | Payoff visualizer | Options strategy builder | filled profit(green)/loss(red) region chart with Max Profit / Spot / Max Loss labels |
@@ -63,7 +65,7 @@ Rule observed consistently: **green/red are reserved strictly for market-data di
 1. **The AI is always reachable, never blocking.** The dock can be dismissed and reopened via the floating button; it never appears as a modal that stops other work.
 2. **Every AI-surfaced number cites its own confidence and recency** ("82% confidence", "5 min ago") — this isn't optional styling, it's the compliance/trust pattern the whole product leans on. Carry it into every AI-sourced card, not just the Home page.
 3. **Compliance framing is a first-class UI element, not a legal footnote** — the "OBSERVATION_ONLY · NOT FINANCIAL ADVICE" and "never investment advice" lines appear inline in the actual layout, not in a buried terms page.
-4. **Sentinel's tone is diagnostic, not directive** — reflection cards ask questions ("What pattern do you notice about your exit timing?") rather than issue instructions. Any new Sentinel copy should default to this register.
+4. **Sentinel's tone is diagnostic, not directive** — its cards ask questions or state plain observations ("What pattern do you notice about your exit timing?") rather than issue instructions. Any new Sentinel copy should default to this register, per its own current component set (`docs/product-architecture/SENTINEL.md` §5).
 
 ## 6. Open items to confirm before `packages/ui` is built
 

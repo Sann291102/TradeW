@@ -34,7 +34,7 @@ UI must show savings explicitly (e.g. "Save ₹4,800 vs monthly" on the 12-month
 
 Sentinel's entitlement architecture is already locked as part of the platform's AI foundation — `services/api` is the single chokepoint that checks a user's active entitlement before proxying a request to `services/sentinel`. This document doesn't introduce a new gating mechanism; it extends the same check to two more resources:
 
-- Sentinel nav/dashboard/widgets: always visible; premium analysis content is replaced with **Start Free Trial** / **Upgrade Plan** CTAs when the entitlement check fails — per the brief, never a silently-missing feature.
+- Sentinel has **two** gating surfaces (2026-07-21): a pre-auth marketing page's "Start Free" CTA, and — inside the application — an authenticated-but-unentitled user seeing an in-app locked state with an **Upgrade Plan** CTA in place of live observations. Either way the Sentinel nav item stays visible; entitlement gates reasoning, not visibility (`TRADEW-OS.md` §3). A note here briefly described the second surface as belonging to a separate Sentinel application; it is the `/sentinel` workspace inside TradeW (`SENTINEL.md` §5).
 - Learning Hub: lesson *listing* stays open; lesson *body* content requires the lifetime entitlement (`LEARNING-HUB.md` §5).
 - Demo trading: order-submission path checks the daily counter / active pass before allowing execution (§1).
 

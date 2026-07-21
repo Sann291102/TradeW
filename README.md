@@ -9,7 +9,7 @@ Every subfolder below has its own `README.md` explaining: what it's for, what re
 ```
 TradeW/
 ├── ARCHITECTURE.md          ← read this first
-├── apps/           web, admin, mobile — user-facing frontends (web hosts Core Platform + Research + Sentinel as one app)
+├── apps/           web, admin, mobile — user-facing frontends (web hosts every workspace as one app: Core Platform, Research, Sentinel, Learning — see TRADEW-OS.md §1)
 ├── services/       api, trading-engine, market-data, tradew-ai, sentinel, notification, auth, analytics
 ├── packages/       ui, types, sdk, database, shared — code shared across apps/services
 ├── agents/         declarative agent definitions, split into tradew-ai/ and sentinel/ — separate systems

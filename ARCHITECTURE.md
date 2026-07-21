@@ -58,6 +58,16 @@ The audited backend already has a working auth module (JWT, refresh tokens, audi
 
 `services/auth/` exists now as the **contract boundary**: it holds the auth module's public interface (guards, DTOs, token-validation logic) as a package `services/api` imports internally. When load actually requires it (roadmap v0.9's 50k-concurrent-session target is the natural trigger), the extraction is a lift of that already-isolated module into its own deployable, not a rewrite. Don't extract it before then.
 
+### 2.2 Sentinel is a workspace inside `apps/web`, like every other pillar
+
+Every pillar — Core Platform, TradeW AI, Sentinel, Learning Hub — is served by `apps/web` as one shared workspace shell: sidebar, top bar, and all, per §4 and `docs/design-reference/DESIGN-SYSTEM.md` §3. Sentinel is the platform's flagship premium intelligence workspace and the AI intelligence layer underneath the rest of the product. It is **not** a separate application.
+
+Sentinel's *workspace* differs from the others because its job differs — different layouts, screens and workflows — but it uses the same shell, the same design language, the same navigation, the same auth and the same entitlement system. A user moving into Sentinel has not left TradeW.
+
+**Marketing is a separate concern from application architecture.** A dedicated Sentinel landing page, marketing site or subdomain is fine and expected. The rule binds from sign-in onward: once authenticated, Sentinel is part of the platform (`TRADEW-OS.md` §1).
+
+> **Reversed direction, 2026-07-21.** This section previously stated the opposite — that Sentinel shipped as its own marketing site and standalone application with no shared sidebar. That was a misreading of the product vision and has been reversed. It was **never executed in code**: `apps/web/src/app/sentinel/page.tsx` still renders inside the shared shell, and an earlier attempt at a chrome-less Sentinel was itself reverted the same day because it left users no way to navigate back out. See `docs/product-architecture/SENTINEL.md` §5.
+
 ---
 
 ## 3. Communication: NestJS API ↔ Python trading engine
@@ -95,7 +105,7 @@ TradeW AI (Research) and Sentinel (Safety Nets) are **deliberately separate syst
 - `services/tradew-ai` and `services/sentinel` are the two **runtimes** — each loads only its own subfolder's definitions, each exposes its own internal endpoint (`POST /agents/:name/invoke`), called only by `services/api` — never directly by `apps/*` — so there's one auth/rate-limit/audit chokepoint per system for compliance review later.
 - Model access goes through the Anthropic API directly (see the workspace's `claude-api` reference for model/pricing/caching choices); this is independent of the separate `TradingBot` project's own Anthropic integration, which stays out of scope per the earlier decision.
 - Every agent response that touches trading data carries a disclaimer and, where relevant, a structured "suggested next step" the user must explicitly act on — the UI converts that into an order only via the normal order-flow path in §3, never automatically. Sentinel additionally never blocks or delays the order flow — it comments in parallel, it is not a gate.
-- Both systems share the same `apps/web` UI shell as workspaces — see `docs/product-architecture/README.md` for the "one app, three workspaces" model and `docs/design-reference/DESIGN-SYSTEM.md` for the shared visual system, extracted from the Emergent mockups and now binding for `packages/ui`.
+- TradeW AI **and Sentinel** share the same `apps/web` UI shell as workspaces — see `docs/product-architecture/README.md` for the "one app, N workspaces" model and `docs/design-reference/DESIGN-SYSTEM.md` for the shared visual system, extracted from the Emergent mockups and now binding for `packages/ui`. Sentinel's workspace has its own layouts and workflows because its job differs, but it sits under the same sidebar, top bar, design language, auth and entitlements as every other pillar (§2.2, `TRADEW-OS.md` §1, `docs/product-architecture/SENTINEL.md` §5).
 
 ---
 

@@ -6,6 +6,8 @@ Status: design, pre-implementation. Grounded in the Emergent mockups' actual Sen
 
 TradeW AI answers "what does this mean?" (market/company/portfolio understanding). Sentinel answers "am I about to do something I'll regret?" (behavioral and structural risk). Different question, different data (Sentinel needs the user's *own* trading behavior history, not just market data), different tone (diagnostic and reflective, not explanatory), and — per the mockup — a visibly different workspace with its own nav entry, not a tab inside Research.
 
+"Separate system" here means a separate **runtime and agent roster** (`services/sentinel`, `agents/sentinel/`), not a separate product. Sentinel is a workspace inside TradeW and the AI intelligence layer beneath the platform — see §5.
+
 ## 2. Agent architecture (as already defined in the mockup — not reinvented here)
 
 The landing page's "Live Agent Desk Preview" and the four feature cards on the Sentinel marketing section map directly to four agents plus one synthesizer:
@@ -15,7 +17,7 @@ The landing page's "Live Agent Desk Preview" and the four feature cards on the S
 | **Market & Technical Intelligence** | Continuously observes technical structure — OHLC, EMA, RSI, VWAP, CPR, volume, OI, IV — across whatever the user is watching or holding | live market data, option chain |
 | **Emotion Intelligence** | Observes the user's own behavior in-session: entry pacing, position sizing relative to their average, exit timing, discipline drift, revenge-trading and FOMO patterns | user's own order/trade history, session timing (via `services/trading-engine`, read-only) |
 | **Trap & Safety Intelligence** | Specializes in composite trap detection (§3) — combines signals from the two agents above rather than watching for any single pattern in isolation | outputs of Market & Technical + Emotion agents, news feed |
-| **Compliance & Audit** | Logs every observation from the other three agents with evidence and a SEBI-relevant category label, building the audit trail the mockup's "Observation Feed" and "Agent Activity Timeline" are backed by | outputs of the other three agents |
+| **Compliance & Audit** | Logs every observation from the other three agents with evidence and a SEBI-relevant category label, building the audit trail each Live Safety Feed card's "Why" panel draws its evidence from (§4, §5) | outputs of the other three agents |
 | **Sentinel Orchestrator** | Synthesizes across all four into the single, user-facing warning or reflection — this is the "combine multiple signals before warning" behavior explicitly wanted; no individual agent talks to the user directly | outputs of all four agents above |
 
 This mirrors the UI states already shown ("observing" / "observing" / "synthesizing") — the orchestrator is the only one that produces user-facing copy; the other agents produce structured internal observations it draws on.
@@ -43,30 +45,47 @@ Each of these is a **signal**, not a standalone verdict. The Trap & Safety Intel
 
 **Output tone contract** (already established by the mockup, keep it exactly): explain the concern, cite the specific evidence, suggest waiting for confirmation — never a flat "don't buy." E.g.: *"Price has broken above resistance, but volume is below the 20-day average and open interest is declining. This resembles a low-conviction breakout. Consider waiting for confirmation."* Every generated warning should follow this **evidence → pattern-name → soft suggestion** structure.
 
-## 4. Full feature set (safety nets + supporting workspace features)
+## 4. Full feature set (safety nets + supporting application features)
 
-From the user's list, plus what the mockup shows is already built around them:
+Updated 2026-07-21 to map onto the current, binding UI (§5) rather than the archived shared-shell dashboard. Every item below is still the same underlying agent behavior — only which component surfaces it changed:
 
-- Emotion Detection, FOMO Detection, Revenge Trading Detection, Overtrading Detection — outputs of the Emotion Intelligence agent, surfaced via **Reflection Cards** ("Exit Discipline", "Revenge Trading", "Holding Time" categories seen in the mockup), each ending in a "Reflect with AI ↗" prompt, not a verdict.
-- Position Sizing Check — Emotion Intelligence agent, surfaced in the **Observation Feed** ("Position sizing on last trade was 2.4x your average — noted for journal review").
-- Stop Loss Validation, Trail Stop Assistant, Exit Timing Coach, Wait Confirmation — Market & Technical + Emotion agents jointly; these are the "soft suggestion" half of the Trap & Safety output, not separate UI sections.
-- Trap Detection — Trap & Safety Intelligence agent, §3.
-- Risk Warnings — Sentinel Orchestrator's synthesized output, shown as the top-level alert cards (e.g. the "Bear Trap" callout card).
-- Trading Psychology Coach — the **Trading Journal** (mood-tagged entries: Focused/Anxious/Confident/Frustrated, with "flagged by AI Sentinel" annotations) plus the **Session Summary** panel (Trades Today, Plan Adherence %, Discipline Δ, Flagged Events) — this is the longitudinal, reflective layer above the real-time Reflection Cards.
-- **Agent Activity Timeline** and **Observation Feed** — the Compliance & Audit agent's user-visible output; every entry here must be traceable to a logged, evidenced observation (ARCHITECTURE.md's SEBI/DPDP compliance-first requirement).
+- Emotion Detection, FOMO Detection, Revenge Trading Detection, Overtrading Detection, Position Sizing Check — outputs of the Emotion Intelligence agent, surfaced as **Live Safety Feed** cards (e.g. "Pause", "Enough", "Book & Breathe"), each expandable into a "Why" panel showing evidence and confidence — never a verdict.
+- Stop Loss Validation, Trail Stop Assistant, Exit Timing Coach, Wait Confirmation — Market & Technical + Emotion agents jointly, also surfaced as Live Safety Feed cards ("Wait & Watch", "Trail or Exit"); these are the "soft suggestion" half of the Trap & Safety output, not separate UI sections.
+- Trap Detection — Trap & Safety Intelligence agent, §3, reflected in the Market Context panel's trap-probability reading and, when a specific signal triggers, its own Live Safety Feed card.
+- Risk Warnings — Sentinel Orchestrator's synthesized output, shown as the pinned, highest-priority card at the top of the Live Safety Feed (replaces the old top-level alert callout card).
+- Trading Psychology Coach — today expressed as **Contextual Training**, surfacing the lesson tied to the session's dominant observation. The mood-tagged Trading Journal component still exists in code but isn't part of the current bound UI — reintroducing it as a longitudinal view is an open product decision, not yet specified here.
+- **Compliance & Audit agent's output** — every observation is still logged with evidence server-side exactly as before (ARCHITECTURE.md's SEBI/DPDP compliance-first requirement); it is no longer exposed as a dedicated user-facing "Agent Activity Timeline"/"Observation Feed" — evidence is surfaced per-card via each Live Safety Feed card's "Why" panel instead. A full historical audit view, if needed, is an admin/backend concern, not a Sentinel-application feature today.
 
-## 5. UI workspace layout (per the mockup, don't redesign this)
+## 5. UI: a premium workspace inside TradeW
 
-Sentinel is a full nav-level workspace (not a dock overlay like TradeW AI): top alert callout cards → AI Reflection Cards row → three-column footer (Agent Activity Timeline / Observation Feed / Session Summary) → Trading Journal below the fold. Shares the same top bar/sidebar chrome as every other workspace (design system §3).
+**Status: binding.** Sentinel shares the shell described in `docs/design-reference/DESIGN-SYSTEM.md` §3 — persistent icon-rail sidebar, shared top bar — with Core Platform, TradeW AI and Learning Hub. It is the platform's flagship premium intelligence workspace and the AI intelligence layer beneath the rest of the product, reached from the shared sidebar like any other pillar (`TRADEW-OS.md` §1, `ARCHITECTURE.md` §2.2).
 
-**Unified with the shared shell (Phase 1 redesign).** Before this pass, `/sentinel/page.tsx` rendered its own duplicate header/nav and raw hex colors, bypassing both the root layout's `AppFrame` and the design-token system — a violation of the paragraph above. It's now a thin composition (`apps/web/src/app/sentinel/page.tsx`) over token-based components in `apps/web/src/components/sentinel/` (`AlertCallout`, `ReflectionCards`, `AgentTimeline`, `ObservationFeed`, `SessionSummary`, `TradingJournal`, `DemoModeBanner`), with data/refresh/journal logic extracted to `apps/web/src/lib/sentinel/useSentinel.ts` — both live endpoints (`POST /sentinel/observe`, `POST /sentinel/journal`) and the offline demo-mode fallback are unchanged, just relocated.
+Sentinel's workspace has its own layouts, screens and workflows because what it does differs from trading or research. That is a workspace difference, not a product boundary: same shell, same design language, same navigation, same auth, same entitlements. A user entering Sentinel has not left TradeW.
 
-There are deliberately **two** Sentinel surfaces, sharing constants from `apps/web/src/lib/sentinel/types.ts` (`AGENT_LABEL`, `AGENT_COLOR`, `OBSERVATION_ONLY_DISCLAIMER`) so they never drift: the full `/sentinel` page above is the **entitled experience**; `terminal/panels/SentinelPanel.tsx` is a **locked/upgrade teaser** shown in the `/trade` dock for non-entitled users (per `SUBSCRIPTIONS.md` §4) — it intentionally renders no live observation content.
+**Marketing (pre-auth) is a separate concern.** A dedicated Sentinel landing page, marketing site, domain or subdomain — hero, problem statement, how it works, feature overview, screenshots, pricing (per `SUBSCRIPTIONS.md`), FAQ, "Start Free" CTA — is fine and expected, because marketing reaches people who are not yet users. The boundary is sign-in: after authentication the user lands in the TradeW application, in the Sentinel workspace, with the full shared shell around them.
+
+**Entitlement gates reasoning, not visibility.** Sentinel is always visible in the sidebar. An authenticated but unentitled user sees the workspace with an in-app locked state and an Upgrade CTA in place of live observations — never a hidden or missing nav item (`SUBSCRIPTIONS.md` §4, `TRADEW-OS.md` §3).
+
+> **Reversed direction, 2026-07-21.** This section previously specified a standalone marketing site plus a separate Sentinel-only application with no shared sidebar, no TradeW branding and no cross-links to other pillars. That was a misreading of the product vision — TradeW is one ecosystem in the sense that Bloomberg Terminal, Microsoft 365, Adobe Creative Cloud and Notion are one ecosystem — and it has been reversed.
+>
+> It was **never executed in code.** `apps/web/src/app/sentinel/page.tsx` renders inside the shared shell today. An earlier attempt at a chrome-less Sentinel page was reverted the same day for a concrete reason worth remembering: it left the user no way to navigate back out.
+
+The workspace answers the same five standing questions this document has always specified, rendered as:
+
+- a **Day Classification** hero card — day label (Trend/Selective/Choppy/Trap-Prone/Quiet), confidence, plain-language explanation, supporting signals;
+- a **Market Context** panel — volatility, momentum, trap probability, market structure, and any dimension without a real backing signal (e.g. institutional participation) reported honestly as not yet available, never fabricated;
+- a **Live Safety Feed** — chronological, plain-language cards (Wait & Watch, Enough, Book & Breathe, Trail or Exit, Pause, Setup Forming), each expandable into a **Why** panel showing evidence, confidence, and a neutral signal-source label (e.g. "Behavioral signal", "Structural risk signal") — never an internal agent name;
+- **Contextual Training** — the Learning Hub lesson tied to today's dominant observation;
+- a closing **Timeline** of session observations.
+
+**Everything platform-level is shared, and must never be duplicated for Sentinel:** authentication, users, organizations, permissions, entitlements, billing, market data, portfolio data, orders, positions, watchlists, AI infrastructure, backend services, APIs, database, event system, notifications. `services/sentinel` is reached only through `services/api` as the single ingress, gated by the same JWT + entitlement/capability system as every other pillar (`hasCapability('sentinel')`). A second implementation of any of the above for Sentinel is an architecture violation (`TRADEW-OS.md` §2.1, "extend before you build").
+
+`terminal/panels/SentinelPanel.tsx` (Core Platform's `/trade` dock) remains a locked/upgrade teaser cross-selling Sentinel — it links to the `/sentinel` workspace in the same application, not out to a separate product.
 
 ## 6. Compliance guardrails (non-negotiable)
 
 - Sentinel **never blocks or delays an order** — it observes and comments in parallel with the normal order flow (ARCHITECTURE.md §3), it is not a gate in that flow.
-- Every observation is logged with evidence and a SEBI-relevant label via the Compliance & Audit agent — this is what makes the Observation Feed defensible, not just a UX flourish.
+- Every observation is logged with evidence and a SEBI-relevant label via the Compliance & Audit agent — this is what makes each Live Safety Feed card's "Why" panel defensible, not just a UX flourish.
 - Language is always diagnostic/reflective ("Consider waiting for confirmation", "What pattern do you notice?"), never directive ("Don't buy", "Sell now").
 
 ## 7. Data dependencies
