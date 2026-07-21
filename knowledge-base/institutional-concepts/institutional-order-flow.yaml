@@ -1,0 +1,44 @@
+id: institutional-order-flow
+name: Institutional Order Flow
+domain: institutional-concepts
+aliases: [size, smart money flow, large participant flow]
+status: canonical
+maturity: established
+confidence: 0.8
+summary: The execution behaviour of participants whose order size is large relative to available liquidity, constrained by the need to avoid moving price against themselves.
+definition: >
+  Order flow from participants whose intended position exceeds what the book
+  can absorb at once. This constraint dictates behaviour: orders are split,
+  worked over time, and directed toward moments of maximum available liquidity.
+  The resulting footprint differs systematically from that of small orders.
+explainer: >
+  Institutional flow is a structural constraint, not a conspiracy. Anyone
+  needing to transact large size faces the same problem — visible size moves
+  price against you — and the solutions are limited and therefore recognisable.
+  Sentinel describes the footprint and the constraint that produces it, and
+  avoids the common framing in which large participants are portrayed as
+  deliberately targeting smaller ones.
+observable_when:
+  - repeated similarly-sized executions appear at one price area over time
+  - depth replenishes persistently at a level after being consumed
+  - volume concentrates at times of day when liquidity is deepest
+relations:
+  - to: liquidity
+    type: depends_on
+    weight: 0.9
+  - to: iceberg-order
+    type: causes
+    weight: 0.85
+  - to: block-trade
+    type: causes
+    weight: 0.8
+  - to: accumulation
+    type: causes
+    weight: 0.75
+  - to: order-book-depth
+    type: measured_by
+    weight: 0.7
+  - to: market-participant
+    type: part_of
+    weight: 0.8
+tags: [institutional, order-flow, foundational]

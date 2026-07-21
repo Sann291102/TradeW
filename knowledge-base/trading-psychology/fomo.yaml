@@ -1,0 +1,42 @@
+id: fomo
+name: Fear of Missing Out
+domain: trading-psychology
+aliases: [FOMO, chase behaviour]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: Acting on a move already underway out of discomfort at being absent from it rather than from a prior intention.
+definition: >
+  A behavioural pattern in which participation is triggered by the observation
+  that a move is happening, typically late in that move and at progressively
+  worse levels. The defining feature is that the decision was not part of any
+  prior plan — the move itself supplied the reason.
+explainer: >
+  FOMO is identifiable in behaviour rather than inferred from feeling: acting
+  outside a stated plan, at a worse level than originally considered, shortly
+  after a rapid move. Sentinel describes what the behaviour pattern was and
+  what conditions preceded it, without diagnosing the person or telling them
+  what to do differently.
+observable_when:
+  - action follows a rapid directional move rather than preceding it
+  - the action was not present in any prior stated plan
+  - execution occurs materially away from levels previously considered
+relations:
+  - to: trend-day
+    type: depends_on
+    weight: 0.7
+    note: Persistent one-way movement is the most common trigger condition.
+  - to: overtrading
+    type: causes
+    weight: 0.75
+  - to: bull-trap
+    type: amplifies
+    weight: 0.75
+  - to: position-sizing
+    type: contradicts
+    weight: 0.7
+    note: Unplanned entries are the most common source of oversized positions.
+  - to: revenge-trading
+    type: similar_to
+    weight: 0.6
+tags: [psychology, behaviour, observable]

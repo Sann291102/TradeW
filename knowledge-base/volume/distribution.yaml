@@ -1,0 +1,33 @@
+id: distribution
+name: Distribution
+domain: volume
+aliases: [supply absorption, topping process]
+status: canonical
+maturity: established
+confidence: 0.75
+summary: Sustained selling absorbed within a contained price area, visible as volume building without downward price progress.
+definition: >
+  The directional inverse of accumulation: substantial volume transacts within
+  a narrow range while price fails to advance, interpreted as size being
+  reduced into available demand. As with accumulation, this is an inference
+  from the volume-to-progress relationship.
+explainer: >
+  Distribution typically occurs while conditions still appear constructive,
+  because that is when there is demand to sell into. This is why tops often
+  form slowly and feel uneventful, in contrast to the abruptness of bottoms.
+  Sentinel reports the footprint and its ambiguity together.
+observable_when:
+  - volume is elevated while upward price progress stalls
+  - repeated upside probes fail to hold their gains
+  - the upper boundary of the area caps multiple attempts
+relations:
+  - to: institutional-order-flow
+    type: depends_on
+    weight: 0.8
+  - to: trading-range
+    type: part_of
+    weight: 0.75
+  - to: bull-trap
+    type: precedes
+    weight: 0.65
+tags: [volume, institutional, inference]

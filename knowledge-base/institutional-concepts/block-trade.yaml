@@ -1,0 +1,35 @@
+id: block-trade
+name: Block Trade
+domain: institutional-concepts
+aliases: [bulk deal, negotiated trade]
+status: canonical
+maturity: established
+confidence: 0.9
+summary: A large transaction negotiated away from the continuous order book and reported separately.
+definition: >
+  A single large transaction executed bilaterally or through a dedicated
+  facility rather than by working the order book, then reported to the market.
+  Because the price is negotiated, block prints can differ from prevailing
+  market price and do not represent continuous-market supply and demand.
+explainer: >
+  Block prints are frequently misread as sudden surges of interest at the
+  reported time. The transaction was typically negotiated earlier, and the
+  print is a disclosure rather than a live event. Sentinel distinguishes block
+  volume from continuous-market volume so that participation evidence is not
+  inflated by transactions that never touched the book.
+observable_when:
+  - an outsized single print appears without corresponding order book activity
+  - the print price sits away from prevailing market price
+  - exchange disclosure identifies the trade as negotiated or bulk
+relations:
+  - to: institutional-order-flow
+    type: is_a
+    weight: 0.85
+  - to: volume-confirmation
+    type: contradicts
+    weight: 0.7
+    note: Block volume does not evidence continuous-market participation.
+  - to: liquidity
+    type: depends_on
+    weight: 0.6
+tags: [institutional, reporting, data-quality]

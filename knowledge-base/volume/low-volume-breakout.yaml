@@ -1,0 +1,40 @@
+id: low-volume-breakout
+name: Low Volume Breakout
+domain: volume
+aliases: [thin break, unsupported break]
+status: canonical
+maturity: established
+confidence: 0.83
+summary: A break of a structural boundary occurring on volume at or below baseline, indicating the move lacked broad participation.
+definition: >
+  A boundary break that is not accompanied by volume expansion. The absence of
+  participation means the move was achieved against thin resistance rather than
+  through genuine demand, which historically associates with a higher incidence
+  of failure than breaks on expanding volume.
+explainer: >
+  Thin conditions make price easy to move and therefore easy to misread. A
+  break achieved on low volume has not demonstrated that participants agree
+  with the new price — only that few were present to disagree. Sentinel treats
+  this as one corroborating component of a trap reading, never as sufficient
+  on its own.
+observable_when:
+  - the break bar's volume is at or below its recent same-time-of-day average
+  - the order book was visibly thin ahead of the break
+  - the break occurs outside primary liquidity hours
+relations:
+  - to: breakout
+    type: is_a
+    weight: 0.8
+  - to: volume-confirmation
+    type: contradicts
+    weight: 0.9
+  - to: false-breakout
+    type: confirms
+    weight: 0.8
+  - to: liquidity
+    type: depends_on
+    weight: 0.85
+  - to: slippage
+    type: causes
+    weight: 0.6
+tags: [volume, trap-component, evidence]

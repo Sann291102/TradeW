@@ -1,0 +1,40 @@
+id: gamma-exposure
+name: Gamma Exposure
+domain: options
+aliases: [GEX, dealer gamma, net gamma]
+status: canonical
+maturity: emerging
+confidence: 0.72
+summary: The aggregate hedging obligation created by dealers' option inventory, which mechanically dampens or amplifies movement in the underlying.
+definition: >
+  A measure of how much dealers must transact in the underlying to stay delta
+  neutral as price moves. When dealers are net long gamma, hedging works
+  against movement and suppresses volatility; when net short, hedging works
+  with movement and amplifies it.
+explainer: >
+  Gamma exposure explains why some sessions feel unusually contained and others
+  unusually violent without any change in news flow. The obligation is
+  mechanical, not discretionary. Estimates of it depend on assumptions about
+  who holds which side of open interest, so Sentinel treats gamma exposure as
+  contextual evidence with acknowledged uncertainty rather than as a measured
+  quantity.
+observable_when:
+  - the underlying repeatedly stalls near strikes carrying large open interest
+  - realised volatility is persistently below or above what news flow suggests
+relations:
+  - to: option-greeks
+    type: part_of
+    weight: 0.9
+  - to: open-interest
+    type: measured_by
+    weight: 0.85
+  - to: gamma-squeeze
+    type: causes
+    weight: 0.9
+  - to: max-pain
+    type: similar_to
+    weight: 0.6
+  - to: market-regime
+    type: amplifies
+    weight: 0.6
+tags: [options, positioning, dealer-flow]

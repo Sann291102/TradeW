@@ -1,0 +1,37 @@
+id: fear-index
+name: Volatility Index
+domain: sentiment
+aliases: [VIX, India VIX, fear gauge]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: An index of implied volatility across near-term options, widely used as a proxy for expected market turbulence.
+definition: >
+  A composite of implied volatilities across a strip of near-term index
+  options, expressed in annualised percentage terms. It measures the price
+  participants are paying for optionality over the coming period, which rises
+  with both expected movement and demand for protection.
+explainer: >
+  The popular name is misleading: the index measures the cost of optionality,
+  not an emotional state. It rises when protection is in demand, which usually
+  coincides with declines because protective demand is asymmetric — few buy
+  insurance against gains. Sentinel describes it as a volatility expectation
+  measure with a demand component, not as a reading of collective mood.
+observable_when:
+  - the index rises sharply while the underlying index declines
+  - it remains elevated after a decline has stabilised, indicating persistent hedging demand
+relations:
+  - to: implied-volatility
+    type: is_a
+    weight: 0.9
+  - to: global-risk-sentiment
+    type: measured_by
+    weight: 0.8
+  - to: market-regime
+    type: confirms
+    weight: 0.75
+  - to: liquidity-provision
+    type: contradicts
+    weight: 0.6
+    note: Elevated readings coincide with liquidity withdrawal.
+tags: [sentiment, volatility, index]

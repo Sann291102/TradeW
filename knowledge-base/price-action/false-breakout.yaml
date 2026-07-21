@@ -1,0 +1,51 @@
+id: false-breakout
+name: False Breakout
+domain: price-action
+aliases: [fakeout, failed break]
+status: canonical
+maturity: established
+confidence: 0.9
+summary: A move beyond a structural boundary that fails to sustain and returns inside the prior area.
+definition: >
+  A break of a boundary followed by price re-entering the region it just left,
+  typically within a short window. The failure is the informative part: it
+  indicates the move beyond the boundary did not attract continuation
+  participation, and that activity beyond the level was absorbed rather than
+  extended.
+explainer: >
+  False breakouts are among the most commonly observed structures because
+  boundaries are exactly where protective orders rest. A move through such a
+  boundary can be driven by those orders triggering rather than by fresh
+  conviction — and once they are exhausted, nothing remains to carry price
+  further. Sentinel names this configuration when it sees the return leg, not
+  on the initial break, because the break alone is ambiguous.
+observable_when:
+  - price trades beyond a boundary then closes back inside within a few bars
+  - the excursion beyond the boundary occurs on volume that does not expand
+  - the return leg is faster than the break leg
+relations:
+  - to: breakout
+    type: contradicts
+    weight: 0.9
+  - to: liquidity-sweep
+    type: similar_to
+    weight: 0.85
+    note: A sweep is a false breakout where the order-flow motive is visible.
+  - to: stop-loss-clustering
+    type: depends_on
+    weight: 0.85
+    note: Without resting orders beyond the boundary there is nothing to trigger the excursion.
+  - to: bull-trap
+    type: causes
+    weight: 0.8
+  - to: bear-trap
+    type: causes
+    weight: 0.8
+  - to: low-volume-breakout
+    type: is_a
+    weight: 0.6
+examples:
+  - title: Range-edge failure into a session close
+    context: Price broke the day's range high in the final hour on below-average volume, with no expansion in delta.
+    outcome: Price returned inside the range before the close; the break high became the reference swing point for subsequent sessions.
+tags: [price-action, trap, high-frequency]

@@ -1,0 +1,34 @@
+id: swing-point
+name: Swing Point
+domain: market-structure
+aliases: [swing high, swing low, pivot]
+status: canonical
+maturity: established
+confidence: 0.96
+summary: A local extreme where price reverses direction, forming the reference points from which all structure is measured.
+definition: >
+  A bar or cluster of bars whose high exceeds surrounding bars (swing high) or
+  whose low undercuts them (swing low). Swing points are the atomic units of
+  market structure: trends, ranges and breakouts are all defined by how swing
+  points relate to one another.
+explainer: >
+  Swing points matter because they are where the market last changed direction,
+  and therefore where protective orders from the prior move tend to sit. That
+  is why price so often reacts at them — not because the level is inherently
+  special, but because resting orders are concentrated there.
+observable_when:
+  - a local high or low is followed by reversal over subsequent bars
+  - the extreme holds without being exceeded for a meaningful number of bars
+relations:
+  - to: support-and-resistance
+    type: causes
+    weight: 0.85
+    note: Prior swing points are what most support and resistance levels actually are.
+  - to: stop-loss-clustering
+    type: causes
+    weight: 0.85
+    note: Protective orders are conventionally placed beyond swing points.
+  - to: timeframe-hierarchy
+    type: depends_on
+    weight: 0.8
+tags: [structure, foundational]

@@ -1,0 +1,39 @@
+id: market-regime
+name: Market Regime
+domain: market-structure
+aliases: [regime, market environment]
+status: canonical
+maturity: emerging
+confidence: 0.8
+summary: The prevailing behavioural mode of a market — trending, ranging, or volatile and directionless — which conditions whether a given signal has historically meant anything.
+definition: >
+  A persistent statistical character of price behaviour over a period,
+  typically classified by the interaction of directionality and volatility.
+  Regime is the conditioning variable behind most signal reliability: the same
+  indicator reading carries different information in a trending regime than in
+  a choppy one.
+explainer: >
+  Regime is the most common reason a previously reliable observation stops
+  working. Sentinel records the regime alongside every observation so that
+  historical comparisons are drawn from genuinely similar environments rather
+  than from superficially similar chart shapes formed under different
+  conditions.
+observable_when:
+  - realised volatility shifts persistently relative to its own recent baseline
+  - the proportion of trend days versus range days changes materially
+  - breadth and cross-constituent correlation move together
+relations:
+  - to: trend
+    type: depends_on
+    weight: 0.75
+  - to: trading-range
+    type: depends_on
+    weight: 0.75
+  - to: volatility
+    type: measured_by
+    weight: 0.85
+  - to: global-risk-sentiment
+    type: amplifies
+    weight: 0.55
+    note: Cross-asset risk sentiment shifts often precede equity regime changes.
+tags: [structure, context, conditioning]

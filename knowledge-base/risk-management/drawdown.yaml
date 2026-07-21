@@ -1,0 +1,37 @@
+id: drawdown
+name: Drawdown
+domain: risk-management
+aliases: [peak-to-trough decline, equity drawdown]
+status: canonical
+maturity: established
+confidence: 0.95
+summary: The decline from an equity peak to a subsequent trough, measured in percentage terms.
+definition: >
+  The percentage fall from a historical high-water mark in account equity to
+  the lowest point before a new high is established. Drawdown is asymmetric by
+  construction: recovering from a decline requires a larger percentage gain
+  than the percentage lost, and the gap widens sharply as declines deepen.
+explainer: >
+  The arithmetic of recovery is the reason drawdown control dominates return
+  maximisation. A fifty percent decline requires a hundred percent gain to
+  recover; an eighty percent decline requires four hundred percent. This
+  asymmetry is why capital preservation is not conservatism but arithmetic, and
+  Sentinel presents current drawdown against that context.
+observable_when:
+  - account equity sits below its historical high-water mark
+  - the decline persists across multiple periods without a new high
+relations:
+  - to: risk-of-ruin
+    type: causes
+    weight: 0.85
+  - to: position-sizing
+    type: mitigates
+    weight: 0.85
+  - to: revenge-trading
+    type: causes
+    weight: 0.75
+    note: Being in drawdown is the most common precondition for recovery behaviour.
+  - to: diversification
+    type: mitigates
+    weight: 0.7
+tags: [risk, foundational, measurable]

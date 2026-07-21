@@ -1,0 +1,41 @@
+id: interest-rate-policy
+name: Interest Rate Policy
+domain: macroeconomics
+aliases: [monetary policy, policy rate, central bank rate]
+status: canonical
+maturity: established
+confidence: 0.9
+summary: The central bank's policy rate and guidance, which set the discount rate underlying every asset valuation.
+definition: >
+  The administered rate and accompanying communication through which a central
+  bank influences the cost of money. Because asset values are functions of
+  discounted future cash flows, the policy rate is an input to the valuation of
+  essentially every asset simultaneously.
+explainer: >
+  Rate policy matters to equities through two channels: the discount rate
+  applied to future earnings, and the relative attractiveness of holding cash.
+  Longer-duration assets — those whose value sits further in the future — are
+  more sensitive, which is why rate shifts affect sectors so unevenly. Markets
+  respond to the change relative to what was already expected, not to the level
+  itself.
+observable_when:
+  - a policy decision or guidance change differs from prevailing expectation
+  - long-duration sectors move disproportionately versus short-duration ones
+relations:
+  - to: valuation-multiple
+    type: causes
+    weight: 0.85
+    note: The discount rate is a direct input to the multiple.
+  - to: global-risk-sentiment
+    type: causes
+    weight: 0.8
+  - to: currency-weakness
+    type: causes
+    weight: 0.75
+  - to: inflation-print
+    type: depends_on
+    weight: 0.8
+  - to: implied-volatility
+    type: amplifies
+    weight: 0.6
+tags: [macro, foundational, scheduled-event]

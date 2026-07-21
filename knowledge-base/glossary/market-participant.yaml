@@ -1,0 +1,31 @@
+id: market-participant
+name: Market Participant
+domain: glossary
+aliases: [participant category, market actor]
+status: canonical
+maturity: established
+confidence: 0.88
+summary: The categories of actor transacting in a market, each with different constraints, horizons and obligations.
+definition: >
+  A classification of market actors — retail, proprietary, institutional
+  asset managers, market makers, hedgers, index and passive flows — grouped by
+  the constraints they operate under. Constraints, not intentions, are what
+  make participant category predictive of behaviour.
+explainer: >
+  Much market behaviour becomes legible once the constraints of the actors
+  involved are considered. An index fund must transact at the close regardless
+  of price; a market maker must quote both sides; a hedger transacts on a
+  schedule unrelated to opinion. None of these are acting on a view, yet all
+  move price. Sentinel frames flow in terms of constraint rather than intent,
+  which avoids the common error of attributing motive to mechanical activity.
+observable_when:
+  - volume concentrates at times driven by mandate rather than opportunity
+  - flow appears insensitive to price or news
+relations:
+  - to: liquidity
+    type: causes
+    weight: 0.8
+    note: Liquidity exists only because participants with differing constraints meet.
+# The participant categories declare `part_of` pointing here, rather than this
+# file listing them — the vocabulary is directional and has no `contains`.
+tags: [glossary, foundational, participants]

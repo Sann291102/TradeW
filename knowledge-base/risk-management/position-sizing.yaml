@@ -1,0 +1,37 @@
+id: position-sizing
+name: Position Sizing
+domain: risk-management
+aliases: [bet sizing, exposure sizing]
+status: canonical
+maturity: established
+confidence: 0.93
+summary: Determining position magnitude as a function of account size and instrument volatility, rather than by conviction.
+definition: >
+  The process of setting exposure so that the loss incurred if a position fails
+  represents a predetermined fraction of capital. Volatility-normalised sizing
+  divides the risk budget by a volatility measure such as ATR, so that
+  positions in different instruments carry comparable risk.
+explainer: >
+  Sizing determines survival more than selection does. A participant with
+  modest accuracy and disciplined sizing can persist indefinitely, while high
+  accuracy with erratic sizing can be ended by a single outsized position.
+  Sentinel describes sizing as a measurable property of a record and reports
+  when it departs from a participant's own baseline; it never states what any
+  particular size should be.
+observable_when:
+  - position size varies without corresponding variation in instrument volatility
+  - a single position represents a materially larger share of capital than the norm
+relations:
+  - to: risk-of-ruin
+    type: mitigates
+    weight: 0.9
+  - to: average-true-range
+    type: depends_on
+    weight: 0.8
+    note: Volatility normalisation requires a volatility measure as denominator.
+  - to: drawdown
+    type: mitigates
+    weight: 0.85
+# `contradicts fomo` and `similar_to diversification` are declared on
+# fomo.yaml and diversification.yaml — both relations are symmetric.
+tags: [risk, foundational, measurable]

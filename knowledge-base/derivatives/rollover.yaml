@@ -1,0 +1,38 @@
+id: rollover
+name: Rollover
+domain: derivatives
+aliases: [roll, contract transition]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: The migration of open positions from an expiring contract to the next, whose completeness indicates conviction in existing positioning.
+definition: >
+  The process by which participants close positions in an expiring contract and
+  reopen them in a later one. The proportion rolled — rollover percentage — is
+  read as an indication of whether existing positioning is being carried
+  forward or abandoned.
+explainer: >
+  Rollover offers a periodic, mechanically-produced readout of positioning
+  conviction. High rollover means participants are carrying their positions
+  forward; low rollover means positions are being closed rather than
+  maintained. The signal is only available around expiry, which makes it
+  infrequent but relatively unambiguous compared with other positioning
+  measures.
+observable_when:
+  - open interest migrates from the near contract to the next
+  - the rolled proportion differs materially from its historical average
+relations:
+  - to: open-interest
+    type: depends_on
+    weight: 0.9
+  - to: futures-basis
+    type: amplifies
+    weight: 0.7
+    note: Roll demand distorts the spread around the transition.
+  - to: expiry-day-trap
+    type: precedes
+    weight: 0.6
+  - to: cost-of-carry
+    type: depends_on
+    weight: 0.7
+tags: [derivatives, positioning, expiry]

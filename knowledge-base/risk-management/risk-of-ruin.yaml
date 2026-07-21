@@ -1,0 +1,37 @@
+id: risk-of-ruin
+name: Risk of Ruin
+domain: risk-management
+aliases: [ruin probability, gambler's ruin]
+status: canonical
+maturity: established
+confidence: 0.9
+summary: The probability that a sequence of outcomes reduces capital below the level at which participation can continue.
+definition: >
+  A probability derived from win rate, payoff ratio and fractional exposure per
+  position, expressing the likelihood of eventual capital exhaustion. Ruin
+  probability rises steeply and non-linearly with exposure per position, which
+  is why fractional sizing matters far more than accuracy.
+explainer: >
+  Risk of ruin formalises why a positive expected value is insufficient on its
+  own. With sufficiently large fractional exposure, ruin becomes near-certain
+  over enough repetitions even with a genuine edge, because the sequence needed
+  to end participation will eventually occur. Sentinel uses this concept to
+  explain why sizing consistency matters, not to compute any individual's
+  number.
+observable_when:
+  - fractional exposure per position is large relative to total capital
+  - exposure increases following losses rather than remaining constant
+relations:
+  - to: position-sizing
+    type: mitigates
+    weight: 0.9
+  - to: drawdown
+    type: depends_on
+    weight: 0.8
+  - to: revenge-trading
+    type: depends_on
+    weight: 0.7
+  - to: diversification
+    type: mitigates
+    weight: 0.7
+tags: [risk, probability, foundational]

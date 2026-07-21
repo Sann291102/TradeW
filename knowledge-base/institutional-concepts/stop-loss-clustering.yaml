@@ -1,0 +1,42 @@
+id: stop-loss-clustering
+name: Stop-Loss Clustering
+domain: institutional-concepts
+aliases: [order clustering, liquidity pool, resting order density]
+status: canonical
+maturity: established
+confidence: 0.88
+summary: The concentration of protective orders just beyond obvious structural levels, created by widely shared placement conventions.
+definition: >
+  Because most participants place protective orders using the same reference
+  points — beyond swing highs and lows, round numbers, session extremes — those
+  areas accumulate dense resting order flow. The clustering is an emergent
+  consequence of shared convention, requiring no coordination.
+explainer: >
+  This concept explains a great deal of otherwise puzzling price behaviour. The
+  reason price so frequently extends just past an obvious level before
+  reversing is that the orders resting there are the most accessible liquidity
+  in the vicinity. Understanding this reframes such moves from something being
+  done to participants into a predictable structural consequence of where
+  everyone placed their orders.
+observable_when:
+  - an obvious structural level has been tested repeatedly and held
+  - price extends marginally beyond that level on a volume spike
+  - depth thins conspicuously on the approach to the level
+relations:
+  - to: swing-point
+    type: depends_on
+    weight: 0.9
+  - to: liquidity-sweep
+    type: causes
+    weight: 0.9
+  - to: support-and-resistance
+    type: depends_on
+    weight: 0.85
+  - to: institutional-order-flow
+    type: amplifies
+    weight: 0.8
+  - to: stop-loss-placement
+    type: depends_on
+    weight: 0.85
+    note: Clustering is an emergent consequence of shared placement convention.
+tags: [institutional, order-flow, foundational]

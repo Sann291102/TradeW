@@ -1,0 +1,32 @@
+id: timeframe-hierarchy
+name: Timeframe Hierarchy
+domain: market-structure
+aliases: [multi-timeframe structure, fractal structure]
+status: canonical
+maturity: established
+confidence: 0.9
+summary: The principle that structure exists independently on every timeframe, and that higher-timeframe structure contextualises lower-timeframe moves.
+definition: >
+  Market structure is fractal: the same definitions of trend, range and swing
+  point apply at every resolution and produce different answers at each. A
+  higher timeframe describes the context inside which lower-timeframe activity
+  occurs; conflict between the two is normal and informative rather than an
+  error to resolve.
+explainer: >
+  Most apparent contradictions in technical reading dissolve once the timeframe
+  is stated. A five-minute downtrend inside a daily uptrend is not a conflict —
+  it is a pullback described at higher resolution. Whenever Sentinel names a
+  structure it names the timeframe with it, because the claim is otherwise
+  unfalsifiable.
+observable_when:
+  - structure read on two timeframes yields different directional descriptions
+  - a lower-timeframe reversal terminates exactly at a higher-timeframe swing point
+relations:
+  - to: swing-point
+    type: depends_on
+    weight: 0.85
+  - to: confirmation-bias
+    type: mitigates
+    weight: 0.6
+    note: Forcing an explicit timeframe makes cherry-picked readings visible.
+tags: [structure, foundational, methodology]

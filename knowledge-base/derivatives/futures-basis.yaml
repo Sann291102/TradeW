@@ -1,0 +1,37 @@
+id: futures-basis
+name: Futures Basis
+domain: derivatives
+aliases: [basis, premium discount, spot-future spread]
+status: canonical
+maturity: established
+confidence: 0.88
+summary: The difference between a futures price and the spot price, reflecting carry cost and positioning pressure.
+definition: >
+  The spread between futures and underlying spot price. In theory it equals the
+  cost of carry to expiry; in practice it deviates with demand for leveraged
+  exposure, borrowing constraints and dividend expectations. The deviation from
+  theoretical carry is the informative part.
+explainer: >
+  Basis is a positioning signal that requires no survey. A futures price
+  persistently above theoretical carry indicates willingness to pay for
+  leveraged long exposure; a discount indicates the reverse or hedging demand.
+  Because basis converges to zero at expiry by construction, its behaviour
+  approaching expiry is mechanical rather than informative, which Sentinel
+  accounts for when interpreting it.
+observable_when:
+  - futures trade persistently above or below theoretical carry
+  - the spread compresses mechanically as expiry approaches
+relations:
+  - to: cost-of-carry
+    type: depends_on
+    weight: 0.9
+  - to: rollover
+    type: precedes
+    weight: 0.75
+  - to: open-interest
+    type: confirms
+    weight: 0.65
+  - to: interest-rate-policy
+    type: depends_on
+    weight: 0.7
+tags: [derivatives, positioning, carry]

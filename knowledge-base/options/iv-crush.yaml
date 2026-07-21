@@ -1,0 +1,42 @@
+id: iv-crush
+name: IV Crush
+domain: options
+aliases: [volatility crush, vol collapse]
+status: canonical
+maturity: established
+confidence: 0.9
+summary: The abrupt fall in implied volatility once a scheduled event passes and uncertainty about it resolves.
+definition: >
+  The rapid decline in option implied volatility immediately following a known
+  event — earnings, policy decisions, scheduled data. Prior to the event,
+  uncertainty supports elevated implied volatility; once the outcome is known,
+  that component disappears regardless of which way the underlying moved.
+explainer: >
+  IV crush explains the common experience of an option losing value despite the
+  underlying moving in the anticipated direction: the directional gain was
+  offset by the collapse in the volatility component. This is a mechanical
+  consequence of the event passing, not a market judgement about the outcome.
+  Sentinel names it whenever an option-related observation spans a scheduled
+  event, because it is the dominant driver across that boundary.
+observable_when:
+  - implied volatility falls sharply within one session of a scheduled event
+  - option premiums decline while the underlying moves directionally
+relations:
+  - to: implied-volatility
+    type: depends_on
+    weight: 0.95
+  - to: option-greeks
+    type: depends_on
+    weight: 0.7
+  - to: earnings-surprise
+    type: precedes
+    weight: 0.85
+    note: The event whose resolution removes the uncertainty premium.
+  - to: expiry-day-trap
+    type: amplifies
+    weight: 0.7
+  - to: loss-aversion
+    type: amplifies
+    weight: 0.6
+    note: A position losing value despite a correct directional read is a common source of confusion.
+tags: [options, volatility, event-driven]

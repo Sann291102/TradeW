@@ -1,0 +1,33 @@
+id: cost-of-carry
+name: Cost of Carry
+domain: derivatives
+aliases: [carry, financing cost]
+status: canonical
+maturity: established
+confidence: 0.9
+summary: The net cost of holding a position to a future date — financing less any income the underlying yields.
+definition: >
+  The sum of financing cost and storage or holding costs, less income received
+  from the underlying such as dividends. Cost of carry is the theoretical basis
+  for the relationship between spot and forward prices, and the anchor from
+  which basis deviations are measured.
+explainer: >
+  Carry explains why futures do not simply equal spot. It also explains why
+  identical exposure obtained through different instruments produces different
+  outcomes over time: the financing embedded in each differs. Sentinel uses
+  carry as the reference point that makes basis deviations interpretable rather
+  than as a signal in itself.
+observable_when:
+  - forward prices differ from spot by approximately the financing rate less yield
+  - the relationship shifts when policy rates or dividend expectations change
+relations:
+  - to: interest-rate-policy
+    type: depends_on
+    weight: 0.85
+  - to: futures-basis
+    type: causes
+    weight: 0.9
+  - to: option-greeks
+    type: confirms
+    weight: 0.5
+tags: [derivatives, pricing, foundational]

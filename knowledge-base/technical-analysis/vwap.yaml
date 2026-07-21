@@ -1,0 +1,37 @@
+id: vwap
+name: Volume Weighted Average Price
+domain: technical-analysis
+aliases: [VWAP]
+status: canonical
+maturity: established
+confidence: 0.88
+summary: The average price over a period weighted by volume at each price, widely used as an execution benchmark.
+definition: >
+  The ratio of total traded value to total traded volume over a period,
+  typically anchored to the session open. Unlike a moving average, VWAP
+  incorporates how much traded at each price, making it a measure of the
+  average participant's transaction price rather than of price alone.
+explainer: >
+  VWAP matters primarily because institutions are measured against it — an
+  execution desk beating VWAP has done its job. That creates genuine flow
+  around the level, which is why reactions there tend to be more meaningful
+  than reactions at arbitrary averages. The level's significance comes from
+  the incentive structure surrounding it, not from the arithmetic.
+observable_when:
+  - price reverts toward the session's volume-weighted average repeatedly
+  - reactions occur at the level on above-average volume
+relations:
+  - to: volume-confirmation
+    type: depends_on
+    weight: 0.8
+  - to: institutional-order-flow
+    type: depends_on
+    weight: 0.8
+    note: Benchmark status is what generates the flow around the level.
+  - to: support-and-resistance
+    type: causes
+    weight: 0.7
+  - to: moving-average
+    type: similar_to
+    weight: 0.6
+tags: [indicator, execution-benchmark, institutional]

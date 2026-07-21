@@ -1,0 +1,37 @@
+id: failed-auction
+name: Failed Auction
+domain: patterns
+aliases: [auction failure, rejected extension]
+status: canonical
+maturity: established
+confidence: 0.78
+summary: An attempt to extend the range that finds no acceptance and returns into the prior value area.
+definition: >
+  In auction terms, price probes beyond established value seeking activity,
+  fails to generate it, and returns. The failure is informative because it
+  demonstrates the market tested a price region and rejected it — the absence
+  of trade is the evidence.
+explainer: >
+  Auction language describes the same events as breakout language but frames
+  them in terms of what the market was attempting: to find participation at a
+  new price. A failed auction says that attempt was answered with silence.
+  Sentinel uses this framing when volume distribution data is available,
+  because it explains the failure rather than merely labelling it.
+observable_when:
+  - price extends beyond the established value area and trades thinly there
+  - time spent beyond the boundary is short relative to the excursion size
+  - price returns into the prior value area and builds volume again
+relations:
+  - to: false-breakout
+    type: similar_to
+    weight: 0.85
+  - to: trading-range
+    type: depends_on
+    weight: 0.75
+  - to: accumulation
+    type: contradicts
+    weight: 0.6
+  - to: liquidity
+    type: depends_on
+    weight: 0.7
+tags: [pattern, auction-theory, composite]

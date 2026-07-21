@@ -1,0 +1,41 @@
+id: slippage
+name: Slippage
+domain: market-microstructure
+aliases: [execution shortfall, implementation cost]
+status: canonical
+maturity: established
+confidence: 0.92
+summary: The difference between the price expected at decision time and the price actually achieved on execution.
+definition: >
+  The realised cost arising from the gap between intended and executed price,
+  driven by spread, insufficient depth at the intended price, and price
+  movement during the interval between decision and fill. Slippage scales with
+  order size relative to available depth and with volatility.
+explainer: >
+  Slippage is the gap between a strategy on paper and the same strategy in
+  practice, and it is systematically underestimated because it does not appear
+  on a chart. It is worst in thin conditions and during rapid movement — the
+  same conditions in which transacting feels most urgent. Sentinel reports
+  realised slippage where execution data is available so the cost is visible
+  rather than assumed away.
+observable_when:
+  - realised fill prices differ materially from prices at decision time
+  - the gap widens with order size or during volatility expansion
+relations:
+  - to: bid-ask-spread
+    type: depends_on
+    weight: 0.85
+  - to: order-book-depth
+    type: depends_on
+    weight: 0.85
+  - to: liquidity
+    type: depends_on
+    weight: 0.9
+  - to: overtrading
+    type: amplifies
+    weight: 0.7
+    note: Cost compounds directly with frequency.
+  - to: low-volume-breakout
+    type: amplifies
+    weight: 0.6
+tags: [microstructure, cost, execution]

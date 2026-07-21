@@ -1,0 +1,39 @@
+id: loss-aversion
+name: Loss Aversion
+domain: trading-psychology
+aliases: [disposition effect, asymmetric loss weighting]
+status: canonical
+maturity: established
+confidence: 0.9
+summary: Weighting a loss more heavily than an equivalent gain, which shows up as holding losing positions longer than winning ones.
+definition: >
+  A well-documented asymmetry in which the disutility of a loss exceeds the
+  utility of a numerically equal gain. In trading records it produces a
+  characteristic signature: shorter average holding periods for gains than for
+  losses, in the same account.
+explainer: >
+  Loss aversion is measurable in an account's own history rather than requiring
+  any psychological assessment. The asymmetry between average holding time on
+  winning and losing positions is a direct readout. Sentinel presents that
+  comparison as a factual property of the record, which is both more useful and
+  more defensible than describing anyone's emotional state.
+observable_when:
+  - average holding time on losing positions exceeds that on winning positions
+  - realised losses are systematically larger than realised gains
+relations:
+  - to: drawdown
+    type: amplifies
+    weight: 0.8
+  - to: revenge-trading
+    type: causes
+    weight: 0.75
+  - to: stop-loss-placement
+    type: contradicts
+    weight: 0.8
+    note: The asymmetry works directly against pre-committed exit discipline.
+  - to: confirmation-bias
+    type: amplifies
+    weight: 0.65
+sources:
+  - Kahneman and Tversky, prospect theory (1979), as applied to trading records
+tags: [psychology, bias, measurable]

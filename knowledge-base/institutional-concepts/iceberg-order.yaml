@@ -1,0 +1,37 @@
+id: iceberg-order
+name: Iceberg Order
+domain: institutional-concepts
+aliases: [hidden size, reserve order, refresh order]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: A large order that displays only a small portion at a time, replenishing as each visible slice is filled.
+definition: >
+  An order type in which the displayed quantity is a fraction of the total,
+  with the remainder held in reserve and released as the visible portion
+  executes. Icebergs let large participants transact without revealing their
+  full intent to the book.
+explainer: >
+  Icebergs explain why a level can absorb far more volume than the visible book
+  suggested it could. The observable signature is repeated replenishment at one
+  price after each fill. Recognising this reframes an apparently immovable
+  level from a coincidence into a participant actively defending it.
+observable_when:
+  - a price level refills repeatedly after each execution consumes it
+  - executed volume at a level greatly exceeds the depth that was displayed
+  - the level holds across multiple tests without visible large orders
+relations:
+  - to: institutional-order-flow
+    type: is_a
+    weight: 0.85
+  - to: order-book-depth
+    type: contradicts
+    weight: 0.7
+    note: Displayed depth systematically understates true available liquidity.
+  - to: accumulation
+    type: confirms
+    weight: 0.75
+  - to: support-and-resistance
+    type: causes
+    weight: 0.7
+tags: [institutional, order-flow, microstructure]

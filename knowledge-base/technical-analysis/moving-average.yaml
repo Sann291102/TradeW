@@ -1,0 +1,39 @@
+id: moving-average
+name: Moving Average
+domain: technical-analysis
+aliases: [MA, EMA, SMA]
+status: canonical
+maturity: established
+confidence: 0.9
+summary: A rolling mean of price over a fixed lookback, used to summarise direction by removing shorter-term fluctuation.
+definition: >
+  The arithmetic or exponentially-weighted mean of price over a specified
+  number of periods, recalculated each period. Moving averages are lagging by
+  construction: they describe the average of what has already occurred, with
+  lag proportional to the lookback length.
+explainer: >
+  A moving average measures direction that has already been established. Its
+  apparent predictive quality in hindsight is largely a consequence of that
+  lag — in a trending series any smoothed line looks prescient. Sentinel uses
+  moving averages descriptively, to characterise the state of a series, and
+  treats reactions at them as evidence of shared convention rather than as
+  intrinsic levels.
+observable_when:
+  - price sustains on one side of the average across many periods
+  - the average's slope changes sign after a directional shift is already visible
+relations:
+  - to: trend
+    type: measured_by
+    weight: 0.75
+  - to: market-regime
+    type: depends_on
+    weight: 0.7
+    note: Reliability differs sharply between trending and ranging regimes.
+  - to: support-and-resistance
+    type: causes
+    weight: 0.55
+    note: Widely-watched averages become reference levels through convention alone.
+  - to: confirmation-bias
+    type: amplifies
+    weight: 0.6
+tags: [indicator, lagging, foundational]

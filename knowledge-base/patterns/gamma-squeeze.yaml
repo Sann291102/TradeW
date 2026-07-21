@@ -1,0 +1,42 @@
+id: gamma-squeeze
+name: Gamma Squeeze
+domain: patterns
+aliases: [gamma feedback loop]
+status: canonical
+maturity: emerging
+confidence: 0.72
+summary: A self-reinforcing move in which dealer hedging of short gamma positions forces buying into strength or selling into weakness.
+definition: >
+  A feedback configuration arising when option dealers are short gamma: as the
+  underlying moves, maintaining a delta-neutral book requires transacting in
+  the same direction as the move, which extends it further and requires
+  additional hedging. The loop persists until positioning normalises or
+  liquidity absorbs the flow.
+explainer: >
+  A gamma squeeze is a mechanical consequence of hedging obligations, not a
+  statement about anyone's view on value. This is why such moves can look
+  disconnected from news or fundamentals — they are driven by a positioning
+  constraint. Recognising the mechanism is what distinguishes it from ordinary
+  momentum, and Sentinel requires positioning evidence before naming it.
+observable_when:
+  - the underlying moves persistently toward a strike with concentrated open interest
+  - implied volatility rises alongside the directional move rather than falling
+  - movement continues without corresponding news or fundamental catalyst
+relations:
+  - to: gamma-exposure
+    type: depends_on
+    weight: 0.95
+  - to: option-greeks
+    type: depends_on
+    weight: 0.85
+  - to: open-interest
+    type: measured_by
+    weight: 0.75
+  - to: range-expansion
+    type: causes
+    weight: 0.8
+  - to: expiry-day-trap
+    type: amplifies
+    weight: 0.7
+    note: Gamma effects concentrate as time to expiry collapses.
+tags: [pattern, options, composite, positioning]

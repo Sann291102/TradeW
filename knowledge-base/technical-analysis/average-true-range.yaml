@@ -1,0 +1,36 @@
+id: average-true-range
+name: Average True Range
+domain: technical-analysis
+aliases: [ATR, true range]
+status: canonical
+maturity: established
+confidence: 0.92
+summary: A rolling average of per-period true range, measuring realised volatility in the instrument's own price units.
+definition: >
+  The mean over a lookback of true range, where true range is the greatest of
+  the current high-low span and the gaps from the prior close. ATR expresses
+  volatility in absolute price terms, making it directly comparable across
+  time for one instrument.
+explainer: >
+  ATR is one of the few indicators that measures rather than infers: it
+  quantifies how much an instrument actually moves per period. That makes it
+  the natural denominator for normalising observations — a move of a given size
+  means something different in a high-volatility regime than a low one, and
+  expressing moves in ATR units makes historical comparisons valid.
+observable_when:
+  - per-period ranges expand or contract persistently relative to the average
+relations:
+  - to: volatility
+    type: measured_by
+    weight: 0.9
+  - to: range-expansion
+    type: measured_by
+    weight: 0.9
+  - to: position-sizing
+    type: measured_by
+    weight: 0.8
+    note: Volatility-normalised sizing uses ATR as its denominator.
+  - to: market-regime
+    type: confirms
+    weight: 0.75
+tags: [indicator, volatility, normalisation]

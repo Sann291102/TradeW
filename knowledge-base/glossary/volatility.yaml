@@ -1,0 +1,39 @@
+id: volatility
+name: Volatility
+domain: glossary
+aliases: [realised volatility, price variability]
+status: canonical
+maturity: established
+confidence: 0.95
+summary: The magnitude of price variation over time, without reference to direction.
+definition: >
+  A measure of dispersion in returns over a period. Realised volatility is
+  computed from observed prices; implied volatility is inferred from option
+  prices. Volatility is directionless by construction — it describes how much
+  price moves, never which way.
+explainer: >
+  Volatility is the natural unit for normalising observations. A move of a
+  given magnitude means something different depending on how much the
+  instrument typically moves, which is why Sentinel expresses moves in
+  volatility-relative terms when comparing across instruments or across time.
+  Volatility also clusters: high-volatility periods follow high-volatility
+  periods, which is what makes regime a coherent concept at all.
+observable_when:
+  - the dispersion of returns rises or falls persistently relative to baseline
+  - large moves cluster together in time rather than arriving independently
+relations:
+  - to: average-true-range
+    type: measured_by
+    weight: 0.9
+  - to: implied-volatility
+    type: similar_to
+    weight: 0.8
+    note: Same units, different derivation — one measured, one inferred from price.
+  - to: market-regime
+    type: causes
+    weight: 0.8
+  - to: liquidity
+    type: contradicts
+    weight: 0.7
+    note: Rising volatility typically coincides with withdrawing liquidity.
+tags: [glossary, foundational, normalisation]

@@ -1,0 +1,33 @@
+id: guidance-revision
+name: Guidance Revision
+domain: company-fundamentals
+aliases: [outlook change, forward guidance update]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: A change in management's stated expectation for future results, which reprices all future periods at once rather than one reported quarter.
+definition: >
+  An update to management's published outlook for revenue, margin or earnings.
+  Because valuation rests on expected future cash flows, a guidance change
+  revises the entire forward stream, which is why it frequently produces a
+  larger reaction than the reported quarter it accompanies.
+explainer: >
+  Guidance is forward-looking where reported results are historical, so it
+  carries more valuation weight. A quarter that beats expectations alongside
+  reduced guidance commonly produces a decline, which appears contradictory
+  until the time dimension is made explicit. Sentinel separates the reported
+  and forward components when describing an earnings reaction.
+observable_when:
+  - management revises published outlook up or down
+  - price reaction contradicts the direction of the reported quarter
+relations:
+  - to: earnings-surprise
+    type: amplifies
+    weight: 0.8
+  - to: valuation-multiple
+    type: causes
+    weight: 0.8
+  - to: balance-sheet-leverage
+    type: amplifies
+    weight: 0.5
+tags: [fundamentals, forward-looking, event]

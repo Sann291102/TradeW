@@ -1,0 +1,41 @@
+id: trend-day
+name: Trend Day
+domain: price-action
+aliases: [directional day, one-timeframing day]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: A session that opens near one extreme and closes near the other, with pullbacks that fail to retrace meaningfully.
+definition: >
+  A session archetype in which directional resolution occurs early and persists
+  to the close, producing a wide range with the close near an extreme. Trend
+  days are comparatively rare but account for a disproportionate share of
+  total directional movement.
+explainer: >
+  Trend days are worth recognising because behaviour that works in a range —
+  fading extremes — performs very differently in them, and vice versa. The
+  common experience of a session feeling relentless is usually a trend day.
+  Sentinel classifies the session archetype so that historical comparisons are
+  drawn from sessions of the same character.
+observable_when:
+  - the session opens near one extreme of its eventual range
+  - pullbacks retrace only a small fraction of the prior leg
+  - the close occurs near the opposite extreme from the open
+relations:
+  - to: trend
+    type: depends_on
+    weight: 0.85
+  - to: range-expansion
+    type: depends_on
+    weight: 0.8
+  - to: trading-range
+    type: contradicts
+    weight: 0.8
+  - to: fomo
+    type: causes
+    weight: 0.7
+    note: Persistent one-way movement is the most common trigger for chase behaviour.
+  - to: market-regime
+    type: part_of
+    weight: 0.6
+tags: [price-action, session-archetype]

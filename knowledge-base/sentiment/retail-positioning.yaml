@@ -1,0 +1,38 @@
+id: retail-positioning
+name: Retail Positioning
+domain: sentiment
+aliases: [retail flow, individual investor participation]
+status: canonical
+maturity: emerging
+confidence: 0.65
+summary: The aggregate exposure of individual participants, whose flow characteristics differ systematically from institutional flow.
+definition: >
+  The net exposure and activity of non-professional participants, inferred from
+  order-size distributions, product preferences and venue data. Retail flow
+  differs structurally from institutional flow: smaller average size, shorter
+  holding periods, and a stronger tendency toward short-dated optionality.
+explainer: >
+  Retail positioning is frequently framed as a contrarian signal, which
+  overstates what the data supports and understates how much retail flow can
+  matter in aggregate, particularly in short-dated options. Sentinel treats it
+  as one input among several and states the inference's limits, since direct
+  measurement is generally unavailable.
+observable_when:
+  - order-size distribution skews toward smaller lots
+  - activity concentrates in short-dated options and high-attention instruments
+  - participation surges following prominent media coverage
+relations:
+  - to: market-participant
+    type: part_of
+    weight: 0.85
+  - to: fomo
+    type: amplifies
+    weight: 0.7
+  - to: put-call-ratio
+    type: measured_by
+    weight: 0.55
+  - to: gamma-exposure
+    type: amplifies
+    weight: 0.6
+    note: Concentrated short-dated activity increases dealer hedging sensitivity.
+tags: [sentiment, flow, inference]

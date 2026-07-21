@@ -1,0 +1,37 @@
+id: bear-trap
+name: Bear Trap
+domain: patterns
+aliases: [downside trap, failed breakdown]
+status: canonical
+maturity: established
+confidence: 0.87
+summary: A downside break that attracts selling, fails to sustain, and reverses back above the broken level.
+definition: >
+  The directional inverse of a bull trap: price breaks below a boundary,
+  selling arrives, the move fails to extend, and price reclaims the level.
+  Bear traps frequently coincide with liquidity sweeps because protective
+  orders below support are a dense and predictable pool.
+explainer: >
+  Downside failures often resolve faster than upside ones, because forced
+  selling exhausts more abruptly than discretionary buying does. As with the
+  bull trap, Sentinel requires the full sequence — break, participation
+  evidence, reclaim — before naming the configuration.
+observable_when:
+  - a downside break occurs without expansion in selling participation
+  - price reclaims the broken boundary within a short window
+  - the excursion below shows a volume spike without follow-through
+relations:
+  - to: false-breakout
+    type: is_a
+    weight: 0.9
+  - to: liquidity-sweep
+    type: similar_to
+    weight: 0.85
+  - to: stop-loss-clustering
+    type: depends_on
+    weight: 0.85
+  - to: loss-aversion
+    type: amplifies
+    weight: 0.65
+    note: Exiting into the low is the behaviour the configuration strands.
+tags: [pattern, composite, trap]

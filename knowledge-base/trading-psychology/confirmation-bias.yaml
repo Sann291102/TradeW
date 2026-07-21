@@ -1,0 +1,38 @@
+id: confirmation-bias
+name: Confirmation Bias
+domain: trading-psychology
+aliases: [selective evidence, motivated reasoning]
+status: canonical
+maturity: established
+confidence: 0.9
+summary: Seeking and weighting evidence that supports an existing view while discounting evidence against it.
+definition: >
+  A general reasoning bias with a specific market expression: once a position
+  or view exists, supporting signals are noticed and retained while
+  disconfirming ones are explained away. Timeframe switching and indicator
+  substitution after the fact are its most common manifestations.
+explainer: >
+  This bias is the reason a stated method matters more than a good one. If the
+  timeframe and the evidence are named before the conclusion, disconfirming
+  evidence remains visible; if they are chosen afterward, any conclusion can be
+  supported. Sentinel commits to naming its evidence and timeframe up front for
+  exactly this reason, and applies the same standard to its own reasoning.
+observable_when:
+  - the timeframe cited changes after price moves against the stated view
+  - supporting indicators are introduced after a position is established
+  - disconfirming evidence is acknowledged but not acted on
+relations:
+  - to: timeframe-hierarchy
+    type: contradicts
+    weight: 0.6
+    note: Post-hoc timeframe switching is the characteristic failure this bias produces.
+  - to: loss-aversion
+    type: amplifies
+    weight: 0.65
+  - to: overtrading
+    type: causes
+    weight: 0.55
+  - to: max-pain
+    type: amplifies
+    weight: 0.5
+tags: [psychology, bias, reasoning]

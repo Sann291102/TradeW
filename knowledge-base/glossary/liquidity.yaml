@@ -1,0 +1,38 @@
+id: liquidity
+name: Liquidity
+domain: glossary
+aliases: [market liquidity, depth of interest]
+status: canonical
+maturity: established
+confidence: 0.95
+summary: The capacity to transact size without materially moving price — the property nearly every other market concept depends on.
+definition: >
+  The degree to which an instrument can absorb transaction volume without
+  significant price impact. Liquidity is multidimensional: tightness (spread),
+  depth (available quantity), and resilience (speed of replenishment) can each
+  be present or absent independently.
+explainer: >
+  Liquidity is the most load-bearing concept in market structure because so
+  many others reduce to it. Sweeps happen where liquidity rests, breaks fail
+  when liquidity is thin, slippage is liquidity's cost, and institutional
+  behaviour is shaped entirely by its scarcity. It is also conditional rather
+  than fixed, which is why the same instrument behaves differently at different
+  times of day.
+observable_when:
+  - large transactions occur with minimal price impact
+  - depth replenishes quickly after being consumed
+  - the spread stays tight relative to the instrument's own norm
+relations:
+  - to: bid-ask-spread
+    type: measured_by
+    weight: 0.9
+  - to: order-book-depth
+    type: measured_by
+    weight: 0.9
+  - to: liquidity-provision
+    type: depends_on
+    weight: 0.9
+  - to: market-participant
+    type: depends_on
+    weight: 0.7
+tags: [glossary, foundational, load-bearing]

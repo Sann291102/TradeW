@@ -1,0 +1,37 @@
+id: breakout
+name: Breakout
+domain: price-action
+aliases: [range break, level break]
+status: canonical
+maturity: established
+confidence: 0.92
+summary: Price trading and holding beyond a recognised structural boundary, indicating the prior balance has been resolved.
+definition: >
+  The event of price moving beyond a boundary that previously contained it — a
+  range edge, prior swing point or established level — and sustaining trade on
+  the far side. A breakout is only distinguishable from a false breakout after
+  the fact, by whether price holds beyond the boundary.
+explainer: >
+  The word breakout describes a move that has already happened, and on its own
+  says nothing about whether the move will persist. The distinction that
+  matters is whether participation supported the move: breaks that occur on
+  expanding volume behave differently in the historical record from breaks
+  that occur on thin volume. Sentinel therefore reports a break together with
+  its participation evidence, never as a standalone event.
+observable_when:
+  - price trades beyond a boundary that previously produced reversals
+  - the move sustains rather than immediately re-entering the prior area
+relations:
+  - to: support-and-resistance
+    type: depends_on
+    weight: 0.9
+  - to: volume-confirmation
+    type: confirms
+    weight: 0.85
+    note: Participation is the primary evidence separating breaks that hold from those that do not.
+  - to: range-expansion
+    type: precedes
+    weight: 0.7
+# `contradicts false-breakout` is declared on false-breakout.yaml — the relation
+# is symmetric, so declaring it here as well would create a duplicate edge.
+tags: [price-action, foundational]

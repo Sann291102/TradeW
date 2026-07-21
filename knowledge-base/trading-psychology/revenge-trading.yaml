@@ -1,0 +1,40 @@
+id: revenge-trading
+name: Revenge Trading
+domain: trading-psychology
+aliases: [tilt, recovery trading]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: Re-entering shortly after a loss, typically with increased size, in an attempt to recover it.
+definition: >
+  A behavioural sequence in which a losing outcome is followed rapidly by a new
+  position, often larger and in the same instrument. The pattern is
+  identifiable from timing and sizing together: speed of re-entry after a loss,
+  combined with a size increase relative to the participant's own baseline.
+explainer: >
+  This is among the most reliably observable behavioural patterns because it
+  leaves an unambiguous data signature — time since last loss, and size
+  relative to baseline. Sentinel surfaces the pattern and its conditions
+  factually, as something the record shows, and leaves the interpretation to
+  the person. It never characterises anyone's state of mind.
+observable_when:
+  - a new position opens shortly after a realised loss
+  - position size exceeds the participant's own recent average
+  - the re-entry is in the same instrument as the loss
+relations:
+  - to: loss-aversion
+    type: depends_on
+    weight: 0.8
+  - to: overtrading
+    type: causes
+    weight: 0.85
+  - to: drawdown
+    type: amplifies
+    weight: 0.85
+  - to: position-sizing
+    type: contradicts
+    weight: 0.8
+  - to: risk-of-ruin
+    type: amplifies
+    weight: 0.75
+tags: [psychology, behaviour, observable, risk]

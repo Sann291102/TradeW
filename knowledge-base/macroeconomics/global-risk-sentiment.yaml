@@ -1,0 +1,41 @@
+id: global-risk-sentiment
+name: Global Risk Sentiment
+domain: macroeconomics
+aliases: [risk-on risk-off, RORO, macro backdrop]
+status: canonical
+maturity: established
+confidence: 0.8
+summary: The prevailing cross-asset appetite for risk, which drives correlated movement across otherwise unrelated instruments.
+definition: >
+  A market-wide state in which assets are repriced according to their perceived
+  risk characteristics rather than their individual fundamentals. Under
+  risk-off conditions, correlations across risk assets converge toward one,
+  and instrument-specific analysis loses most of its explanatory power.
+explainer: >
+  This concept explains why individual analysis sometimes stops working
+  entirely. When macro risk dominates, everything correlated moves together
+  regardless of individual merit, and diversification erodes precisely when it
+  is most needed. Sentinel checks the macro backdrop before attributing a move
+  to instrument-specific causes, because misattribution is otherwise routine.
+observable_when:
+  - cross-asset correlations rise sharply toward one
+  - defensive assets and risk assets move in opposite directions simultaneously
+  - breadth deteriorates broadly rather than sectorally
+relations:
+  - to: market-breadth
+    type: measured_by
+    weight: 0.8
+  - to: fear-index
+    type: measured_by
+    weight: 0.85
+  - to: diversification
+    type: invalidates
+    weight: 0.7
+    note: Converging correlations remove the benefit exactly when it is needed.
+  - to: interest-rate-policy
+    type: depends_on
+    weight: 0.75
+  - to: market-regime
+    type: causes
+    weight: 0.75
+tags: [macro, cross-asset, regime-driver]

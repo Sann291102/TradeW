@@ -1,0 +1,38 @@
+id: balance-sheet-leverage
+name: Balance Sheet Leverage
+domain: company-fundamentals
+aliases: [debt load, gearing, financial leverage]
+status: canonical
+maturity: established
+confidence: 0.88
+summary: The proportion of debt in a company's capital structure, which magnifies both earnings variability and sensitivity to rates.
+definition: >
+  The relationship between borrowed and owned capital, typically expressed as
+  debt to equity or net debt to operating earnings. Leverage amplifies returns
+  on equity in both directions and creates direct sensitivity to refinancing
+  conditions and interest rates.
+explainer: >
+  Leverage is the mechanism by which macro conditions reach individual
+  companies unevenly. When rates rise, heavily indebted companies face higher
+  servicing costs and refinancing risk while unlevered peers are largely
+  unaffected — which is why apparently similar companies diverge sharply under
+  the same macro conditions. Sentinel uses leverage to explain such divergence
+  rather than as a standalone quality measure.
+observable_when:
+  - similar companies diverge sharply following a rate or credit development
+  - debt maturities cluster in a near-term window
+relations:
+  - to: interest-rate-policy
+    type: depends_on
+    weight: 0.85
+  - to: valuation-multiple
+    type: causes
+    weight: 0.6
+  - to: currency-weakness
+    type: amplifies
+    weight: 0.6
+    note: Foreign-currency borrowing turns depreciation into a direct servicing cost.
+  - to: global-risk-sentiment
+    type: amplifies
+    weight: 0.6
+tags: [fundamentals, balance-sheet, macro-sensitivity]

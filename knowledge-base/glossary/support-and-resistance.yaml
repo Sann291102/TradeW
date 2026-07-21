@@ -1,0 +1,42 @@
+id: support-and-resistance
+name: Support and Resistance
+domain: glossary
+aliases: [levels, key levels, S/R]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: Price areas where reversals have repeatedly occurred, significant because of the resting orders they accumulate rather than any intrinsic property.
+definition: >
+  Areas at which price has historically ceased advancing or declining. Their
+  significance derives from participant memory and order placement: because
+  these areas are visible to everyone, orders accumulate there, and that
+  accumulation is what produces subsequent reactions.
+explainer: >
+  Levels work through a self-referential mechanism, not a physical one. They
+  matter because participants believe they matter and place orders
+  accordingly. This explains both why they produce reactions and why those
+  reactions frequently fail — the same visibility that creates the reaction
+  also makes the level an attractive place to transact against. Sentinel
+  describes levels as order-concentration areas rather than as barriers.
+observable_when:
+  - price has reversed at approximately the same area on multiple occasions
+  - reactions at the area occur on elevated volume
+  - the area coincides with a prior swing point or session extreme
+relations:
+  - to: swing-point
+    type: depends_on
+    weight: 0.9
+  - to: stop-loss-clustering
+    type: causes
+    weight: 0.85
+  - to: trading-range
+    type: part_of
+    weight: 0.8
+  - to: false-breakout
+    type: precedes
+    weight: 0.65
+  - to: market-participant
+    type: depends_on
+    weight: 0.6
+    note: The mechanism is shared attention, so it requires many participants watching the same area.
+tags: [glossary, foundational, self-referential]

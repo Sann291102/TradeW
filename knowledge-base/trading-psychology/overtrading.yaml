@@ -1,0 +1,42 @@
+id: overtrading
+name: Overtrading
+domain: trading-psychology
+aliases: [excessive frequency, churning]
+status: canonical
+maturity: established
+confidence: 0.82
+summary: Transacting at a frequency materially above one's own baseline, usually following a triggering event rather than a change in opportunity.
+definition: >
+  A sustained elevation in trade frequency relative to the participant's own
+  established norm, not accounted for by a corresponding change in market
+  conditions. Overtrading is defined against personal baseline rather than any
+  universal threshold, since appropriate frequency varies enormously by
+  approach.
+explainer: >
+  Frequency is worth watching because costs scale with it while edge does not.
+  The signature that matters is a change relative to one's own history,
+  particularly one that begins after a loss or a rapid move. Sentinel reports
+  the frequency change and what preceded it, leaving the significance for the
+  person to judge.
+observable_when:
+  - trade count over a window materially exceeds the participant's own average
+  - the elevation begins immediately after a loss or a fast directional move
+  - average holding time contracts alongside rising frequency
+relations:
+  - to: revenge-trading
+    type: depends_on
+    weight: 0.7
+  - to: fomo
+    type: depends_on
+    weight: 0.7
+  - to: slippage
+    type: amplifies
+    weight: 0.7
+    note: Transaction costs compound directly with frequency.
+  - to: drawdown
+    type: amplifies
+    weight: 0.7
+  - to: position-sizing
+    type: contradicts
+    weight: 0.6
+tags: [psychology, behaviour, measurable, cost]

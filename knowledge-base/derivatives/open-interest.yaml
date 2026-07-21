@@ -1,0 +1,38 @@
+id: open-interest
+name: Open Interest
+domain: derivatives
+aliases: [OI, outstanding contracts]
+status: canonical
+maturity: established
+confidence: 0.92
+summary: The number of derivative contracts currently outstanding, indicating how much positioning is committed rather than how much has traded.
+definition: >
+  The count of contracts that remain open. Unlike volume, which resets each
+  session, open interest accumulates: it rises when new positions are
+  established and falls when they are closed. Combined with price direction, it
+  distinguishes new positioning from position closing.
+explainer: >
+  Open interest and volume answer different questions. Volume says how much
+  changed hands; open interest says how much commitment remains. Rising price
+  with rising open interest indicates new positions being built, while rising
+  price with falling open interest indicates existing positions being closed —
+  a distinction that materially changes the reading and that Sentinel reports
+  explicitly.
+observable_when:
+  - open interest builds at a specific strike ahead of expiry
+  - price and open interest move in the same or opposite directions
+relations:
+  - to: gamma-exposure
+    type: measured_by
+    weight: 0.85
+  - to: max-pain
+    type: causes
+    weight: 0.8
+  - to: rollover
+    type: measured_by
+    weight: 0.85
+  - to: volume-confirmation
+    type: similar_to
+    weight: 0.6
+    note: Related evidence, different question — commitment versus turnover.
+tags: [derivatives, positioning, foundational]

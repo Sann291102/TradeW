@@ -1,0 +1,36 @@
+id: inflation-print
+name: Inflation Print
+domain: macroeconomics
+aliases: [CPI release, inflation data]
+status: canonical
+maturity: established
+confidence: 0.88
+summary: A scheduled inflation data release, whose deviation from expectation drives rate expectations and therefore asset repricing.
+definition: >
+  The periodic publication of a price index. Market impact derives from the
+  surprise component — the gap between the released figure and consensus — not
+  from the absolute level, because the expected portion is already reflected
+  in prices before release.
+explainer: >
+  Scheduled data releases produce a characteristic pattern: implied volatility
+  builds beforehand as uncertainty is priced, then collapses afterward once
+  resolved, regardless of the outcome. This is why option positions held across
+  such events frequently lose value even when the directional view proves
+  correct. Sentinel names the event context whenever an observation spans one.
+observable_when:
+  - the released figure differs materially from consensus expectation
+  - implied volatility rises ahead of the release and falls immediately after
+relations:
+  - to: interest-rate-policy
+    type: causes
+    weight: 0.85
+  - to: iv-crush
+    type: causes
+    weight: 0.8
+  - to: implied-volatility
+    type: amplifies
+    weight: 0.75
+  - to: global-risk-sentiment
+    type: causes
+    weight: 0.7
+tags: [macro, scheduled-event, surprise-driven]

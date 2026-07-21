@@ -1,0 +1,42 @@
+id: liquidity-provision
+name: Liquidity Provision
+domain: market-microstructure
+aliases: [market making, passive quoting]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: Quoting on both sides of the book to earn the spread, while bearing inventory and adverse-selection risk.
+definition: >
+  The activity of continuously offering to buy and sell, profiting from the
+  spread while carrying the risk of holding inventory and of transacting
+  against better-informed participants. Providers widen quotes or withdraw
+  entirely when either risk rises, which is why liquidity is most scarce
+  exactly when it is most wanted.
+explainer: >
+  Understanding provision explains liquidity's most important property: it is
+  conditional, not constant. Providers are not obliged to quote, and withdraw
+  when uncertainty spikes. This is the mechanism behind sudden gaps and
+  disorderly moves — not an absence of interest, but an absence of
+  intermediation. Sentinel treats liquidity conditions as context for every
+  execution-related observation.
+observable_when:
+  - quotes widen or thin sharply around scheduled events
+  - depth withdraws ahead of a data release and returns afterward
+relations:
+  - to: liquidity
+    type: causes
+    weight: 0.9
+  - to: bid-ask-spread
+    type: causes
+    weight: 0.9
+  - to: order-book-depth
+    type: causes
+    weight: 0.85
+  - to: volatility
+    type: contradicts
+    weight: 0.7
+    note: Provision withdraws as volatility rises, which further amplifies it.
+  - to: market-participant
+    type: part_of
+    weight: 0.8
+tags: [microstructure, foundational, mechanism]

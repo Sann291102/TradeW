@@ -1,0 +1,37 @@
+id: diversification
+name: Diversification
+domain: risk-management
+aliases: [correlation management, exposure spreading]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: Spreading exposure across positions whose outcomes are not driven by the same underlying factor.
+definition: >
+  The reduction of portfolio variance achieved by holding positions with low
+  outcome correlation. Its effectiveness depends entirely on that correlation
+  being genuinely low — positions in different instruments driven by the same
+  factor provide the appearance of diversification without the effect.
+explainer: >
+  The most common failure is holding many positions that are in substance one
+  position, because they share a sector, a factor, or a macro driver.
+  Correlations also tend to converge toward one precisely during stress, which
+  is when diversification is most needed. Sentinel describes the factor
+  overlap it can observe and names this limitation explicitly.
+observable_when:
+  - multiple positions share a sector, factor or macro driver
+  - portfolio positions move together during stress despite nominal variety
+relations:
+  - to: risk-of-ruin
+    type: mitigates
+    weight: 0.7
+  - to: drawdown
+    type: mitigates
+    weight: 0.7
+  - to: global-risk-sentiment
+    type: contradicts
+    weight: 0.65
+    note: Correlations converge under broad risk-off conditions, eroding the benefit.
+  - to: position-sizing
+    type: similar_to
+    weight: 0.6
+tags: [risk, portfolio, foundational]

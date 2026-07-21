@@ -1,0 +1,41 @@
+id: implied-volatility
+name: Implied Volatility
+domain: options
+aliases: [IV, implied vol]
+status: canonical
+maturity: established
+confidence: 0.95
+summary: The volatility figure that, placed into an option pricing model, reproduces the option's traded price — a market-derived expectation, not a measurement.
+definition: >
+  The value of the volatility input that equates a pricing model's output with
+  an option's observed market price. Implied volatility is therefore a
+  restatement of price in volatility units. It reflects what participants are
+  collectively willing to pay for optionality, which includes expectation of
+  movement, supply and demand for hedges, and event risk.
+explainer: >
+  Implied volatility is frequently misread as a forecast. It is closer to a
+  price: when demand for protection rises, implied volatility rises whether or
+  not realised movement follows. The gap between implied and subsequently
+  realised volatility is where much of options behaviour originates, and it is
+  the relationship Sentinel describes rather than either figure alone.
+observable_when:
+  - option prices change materially without a corresponding move in the underlying
+  - implied volatility rises into a scheduled event and falls after it
+relations:
+  - to: volatility
+    type: is_a
+    weight: 0.9
+  - to: option-greeks
+    type: part_of
+    weight: 0.85
+  - to: iv-crush
+    type: causes
+    weight: 0.85
+    note: Elevated implied volatility is the precondition for the collapse.
+  - to: fear-index
+    type: measured_by
+    weight: 0.8
+  - to: earnings-surprise
+    type: precedes
+    weight: 0.7
+tags: [options, foundational, volatility]

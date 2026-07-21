@@ -2,6 +2,10 @@
 
 Status: design, pre-implementation. Cross-cutting system, added by the Genesis v2 brief. Governed by [`TRADEW-OS.md`](TRADEW-OS.md) §4 (knowledge lifecycle). This graph holds **validated** knowledge only; its raw-evidence counterpart is the [Research Vault](RESEARCH-VAULT.md) — the two are the same physical store separated by a stage discriminator (`RESEARCH-VAULT.md` §2), never two databases.
 
+> **Companion doc, 2026-07-21.** This document specifies the **evidence lifecycle** — how raw observation becomes validated knowledge (§3's News→…→Lesson chain, the permanence rule, the validation gate). Its companion, [`SENTINEL-KNOWLEDGE-GRAPH.md`](SENTINEL-KNOWLEDGE-GRAPH.md), specifies the **concept ontology** those evidence nodes are interpreted against — the durable market knowledge Sentinel reasons over, its semantic relation vocabulary, and the reasoning layer itself.
+>
+> Two complementary layers over one store, not competing designs. This doc answers *"how does something become knowledge?"*; that one answers *"what does Sentinel know, and how does knowing it produce an explanation?"* The concept layer is **implemented** as of 2026-07-21 (schema, 66-concept seed ontology, loader, reasoning, reinforcement); this evidence layer remains design-stage. §2 and §3 below are updated to reflect what actually shipped.
+
 ## 1. This is not `TradeW/knowledge/`
 
 `TradeW/knowledge/` is an Obsidian vault scoped strictly to **engineering/coding-agent memory** for people (and Claude) building TradeW — architecture decisions, debugging notes, implementation plans. Per its own `_INDEX.md` and `CLAUDE.md` Rule 4, it explicitly excludes live market data and real-time analytics, and is never wired into the production runtime. The direction update (§9) reaffirms this separation as a hard rule.
@@ -23,6 +27,10 @@ The product-facing Knowledge Graph is therefore **the same Postgres+pgvector sto
 
 1. A **node-type taxonomy** matching §3 below (currently `ConceptLearningEngine` extracts symbols/patterns/sectors generically — this adds the specific node kinds the brief asks for: News, Market Event, Pattern, Indicator, Concept, Historical Example, Backtest, Outcome, Lesson, Research).
 2. A **read API surface for non-Sentinel consumers** — today `KnowledgeCenterService` only exposes graph data indirectly through `ConceptLearningEngine`'s writes (per the Brain audit, no direct graph-query endpoint exists yet). Learning Hub's lesson generation and TradeW AI's research agents need a direct `GET /brain/graph/:nodeId/neighbors`-style read path, gated the same way (`ServiceTokenGuard`, internal-only, called via `services/api`).
+
+**Update (2026-07-21) — how addition 1 actually shipped.** The Concept node kind was built out first and separately, as the concept ontology in `SENTINEL-KNOWLEDGE-GRAPH.md`. It uses **new tables in the same Postgres** (`ConceptNode`, `ConceptEdge`, `ConceptObservation`, `ConceptPromotion`) rather than overloading `GraphNode.entityType`, because domain, status and confidence needed to be indexed query dimensions and runtime reinforcement needed its own append-only log — both impossible inside a `properties` JSON blob at thousands of concepts. This is still "extend the Brain, don't build new infrastructure": same database, same service, same Prisma schema owner. The remaining evidence-lifecycle node kinds (News, Market Event, Backtest, Outcome, Lesson, Research) are still unbuilt and remain this document's scope.
+
+Addition 2 (the read API) is still unbuilt for both layers.
 
 ## 3. Node types and the canonical chain
 

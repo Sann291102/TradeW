@@ -1,0 +1,43 @@
+id: expiry-day-trap
+name: Expiry Day Trap
+domain: patterns
+aliases: [expiry pin trap, settlement-day distortion]
+status: canonical
+maturity: emerging
+confidence: 0.75
+summary: Price behaviour on expiry driven by options settlement mechanics rather than by directional conviction, which reverts once the mechanical pressure lapses.
+definition: >
+  A configuration specific to expiry sessions in which hedging flows,
+  pin effects around heavily-populated strikes, and the collapse of time value
+  produce movement that does not reflect underlying directional interest. The
+  distortion typically resolves once settlement passes.
+explainer: >
+  Expiry sessions are structurally different from ordinary sessions, and
+  patterns read from them frequently do not generalise. The distinguishing
+  question is whether movement is explained by settlement mechanics or by
+  fresh participation. Sentinel flags expiry context explicitly so that
+  historical comparisons are not drawn between expiry and non-expiry sessions,
+  which is one of the most common sources of misleading similarity.
+observable_when:
+  - the session is a scheduled derivative expiry
+  - price gravitates toward strikes carrying large open interest
+  - directional movement is not corroborated by cash-market volume expansion
+relations:
+  - to: max-pain
+    type: depends_on
+    weight: 0.7
+  - to: gamma-exposure
+    type: depends_on
+    weight: 0.8
+    note: Dealer hedging obligation is the mechanism generating the distortion.
+  - to: iv-crush
+    type: precedes
+    weight: 0.75
+  - to: open-interest
+    type: measured_by
+    weight: 0.7
+  - to: market-regime
+    type: contradicts
+    weight: 0.6
+    note: Expiry sessions should be excluded when characterising the prevailing regime.
+tags: [pattern, options, expiry, composite]

@@ -1,0 +1,37 @@
+id: range-expansion
+name: Range Expansion
+domain: price-action
+aliases: [expansion, displacement, impulse]
+status: canonical
+maturity: established
+confidence: 0.88
+summary: A marked increase in the distance price covers per unit time, indicating one side has achieved displacement.
+definition: >
+  A shift from contained, overlapping bars to bars that cover materially more
+  distance with less overlap. Expansion is the observable signature of an
+  imbalance being resolved: one side is transacting with urgency and the other
+  is stepping away rather than defending.
+explainer: >
+  Expansion is what separates a move that matters structurally from one that
+  merely drifts. It is measurable rather than subjective — average true range
+  and candle body ratios both capture it. Sentinel uses expansion primarily as
+  corroborating evidence: a boundary break accompanied by expansion has a
+  different historical character from one without it.
+observable_when:
+  - bar ranges exceed their recent average by a meaningful multiple
+  - successive bars show reduced overlap with one another
+  - average true range rises while direction persists
+relations:
+  - to: average-true-range
+    type: measured_by
+    weight: 0.9
+  - to: breakout
+    type: confirms
+    weight: 0.8
+  - to: volatility
+    type: is_a
+    weight: 0.7
+  - to: trend-day
+    type: precedes
+    weight: 0.7
+tags: [price-action, volatility]

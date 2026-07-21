@@ -1,0 +1,39 @@
+id: trading-range
+name: Trading Range
+domain: market-structure
+aliases: [consolidation, balance area, sideways market]
+status: canonical
+maturity: established
+confidence: 0.93
+summary: A bounded area where price oscillates between a recognised high and low without swing points progressing directionally.
+definition: >
+  A period during which price repeatedly reverses between an upper and lower
+  boundary, producing swing points that fail to progress in either direction.
+  Ranges represent two-sided agreement on value: both buyers and sellers act
+  at the extremes, so neither side achieves displacement.
+explainer: >
+  A range means the market has stopped resolving in one direction. Its edges
+  attract activity because that is where resting orders accumulate, which is
+  also why range boundaries are the most common location for sweeps and false
+  breakouts. Sentinel treats range edges as places where evidence tends to
+  cluster, not as levels carrying an instruction.
+observable_when:
+  - swing highs cluster near one price and swing lows near another
+  - range expansion is absent and candle bodies contract
+  - repeated rejection from both boundaries within the same period
+relations:
+  - to: support-and-resistance
+    type: depends_on
+    weight: 0.9
+  - to: stop-loss-clustering
+    type: causes
+    weight: 0.8
+    note: Range edges are where protective orders concentrate.
+  - to: liquidity-sweep
+    type: precedes
+    weight: 0.7
+    note: Sweeps commonly resolve the liquidity a range has built at its edges.
+  - to: failed-auction
+    type: similar_to
+    weight: 0.6
+tags: [structure, foundational]

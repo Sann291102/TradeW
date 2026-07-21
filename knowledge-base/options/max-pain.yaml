@@ -1,0 +1,41 @@
+id: max-pain
+name: Max Pain
+domain: options
+aliases: [pin strike, maximum pain point]
+status: canonical
+maturity: contested
+confidence: 0.5
+summary: The strike at which the aggregate value of expiring options is smallest, sometimes observed to act as a gravitational reference into expiry.
+definition: >
+  The underlying price at which the total intrinsic value of all open option
+  contracts at expiry would be minimised. The associated claim — that price
+  tends to gravitate toward this level into expiry — is widely repeated and
+  weakly evidenced.
+explainer: >
+  Max pain is included deliberately as a contested concept. Any pinning effect
+  that does occur is better explained by dealer hedging around concentrated
+  open interest than by the max pain calculation itself, and the two often
+  point at nearby strikes, which makes the weaker explanation look correct.
+  Sentinel carries this concept at low confidence and will say so whenever it
+  is referenced, rather than omitting it and leaving users to encounter it
+  without that caveat.
+observable_when:
+  - price stalls near a heavily-populated strike in the final expiry session
+relations:
+  - to: gamma-exposure
+    type: contradicts
+    weight: 0.6
+    note: Dealer hedging is the competing and better-evidenced explanation for pinning.
+  - to: open-interest
+    type: depends_on
+    weight: 0.9
+  - to: expiry-day-trap
+    type: part_of
+    weight: 0.6
+  - to: confirmation-bias
+    type: amplifies
+    weight: 0.55
+    note: Nearby strikes make retrospective confirmation easy and disconfirmation invisible.
+sources:
+  - Widely circulated in retail options commentary; academic support is limited and mixed.
+tags: [options, expiry, contested]

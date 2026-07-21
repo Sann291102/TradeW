@@ -1,0 +1,33 @@
+id: option-greeks
+name: Option Greeks
+domain: options
+aliases: [greeks, delta gamma theta vega]
+status: canonical
+maturity: established
+confidence: 0.96
+summary: The sensitivities of an option's price to the underlying, to time, to volatility and to their rates of change.
+definition: >
+  A set of partial derivatives describing how an option's theoretical value
+  responds to each input: delta to the underlying price, gamma to delta itself,
+  theta to time, vega to implied volatility, rho to interest rates. Together
+  they decompose an option position into separable risk exposures.
+explainer: >
+  The greeks are useful because they explain why an option position gained or
+  lost value, separating the directional component from the volatility and
+  time components. Most confusion about option outcomes resolves once the
+  position is decomposed this way, which is how Sentinel frames any option
+  observation it reports.
+observable_when:
+  - an option position changes value in a way the underlying move alone does not explain
+relations:
+  - to: implied-volatility
+    type: measured_by
+    weight: 0.85
+  - to: iv-crush
+    type: confirms
+    weight: 0.7
+    note: Vega decomposition is what makes an IV crush outcome legible.
+  - to: cost-of-carry
+    type: depends_on
+    weight: 0.5
+tags: [options, foundational]

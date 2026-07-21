@@ -1,0 +1,38 @@
+id: valuation-multiple
+name: Valuation Multiple
+domain: company-fundamentals
+aliases: [PE ratio, EV/EBITDA, multiple]
+status: canonical
+maturity: established
+confidence: 0.88
+summary: The ratio of price to a fundamental measure, expressing what participants currently pay per unit of earnings or cash flow.
+definition: >
+  A ratio relating market price to a fundamental quantity such as earnings,
+  book value or cash flow. Multiples are comparative rather than absolute:
+  they carry meaning only against a peer group, the company's own history, or
+  the prevailing discount rate.
+explainer: >
+  A multiple compresses growth expectations, risk perception and the discount
+  rate into a single number, which makes it convenient and easy to misread. A
+  rising multiple can reflect improving expectations or falling rates, and
+  those have very different implications. Sentinel presents multiples with
+  their comparison basis stated, since the figure alone supports almost any
+  conclusion.
+observable_when:
+  - the multiple diverges materially from peers or from its own history
+  - it expands or compresses without a corresponding change in fundamentals
+relations:
+  - to: interest-rate-policy
+    type: depends_on
+    weight: 0.85
+    note: The discount rate is a direct input to any multiple.
+  - to: earnings-surprise
+    type: depends_on
+    weight: 0.75
+  - to: guidance-revision
+    type: depends_on
+    weight: 0.75
+  - to: balance-sheet-leverage
+    type: depends_on
+    weight: 0.6
+tags: [fundamentals, valuation, comparative]

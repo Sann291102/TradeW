@@ -1,0 +1,44 @@
+id: bull-trap
+name: Bull Trap
+domain: patterns
+aliases: [upside trap, failed upside break]
+status: canonical
+maturity: established
+confidence: 0.87
+summary: An upside break that attracts buying, fails to sustain, and reverses below the broken level.
+definition: >
+  A composite configuration: price breaks above a boundary, participation
+  arrives on the break, the move fails to extend, and price returns below the
+  level. The trap element is the sequence — buying interest is attracted at the
+  point of maximum structural weakness, immediately before the failure.
+explainer: >
+  A bull trap is never identified from a single signal. It requires the break,
+  the participation evidence, and the failure, in that order. This is why
+  Sentinel reports it only as a composite with each component named
+  individually — a break alone, or thin volume alone, is not a trap, and
+  calling one prematurely would be a guess dressed as an observation.
+observable_when:
+  - an upside break occurs without corresponding volume expansion
+  - price returns below the broken boundary within a short window
+  - the return leg covers distance faster than the break leg did
+relations:
+  - to: false-breakout
+    type: is_a
+    weight: 0.9
+  - to: low-volume-breakout
+    type: confirms
+    weight: 0.8
+    note: Thin participation on the break is the most common corroborating component.
+  - to: bear-trap
+    type: similar_to
+    weight: 0.9
+    note: Structurally identical, direction inverted.
+  - to: fomo
+    type: amplifies
+    weight: 0.75
+    note: Chase behaviour supplies the buying that the failure then strands.
+  - to: volume-confirmation
+    type: contradicts
+    weight: 0.8
+    note: Genuine participation on the break argues against the trap reading.
+tags: [pattern, composite, trap]

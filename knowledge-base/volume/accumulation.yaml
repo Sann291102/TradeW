@@ -1,0 +1,40 @@
+id: accumulation
+name: Accumulation
+domain: volume
+aliases: [absorption, basing]
+status: canonical
+maturity: established
+confidence: 0.75
+summary: Sustained buying absorbed within a contained price area, visible as volume building without upward price progress.
+definition: >
+  A period in which substantial volume transacts within a narrow range without
+  price advancing proportionally, interpreted as size being acquired without
+  moving the market against the acquirer. Accumulation is inferred from the
+  volume-to-progress relationship rather than observed directly.
+explainer: >
+  Large positions cannot be established quickly without moving price, so they
+  are built gradually inside ranges. The observable signature is volume without
+  displacement. This is an inference and Sentinel labels it as one — the same
+  footprint can be produced by two-sided indecision, and distinguishing them
+  reliably requires order-flow data that is not always available.
+observable_when:
+  - volume is elevated while the price range stays contained
+  - repeated downside probes are absorbed without follow-through
+  - the lower boundary of the area holds across multiple tests
+relations:
+  - to: institutional-order-flow
+    type: depends_on
+    weight: 0.8
+  - to: trading-range
+    type: part_of
+    weight: 0.75
+  - to: distribution
+    type: contradicts
+    weight: 0.85
+  - to: iceberg-order
+    type: confirms
+    weight: 0.7
+  - to: breakout
+    type: precedes
+    weight: 0.6
+tags: [volume, institutional, inference]

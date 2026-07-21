@@ -1,0 +1,44 @@
+id: stop-loss-placement
+name: Stop-Loss Placement
+domain: risk-management
+aliases: [protective order placement, invalidation level]
+status: canonical
+maturity: established
+confidence: 0.88
+summary: Deciding in advance the price at which a position's premise is considered disproven, and pre-committing to exit there.
+definition: >
+  The practice of identifying, before entering, the price that would invalidate
+  the reasoning behind a position, and placing a protective order accordingly.
+  Structural placement locates that price beyond the level whose breach would
+  disprove the premise; arbitrary placement uses a fixed distance unrelated to
+  structure.
+explainer: >
+  The purpose of a protective order is to define in advance what being wrong
+  looks like, while judgement is unimpaired. Placement carries a structural
+  tension worth understanding: the obvious location is beyond the nearest swing
+  point, which is precisely where such orders cluster and therefore where
+  sweeps occur. Sentinel surfaces this trade-off as knowledge; it does not
+  prescribe any particular placement.
+observable_when:
+  - a protective order sits immediately beyond an obvious structural level
+  - realised losses cluster tightly at a repeated distance from entry
+relations:
+  - to: stop-loss-clustering
+    type: causes
+    weight: 0.85
+    note: Shared placement convention is what creates the clusters.
+  - to: liquidity-sweep
+    type: depends_on
+    weight: 0.7
+    note: The structural tension — protective orders sit where sweeps occur.
+  - to: swing-point
+    type: depends_on
+    weight: 0.85
+  - to: drawdown
+    type: mitigates
+    weight: 0.8
+  - to: loss-aversion
+    type: mitigates
+    weight: 0.75
+    note: Pre-commitment removes the decision from the moment of stress.
+tags: [risk, foundational, structural-tension]

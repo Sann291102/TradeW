@@ -1,0 +1,33 @@
+id: order-book-depth
+name: Order Book Depth
+domain: market-microstructure
+aliases: [depth of market, DOM, book depth]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: The quantity of resting orders at each price level away from the touch, indicating how much size the book can absorb.
+definition: >
+  The distribution of resting limit orders across price levels on both sides of
+  the book. Depth determines how far price moves for a given executed size, and
+  is the most direct available measure of immediately available liquidity —
+  subject to the caveat that displayed depth is not total depth.
+explainer: >
+  Depth is informative but systematically incomplete: hidden and reserve orders
+  mean displayed quantity understates what is truly available, while orders
+  that can be cancelled instantly mean it can also overstate it. Sentinel uses
+  depth as directional evidence about liquidity conditions rather than as a
+  precise measurement.
+observable_when:
+  - displayed quantity thins conspicuously on one side ahead of a move
+  - executed volume at a level greatly exceeds the depth that was displayed
+relations:
+  - to: liquidity
+    type: measured_by
+    weight: 0.85
+  - to: slippage
+    type: causes
+    weight: 0.8
+  - to: liquidity-sweep
+    type: confirms
+    weight: 0.65
+tags: [microstructure, order-flow, evidence]

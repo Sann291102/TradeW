@@ -1,0 +1,35 @@
+id: bid-ask-spread
+name: Bid-Ask Spread
+domain: market-microstructure
+aliases: [spread, quoted spread]
+status: canonical
+maturity: established
+confidence: 0.95
+summary: The difference between the best available buy and sell prices, representing the immediate cost of transacting.
+definition: >
+  The gap between the highest resting bid and the lowest resting offer. The
+  spread compensates liquidity providers for the risk of holding inventory and
+  for adverse selection, and widens when either risk increases.
+explainer: >
+  The spread is the most immediate and most frequently overlooked transaction
+  cost. It widens exactly when conditions are most volatile or least liquid,
+  which means the cost of transacting rises precisely when the urge to
+  transact is strongest. Sentinel reports spread conditions alongside execution
+  observations because the cost is otherwise invisible in a price chart.
+observable_when:
+  - the quoted spread exceeds its recent typical value for the instrument
+  - spread widens during volatility expansion or outside primary hours
+relations:
+  - to: liquidity
+    type: measured_by
+    weight: 0.9
+  - to: slippage
+    type: causes
+    weight: 0.85
+  - to: liquidity-provision
+    type: depends_on
+    weight: 0.85
+  - to: volatility
+    type: amplifies
+    weight: 0.7
+tags: [microstructure, cost, foundational]

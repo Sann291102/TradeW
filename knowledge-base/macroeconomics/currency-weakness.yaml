@@ -1,0 +1,38 @@
+id: currency-weakness
+name: Currency Weakness
+domain: macroeconomics
+aliases: [FX depreciation, exchange rate pressure]
+status: canonical
+maturity: established
+confidence: 0.82
+summary: Depreciation of the domestic currency, which redistributes earnings impact between importers and exporters and affects foreign portfolio flows.
+definition: >
+  A sustained decline in the domestic currency against major counterparts.
+  Effects on equities are sectorally divergent: exporters and foreign-revenue
+  earners benefit in domestic terms while importers and foreign-currency
+  borrowers face margin and servicing pressure.
+explainer: >
+  Currency moves matter to equity markets through two distinct channels that
+  are often conflated: the earnings translation effect, which is sectoral, and
+  the portfolio flow effect, which is market-wide. Persistent depreciation
+  tends to discourage foreign inflows because returns must be converted back.
+  Sentinel separates the two channels when describing a currency-linked
+  observation.
+observable_when:
+  - the domestic currency declines persistently against major counterparts
+  - export-oriented and import-dependent sectors diverge in performance
+  - foreign portfolio flows turn persistently negative
+relations:
+  - to: interest-rate-policy
+    type: depends_on
+    weight: 0.8
+  - to: global-risk-sentiment
+    type: confirms
+    weight: 0.7
+  - to: earnings-surprise
+    type: causes
+    weight: 0.6
+  - to: market-regime
+    type: amplifies
+    weight: 0.6
+tags: [macro, cross-asset, sectoral]

@@ -1,0 +1,43 @@
+id: trend
+name: Trend
+domain: market-structure
+aliases: [directional move, trending market]
+status: canonical
+maturity: established
+confidence: 0.95
+summary: A sustained sequence of higher highs and higher lows, or lower highs and lower lows, on a stated timeframe.
+definition: >
+  The condition where successive swing points progress in one direction: an
+  uptrend prints higher swing highs and higher swing lows, a downtrend the
+  inverse. Trend is always timeframe-relative — the same series can be an
+  uptrend on a daily chart and a range on a five-minute chart, so a trend
+  claim carries no meaning without the timeframe it was measured on.
+explainer: >
+  When Sentinel describes a market as trending, it means the swing structure
+  is still progressing in one direction on the timeframe named. That is a
+  description of what price has already done, not a statement about what
+  happens next. Trends end, and the structural evidence that one has ended is
+  a swing point failing to extend.
+observable_when:
+  - successive swing highs and swing lows both progress in the same direction
+  - pullbacks stop short of the prior swing point rather than exceeding it
+  - expansion candles appear in the direction of the sequence
+relations:
+  - to: swing-point
+    type: depends_on
+    weight: 0.95
+    note: Trend is defined entirely in terms of swing point progression.
+  - to: timeframe-hierarchy
+    type: depends_on
+    weight: 0.9
+    note: A trend claim is undefined without a stated timeframe.
+  - to: trading-range
+    type: contradicts
+    weight: 0.85
+    note: On one timeframe a market is trending or ranging, not both.
+  - to: moving-average
+    type: measured_by
+    weight: 0.6
+sources:
+  - Dow Theory, as summarised in standard market-structure literature
+tags: [structure, foundational]

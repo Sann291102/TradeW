@@ -1,0 +1,41 @@
+id: earnings-surprise
+name: Earnings Surprise
+domain: company-fundamentals
+aliases: [earnings beat, earnings miss]
+status: canonical
+maturity: established
+confidence: 0.88
+summary: The deviation of reported results from consensus expectation, which drives repricing far more than the absolute result does.
+definition: >
+  The gap between reported earnings and the consensus estimate preceding the
+  release. Because the expected component is already reflected in price, the
+  surprise is what causes repricing — a strong result below expectation
+  typically produces a decline.
+explainer: >
+  This is the most common source of confusion about earnings reactions: a
+  company reporting record profit can fall sharply because the record was
+  smaller than anticipated. Price responds to the difference from expectation,
+  not to the result in isolation. Guidance accompanying the release frequently
+  matters more than the reported quarter, since it revises all future
+  expectations at once.
+observable_when:
+  - reported figures differ materially from consensus estimates
+  - price moves opposite to the direction the headline result suggests
+  - implied volatility collapses immediately following the release
+relations:
+  - to: guidance-revision
+    type: precedes
+    weight: 0.8
+  - to: iv-crush
+    type: causes
+    weight: 0.85
+  - to: valuation-multiple
+    type: causes
+    weight: 0.75
+  - to: implied-volatility
+    type: amplifies
+    weight: 0.7
+  - to: confirmation-bias
+    type: amplifies
+    weight: 0.55
+tags: [fundamentals, scheduled-event, surprise-driven]

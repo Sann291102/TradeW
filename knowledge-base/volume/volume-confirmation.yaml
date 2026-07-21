@@ -1,0 +1,33 @@
+id: volume-confirmation
+name: Volume Confirmation
+domain: volume
+aliases: [participation confirmation, volume support]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: Expansion in traded volume accompanying a directional move, evidencing that participation rather than thin conditions produced it.
+definition: >
+  The condition where a structural event — a break, a reversal, an expansion —
+  occurs alongside volume materially above its recent baseline. Confirmation is
+  comparative rather than absolute: what matters is volume relative to the same
+  instrument's own recent distribution and time of day.
+explainer: >
+  Volume answers a question price cannot: how many participants were involved.
+  A move on heavy participation and the identical move on thin participation
+  have different historical characters, which is why Sentinel reports the
+  participation evidence alongside every structural observation instead of
+  describing the price move alone.
+observable_when:
+  - volume on the event bar exceeds its recent same-time-of-day average
+  - the expansion persists across several bars rather than one spike
+relations:
+  - to: breakout
+    type: confirms
+    weight: 0.85
+  - to: liquidity
+    type: measured_by
+    weight: 0.7
+  - to: accumulation
+    type: confirms
+    weight: 0.7
+tags: [volume, evidence, foundational]

@@ -1,0 +1,39 @@
+id: put-call-ratio
+name: Put-Call Ratio
+domain: sentiment
+aliases: [PCR, options sentiment ratio]
+status: canonical
+maturity: contested
+confidence: 0.6
+summary: The ratio of put to call activity, commonly read as a contrarian sentiment gauge though its interpretation is unreliable.
+definition: >
+  The ratio of put volume or open interest to the call equivalent. It is
+  conventionally interpreted as a contrarian indicator, on the reasoning that
+  extreme protective demand marks pessimism extremes. The interpretation is
+  confounded by the inability to distinguish hedging from speculation in the
+  raw figures.
+explainer: >
+  This concept is carried at reduced confidence deliberately. A large put
+  volume may represent bearish speculation or routine portfolio hedging by an
+  institution with no directional view at all, and the ratio cannot separate
+  them. Sentinel reports the reading together with this ambiguity rather than
+  presenting it as a clean sentiment signal, and prefers volume-based to
+  open-interest-based versions where the choice exists.
+observable_when:
+  - the ratio reaches an extreme relative to its own recent distribution
+  - the reading diverges from other sentiment measures
+relations:
+  - to: retail-positioning
+    type: measured_by
+    weight: 0.6
+  - to: fear-index
+    type: similar_to
+    weight: 0.7
+  - to: open-interest
+    type: depends_on
+    weight: 0.8
+  - to: confirmation-bias
+    type: amplifies
+    weight: 0.55
+    note: Ambiguity in the measure makes it easy to read either way after the fact.
+tags: [sentiment, options, contested]

@@ -1,0 +1,39 @@
+id: relative-strength-index
+name: Relative Strength Index
+domain: technical-analysis
+aliases: [RSI, momentum oscillator]
+status: canonical
+maturity: established
+confidence: 0.8
+summary: A bounded oscillator comparing the magnitude of recent gains to recent losses over a lookback period.
+definition: >
+  An index between 0 and 100 derived from the ratio of average gain to average
+  loss across a lookback. RSI measures the balance of recent directional
+  movement; it does not measure value, extension, or exhaustion, despite being
+  commonly interpreted as doing so.
+explainer: >
+  The widespread reading of high or low RSI as meaning a move has gone too far
+  is the single most common misuse of this indicator. In a strong trend RSI can
+  remain at an extreme for extended periods, and treating that as exhaustion
+  systematically positions against the prevailing direction. Sentinel reports
+  RSI together with the regime it was measured in, because the same reading
+  carries opposite implications in trending versus ranging conditions.
+observable_when:
+  - the oscillator persists at an extreme while price continues directionally
+  - oscillator and price diverge over a sustained sequence of swings
+relations:
+  - to: market-regime
+    type: depends_on
+    weight: 0.85
+    note: Interpretation inverts between trending and ranging regimes.
+  - to: trend
+    type: contradicts
+    weight: 0.6
+    note: Extreme readings persist in trends, contradicting the exhaustion reading.
+  - to: confirmation-bias
+    type: amplifies
+    weight: 0.7
+  - to: moving-average
+    type: similar_to
+    weight: 0.5
+tags: [indicator, oscillator, commonly-misused]

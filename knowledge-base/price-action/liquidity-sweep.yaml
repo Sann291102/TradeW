@@ -1,0 +1,45 @@
+id: liquidity-sweep
+name: Liquidity Sweep
+domain: price-action
+aliases: [stop hunt, liquidity grab, stop run]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: A rapid excursion beyond a level dense with resting orders, which reverses once those orders are consumed.
+definition: >
+  A move that extends just beyond a swing point or range edge, triggers the
+  protective orders resting there, and reverses promptly. The defining
+  characteristic is that the excursion consumes liquidity rather than
+  establishing acceptance beyond the level: volume spikes on the excursion but
+  price does not build value on the far side.
+explainer: >
+  Large participants need resting orders on the other side to fill size without
+  moving price against themselves. Areas where protective orders cluster are
+  therefore where large orders can be executed most efficiently. This does not
+  require any coordination or manipulation — it is a structural consequence of
+  where liquidity sits. Sentinel describes sweeps as an order-flow phenomenon,
+  and treats the reversal as evidence about participation, not as a signal.
+observable_when:
+  - price extends marginally beyond a prior swing point then reverses within a few bars
+  - volume spikes on the excursion bar without follow-through volume after it
+  - the far side of the level shows no sustained trade or value building
+relations:
+  - to: stop-loss-clustering
+    type: depends_on
+    weight: 0.95
+    note: A sweep is only possible where protective orders have accumulated.
+  - to: institutional-order-flow
+    type: depends_on
+    weight: 0.7
+    note: Requires size seeking efficient fills; absent that motive the excursion is just a failed break.
+  - to: order-book-depth
+    type: measured_by
+    weight: 0.6
+  - to: bull-trap
+    type: causes
+    weight: 0.75
+examples:
+  - title: Prior-day low swept before reversal
+    context: Price undercut the previous session low by a small margin on a volume spike, with depth thinning on the bid immediately beforehand.
+    outcome: Price reclaimed the prior low within the same hour and spent the remainder of the session above it.
+tags: [price-action, institutional, trap]

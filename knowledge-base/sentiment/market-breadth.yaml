@@ -1,0 +1,37 @@
+id: market-breadth
+name: Market Breadth
+domain: sentiment
+aliases: [advance-decline, participation breadth]
+status: canonical
+maturity: established
+confidence: 0.85
+summary: The proportion of constituents participating in an index move, distinguishing broad advances from narrow ones.
+definition: >
+  A family of measures — advance-decline ratios, percentage above a moving
+  average, new highs versus new lows — describing how many constituents share
+  in an index's direction. Breadth separates moves driven by broad
+  participation from those driven by a handful of heavily-weighted names.
+explainer: >
+  An index can rise while most of its constituents fall, if the largest
+  weights carry it. Breadth makes this visible, which matters because the
+  headline index number is what most people see and it can misrepresent what
+  the market is actually doing. Sentinel reports breadth alongside index
+  observations for that reason.
+observable_when:
+  - the index advances while a minority of constituents participate
+  - new lows expand while the index is near its highs
+  - equal-weighted and cap-weighted versions of an index diverge
+relations:
+  - to: global-risk-sentiment
+    type: measured_by
+    weight: 0.8
+  - to: market-regime
+    type: confirms
+    weight: 0.75
+  - to: distribution
+    type: confirms
+    weight: 0.6
+  - to: retail-positioning
+    type: similar_to
+    weight: 0.5
+tags: [sentiment, breadth, index]
