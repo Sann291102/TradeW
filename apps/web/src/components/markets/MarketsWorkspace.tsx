@@ -1,30 +1,144 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { Card, cn } from '@tradew/ui';
-import { SECTORS, SECTOR_STOCKS } from '@/lib/mock/market';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Card, Badge, cn } from '@tradew/ui';
+import { TradeIcon } from '@/components/shell/icons';
+import { SECTORS, SECTOR_STOCKS, COMMODITIES } from '@/lib/mock/market';
 import { ALL_NSE_INDICES } from '@/lib/mock/indices';
 import { FO_STOCK_UNIVERSE } from '@/lib/mock/foUniverse';
+import { useDhanLiveFeed, type DhanFeedStatus } from '@/lib/hooks/useDhanLiveFeed';
 import { fmt, pct } from '@/lib/format';
 
-const CATEGORIES = ['Indices', 'Stocks', 'Futures', 'Options', 'ETFs', 'Commodities'] as const;
+const CATEGORIES = ['Indices', 'Stocks', 'ETFs', 'Commodities'] as const;
+
+/** The Dhan bridge's index symbols, mapped onto the matching `ALL_NSE_INDICES`
+ *  row name — NSE's own index list uses full names ("NIFTY 50"), the bridge
+ *  uses ticker-style symbols. SENSEX has no row here (BSE index, this list is
+ *  NSE-only), so it never overlays. */
+const INDEX_NAME_TO_DHAN_SYMBOL: Record<string, string> = {
+  'NIFTY 50': 'NIFTY',
+  'NIFTY BANK': 'BANKNIFTY',
+  'NIFTY FINANCIAL SERVICES': 'FINNIFTY',
+  'INDIA VIX': 'INDIAVIX',
+};
+
+/** A row generic enough to cover indices/stocks/ETFs/commodities in one table. */
+interface QuoteRow {
+  symbol: string;
+  name: string;
+  ltp: number | null;
+  changePct: number | null;
+  isLive: boolean;
+}
+
+/** Buy / Sell / Chart, revealed on row hover (or keyboard focus). Same
+ *  `/trade?symbol=…&action=buy|sell` convention the Option Chain's
+ *  QuickActionsDock already uses — no separate order-entry flow invented
+ *  here, this just routes into the existing trade page. */
+function RowActions({ symbol }: { symbol: string }) {
+  const router = useRouter();
+  return (
+    <div
+      className="ml-2 flex shrink-0 items-center gap-1 opacity-0 transition-opacity duration-micro group-hover:opacity-100 group-focus-within:opacity-100"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        title={`Buy ${symbol}`}
+        aria-label={`Buy ${symbol}`}
+        onClick={() => router.push(`/trade?symbol=${symbol}&action=buy`)}
+        className="flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-up transition-colors duration-micro hover:bg-up-bg"
+      >
+        B
+      </button>
+      <button
+        type="button"
+        title={`Sell ${symbol}`}
+        aria-label={`Sell ${symbol}`}
+        onClick={() => router.push(`/trade?symbol=${symbol}&action=sell`)}
+        className="flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-down transition-colors duration-micro hover:bg-down-bg"
+      >
+        S
+      </button>
+      <button
+        type="button"
+        title={`Open ${symbol} chart`}
+        aria-label={`Open ${symbol} chart`}
+        onClick={() => router.push(`/trade?symbol=${symbol}`)}
+        className="flex h-6 w-6 items-center justify-center rounded-full text-teal transition-colors duration-micro hover:bg-teal-bg"
+      >
+        <TradeIcon className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+/** Single consistent row layout for Stocks/ETFs/Commodities — replaces the
+ *  old two-column grid, whose alignment broke as soon as some rows had a
+ *  price sub-line and others didn't. Every row is the same height and shape
+ *  now regardless of whether the bridge has live data for that symbol. */
+function QuoteList({ rows, emptyMessage }: { rows: QuoteRow[]; emptyMessage: string }) {
+  if (rows.length === 0) {
+    return <p className="py-6 text-center text-sm text-muted">{emptyMessage}</p>;
+  }
+  return (
+    <ul className="divide-y divide-border">
+      {rows.map((r) => {
+        const up = (r.changePct ?? 0) >= 0;
+        return (
+          <li key={r.symbol} className="group flex items-center gap-3 rounded-lg px-2 py-2.5 -mx-2 transition-colors duration-micro hover:bg-hover">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-semibold text-text">
+                {r.symbol}
+                {r.isLive && <span className="ml-1.5 text-[9px] font-normal text-teal">●</span>}
+              </div>
+              <div className="truncate text-[11px] text-faint">{r.name}</div>
+            </div>
+            <div className="w-24 shrink-0 text-right">
+              {r.ltp != null ? (
+                <>
+                  <div className="font-mono text-sm tabular-nums text-text">{fmt(r.ltp)}</div>
+                  <div className={cn('font-mono text-[11px] tabular-nums', up ? 'text-up' : 'text-down')}>
+                    {r.changePct != null ? pct(r.changePct) : '—'}
+                  </div>
+                </>
+              ) : (
+                <span className="text-xs text-faint">—</span>
+              )}
+            </div>
+            <RowActions symbol={r.symbol} />
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function LiveBadge({ status }: { status: DhanFeedStatus }) {
+  if (status === 'live') return <Badge tone="positive" className="px-1.5 py-0 text-[9px]">LIVE</Badge>;
+  if (status === 'closed') return <Badge tone="neutral" className="px-1.5 py-0 text-[9px]">CLOSED</Badge>;
+  return null;
+}
 
 /**
  * Markets workspace — converted from the canonical `pageMarkets`. Category tabs
- * over a quotes table.
+ * over a quotes table. Futures and Options are handled by the dedicated
+ * Option Chain terminal panel (chart-tabs/OptionChainTab.tsx), not this page,
+ * so they aren't listed here.
  *
  * Indices tab: every NSE index (`ALL_NSE_INDICES`, 139 rows — real dated
- * figures from the user-supplied `MW-All-Indices-*.csv`, not placeholder
- * mock data, see lib/mock/indices.ts), filterable by name.
+ * figures from the user-supplied `MW-All-Indices-*.csv`, see
+ * lib/mock/indices.ts), live-overlaid for the 4 the bridge covers.
  *
- * Stocks tab: every NSE F&O-eligible stock is browsable/searchable
- * (`FO_STOCK_UNIVERSE`, ~208 symbols from `NSE_FO_SosScheme.csv` — see
- * lib/mock/foUniverse.ts). `?sector=<key>` (from Sector Heatmap tile links)
- * narrows this to one sector's constituents, which additionally carry
- * illustrative mock LTP/% change (`SECTOR_STOCKS`) — the rest of the
- * universe is symbol+name only until real per-stock pricing is wired in.
+ * Stocks tab: every NSE F&O-eligible stock (`FO_STOCK_UNIVERSE`, ~210
+ * symbols — see lib/mock/foUniverse.ts), live-overlaid for the ~211 the
+ * Dhan bridge resolves from its own scrip master at boot (effectively the
+ * whole list). `?sector=<key>` narrows to one sector's constituents.
+ *
+ * ETFs tab: sourced entirely from the Dhan bridge — no separate static ETF
+ * list exists, unlike Stocks/Indices, since there's no equivalent curated
+ * source file for ETFs. Empty until the bridge is reachable.
  */
 export function MarketsWorkspace() {
   const searchParams = useSearchParams();
@@ -33,6 +147,7 @@ export function MarketsWorkspace() {
   const [sector, setSector] = useState<string | null>(sectorParam);
   const [indexFilter, setIndexFilter] = useState('');
   const [stockFilter, setStockFilter] = useState('');
+  const [etfFilter, setEtfFilter] = useState('');
 
   // a new ?sector= link (clicking a different heatmap tile while already on
   // this page) should re-open the filter, not be stuck on the first value
@@ -42,6 +157,12 @@ export function MarketsWorkspace() {
       setCat('Stocks');
     }
   }, [sectorParam]);
+
+  const { quotes: liveIndices, stocks: liveStocks, etfs: liveEtfs, commodities: liveCommodities, status } = useDhanLiveFeed();
+  const live = status === 'live' || status === 'closed';
+  const liveIndexByDhanSymbol = live ? new Map((liveIndices ?? []).map((q) => [q.symbol, q])) : null;
+  const liveStockBySymbol = live ? new Map((liveStocks ?? []).map((q) => [q.symbol, q])) : null;
+  const liveCommodityBySymbol = live ? new Map((liveCommodities ?? []).map((q) => [q.symbol, q])) : null;
 
   const sectorMeta = sector ? SECTORS.find((s) => s.key === sector) : null;
   const sectorStocks = sector ? SECTOR_STOCKS[sector] : null;
@@ -57,6 +178,36 @@ export function MarketsWorkspace() {
     if (!q) return FO_STOCK_UNIVERSE;
     return FO_STOCK_UNIVERSE.filter((s) => s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q));
   }, [stockFilter]);
+
+  const filteredEtfs = useMemo(() => {
+    const all = liveEtfs ?? [];
+    const q = etfFilter.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter((e) => e.symbol.toLowerCase().includes(q) || e.displayName.toLowerCase().includes(q));
+  }, [liveEtfs, etfFilter]);
+
+  const stockRows: QuoteRow[] = sectorStocks
+    ? sectorStocks.map((r) => {
+        const liveMatch = liveStockBySymbol?.get(r.symbol);
+        return { symbol: r.symbol, name: r.name, ltp: liveMatch?.ltp ?? r.ltp, changePct: liveMatch?.changePct ?? r.changePct, isLive: !!liveMatch };
+      })
+    : filteredUniverse.map((s) => {
+        const liveMatch = liveStockBySymbol?.get(s.symbol);
+        return { symbol: s.symbol, name: s.name, ltp: liveMatch?.ltp ?? null, changePct: liveMatch?.changePct ?? null, isLive: !!liveMatch };
+      });
+
+  const etfRows: QuoteRow[] = filteredEtfs.map((e) => ({ symbol: e.symbol, name: e.displayName, ltp: e.ltp, changePct: e.changePct, isLive: true }));
+
+  const commodityRows: QuoteRow[] = COMMODITIES.map((c) => {
+    const liveMatch = liveCommodityBySymbol?.get(c.symbol);
+    return {
+      symbol: c.symbol,
+      name: `${c.name} /${c.unit}`,
+      ltp: liveMatch?.ltp ?? c.ltp,
+      changePct: liveMatch?.changePct ?? c.changePct,
+      isLive: !!liveMatch,
+    };
+  });
 
   return (
     <div className="mx-auto max-w-[1200px] space-y-4 p-4">
@@ -81,32 +232,63 @@ export function MarketsWorkspace() {
       </div>
 
       <Card
-        title={cat === 'Stocks' && sectorMeta ? `Stocks — ${sectorMeta.name}` : cat === 'Indices' ? `Indices (${ALL_NSE_INDICES.length})` : cat === 'Stocks' ? `Stocks (${FO_STOCK_UNIVERSE.length})` : cat}
+        title={
+          cat === 'Stocks' && sectorMeta
+            ? `Stocks — ${sectorMeta.name}`
+            : cat === 'Indices'
+              ? `Indices (${ALL_NSE_INDICES.length})`
+              : cat === 'Stocks'
+                ? `Stocks (${FO_STOCK_UNIVERSE.length})`
+                : cat === 'ETFs'
+                  ? `ETFs${liveEtfs && liveEtfs.length > 0 ? ` (${liveEtfs.length})` : ''}`
+                  : cat
+        }
         actions={
           cat === 'Stocks' && sector ? (
-            <button onClick={() => setSector(null)} className="text-xs font-semibold text-teal hover:underline">
-              ← All sectors
-            </button>
+            <div className="flex items-center gap-2">
+              <LiveBadge status={status} />
+              <button onClick={() => setSector(null)} className="text-xs font-semibold text-teal hover:underline">
+                ← All sectors
+              </button>
+            </div>
           ) : cat === 'Indices' ? (
-            <input
-              value={indexFilter}
-              onChange={(e) => setIndexFilter(e.target.value)}
-              placeholder="Filter indices…"
-              className="w-40 rounded-lg border border-border2 bg-bg px-2.5 py-1 text-xs text-text placeholder:text-faint focus:border-teal focus:outline-none"
-            />
+            <div className="flex items-center gap-2">
+              <LiveBadge status={status} />
+              <input
+                value={indexFilter}
+                onChange={(e) => setIndexFilter(e.target.value)}
+                placeholder="Filter indices…"
+                className="w-40 rounded-lg border border-border2 bg-bg px-2.5 py-1 text-xs text-text placeholder:text-faint focus:border-teal focus:outline-none"
+              />
+            </div>
           ) : cat === 'Stocks' && !sector ? (
-            <input
-              value={stockFilter}
-              onChange={(e) => setStockFilter(e.target.value)}
-              placeholder="Filter stocks…"
-              className="w-40 rounded-lg border border-border2 bg-bg px-2.5 py-1 text-xs text-text placeholder:text-faint focus:border-teal focus:outline-none"
-            />
+            <div className="flex items-center gap-2">
+              <LiveBadge status={status} />
+              <input
+                value={stockFilter}
+                onChange={(e) => setStockFilter(e.target.value)}
+                placeholder="Filter stocks…"
+                className="w-40 rounded-lg border border-border2 bg-bg px-2.5 py-1 text-xs text-text placeholder:text-faint focus:border-teal focus:outline-none"
+              />
+            </div>
+          ) : cat === 'ETFs' ? (
+            <div className="flex items-center gap-2">
+              <LiveBadge status={status} />
+              <input
+                value={etfFilter}
+                onChange={(e) => setEtfFilter(e.target.value)}
+                placeholder="Filter ETFs…"
+                className="w-40 rounded-lg border border-border2 bg-bg px-2.5 py-1 text-xs text-text placeholder:text-faint focus:border-teal focus:outline-none"
+              />
+            </div>
+          ) : cat === 'Commodities' ? (
+            <LiveBadge status={status} />
           ) : undefined
         }
       >
         {cat === 'Indices' ? (
           <div className="max-h-[560px] overflow-auto">
-            <table className="w-full min-w-[640px] text-sm">
+            <table className="w-full min-w-[720px] text-sm">
               <thead className="sticky top-0 bg-card text-faint">
                 <tr className="border-b border-border text-left">
                   <th className="py-2 font-semibold">Name</th>
@@ -116,17 +298,25 @@ export function MarketsWorkspace() {
                   <th className="py-2 text-right font-semibold">52W Low</th>
                   <th className="py-2 text-right font-semibold">30D %</th>
                   <th className="py-2 text-right font-semibold">365D %</th>
+                  <th className="py-2 text-right font-semibold"></th>
                 </tr>
               </thead>
               <tbody className="font-mono tabular-nums">
                 {filteredIndices.map((idx) => {
-                  const up = (idx.changePct ?? 0) >= 0;
+                  const dhanSymbol = INDEX_NAME_TO_DHAN_SYMBOL[idx.name];
+                  const liveMatch = dhanSymbol ? liveIndexByDhanSymbol?.get(dhanSymbol) : undefined;
+                  const current = liveMatch?.ltp ?? idx.current;
+                  const changePct = liveMatch?.changePct ?? idx.changePct;
+                  const up = (changePct ?? 0) >= 0;
                   return (
-                    <tr key={idx.name} className="border-b border-border">
-                      <td className="py-2 font-sans font-semibold text-text">{idx.name}</td>
-                      <td className="py-2 text-right text-text">{fmt(idx.current)}</td>
-                      <td className={cn('py-2 text-right', idx.changePct == null ? 'text-faint' : up ? 'text-up' : 'text-down')}>
-                        {idx.changePct == null ? '—' : pct(idx.changePct)}
+                    <tr key={idx.name} className="group border-b border-border">
+                      <td className="py-2 font-sans font-semibold text-text">
+                        {idx.name}
+                        {liveMatch && <span className="ml-1.5 text-[9px] font-normal text-teal">●</span>}
+                      </td>
+                      <td className="py-2 text-right text-text">{fmt(current)}</td>
+                      <td className={cn('py-2 text-right', changePct == null ? 'text-faint' : up ? 'text-up' : 'text-down')}>
+                        {changePct == null ? '—' : pct(changePct)}
                       </td>
                       <td className="py-2 text-right text-muted">{idx.week52High != null ? fmt(idx.week52High) : '—'}</td>
                       <td className="py-2 text-right text-muted">{idx.week52Low != null ? fmt(idx.week52Low) : '—'}</td>
@@ -136,12 +326,15 @@ export function MarketsWorkspace() {
                       <td className={cn('py-2 text-right', idx.chg365D == null ? 'text-faint' : idx.chg365D >= 0 ? 'text-up' : 'text-down')}>
                         {idx.chg365D != null ? pct(idx.chg365D) : '—'}
                       </td>
+                      <td className="py-2 pl-2 text-right">
+                        <RowActions symbol={dhanSymbol ?? idx.name.replace(/\s+/g, '')} />
+                      </td>
                     </tr>
                   );
                 })}
                 {filteredIndices.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-6 text-center font-sans text-muted">
+                    <td colSpan={8} className="py-6 text-center font-sans text-muted">
                       No indices match &ldquo;{indexFilter}&rdquo;.
                     </td>
                   </tr>
@@ -149,58 +342,20 @@ export function MarketsWorkspace() {
               </tbody>
             </table>
           </div>
-        ) : cat === 'Stocks' && sectorStocks ? (
-          <ul className="divide-y divide-border">
-            {sectorStocks.map((r) => {
-              const up = r.changePct >= 0;
-              return (
-                <li key={r.symbol}>
-                  <Link
-                    href={`/trade?symbol=${r.symbol}`}
-                    className="flex items-center justify-between gap-3 rounded-lg px-2 py-2.5 -mx-2 transition-colors duration-micro hover:bg-hover"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-text">{r.symbol}</div>
-                      <div className="truncate text-[11px] text-faint">{r.name}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-mono text-sm tabular-nums text-text">{fmt(r.ltp)}</div>
-                      <div className={cn('font-mono text-[11px] tabular-nums', up ? 'text-up' : 'text-down')}>
-                        {pct(r.changePct)}
-                      </div>
-                    </div>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
         ) : cat === 'Stocks' ? (
           <div className="max-h-[560px] overflow-auto">
-            <p className="mb-3 text-[11.5px] text-faint">
-              Every NSE F&amp;O-eligible stock — symbol/name only until real per-stock pricing is wired in. Pick a
-              sector from the Sector Heatmap for a subset with illustrative prices.
-            </p>
-            <ul className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
-              {filteredUniverse.map((s) => (
-                <li key={s.symbol}>
-                  <Link
-                    href={`/trade?symbol=${s.symbol}`}
-                    className="flex items-center justify-between gap-3 rounded-lg px-2 py-2 -mx-2 transition-colors duration-micro hover:bg-hover"
-                  >
-                    <span className="truncate text-sm font-semibold text-text">{s.symbol}</span>
-                    <span className="truncate text-[11px] text-faint">{s.name}</span>
-                  </Link>
-                </li>
-              ))}
-              {filteredUniverse.length === 0 && (
-                <li className="col-span-2 py-6 text-center text-sm text-muted">No stocks match &ldquo;{stockFilter}&rdquo;.</li>
-              )}
-            </ul>
+            <QuoteList rows={stockRows} emptyMessage={`No stocks match “${stockFilter}”.`} />
+          </div>
+        ) : cat === 'ETFs' ? (
+          <div className="max-h-[560px] overflow-auto">
+            {liveEtfs === null ? (
+              <p className="py-6 text-center text-sm text-muted">ETFs stream live from the Dhan bridge — connecting…</p>
+            ) : (
+              <QuoteList rows={etfRows} emptyMessage={etfFilter ? `No ETFs match “${etfFilter}”.` : 'ETF feed unreachable right now.'} />
+            )}
           </div>
         ) : (
-          <div className="py-10 text-center text-sm text-muted">
-            {cat} listings arrive with the live market-data feed.
-          </div>
+          <QuoteList rows={commodityRows} emptyMessage="No commodities available." />
         )}
       </Card>
     </div>

@@ -1,18 +1,20 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge, cn } from '@tradew/ui';
 import { fmt, pct } from '@/lib/format';
-import { blackScholesGreeks } from '@/lib/black-scholes';
+import { blackScholesGreeks, type Greeks } from '@/lib/black-scholes';
 import { useTradeBasketStore, useHydrateTradeBasket, contractKeyOf, type ContractKey } from '@/lib/store/tradeBasketStore';
-import { EXPIRIES, ATM_STRIKE, strikeStepFor, mockIvPct } from '@/lib/mock/optionChain';
+import { EXPIRIES, ATM_STRIKE, strikeStepFor, formatExpiryLabel, resolveExpiry } from '@/lib/mock/optionChain';
+import { fetchDhanExpiryList, fetchDhanOptionChain, type DhanOptionChain, type DhanOptionStrike } from '@/lib/dhanLiveFeed';
 import { TradeIcon, SparkleIcon, BookmarkIcon, LayersIcon } from '@/components/shell/icons';
 import { QuickActionsDock, type QuickAction } from './QuickActionsDock';
 import { ContractAnalysisDrawer, type ContractAnalysisData } from './ContractAnalysisDrawer';
 
-// mock option chain — presentation only, illustrative pricing (see caption)
 const STRIKE_COUNT = 9; // ATM +/- 4
+const CHAIN_REFRESH_MS = 15_000;
+const MAX_EXPIRY_TABS = 8;
 
 interface Row {
   strike: number;
@@ -27,6 +29,58 @@ interface Row {
   putLtp: number;
   putLtpChangePct: number;
   ivPct: number;
+  /** Real per-leg Greeks from Dhan, when this row came from the live chain
+   *  (see `rowsFromLiveChain`) — used instead of the Black-Scholes estimate. */
+  callGreeks?: Greeks | null;
+  putGreeks?: Greeks | null;
+}
+
+/** `changePct` helper for a leg's LTP vs its previous close. */
+function legChangePct(ltp: number, previousClose: number): number {
+  return previousClose ? ((ltp - previousClose) / previousClose) * 100 : 0;
+}
+
+function toGreeks(leg: DhanOptionStrike['ce']): Greeks | null {
+  if (!leg || leg.delta == null) return null;
+  return { delta: leg.delta, gamma: leg.gamma ?? 0, theta: leg.theta ?? 0, vega: leg.vega ?? 0 };
+}
+
+/** Real Dhan chain -> the same `Row` shape the simulated table already
+ *  renders, windowed to `STRIKE_COUNT` strikes centered on the strike
+ *  closest to spot (real strike spacing, not the app's assumed step). */
+function rowsFromLiveChain(chain: DhanOptionChain, spot: number): Row[] {
+  const strikes = chain.strikes;
+  let closestIdx = 0;
+  let closestDist = Infinity;
+  strikes.forEach((s, i) => {
+    const dist = Math.abs(s.strike - spot);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closestIdx = i;
+    }
+  });
+  const half = Math.floor(STRIKE_COUNT / 2);
+  const end = Math.min(strikes.length, closestIdx + half + 1);
+  const start = Math.max(0, end - STRIKE_COUNT);
+  return strikes.slice(start, Math.min(strikes.length, start + STRIKE_COUNT)).map((s) => {
+    const ivValues = [s.ce?.iv, s.pe?.iv].filter((v): v is number => v != null && v > 0);
+    return {
+      strike: s.strike,
+      callOi: s.ce?.oi ?? 0,
+      callOiChangePct: s.ce?.previousOi ? ((s.ce.oi - s.ce.previousOi) / s.ce.previousOi) * 100 : 0,
+      callVolume: s.ce?.volume ?? 0,
+      callLtp: s.ce?.ltp ?? 0,
+      callLtpChangePct: s.ce ? legChangePct(s.ce.ltp, s.ce.previousClose) : 0,
+      putOi: s.pe?.oi ?? 0,
+      putOiChangePct: s.pe?.previousOi ? ((s.pe.oi - s.pe.previousOi) / s.pe.previousOi) * 100 : 0,
+      putVolume: s.pe?.volume ?? 0,
+      putLtp: s.pe?.ltp ?? 0,
+      putLtpChangePct: s.pe ? legChangePct(s.pe.ltp, s.pe.previousClose) : 0,
+      ivPct: ivValues.length > 0 ? ivValues.reduce((a, v) => a + v, 0) / ivValues.length : 0,
+      callGreeks: toGreeks(s.ce),
+      putGreeks: toGreeks(s.pe),
+    };
+  });
 }
 
 function buildRows(atm: number, strikeStep: number): Row[] {
@@ -83,6 +137,13 @@ interface OptionChainTabProps {
   initialExpiryLabel?: string;
 }
 
+interface ExpiryOption {
+  label: string;
+  /** Real ISO date when this came from Dhan's expiry list; null for the
+   *  simulated fallback table, which addresses expiries by label alone. */
+  iso: string | null;
+}
+
 export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialExpiryLabel }: OptionChainTabProps) {
   useHydrateTradeBasket();
   const router = useRouter();
@@ -91,21 +152,82 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
   const toggleWatchlist = useTradeBasketStore((s) => s.toggleWatchlist);
   const toggleStrategy = useTradeBasketStore((s) => s.toggleStrategy);
 
+  // Real expiry dates from Dhan's Option Chain API (bridge's
+  // /optionchain/expirylist route) — null while loading/not-yet-known,
+  // [] once confirmed there are none (ETF/commodity, or unreachable), both
+  // of which fall back to the simulated EXPIRIES table below.
+  const [liveExpiries, setLiveExpiries] = useState<ExpiryOption[] | null>(null);
   const [expiryIdx, setExpiryIdx] = useState(() => {
     const found = EXPIRIES.findIndex((e) => e.label === initialExpiryLabel);
     return found >= 0 ? found : 0;
   });
+  const [chain, setChain] = useState<DhanOptionChain | null>(null);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<ContractAnalysisData | null>(null);
 
-  const expiry = EXPIRIES[expiryIdx];
-  const yearsToExpiry = expiry.days / 365;
+  useEffect(() => {
+    let cancelled = false;
+    setLiveExpiries(null);
+    setChain(null);
+    fetchDhanExpiryList(underlyingSymbol).then((isoList) => {
+      if (cancelled) return;
+      if (isoList.length === 0) {
+        setLiveExpiries([]);
+        return;
+      }
+      // Dhan's expiry list runs years out (monthly/yearly contracts beyond
+      // the weeklies) — the tab row only needs the near-term ones a trader
+      // actually picks from, same rough count as the old mock EXPIRIES table.
+      const mapped = isoList.slice(0, MAX_EXPIRY_TABS).map((iso) => ({ label: formatExpiryLabel(iso), iso }));
+      setLiveExpiries(mapped);
+      const found = initialExpiryLabel ? mapped.findIndex((e) => e.label === initialExpiryLabel) : -1;
+      setExpiryIdx(found >= 0 ? found : 0);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // initialExpiryLabel is only meant to apply on first resolve for a symbol
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [underlyingSymbol]);
 
+  const expiries: ExpiryOption[] = liveExpiries && liveExpiries.length > 0 ? liveExpiries : EXPIRIES.map((e) => ({ label: e.label, iso: null }));
+  const expiry = expiries[expiryIdx] ?? expiries[0];
+  const resolvedExpiry = (expiry.iso ? resolveExpiry(expiry.iso) : resolveExpiry(expiry.label)) ?? { label: expiry.label, days: EXPIRIES[0].days };
+  const yearsToExpiry = resolvedExpiry.days / 365;
+
+  // Real chain data for the selected underlying + expiry, refreshed on an
+  // interval — the bridge itself caches/throttles the underlying Dhan calls,
+  // so polling here never risks the rate limit regardless of how often this
+  // fires or how many tabs are open.
+  useEffect(() => {
+    if (!expiry.iso) {
+      setChain(null);
+      return;
+    }
+    let cancelled = false;
+    const iso = expiry.iso;
+    const load = () =>
+      fetchDhanOptionChain(underlyingSymbol, iso).then((data) => {
+        if (!cancelled) setChain(data);
+      });
+    load();
+    const timer = setInterval(load, CHAIN_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [underlyingSymbol, expiry.iso]);
+
+  const live = chain != null && chain.strikes.length > 0;
   const STRIKE_STEP = strikeStepFor(underlyingSymbol);
-  const SPOT = spotPrice ?? ATM_STRIKE;
+  const SPOT = chain?.spot ?? spotPrice ?? ATM_STRIKE;
   const ATM = Math.round(SPOT / STRIKE_STEP) * STRIKE_STEP;
 
-  const ROWS = useMemo(() => buildRows(ATM, STRIKE_STEP), [ATM, STRIKE_STEP]);
+  const ROWS = useMemo(() => (live ? rowsFromLiveChain(chain!, SPOT) : buildRows(ATM, STRIKE_STEP)), [live, chain, SPOT, ATM, STRIKE_STEP]);
+  const highlightStrike = useMemo(
+    () => ROWS.reduce((closest, r) => (Math.abs(r.strike - SPOT) < Math.abs(closest.strike - SPOT) ? r : closest), ROWS[0])?.strike,
+    [ROWS, SPOT],
+  );
   const AVG_IV = useMemo(() => ROWS.reduce((a, r) => a + r.ivPct, 0) / ROWS.length, [ROWS]);
   const callOiRanks = useMemo(() => oiRanks(ROWS.map((r) => r.callOi)), [ROWS]);
   const putOiRanks = useMemo(() => oiRanks(ROWS.map((r) => r.putOi)), [ROWS]);
@@ -123,7 +245,10 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
       symbol: underlyingSymbol,
       strike: String(strike),
       type: optionType,
-      expiry: expiry.label,
+      // Real ISO date when live so the /trade page's Black-Scholes day-count
+      // (contract chart, IV) resolves against the real expiry too — see
+      // resolveExpiry. Falls back to the mock label otherwise, unchanged.
+      expiry: expiry.iso ?? expiry.label,
     });
     if (action) params.set('action', action);
     router.push(`/trade?${params.toString()}`);
@@ -133,7 +258,9 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
     const key = contractKey(strike, optionType);
     const inWatchlist = watchlist.some((w) => contractKeyOf(w) === contractKeyOf(key));
     const inStrategy = strategyLegs.some((w) => contractKeyOf(w) === contractKeyOf(key));
-    const greeks = blackScholesGreeks(SPOT, strike, yearsToExpiry, ivPct, optionType === 'CE' ? 'call' : 'put');
+    const row = ROWS.find((r) => r.strike === strike);
+    const realGreeks = optionType === 'CE' ? row?.callGreeks : row?.putGreeks;
+    const greeks = realGreeks ?? blackScholesGreeks(SPOT, strike, yearsToExpiry, ivPct, optionType === 'CE' ? 'call' : 'put');
     return [
       { key: 'buy', label: 'Buy', icon: <span className="text-[10px] font-bold">B</span>, tone: 'up', onClick: () => navigateToContract(strike, optionType, 'buy') },
       { key: 'sell', label: 'Sell', icon: <span className="text-[10px] font-bold">S</span>, tone: 'down', onClick: () => navigateToContract(strike, optionType, 'sell') },
@@ -144,7 +271,7 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
         icon: <SparkleIcon className="h-3 w-3" />,
         tone: 'teal',
         onClick: () => {
-          const row = ROWS.find((r) => r.strike === strike)!;
+          if (!row) return;
           setAnalysis({
             underlying: underlyingSymbol,
             strike,
@@ -168,17 +295,28 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
 
   return (
     <div className="flex flex-1 flex-col p-3">
-      {spotPrice && (
-        <div className="mb-1.5 flex shrink-0 items-center gap-1.5 text-[11px] text-faint">
-          <span>Spot</span>
-          <span className="font-mono font-bold text-text">{fmt(spotPrice)}</span>
-          <span>· ATM strike</span>
-          <span className="font-mono font-bold text-teal">{ATM}</span>
-          <span>(strikes are quantized to {STRIKE_STEP}-wide intervals — never exactly the spot)</span>
-        </div>
-      )}
+      <div className="mb-1.5 flex shrink-0 flex-wrap items-center gap-1.5 text-[11px] text-faint">
+        {live ? (
+          <Badge tone="positive" className="px-1.5 py-0 text-[9px]">LIVE</Badge>
+        ) : (
+          <Badge tone="neutral" className="px-1.5 py-0 text-[9px]">PREVIEW</Badge>
+        )}
+        {(chain?.spot ?? spotPrice) != null && (
+          <>
+            <span>Spot</span>
+            <span className="font-mono font-bold text-text">{fmt(chain?.spot ?? spotPrice!)}</span>
+            {!live && (
+              <>
+                <span>· ATM strike</span>
+                <span className="font-mono font-bold text-teal">{ATM}</span>
+                <span>(strikes are quantized to {STRIKE_STEP}-wide intervals — never exactly the spot)</span>
+              </>
+            )}
+          </>
+        )}
+      </div>
       <div role="tablist" aria-label="Expiry" className="mb-1.5 flex shrink-0 items-center gap-1 overflow-x-auto pb-1.5">
-        {EXPIRIES.map((e, i) => (
+        {expiries.map((e, i) => (
           <button
             key={e.label}
             role="tab"
@@ -209,7 +347,7 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
           </thead>
           <tbody className="font-mono tabular-nums">
             {ROWS.map((r) => {
-              const atm = r.strike === ATM;
+              const atm = r.strike === highlightStrike;
               const callRank = callOiRanks.get(ROWS.indexOf(r));
               const putRank = putOiRanks.get(ROWS.indexOf(r));
               const callKey = `${r.strike}-CE`;
@@ -272,9 +410,11 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
         <span>PCR (OI) <b className="text-text">{pcr.toFixed(2)}</b></span>
         <span>Watchlist <b className="text-text">{watchlist.length}</b> · Strategy <b className="text-text">{strategyLegs.length}</b></span>
         <span>
-          {spotPrice
-            ? `Strikes centered on today's real spot (${fmt(spotPrice)}); OI/volume/IV and Greeks are still illustrative mock data, not live.`
-            : "Greeks are Black-Scholes estimates from mock IV — illustrative, not live."}
+          {live
+            ? `Live from Dhan's Option Chain API — strikes, OI, volume, IV and Greeks all real for ${underlyingSymbol} · ${expiry.label} expiry.`
+            : spotPrice
+              ? `Strikes centered on today's real spot (${fmt(spotPrice)}); OI/volume/IV and Greeks are still illustrative mock data — this underlying/expiry has no live chain right now.`
+              : 'Greeks are Black-Scholes estimates from mock IV — illustrative, not live.'}
         </span>
       </div>
 

@@ -7,7 +7,7 @@ export type DhanFeedStatus = 'loading' | 'live' | 'closed' | 'unreachable';
 
 const DHAN_LIVE_URL = process.env.NEXT_PUBLIC_DHAN_LIVE_URL || 'http://localhost:4600';
 const POLL_MS = 5000;
-const EMPTY_SNAPSHOT: DhanLiveSnapshot = { marketOpen: false, indices: [], stocks: [], commodities: [] };
+const EMPTY_SNAPSHOT: DhanLiveSnapshot = { marketOpen: false, indices: [], stocks: [], etfs: [], commodities: [] };
 
 type State = { snapshot: DhanLiveSnapshot | null; status: DhanFeedStatus };
 type Listener = (state: State) => void;
@@ -35,7 +35,7 @@ function setState(next: State) {
 }
 
 function apply(data: DhanLiveSnapshot) {
-  if (data.indices.length === 0 && data.stocks.length === 0 && data.commodities.length === 0) {
+  if (data.indices.length === 0 && data.stocks.length === 0 && data.etfs.length === 0 && data.commodities.length === 0) {
     setState({ snapshot: state.snapshot, status: 'unreachable' });
     return;
   }
@@ -95,12 +95,15 @@ function subscribe(listener: Listener): () => void {
  *
  * `quotes` is kept as the indices array (its original shape) so existing
  * callers (Ticker, IndexOverview, TopBar, ChartPanel) don't need to change;
- * `stocks`/`commodities` are the newer groups (Market Movers, Trending
- * Stocks, Commodities widget).
+ * `stocks`/`etfs`/`commodities` are the newer groups (Market Movers,
+ * Trending Stocks, Markets page, Commodities widget) — the bridge resolves
+ * the full NSE F&O stock universe and every NSE ETF from Dhan's scrip
+ * master at boot, not a hand-picked handful.
  */
 export function useDhanLiveFeed(): {
   quotes: DhanLiveQuote[] | null;
   stocks: DhanLiveQuote[] | null;
+  etfs: DhanLiveQuote[] | null;
   commodities: DhanLiveQuote[] | null;
   status: DhanFeedStatus;
 } {
@@ -112,6 +115,7 @@ export function useDhanLiveFeed(): {
   return {
     quotes: local.snapshot ? s.indices : null,
     stocks: local.snapshot ? s.stocks : null,
+    etfs: local.snapshot ? s.etfs : null,
     commodities: local.snapshot ? s.commodities : null,
     status: local.status,
   };

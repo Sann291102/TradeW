@@ -37,14 +37,30 @@ export function strikeStepFor(symbol: string): number {
   return STRIKE_STEP_BY_SYMBOL[symbol] ?? STRIKE_STEP;
 }
 
-/** Symbols with no NSE F&O contract at all in this app's universe — MCX
- *  commodity futures (GOLD/SILVER/CRUDEOIL/NATURALGAS/COPPER). Real MCX does
- *  have its own commodity options, but this app doesn't model that market
- *  (different strike/lot conventions, different exchange) — showing an
- *  equity-style NIFTY-shaped chain for them would be actively misleading
- *  rather than just illustrative, so the Option Chain tab is hidden instead. */
-const NON_OPTIONABLE = new Set(['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'COPPER']);
+/** ISO `YYYY-MM-DD` -> display label ("28 Jul"), matching the mock EXPIRIES
+ *  table's label style so real and simulated expiries look the same in the
+ *  UI. Parsed as UTC midnight so the calendar date never shifts a day in
+ *  either direction depending on the browser's timezone. */
+export function formatExpiryLabel(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+}
 
-export function hasOptionChain(symbol: string): boolean {
-  return !NON_OPTIONABLE.has(symbol);
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Resolves an `expiry` identifier — either a real ISO date (from a live Dhan
+ * option chain, carried through `/trade?expiry=...`) or one of the fixed
+ * mock `EXPIRIES` labels (simulated fallback) — into `{label, days}` for
+ * Black-Scholes day-count math (contract-mode chart, IV, Greeks). Needed
+ * because a real expiry date won't match any mock EXPIRIES label, so a plain
+ * `EXPIRIES.find` would silently drop the contract.
+ */
+export function resolveExpiry(value: string): { label: string; days: number } | null {
+  if (ISO_DATE_RE.test(value)) {
+    const expiryMs = new Date(`${value}T15:30:00+05:30`).getTime(); // NSE expiry cutoff, IST
+    if (Number.isNaN(expiryMs)) return null;
+    return { label: formatExpiryLabel(value), days: Math.max(0, (expiryMs - Date.now()) / 86_400_000) };
+  }
+  return EXPIRIES.find((e) => e.label === value) ?? null;
 }
