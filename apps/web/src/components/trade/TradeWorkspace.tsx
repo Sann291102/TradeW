@@ -4,13 +4,14 @@ import dynamic from 'next/dynamic';
 import { useSearchParams } from 'next/navigation';
 import { Panel } from '@tradew/ui';
 import { useWorkspaceStore } from '@/lib/store/workspaceStore';
-import { EXPIRIES, mockIvPct, ATM_STRIKE, STRIKE_STEP } from '@/lib/mock/optionChain';
+import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
+import { resolveExpiry, mockIvPct, ATM_STRIKE, STRIKE_STEP } from '@/lib/mock/optionChain';
 import { LayoutMenu } from '@/components/workspace/LayoutMenu';
 import { ClosedPanelsMenu } from '@/components/workspace/ClosedPanelsMenu';
 import { BlotterPanel } from '../terminal/panels/BlotterPanel';
 import { SentinelPanel } from '../terminal/panels/SentinelPanel';
 import { NewsPanel } from '../terminal/panels/NewsPanel';
-import { OrderTicketPanel } from '../terminal/panels/OrderTicketPanel';
+import { OrdersPanel } from '../terminal/panels/OrdersPanel';
 
 const ChartPanel = dynamic(() => import('../terminal/panels/ChartPanel'), {
   ssr: false,
@@ -40,7 +41,9 @@ export function TradeWorkspace() {
 
   const strike = strikeParam ? Number(strikeParam) : null;
   const optionType: 'CE' | 'PE' | null = typeParam === 'CE' || typeParam === 'PE' ? typeParam : null;
-  const expiry = EXPIRIES.find((e) => e.label === expiryParam) ?? null;
+  // expiryParam may be a real ISO date (live Dhan chain) or a mock EXPIRIES
+  // label (simulated fallback) — resolveExpiry handles both.
+  const expiry = expiryParam ? resolveExpiry(expiryParam) : null;
   const contract =
     strike != null && optionType && expiry
       ? {
@@ -56,6 +59,14 @@ export function TradeWorkspace() {
   const tab = useWorkspaceStore((s) => s.activeTab());
   const isVisible = (kind: string) => tab.panels.find((p) => p.kind === kind)?.visible ?? false;
 
+  // Live LTP for the Orders panel's limit-price prefill and order-value
+  // readout — same shared singleton feed the rest of the app uses, so this
+  // adds no extra network traffic.
+  const { quotes, stocks, etfs, commodities } = useDhanLiveFeed();
+  const livePrice = symbol
+    ? [...(quotes ?? []), ...(stocks ?? []), ...(etfs ?? []), ...(commodities ?? [])].find((q) => q.symbol === symbol)?.ltp
+    : undefined;
+
   return (
     <div className="mx-auto max-w-[1440px] space-y-4 p-4">
       <ChartPanel
@@ -65,13 +76,18 @@ export function TradeWorkspace() {
         trailingControls={<><LayoutMenu /><ClosedPanelsMenu /></>}
       />
 
-      {orderAction && contract && (
-        <OrderTicketPanel
-          key={`${symbol}-${contract.strike}-${contract.optionType}-${orderAction}`}
-          defaultSide={orderAction}
-          contractLabel={`${symbol ?? 'NIFTY'} ${contract.strike} ${contract.optionType} · ${contract.expiryLabel} · prefilled from Option Chain`}
-        />
-      )}
+      <OrdersPanel
+        key={`${symbol}-${contract?.strike ?? ''}-${contract?.optionType ?? ''}-${orderAction ?? ''}`}
+        symbol={symbol}
+        defaultSide={orderAction ?? undefined}
+        currentPrice={livePrice}
+        isOptionContract={!!contract}
+        contractLabel={
+          contract
+            ? `${symbol ?? 'NIFTY'} ${contract.strike} ${contract.optionType} · ${contract.expiryLabel}`
+            : symbol
+        }
+      />
 
       {isVisible('blotter') && <BlotterPanel />}
 

@@ -4,7 +4,7 @@ import { Panel } from '@tradew/ui';
 import type { PanelKind } from '@/lib/store/workspaceStore';
 import type { DockPanelContentProps } from '../terminal/panels/types';
 import { WatchlistPanel } from '../terminal/panels/WatchlistPanel';
-import { OrderTicketPanel } from '../terminal/panels/OrderTicketPanel';
+import { OrdersPanel } from '../terminal/panels/OrdersPanel';
 import { DepthPanel } from '../terminal/panels/DepthPanel';
 import { BlotterPanel } from '../terminal/panels/BlotterPanel';
 import { SentinelPanel } from '../terminal/panels/SentinelPanel';
@@ -50,7 +50,7 @@ export const PANEL_REGISTRY: Record<PanelKind, PanelRegistryEntry> = {
   chart: { title: 'Chart', icon: TradeIcon, Component: ChartPanel },
   blotter: { title: 'Blotter', icon: PortfolioIcon, Component: BlotterPanel },
   optionChain: { title: 'Option Chain', icon: MarketsIcon, Component: OptionChainPanel },
-  orderTicket: { title: 'Order Ticket', icon: TradeIcon, Component: OrderTicketPanel },
+  orderTicket: { title: 'Orders', icon: TradeIcon, Component: OrdersPanel },
   depth: { title: 'Market Depth', icon: MarketsIcon, Component: DepthPanel },
   sentinel: { title: 'Sentinel', icon: SentinelIcon, Component: SentinelPanel },
   news: { title: 'News', icon: KnowledgeIcon, Component: NewsPanel },

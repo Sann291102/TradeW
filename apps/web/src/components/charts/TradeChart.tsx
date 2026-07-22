@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { createChart, type IChartApi, type ISeriesApi, ColorType, CrosshairMode } from 'lightweight-charts';
+import { createChart, type IChartApi, type ISeriesApi, type Time, ColorType, CrosshairMode, TickMarkType } from 'lightweight-charts';
 import type { Candle } from '@tradew/types';
 import { cn } from '@tradew/ui';
 
@@ -10,10 +10,54 @@ export interface TradeChartProps {
   height?: number;
   className?: string;
   'aria-label'?: string;
+  /** Candle duration in minutes. When given (intraday only), the crosshair
+   *  label shows the bar's full span — "22 Jul 15:15–15:30" — instead of
+   *  just its open time. Candles are open-stamped by convention, so the
+   *  final bar of an NSE session reads 15:15 even though it runs to the
+   *  15:30 close; showing the range removes that ambiguity. */
+  intervalMinutes?: number;
 }
 
 function readToken(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+/**
+ * lightweight-charts renders time-axis/crosshair labels from a plain JS
+ * `Date`, which formats in the *browser's* local timezone by default — NSE
+ * trading hours (9:15–15:30) are IST-relative, so on any machine not itself
+ * set to IST the axis silently drifts (e.g. renders in UTC, ~5.5h earlier).
+ * These two formatters pin every label to Asia/Kolkata explicitly, matching
+ * what a trader actually expects regardless of the viewer's own timezone.
+ */
+function istTickMarkFormatter(time: Time, tickMarkType: TickMarkType): string {
+  const date = new Date((time as number) * 1000);
+  switch (tickMarkType) {
+    case TickMarkType.Year:
+      return date.toLocaleString('en-US', { year: 'numeric', timeZone: 'Asia/Kolkata' });
+    case TickMarkType.Month:
+      return date.toLocaleString('en-US', { month: 'short', timeZone: 'Asia/Kolkata' });
+    case TickMarkType.DayOfMonth:
+      return date.toLocaleString('en-US', { day: 'numeric', timeZone: 'Asia/Kolkata' });
+    case TickMarkType.TimeWithSeconds:
+      return date.toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+    case TickMarkType.Time:
+    default:
+      return date.toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+  }
+}
+
+const IST_HHMM: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' };
+
+function makeIstCrosshairFormatter(intervalMinutes?: number) {
+  return (time: Time): string => {
+    const openMs = (time as number) * 1000;
+    const open = new Date(openMs);
+    const day = open.toLocaleString('en-GB', { day: '2-digit', month: 'short', timeZone: 'Asia/Kolkata' });
+    if (!intervalMinutes) return day;
+    const close = new Date(openMs + intervalMinutes * 60_000);
+    return `${day} ${open.toLocaleString('en-GB', IST_HHMM)}–${close.toLocaleString('en-GB', IST_HHMM)}`;
+  };
 }
 
 /**
@@ -25,7 +69,7 @@ function readToken(name: string): string {
  * so light/dark/high-contrast all render correctly with no chart-specific
  * theme branching here.
  */
-export function TradeChart({ candles, height = 320, className, ...aria }: TradeChartProps) {
+export function TradeChart({ candles, height = 320, className, intervalMinutes, ...aria }: TradeChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -62,7 +106,8 @@ export function TradeChart({ candles, height = 320, className, ...aria }: TradeC
       width: el.clientWidth,
       height,
       crosshair: { mode: CrosshairMode.Normal },
-      timeScale: { timeVisible: true, secondsVisible: false },
+      timeScale: { timeVisible: true, secondsVisible: false, tickMarkFormatter: istTickMarkFormatter },
+      localization: { timeFormatter: makeIstCrosshairFormatter(intervalMinutes) },
     });
     chartRef.current = chart;
     seriesRef.current = chart.addCandlestickSeries();
@@ -87,6 +132,13 @@ export function TradeChart({ candles, height = 320, className, ...aria }: TradeC
     // height intentionally excluded — resized via ResizeObserver, not re-init
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The chart itself is created once on mount, so switching timeframe has to
+  // re-apply the crosshair formatter — otherwise a 15m chart would keep
+  // showing a 5m chart's bar span.
+  useEffect(() => {
+    chartRef.current?.applyOptions({ localization: { timeFormatter: makeIstCrosshairFormatter(intervalMinutes) } });
+  }, [intervalMinutes]);
 
   useEffect(() => {
     seriesRef.current?.setData(

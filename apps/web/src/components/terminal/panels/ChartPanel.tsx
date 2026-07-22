@@ -7,9 +7,9 @@ import { INDEX_QUOTES, TOP_GAINERS, TOP_LOSERS, COMMODITIES } from '@/lib/mock/m
 import { fmt, pct } from '@/lib/format';
 import { useCandles } from '@/lib/hooks/useCandles';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
+import { useHasOptionChain } from '@/lib/hooks/useHasOptionChain';
 import { TradeChart } from '@/components/charts/TradeChart';
 import { deriveOptionCandles } from '@/lib/mock/optionCandles';
-import { hasOptionChain } from '@/lib/mock/optionChain';
 import { blackScholesPrice } from '@/lib/black-scholes';
 import { MarketsTab } from './chart-tabs/MarketsTab';
 import { TechnicalsTab } from './chart-tabs/TechnicalsTab';
@@ -47,6 +47,16 @@ const TF_CONFIG: Record<(typeof TIMEFRAMES)[number], { interval: CandleInterval;
   '1H': { interval: '1h', days: 14 },
   '1D': { interval: '1d', days: 90 },
   '1W': { interval: '1d', days: 365 },
+};
+
+/** Bar duration per timeframe, for the chart's "15:15–15:30" crosshair
+ *  range label. Daily/weekly are omitted — a date alone is unambiguous
+ *  there, and a "span" across non-trading hours would be misleading. */
+const TF_MINUTES: Partial<Record<(typeof TIMEFRAMES)[number], number>> = {
+  '1m': 1,
+  '5m': 5,
+  '15m': 15,
+  '1H': 60,
 };
 
 /**
@@ -105,27 +115,34 @@ export default function ChartPanel({
     prevContractKey.current = contractKey;
   }, [contractKey]);
 
-  // Resolve a base (mock) quote for whatever symbol was clicked — previously
-  // this only ever checked INDEX_QUOTES and silently fell back to NIFTY for
-  // any stock/commodity symbol (wrong name AND wrong price). Now checks every
-  // mock list the dashboard actually links from.
-  const mockQuote: { symbol: string; name: string; ltp: number; changePct: number } =
-    INDEX_QUOTES.find((i) => i.symbol === symbol) ??
-    TOP_GAINERS.find((i) => i.symbol === symbol) ??
-    TOP_LOSERS.find((i) => i.symbol === symbol) ??
-    COMMODITIES.find((i) => i.symbol === symbol) ??
-    { ...INDEX_QUOTES[0] };
-  // The Dhan live-feed bridge covers 5 indices, 14 stocks and 5 commodities
-  // (lib/dhanLiveFeed.ts) — for those, prefer its real LTP/change over the
-  // static mock so this header agrees with the dashboard/ticker instead of
-  // showing a stale hardcoded number. Candles stay simulated (no real
-  // intraday backfill exists yet), but are rescaled to end on the real
-  // price — see mock/candles.ts.
-  const { quotes: liveIndices, stocks: liveStocks, commodities: liveCommodities, status: liveStatus } = useDhanLiveFeed();
+  // Which instrument to show — the requested symbol, or NIFTY only when
+  // none was requested at all (bare /trade with no query param).
+  const symbolKey = symbol ?? INDEX_QUOTES[0].symbol;
+
+  // The Dhan live-feed bridge now resolves the full F&O stock universe
+  // (~211 symbols), every NSE ETF (~331) and all 5 commodities/indices from
+  // Dhan's own scrip master (lib/dhanLiveFeed.ts) — not just the handful in
+  // the small mock lists below. Look it up by the REAL requested symbol, not
+  // by whatever the mock lookup happens to find, so a stock/ETF outside the
+  // old ~20-symbol mock lists (e.g. ADANIENT, any ETF) still resolves to
+  // itself instead of silently falling back to NIFTY.
+  const { quotes: liveIndices, stocks: liveStocks, etfs: liveEtfs, commodities: liveCommodities, status: liveStatus } = useDhanLiveFeed();
   const liveReady = liveStatus !== 'loading' && liveStatus !== 'unreachable';
   const liveMatch = liveReady
-    ? [...(liveIndices ?? []), ...(liveStocks ?? []), ...(liveCommodities ?? [])].find((lq) => lq.symbol === mockQuote.symbol)
+    ? [...(liveIndices ?? []), ...(liveStocks ?? []), ...(liveEtfs ?? []), ...(liveCommodities ?? [])].find((lq) => lq.symbol === symbolKey)
     : undefined;
+
+  // Base (mock) quote — mainly for `name` and as a last-resort price when
+  // the bridge is unreachable. Checked by the real symbolKey too; when
+  // nothing matches (most of the F&O/ETF universe isn't in these small
+  // illustrative lists), fall back to the live feed's own display name
+  // rather than a hardcoded NIFTY object.
+  const mockQuote: { symbol: string; name: string; ltp: number; changePct: number } =
+    INDEX_QUOTES.find((i) => i.symbol === symbolKey) ??
+    TOP_GAINERS.find((i) => i.symbol === symbolKey) ??
+    TOP_LOSERS.find((i) => i.symbol === symbolKey) ??
+    COMMODITIES.find((i) => i.symbol === symbolKey) ??
+    { symbol: symbolKey, name: liveMatch?.displayName ?? symbolKey, ltp: liveMatch?.ltp ?? 0, changePct: liveMatch?.changePct ?? 0 };
   const q = liveMatch ? { ...mockQuote, ltp: liveMatch.ltp, changePct: liveMatch.changePct } : mockQuote;
   const up = q.changePct >= 0;
   const { interval, days } = TF_CONFIG[tf];
@@ -137,11 +154,13 @@ export default function ChartPanel({
     contract && candles ? deriveOptionCandles(candles, contract.strike, contract.optionType, contract.yearsToExpiry, contract.ivPct) : null;
   const contractLtp = contract ? blackScholesPrice(q.ltp, contract.strike, contract.yearsToExpiry, contract.ivPct, contract.optionType === 'CE' ? 'call' : 'put') : null;
 
-  // Only indices and F&O-eligible stocks have an options market — MCX
-  // commodities (GOLD/SILVER/CRUDEOIL/NATURALGAS/COPPER) don't, so the tab
-  // is hidden rather than showing a NIFTY-shaped chain for something that
-  // structurally can't have one (see lib/mock/optionChain.ts).
-  const optionable = hasOptionChain(q.symbol);
+  // Whether this symbol has a live options market — determined dynamically
+  // per-symbol from Dhan's own Option Chain API (no hardcoded stock/
+  // commodity list, see useHasOptionChain), so a stock with real listed
+  // derivatives shows the tab and one without doesn't, automatically.
+  // Defaults to hidden until resolved, so the tab never flashes in and then
+  // disappears — chart/price rendering above is unaffected either way.
+  const optionable = useHasOptionChain(q.symbol);
   const views = optionable ? VIEWS : VIEWS.filter((v) => v !== 'optionChain');
   useEffect(() => {
     if (!optionable && view === 'optionChain') setView('charts');
@@ -226,12 +245,12 @@ export default function ChartPanel({
           <div className="flex flex-1 items-center justify-center">
             {contract ? (
               contractCandles ? (
-                <TradeChart candles={contractCandles} height={280} aria-label={`${q.symbol} ${contract.strike} ${contract.optionType} chart`} />
+                <TradeChart candles={contractCandles} height={280} intervalMinutes={TF_MINUTES[tf]} aria-label={`${q.symbol} ${contract.strike} ${contract.optionType} chart`} />
               ) : (
                 <div className="h-[280px] w-full animate-pulse rounded bg-hover" />
               )
             ) : candles ? (
-              <TradeChart candles={candles} height={280} aria-label={`${q.symbol} ${tf} chart`} />
+              <TradeChart candles={candles} height={280} intervalMinutes={TF_MINUTES[tf]} aria-label={`${q.symbol} ${tf} chart`} />
             ) : (
               <div className="h-[280px] w-full animate-pulse rounded bg-hover" />
             )}
