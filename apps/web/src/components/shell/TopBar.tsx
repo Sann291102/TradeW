@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { cn, IconButton, Badge } from '@tradew/ui';
 import { useWorkspaceStore } from '@/lib/store/workspaceStore';
 import { useSessionStore } from '@/lib/store/sessionStore';
+import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { initials } from '@/lib/format';
 import { NAV_ITEMS } from './nav-config';
 import { ThemeMenu } from './ThemeMenu';
@@ -53,15 +54,25 @@ function PaperLiveToggle() {
   );
 }
 
-/** Market status pill — session state dot + label (mirrors the canonical #mktPill). */
+/** Market status pill — session state dot + label (mirrors the canonical #mktPill).
+ *  Driven by the Dhan live-feed bridge's own IST session-hours check
+ *  (services/market-data/scripts/live-feed-server.ts), not a static label —
+ *  it reflects whether NSE is actually open right now. */
 function MarketStatus() {
+  const { status } = useDhanLiveFeed();
+  const open = status === 'live';
+  const label = status === 'unreachable' ? 'Status unknown' : open ? 'Market open' : 'Market closed';
+  const dotColor = status === 'unreachable' ? 'bg-faint' : open ? 'bg-up' : 'bg-down';
+
   return (
     <div className="hidden items-center gap-2 rounded-full bg-hover px-3 py-1.5 text-xs text-muted sm:flex">
       <span className="relative flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-up opacity-60" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-up" />
+        {open && (
+          <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-up opacity-60" />
+        )}
+        <span className={cn('relative inline-flex h-2 w-2 rounded-full', dotColor)} />
       </span>
-      <span>Market open</span>
+      <span>{label}</span>
       <span className="text-faint">· NSE</span>
     </div>
   );

@@ -1,19 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge, cn } from '@tradew/ui';
 import { fmt, pct } from '@/lib/format';
 import { blackScholesGreeks } from '@/lib/black-scholes';
 import { useTradeBasketStore, useHydrateTradeBasket, contractKeyOf, type ContractKey } from '@/lib/store/tradeBasketStore';
-import { EXPIRIES, ATM_STRIKE, STRIKE_STEP, mockIvPct } from '@/lib/mock/optionChain';
+import { EXPIRIES, ATM_STRIKE, strikeStepFor, mockIvPct } from '@/lib/mock/optionChain';
 import { TradeIcon, SparkleIcon, BookmarkIcon, LayersIcon } from '@/components/shell/icons';
 import { QuickActionsDock, type QuickAction } from './QuickActionsDock';
 import { ContractAnalysisDrawer, type ContractAnalysisData } from './ContractAnalysisDrawer';
 
 // mock option chain — presentation only, illustrative pricing (see caption)
-const SPOT = ATM_STRIKE;
-const ATM = ATM_STRIKE;
 const STRIKE_COUNT = 9; // ATM +/- 4
 
 interface Row {
@@ -31,11 +29,11 @@ interface Row {
   ivPct: number;
 }
 
-function buildRows(): Row[] {
+function buildRows(atm: number, strikeStep: number): Row[] {
   const rows: Row[] = [];
   const half = Math.floor(STRIKE_COUNT / 2);
   for (let i = -half; i <= half; i++) {
-    const strike = ATM + i * STRIKE_STEP;
+    const strike = atm + i * strikeStep;
     const dist = Math.abs(i);
     const callLtp = Math.max(4, 180 - i * 20 + Math.sin(i) * 6);
     const putLtp = Math.max(4, 60 + i * 22 + Math.cos(i) * 6);
@@ -57,9 +55,6 @@ function buildRows(): Row[] {
   return rows;
 }
 
-const ROWS = buildRows();
-const AVG_IV = ROWS.reduce((a, r) => a + r.ivPct, 0) / ROWS.length;
-
 /** Rank the top-4 OI values in a column, matching the reference's "OI 1..4" badges. */
 function oiRanks(values: number[]): Map<number, number> {
   const ranked = values
@@ -71,23 +66,24 @@ function oiRanks(values: number[]): Map<number, number> {
   return ranks;
 }
 
-const callOiRanks = oiRanks(ROWS.map((r) => r.callOi));
-const putOiRanks = oiRanks(ROWS.map((r) => r.putOi));
-
 function ChangeCell({ value }: { value: number }) {
   return <span className={cn('text-[9.5px]', value >= 0 ? 'text-up' : 'text-down')}>({pct(value)})</span>;
 }
 
 interface OptionChainTabProps {
   /** Underlying symbol this chain belongs to — carried into contract nav
-   *  links (Chart/Buy/Sell), even though the mock strike ladder itself is
-   *  NIFTY-shaped regardless of which underlying is active (flagged
-   *  limitation, not silently pretended away). */
+   *  links (Chart/Buy/Sell). Also picks the strike interval (strikeStepFor)
+   *  and, with spotPrice, where the ladder is centered. */
   underlyingSymbol?: string;
+  /** Real spot (Dhan LTP) when the caller has one — see ChartPanel, which
+   *  passes its own already-live-aware `q.ltp`. Falls back to the fixed mock
+   *  ATM_STRIKE (NIFTY-shaped) only when no live price is available at all,
+   *  same as before this was wired up. */
+  spotPrice?: number;
   initialExpiryLabel?: string;
 }
 
-export function OptionChainTab({ underlyingSymbol = 'NIFTY', initialExpiryLabel }: OptionChainTabProps) {
+export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialExpiryLabel }: OptionChainTabProps) {
   useHydrateTradeBasket();
   const router = useRouter();
   const watchlist = useTradeBasketStore((s) => s.watchlist);
@@ -104,6 +100,15 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', initialExpiryLabel 
 
   const expiry = EXPIRIES[expiryIdx];
   const yearsToExpiry = expiry.days / 365;
+
+  const STRIKE_STEP = strikeStepFor(underlyingSymbol);
+  const SPOT = spotPrice ?? ATM_STRIKE;
+  const ATM = Math.round(SPOT / STRIKE_STEP) * STRIKE_STEP;
+
+  const ROWS = useMemo(() => buildRows(ATM, STRIKE_STEP), [ATM, STRIKE_STEP]);
+  const AVG_IV = useMemo(() => ROWS.reduce((a, r) => a + r.ivPct, 0) / ROWS.length, [ROWS]);
+  const callOiRanks = useMemo(() => oiRanks(ROWS.map((r) => r.callOi)), [ROWS]);
+  const putOiRanks = useMemo(() => oiRanks(ROWS.map((r) => r.putOi)), [ROWS]);
 
   const totalCallOi = ROWS.reduce((a, r) => a + r.callOi, 0);
   const totalPutOi = ROWS.reduce((a, r) => a + r.putOi, 0);
@@ -163,6 +168,15 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', initialExpiryLabel 
 
   return (
     <div className="flex flex-1 flex-col p-3">
+      {spotPrice && (
+        <div className="mb-1.5 flex shrink-0 items-center gap-1.5 text-[11px] text-faint">
+          <span>Spot</span>
+          <span className="font-mono font-bold text-text">{fmt(spotPrice)}</span>
+          <span>· ATM strike</span>
+          <span className="font-mono font-bold text-teal">{ATM}</span>
+          <span>(strikes are quantized to {STRIKE_STEP}-wide intervals — never exactly the spot)</span>
+        </div>
+      )}
       <div role="tablist" aria-label="Expiry" className="mb-1.5 flex shrink-0 items-center gap-1 overflow-x-auto pb-1.5">
         {EXPIRIES.map((e, i) => (
           <button
@@ -257,7 +271,11 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', initialExpiryLabel 
       <div className="mt-2 flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-border pt-2 text-[10px] text-faint">
         <span>PCR (OI) <b className="text-text">{pcr.toFixed(2)}</b></span>
         <span>Watchlist <b className="text-text">{watchlist.length}</b> · Strategy <b className="text-text">{strategyLegs.length}</b></span>
-        <span>Greeks are Black-Scholes estimates from mock IV — illustrative, not live.</span>
+        <span>
+          {spotPrice
+            ? `Strikes centered on today's real spot (${fmt(spotPrice)}); OI/volume/IV and Greeks are still illustrative mock data, not live.`
+            : "Greeks are Black-Scholes estimates from mock IV — illustrative, not live."}
+        </span>
       </div>
 
       <ContractAnalysisDrawer data={analysis} onClose={() => setAnalysis(null)} />

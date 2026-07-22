@@ -8,7 +8,8 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main.js",
-    "scrip:sync": "ts-node -T --project tsconfig.scripts.json scripts/sync-scrip-master.ts"
+    "scrip:sync": "ts-node -T --project tsconfig.scripts.json scripts/sync-scrip-master.ts",
+    "live:server": "ts-node -T --project tsconfig.scripts.json scripts/live-feed-server.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",
@@ -19,11 +20,13 @@
     "@tradew/types": "*",
     "dotenv": "^16.4.5",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.8",
     "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.2"
   }
