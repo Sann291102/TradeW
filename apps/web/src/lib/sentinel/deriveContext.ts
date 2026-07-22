@@ -21,7 +21,13 @@ import { pretty, type Observation, type Signal, type Synthesis } from './types';
  * evidence-backed, so a guessed value defeats the point.
  */
 
-export type DayLabel = 'Trend Day' | 'Selective Day' | 'Choppy Day' | 'Trap-Prone Day' | 'Quiet Day';
+export type DayLabel =
+  | 'Trend Day'
+  | 'Selective Day'
+  | 'Choppy Day'
+  | 'Trap-Prone Day'
+  | 'Quiet Day'
+  | 'Sit Out Day';
 
 export interface DayClassification {
   label: DayLabel;
@@ -29,6 +35,60 @@ export interface DayClassification {
   explanation: string;
   supportingSignals: string[];
 }
+
+export interface DayTypeInfo {
+  label: DayLabel;
+  /** What the market is doing — a description of conditions, never an instruction. */
+  summary: string;
+  /** How the session tends to behave. Observation tone only (SENTINEL.md §3). */
+  character: string;
+  /** Set when the classification can't yet be reached from today's signal set. */
+  note?: string;
+}
+
+/**
+ * The full day-classification vocabulary, in the order the product defines it.
+ *
+ * This is the reference catalog behind the hero card's "what are the other
+ * day types?" disclosure — a trader can only trust a label like "Selective
+ * Day" if they can see the scale it sits on. Copy stays descriptive
+ * ("conditions favor X") rather than directive ("do X"), per TRADEW-OS.md §1
+ * observation-never-advice and SENTINEL.md §3's evidence → pattern-name →
+ * soft-suggestion contract.
+ */
+export const DAY_TYPES: DayTypeInfo[] = [
+  {
+    label: 'Trend Day',
+    summary: 'Direction resolves early and holds through to the close.',
+    character: 'Pullbacks stay shallow and follow-through is unusually persistent — the opposite of a range session, where fading extremes is what tends to work.',
+    note: 'Needs trend and moving-average data, which Sentinel does not receive yet — this classification cannot be reached from today’s signals.',
+  },
+  {
+    label: 'Selective Day',
+    summary: 'Some market signals are active, but conditions are not uniformly clean.',
+    character: 'Opportunities exist without the whole session cooperating, so which setups are taken matters more than usual.',
+  },
+  {
+    label: 'Choppy Day',
+    summary: 'Elevated volatility alongside narrow participation.',
+    character: 'Moves start but struggle to carry, so direction reverses more often than it extends.',
+  },
+  {
+    label: 'Trap-Prone Day',
+    summary: 'Structural risk signals are active — conditions favor false moves.',
+    character: 'Breakouts and breakdowns are more likely to reverse than to follow through, so confirmation is worth more than speed.',
+  },
+  {
+    label: 'Quiet Day',
+    summary: 'No market-technical signals are active. Conditions look calm.',
+    character: 'Little of structural significance is happening. Sentinel keeps watching in the background.',
+  },
+  {
+    label: 'Sit Out Day',
+    summary: 'Multiple structural risks are active at once, alongside elevated volatility.',
+    character: 'The hostile conditions corroborate each other rather than appearing in isolation — the session offers little that is readable, and standing aside is a position many experienced traders take on days like this.',
+  },
+];
 
 const MARKET_TAG: Record<string, string> = {
   elevated_vix: 'Elevated Volatility',
@@ -66,6 +126,20 @@ export function classifyDay(signals: Signal[]): DayClassification {
   const trapTriggered = triggered.filter((s) => s.agent === 'trap-safety');
   const names = triggered.map((s) => s.name);
 
+  // Sit Out Day sits above Trap-Prone Day in severity, so it is checked first
+  // and deliberately requires corroboration rather than one bad signal:
+  // multiple structural risks AND elevated volatility together. A single trap
+  // signal is a Trap-Prone Day — never this. (SENTINEL.md §3: the orchestrator
+  // only escalates when enough signals confirm each other.)
+  if (trapTriggered.length >= 2 && names.includes('elevated_vix')) {
+    const tags = triggered.map((s) => marketTag(s.name));
+    return {
+      label: 'Sit Out Day',
+      confidence: avgWeight(triggered),
+      explanation: `${trapTriggered.length} structural risk signals are active alongside elevated volatility — ${tags.join(', ')}. Conditions are corroborating each other rather than appearing in isolation, leaving little that reads cleanly today.`,
+      supportingSignals: tags,
+    };
+  }
   if (trapTriggered.length > 0) {
     const tags = trapTriggered.map((s) => marketTag(s.name));
     return {
