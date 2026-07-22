@@ -45,9 +45,9 @@ export class SentinelApiService {
       const since = new Date(Date.now() - 24 * 3_600_000);
       const [trades, dbPositions] = await Promise.all([
         this.prisma.trade.findMany({
-          where: { userId, createdAt: { gte: since } },
+          where: { userId, executedAt: { gte: since } },
           include: { instrument: { select: { symbol: true } } },
-          orderBy: { createdAt: 'desc' },
+          orderBy: { executedAt: 'desc' },
           take: 100,
         }),
         this.prisma.position.findMany({
@@ -61,7 +61,7 @@ export class SentinelApiService {
         side: t.side,
         quantity: t.quantity,
         fillPrice: Number(t.fillPrice),
-        createdAt: t.createdAt.toISOString(),
+        createdAt: t.executedAt.toISOString(),
       }));
       positions = dbPositions.map((p) => ({
         symbol: p.instrument.symbol,
@@ -136,7 +136,7 @@ export class SentinelApiService {
     const dayStart = new Date();
     dayStart.setUTCHours(0, 0, 0, 0);
     const [tradesToday, positions] = await Promise.all([
-      this.prisma.trade.count({ where: { userId, createdAt: { gte: dayStart } } }),
+      this.prisma.trade.count({ where: { userId, executedAt: { gte: dayStart } } }),
       this.prisma.position.findMany({ where: { userId }, select: { realizedPnl: true } }),
     ]);
     let flaggedEvents = 0;

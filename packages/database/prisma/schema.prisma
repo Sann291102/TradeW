@@ -25,9 +25,48 @@ enum OrderSide {
   SELL
 }
 
+/// MARKET fills immediately at the live price. LIMIT rests until the market
+/// reaches `price`. SL (stop-loss limit) rests untriggered until the live
+/// price crosses `triggerPrice`, then behaves like a LIMIT at `price`. SL_M
+/// (stop-loss market) triggers the same way but fills at market once hit.
+enum OrderType {
+  MARKET
+  LIMIT
+  SL
+  SL_M
+}
+
+/// DAY: cancelled automatically if unfilled by session close. IOC: fill
+/// whatever is immediately available and cancel the remainder right away.
+enum OrderValidity {
+  DAY
+  IOC
+}
+
+/// MIS: intraday, simulated higher leverage. CNC: cash delivery (equities/
+/// ETFs). NRML: carry-forward (F&O). Purely affects the simulated margin
+/// calculation in this paper engine — there is no real broker settlement.
+enum ProductType {
+  MIS
+  CNC
+  NRML
+}
+
+/// PENDING: accepted, not yet queued. OPEN: resting and working the market
+/// (LIMIT before fill). TRIGGER_PENDING: SL/SL_M before its trigger price is
+/// hit. PARTIALLY_FILLED / FILLED: filledQuantity < / == quantity. CANCELLED:
+/// user- or validity-cancelled before full fill. REJECTED: never accepted
+/// (bad lot size, insufficient margin, unresolvable instrument). EXPIRED:
+/// DAY validity order still open at session close.
 enum OrderStatus {
+  PENDING
+  OPEN
+  TRIGGER_PENDING
+  PARTIALLY_FILLED
   FILLED
+  CANCELLED
   REJECTED
+  EXPIRED
 }
 
 model User {
@@ -42,6 +81,7 @@ model User {
   orders             Order[]
   trades             Trade[]
   positions          Position[]
+  paperWallet        PaperWallet?
   refreshTokens      RefreshToken[]
   preferences        UserPreference[]
   auditEvents        AuditEvent[]
@@ -167,55 +207,129 @@ model Quote {
 }
 
 model Order {
-  id             String      @id @default(uuid())
+  id             String        @id @default(uuid())
   userId         String
   instrumentId   String
-  side           OrderSide
-  quantity       Int
-  status         OrderStatus @default(FILLED)
-  requestedPrice Decimal?    @db.Decimal(12, 2)
-  fillPrice      Decimal     @db.Decimal(12, 2)
-  slippage       Decimal     @db.Decimal(12, 2)
-  charges        Decimal     @db.Decimal(12, 2)
-  createdAt      DateTime    @default(now())
-  user           User        @relation(fields: [userId], references: [id])
-  instrument     Instrument  @relation(fields: [instrumentId], references: [id])
-  trade          Trade?
 
-  @@index([userId, createdAt])
+  side           OrderSide
+  type           OrderType     @default(MARKET)
+  validity       OrderValidity @default(DAY)
+  productType    ProductType   @default(MIS)
+  status         OrderStatus   @default(PENDING)
+
+  quantity       Int
+  /// Sum of every Trade's quantity against this order so far.
+  filledQuantity Int           @default(0)
+  /// Limit price — required for LIMIT and SL, ignored for MARKET/SL_M.
+  price          Decimal?      @db.Decimal(12, 2)
+  /// Trigger price — required for SL and SL_M, ignored otherwise. Once the
+  /// live price crosses this, status moves TRIGGER_PENDING -> OPEN (SL) or
+  /// straight to filling (SL_M).
+  triggerPrice   Decimal?      @db.Decimal(12, 2)
+  /// Quantity-weighted average across this order's trades — null until the
+  /// first fill.
+  avgFillPrice   Decimal?      @db.Decimal(12, 2)
+  slippage       Decimal?      @db.Decimal(12, 2)
+  charges        Decimal       @default(0) @db.Decimal(12, 2)
+  /// Simulated margin blocked while this order is open; released on
+  /// fill/cancel/reject (fill converts it into the position's marginUsed).
+  marginBlocked  Decimal       @default(0) @db.Decimal(12, 2)
+
+  rejectReason   String?
+
+  /// Bracket/Target order future-readiness (spec: "future-ready", not
+  /// implemented this phase) — a child SL or target order would reference
+  /// the entry order that spawned it. Nothing populates this yet.
+  parentOrderId  String?
+  parentOrder    Order?        @relation("OrderChildren", fields: [parentOrderId], references: [id])
+  childOrders    Order[]       @relation("OrderChildren")
+
+  placedAt       DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  /// DAY validity: end of the current session, set at placement. IOC: not used
+  /// (resolved immediately at placement time).
+  expiresAt      DateTime?
+
+  user           User          @relation(fields: [userId], references: [id])
+  instrument     Instrument    @relation(fields: [instrumentId], references: [id])
+  trades         Trade[]
+
+  @@index([userId, placedAt])
+  @@index([status])
+  @@index([userId, status])
 }
 
 model Trade {
   id           String     @id @default(uuid())
-  orderId      String     @unique
+  orderId      String
   userId       String
   instrumentId String
   side         OrderSide
   quantity     Int
   fillPrice    Decimal    @db.Decimal(12, 2)
   charges      Decimal    @db.Decimal(12, 2)
-  createdAt    DateTime   @default(now())
+  /// Set only when this fill reduces or closes an existing position — the
+  /// realized P&L this specific trade locked in. Null for a trade that only
+  /// opens/adds to a position.
+  realizedPnl  Decimal?   @db.Decimal(12, 2)
+  executedAt   DateTime   @default(now())
   order        Order      @relation(fields: [orderId], references: [id])
   user         User       @relation(fields: [userId], references: [id])
   instrument   Instrument @relation(fields: [instrumentId], references: [id])
 
-  @@index([userId, createdAt])
+  @@index([userId, executedAt])
+  @@index([orderId])
 }
 
 model Position {
-  id           String     @id @default(uuid())
-  userId       String
-  instrumentId String
-  quantity     Int
-  avgPrice     Decimal    @db.Decimal(12, 2)
-  realizedPnl  Decimal    @default(0) @db.Decimal(12, 2)
-  updatedAt    DateTime   @updatedAt
-  createdAt    DateTime   @default(now())
-  user         User       @relation(fields: [userId], references: [id])
-  instrument   Instrument @relation(fields: [instrumentId], references: [id])
+  id            String      @id @default(uuid())
+  userId        String
+  instrumentId  String
+  productType   ProductType @default(MIS)
+  quantity      Int
+  avgPrice      Decimal     @db.Decimal(12, 2)
+  /// Lifetime realized P&L for this position row (survives flatten-and-reopen
+  /// only in the sense that a fresh row starts back at 0 — closing to zero
+  /// quantity does not delete the row, see PositionService).
+  realizedPnl   Decimal     @default(0) @db.Decimal(12, 2)
 
-  @@unique([userId, instrumentId])
+  /// Session-open snapshot (IST calendar day), refreshed once per day on
+  /// first touch — see PositionService.dailyPnl. Distinguishes "today's P&L"
+  /// from lifetime unrealized/realized without a separate time-series table.
+  sessionOpenQty         Int      @default(0)
+  sessionOpenAvgPrice    Decimal? @db.Decimal(12, 2)
+  sessionOpenMarketPrice Decimal? @db.Decimal(12, 2)
+  sessionAnchorAt        DateTime?
+
+  /// Simulated margin currently blocked for this open position.
+  marginUsed    Decimal     @default(0) @db.Decimal(12, 2)
+
+  updatedAt     DateTime    @updatedAt
+  createdAt     DateTime    @default(now())
+  user          User        @relation(fields: [userId], references: [id])
+  instrument    Instrument  @relation(fields: [instrumentId], references: [id])
+
+  @@unique([userId, instrumentId, productType])
   @@index([userId])
+}
+
+/// One paper-trading cash account per user. Created lazily on a user's first
+/// order (see PortfolioService) rather than at signup, so accounts that never
+/// trade never accumulate wallet rows.
+model PaperWallet {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  /// Paper capital granted once, at wallet creation — never changes after.
+  startingBalance Decimal  @default(1000000) @db.Decimal(14, 2)
+  /// Cash not currently blocked as margin: startingBalance + realizedPnl -
+  /// marginUsed - lifetime charges. Maintained incrementally, not derived
+  /// per-request, so it stays correct even if trade history is pruned later.
+  cashBalance     Decimal  @default(1000000) @db.Decimal(14, 2)
+  marginUsed      Decimal  @default(0) @db.Decimal(14, 2)
+  realizedPnl     Decimal  @default(0) @db.Decimal(14, 2)
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+  user            User     @relation(fields: [userId], references: [id])
 }
 
 // ============================================================================
