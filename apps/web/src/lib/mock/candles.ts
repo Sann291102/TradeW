@@ -12,8 +12,19 @@ import type { Candle, CandleInterval, MarketDataProvider } from '@tradew/types';
  * `SimMarketDataProvider` so mock candles look consistent with the rest of
  * the platform's simulated data.
  */
-export const mockMarketDataProvider: Pick<MarketDataProvider, 'getCandles'> = {
-  async getCandles(symbol: string, interval: CandleInterval, from: Date, to: Date): Promise<Candle[]> {
+export const mockMarketDataProvider: Pick<MarketDataProvider, 'getCandles'> & {
+  getCandles(symbol: string, interval: CandleInterval, from: Date, to: Date, anchorPrice?: number): Promise<Candle[]>;
+} = {
+  /**
+   * `anchorPrice` (optional): when the caller has a real live LTP (the Dhan
+   * live-feed bridge, for the 5 symbols it covers — see useDhanLiveFeed), the
+   * whole generated series is rescaled multiplicatively so its last close
+   * lands exactly on that real price. History is still simulated (no real
+   * intraday backfill exists — DHAN-MARKET-DATA-INTEGRATION.md Phase 3 isn't
+   * built), but the chart then agrees with the live number shown everywhere
+   * else instead of drifting on its own hardcoded baseline.
+   */
+  async getCandles(symbol: string, interval: CandleInterval, from: Date, to: Date, anchorPrice?: number): Promise<Candle[]> {
     const intervalMs: Record<CandleInterval, number> = {
       '1m': 60_000,
       '5m': 300_000,
@@ -46,6 +57,17 @@ export const mockMarketDataProvider: Pick<MarketDataProvider, 'getCandles'> = {
       candles.push({ timestamp: new Date(from.getTime() + i * step), open, high, low, close, volume });
       price = close;
     }
+
+    if (anchorPrice && candles.length > 0) {
+      const scale = anchorPrice / candles[candles.length - 1].close;
+      for (const c of candles) {
+        c.open *= scale;
+        c.high *= scale;
+        c.low *= scale;
+        c.close *= scale;
+      }
+    }
+
     return candles;
   },
 };

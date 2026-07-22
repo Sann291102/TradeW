@@ -9,6 +9,7 @@ import {
 } from '@tradew/market-data';
 import { InstrumentRegistryService } from '../instruments/instrument-registry.service';
 import { TickPipelineService } from './tick-pipeline.service';
+import { dhanWebSocketFactory } from './dhan-websocket-factory';
 
 /**
  * Owns the feed's lifecycle: which provider is active, when it connects, what
@@ -70,10 +71,11 @@ export class FeedManagerService implements OnApplicationBootstrap, OnModuleDestr
 
     this.feed = createMarketFeed(this.config, {
       resolveAnchor: this.instruments.anchorResolver,
-      // No webSocketFactory is supplied: selecting MARKET_DATA_FEED=dhan will
-      // therefore fail loudly here rather than appear to work. Wiring a real
-      // WebSocket client is Phase 4, gated on the licensing decision in
-      // DHAN-MARKET-DATA-INTEGRATION.md §3.1.
+      // Real transport for MARKET_DATA_FEED=dhan. Still gated on credentials
+      // being present (registry.ts throws without them) and on the licensing
+      // decision in DHAN-MARKET-DATA-INTEGRATION.md §3.1 before this is
+      // pointed at a production account.
+      webSocketFactory: dhanWebSocketFactory,
     });
 
     this.feed.onStatus((event) => this.recordStatus(event));
