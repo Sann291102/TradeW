@@ -8,7 +8,7 @@ import { useSessionStore } from '@/lib/store/sessionStore';
 
 function friendlyError(message: string): string {
   if (/fetch|network|load failed/i.test(message)) {
-    return "Couldn't reach the TradeW server. The API isn't running in this preview — you can still explore the workspace without signing in.";
+    return "Couldn't reach the TradeW server. Check that the API is running and NEXT_PUBLIC_API_URL is set correctly — you can still explore the workspace without signing in.";
   }
   return message || 'Something went wrong. Please try again.';
 }
