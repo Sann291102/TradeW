@@ -1,0 +1,18 @@
+# Python tooling for Dhan API exploration and verification.
+#
+# This is NOT the trading-engine's dependency set — that service brings its own
+# requirements.txt when it is migrated (see services/trading-engine/README.md,
+# ARCHITECTURE.md §2, and ADR-045: migration awaits explicit approval).
+#
+# Purpose: the official DhanHQ SDK is the reference implementation for the
+# market-data integration. TradeW's own runtime is TypeScript and parses the
+# Dhan binary feed itself (packages/market-data/src/providers/dhan/), so this
+# library is used for verification and API discovery, not in the request path.
+#
+# Install:  pip install --pre -r scripts/requirements.txt
+
+# Pre-release pin. 2.3.x is a substantial API change from 2.0.x — modular
+# classes (DhanContext, MarketFeed, OptionChain, HistoricalData, FullDepth,
+# DhanLogin) rather than one monolithic `dhanhq` object. Pinned exactly
+# because it is a release candidate and the surface may still move.
+dhanhq==2.3.0rc1
