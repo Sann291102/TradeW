@@ -5,7 +5,11 @@ import { useSearchParams } from 'next/navigation';
 import { Panel } from '@tradew/ui';
 import { useWorkspaceStore } from '@/lib/store/workspaceStore';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
-import { resolveExpiry, mockIvPct, ATM_STRIKE, STRIKE_STEP } from '@/lib/mock/optionChain';
+import { resolveExpiry, mockIvPct, strikeStepFor, ATM_STRIKE, STRIKE_STEP } from '@/lib/mock/optionChain';
+import { resolveLegs } from '@/lib/learning/payoff';
+import type { Strategy } from '@/lib/learning/types';
+import type { ChartPriceLine } from '@/components/charts/TradeChart';
+import { StrategyOverlay } from './StrategyOverlay';
 import { LayoutMenu } from '@/components/workspace/LayoutMenu';
 import { ClosedPanelsMenu } from '@/components/workspace/ClosedPanelsMenu';
 import { BlotterPanel } from '../terminal/panels/BlotterPanel';
@@ -30,7 +34,7 @@ const ChartPanel = dynamic(() => import('../terminal/panels/ChartPanel'), {
  * route anymore — they're untouched and still available, just unused here
  * (never deleted, per repo rule).
  */
-export function TradeWorkspace() {
+export function TradeWorkspace({ strategies = [] }: { strategies?: Strategy[] }) {
   const searchParams = useSearchParams();
   const symbol = searchParams.get('symbol') ?? undefined;
 
@@ -67,14 +71,59 @@ export function TradeWorkspace() {
     ? [...(quotes ?? []), ...(stocks ?? []), ...(etfs ?? []), ...(commodities ?? [])].find((q) => q.symbol === symbol)?.ltp
     : undefined;
 
+  // `?strategy=<id>` arrives from the Learning Hub's Apply action. It is
+  // VISUALISE-ONLY: the legs are drawn on the chart and a payoff diagram is
+  // rendered, and nothing is ordered or staged (LEARNING-HUB.md §6).
+  const strategyParam = searchParams.get('strategy');
+  const strategy = strategyParam ? strategies.find((s) => s.id === strategyParam) : undefined;
+
+  // Strikes resolve against the live price, so the same lesson works on any
+  // underlying. Without a price there is no ATM to anchor to, and drawing the
+  // legs against a stale mock spot would put them in the wrong place — so the
+  // overlay waits rather than rendering something misleading.
+  const strikeStep = symbol ? strikeStepFor(symbol) : STRIKE_STEP;
+  const strategySpot = livePrice;
+  const strategyYears = expiry ? expiry.days / 365 : undefined;
+
+  const strategyPriceLines: ChartPriceLine[] | undefined =
+    strategy && strategySpot && strategyYears !== undefined
+      ? resolveLegs(strategy.legs, strategySpot, strikeStep, strategyYears).map((leg) => ({
+          price: leg.strikePrice,
+          title: `${leg.action === 'BUY' ? '+' : '−'}${leg.kind} ${leg.strikePrice}`,
+          colorToken: leg.action === 'BUY' ? '--green' : '--red',
+          dashed: true,
+        }))
+      : undefined;
+
   return (
     <div className="mx-auto max-w-[1440px] space-y-4 p-4">
       <ChartPanel
         symbol={symbol}
         contract={contract}
         initialExpiryLabel={expiry?.label}
+        priceLines={strategyPriceLines}
         trailingControls={<><LayoutMenu /><ClosedPanelsMenu /></>}
       />
+
+      {strategy && (
+        strategySpot && strategyYears !== undefined ? (
+          <StrategyOverlay
+            strategy={strategy}
+            symbol={symbol ?? 'NIFTY'}
+            spot={strategySpot}
+            strikeStep={strikeStep}
+            yearsToExpiry={strategyYears}
+            expiryLabel={expiry?.label ?? '—'}
+          />
+        ) : (
+          <Panel title={strategy.name} elevation={1}>
+            <p className="text-[11.5px] text-faint">
+              Waiting for a live price on {symbol ?? 'this instrument'} — strikes are resolved around the at-the-money
+              level, so the payoff cannot be drawn until it is known.
+            </p>
+          </Panel>
+        )
+      )}
 
       <OrdersPanel
         key={`${symbol}-${contract?.strike ?? ''}-${contract?.optionType ?? ''}-${orderAction ?? ''}`}
