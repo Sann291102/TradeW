@@ -23,3 +23,8 @@ coverage/
 __pycache__/
 *.pyc
 .venv/
+
+# backups of env files — may contain secrets, never commit
+*.env.bak
+.env.bak
+*.bak

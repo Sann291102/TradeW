@@ -13,7 +13,13 @@ import { QuickActionsDock, type QuickAction } from './QuickActionsDock';
 import { ContractAnalysisDrawer, type ContractAnalysisData } from './ContractAnalysisDrawer';
 
 const STRIKE_COUNT = 9; // ATM +/- 4
-const CHAIN_REFRESH_MS = 15_000;
+/** Dhan's option-chain REST endpoint is rate-limited to roughly one call every
+ *  3s, which is the hard floor for OI/IV/Greeks refresh. Poll at that floor
+ *  rather than the old 15s — the bridge's short response cache collapses
+ *  duplicate requests from multiple tabs/components onto one upstream call, so
+ *  polling faster here costs nothing upstream. (Per-strike LTP additionally
+ *  arrives in real time over the websocket feed, which is not rate-limited.) */
+const CHAIN_REFRESH_MS = 3_000;
 const MAX_EXPIRY_TABS = 8;
 
 interface Row {
@@ -135,6 +141,11 @@ interface OptionChainTabProps {
    *  same as before this was wired up. */
   spotPrice?: number;
   initialExpiryLabel?: string;
+  /** Called the moment the user acts on a contract (Open chart / Buy / Sell),
+   *  so the host (ChartPanel) can switch to its Charts view immediately —
+   *  even when re-selecting the same strike, where the URL is unchanged and
+   *  the router push is a no-op, so nothing would otherwise "open". */
+  onOpenChart?: () => void;
 }
 
 interface ExpiryOption {
@@ -144,7 +155,7 @@ interface ExpiryOption {
   iso: string | null;
 }
 
-export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialExpiryLabel }: OptionChainTabProps) {
+export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialExpiryLabel, onOpenChart }: OptionChainTabProps) {
   useHydrateTradeBasket();
   const router = useRouter();
   const watchlist = useTradeBasketStore((s) => s.watchlist);
@@ -241,6 +252,9 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
   }
 
   function navigateToContract(strike: number, optionType: 'CE' | 'PE', action?: 'buy' | 'sell') {
+    // Switch the host to the chart right away — covers re-selecting the same
+    // strike, where the query string doesn't change and router.push is a no-op.
+    onOpenChart?.();
     const params = new URLSearchParams({
       symbol: underlyingSymbol,
       strike: String(strike),

@@ -16,6 +16,57 @@ export interface OpenAiCompatibleConfig {
   baseUrl: string;
   apiKey?: string;
   models: { fast: string; balanced: string; deep: string };
+  /**
+   * Vendor-specific fields merged into the request body verbatim — the escape
+   * hatch for params outside the OpenAI schema. Config-supplied only, so no
+   * provider name ever leaks into consumer code (locked decision Q5).
+   * NIM reasoning models use it for `chat_template_kwargs.enable_thinking`.
+   * Never overrides a field the request itself set.
+   */
+  extraBody?: Record<string, unknown>;
+  /** applied when the request doesn't specify topP */
+  defaultTopP?: number;
+  /** abort a hung/queued call instead of blocking a worker forever */
+  timeoutMs?: number;
+  /**
+   * How `request.jsonMode` is expressed on the wire. OpenAI accepts a bare
+   * `{type:'json_object'}`; the vLLM build behind NVIDIA NIM rejects it with a
+   * 400 unless a schema comes with it, so those endpoints use 'omit' and lean
+   * on the prompt instead. Defaults to 'json_object'.
+   */
+  jsonModeStrategy?: 'json_object' | 'omit';
+}
+
+/**
+ * Reasoning models return their chain-of-thought either in a sibling field
+ * (`reasoning` on NIM/vLLM, `reasoning_content` on others) or inline in a
+ * <think> block. Split it off so callers get a clean answer in `text` and the
+ * trace stays available for audit only.
+ */
+function splitReasoning(
+  content: string,
+  message: { reasoning?: string | null; reasoning_content?: string | null },
+): { text: string; reasoning?: string } {
+  const sibling = message.reasoning ?? message.reasoning_content ?? undefined;
+  const inline: string[] = [];
+  const stripped = content
+    .replace(/<(think|thinking|reasoning)>([\s\S]*?)<\/\1>/gi, (_m, _tag, body: string) => {
+      inline.push(body.trim());
+      return '';
+    })
+    // an unterminated <think> means max_tokens cut the trace off mid-stream
+    .replace(/<(think|thinking|reasoning)>[\s\S]*$/i, (m) => {
+      inline.push(m.replace(/^<[^>]+>/, '').trim());
+      return '';
+    })
+    .trim();
+
+  const reasoning = [sibling?.trim(), ...inline].filter(Boolean).join('\n\n') || undefined;
+  // Reasoning is NEVER promoted into `text`, even when the model burned its
+  // whole max_tokens budget thinking and left no answer. An empty string is a
+  // failure the caller can detect; leaked chain-of-thought rendered as a
+  // Sentinel observation is not (observation-only contract, ARCHITECTURE.md).
+  return { text: stripped, reasoning };
 }
 
 export class OpenAiCompatibleLlmProvider implements LlmProvider {
@@ -45,13 +96,19 @@ export class OpenAiCompatibleLlmProvider implements LlmProvider {
       return { role: m.role, content: m.content };
     });
 
+    const topP = request.topP ?? this.config.defaultTopP;
     const body: Record<string, unknown> = {
+      // extraBody first so explicit request fields always win
+      ...this.config.extraBody,
       model,
       messages,
       ...(request.maxTokens ? { max_tokens: request.maxTokens } : {}),
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+      ...(topP !== undefined ? { top_p: topP } : {}),
       ...(request.stopSequences ? { stop: request.stopSequences } : {}),
-      ...(request.jsonMode ? { response_format: { type: 'json_object' } } : {}),
+      ...(request.jsonMode && (this.config.jsonModeStrategy ?? 'json_object') === 'json_object'
+        ? { response_format: { type: 'json_object' } }
+        : {}),
       ...(request.tools?.length
         ? {
             tools: request.tools.map((t) => ({
@@ -62,20 +119,37 @@ export class OpenAiCompatibleLlmProvider implements LlmProvider {
         : {}),
     };
 
-    const res = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}),
-      },
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}),
+        },
+        body: JSON.stringify(body),
+        ...(this.config.timeoutMs ? { signal: AbortSignal.timeout(this.config.timeoutMs) } : {}),
+      });
+    } catch (err) {
+      if ((err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError') {
+        throw new Error(
+          `${this.name} completion timed out after ${this.config.timeoutMs}ms (model ${model}). ` +
+            `Some hosted models queue for minutes on the free tier — raise the timeout or pick a faster model.`,
+        );
+      }
+      throw err;
+    }
     if (!res.ok) {
       throw new Error(`${this.name} completion failed: ${res.status} ${await res.text()}`);
     }
     const data = (await res.json()) as {
       choices: {
-        message: { content: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] };
+        message: {
+          content: string | null;
+          reasoning?: string | null;
+          reasoning_content?: string | null;
+          tool_calls?: { id: string; function: { name: string; arguments: string } }[];
+        };
         finish_reason: string;
       }[];
       usage?: { prompt_tokens: number; completion_tokens: number };
@@ -94,14 +168,17 @@ export class OpenAiCompatibleLlmProvider implements LlmProvider {
       tool_calls: 'tool_use',
     };
 
+    const { text, reasoning } = splitReasoning(choice.message.content ?? '', choice.message);
+
     return {
-      text: choice.message.content ?? '',
+      text,
       toolCalls,
       stopReason: stopMap[choice.finish_reason] ?? 'other',
       usage: {
         inputTokens: data.usage?.prompt_tokens ?? 0,
         outputTokens: data.usage?.completion_tokens ?? 0,
       },
+      ...(reasoning ? { reasoning } : {}),
       servedBy: { provider: this.name, model: data.model ?? model },
     };
   }

@@ -10,7 +10,8 @@
     "start:prod": "node dist/main.js",
     "ontology:validate": "ts-node -T --project tsconfig.scripts.json scripts/validate-ontology.ts",
     "ontology:seed": "ts-node -T --project tsconfig.scripts.json scripts/seed-ontology.ts",
-    "ontology:smoke": "ts-node -T --project tsconfig.scripts.json scripts/smoke-concept-graph.ts"
+    "ontology:smoke": "ts-node -T --project tsconfig.scripts.json scripts/smoke-concept-graph.ts",
+    "nim:smoke": "ts-node -T --project tsconfig.scripts.json scripts/smoke-nvidia-nim.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

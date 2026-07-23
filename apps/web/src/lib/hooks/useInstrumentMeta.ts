@@ -54,7 +54,14 @@ function load(symbol: string): Promise<InstrumentMeta | null> {
  * applies to what's actually being traded.
  */
 export function useInstrumentMeta(symbol: string | undefined): InstrumentMeta | null {
-  const [meta, setMeta] = useState<InstrumentMeta | null>(() => (symbol ? cache.get(symbol) ?? null : null));
+  // Always start at null, never from `cache`. The cache is empty during SSR but
+  // often already warm on the client (a previous page populated it), so seeding
+  // initial state from it made the first client render disagree with the server
+  // HTML — React's "Expected server HTML to contain a matching <div>" hydration
+  // error. The effect below re-reads the cache synchronously on mount, so a
+  // warm value still appears immediately; it just no longer happens during the
+  // hydration pass.
+  const [meta, setMeta] = useState<InstrumentMeta | null>(null);
 
   useEffect(() => {
     if (!symbol) {

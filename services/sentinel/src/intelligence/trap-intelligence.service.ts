@@ -89,14 +89,29 @@ export class TrapIntelligenceService {
     if (lastBuy && candles.length >= 12) {
       const window = candles.slice(-12);
       const moveStart = window[0].close;
+      // Units: movePct is the signed size of the recent 12-bar move, in *percent*
+      // (e.g. 0.674 == +0.67%). entryLateness is a *fraction in [0, 1]*: how far
+      // through that move the BUY filled — 0 = entered at the move's start,
+      // 1 = entered at the current price (maximally late). A fill that lands
+      // outside the move's price band (e.g. one predating this window, so below
+      // moveStart) falls outside [0, 1], so we clamp it. Without the clamp the
+      // derived "captured" figure overshoots 100% or goes negative — the source
+      // of the nonsensical "last 254%" / entryLateness -1.54 evidence.
       const movePct = ((last.close - moveStart) / moveStart) * 100;
-      const entryLateness = movePct !== 0 ? (lastBuy.fillPrice - moveStart) / (last.close - moveStart) : 0;
+      const moveRange = last.close - moveStart;
+      const rawLateness = moveRange !== 0 ? (lastBuy.fillPrice - moveStart) / moveRange : 0;
+      const entryLateness = Math.max(0, Math.min(1, rawLateness));
+      // Complement of lateness: the slice of the move still ahead of the entry,
+      // i.e. what the entry actually "captured". Bounded to 0–100% by the clamp.
+      const capturedPct = (1 - entryLateness) * 100;
       sig(
         'fomo_entry',
         movePct > 0.8 && entryLateness > 0.75,
         0.3,
-        [`Entry at ${lastBuy.fillPrice.toFixed(1)} captured only the last ${(100 - entryLateness * 100).toFixed(0)}% of a ${movePct.toFixed(1)}% move already in progress`],
-        { movePct, entryLateness },
+        [
+          `Entry at ${lastBuy.fillPrice.toFixed(1)} came after ${(entryLateness * 100).toFixed(0)}% of a ${Math.abs(movePct).toFixed(1)}% move had already played out, capturing the final ${capturedPct.toFixed(0)}%`,
+        ],
+        { movePct, entryLateness, capturedPct },
       );
     }
 

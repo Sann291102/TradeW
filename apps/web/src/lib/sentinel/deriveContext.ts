@@ -239,6 +239,26 @@ export interface SafetyCardData {
   evidence: string[];
   source: string;
   pinned?: boolean;
+  /**
+   * Whether this warrants *pushing* to the Live Safety Feed right now, vs. only
+   * living in the timeline/history. The feed is meant to fire when a genuine
+   * setup or behavior is experienced — not to echo every routine market reading
+   * on every refresh. True for: the corroborated synthesis, any behavioral
+   * (emotion) or structural-risk (trap-safety) event, and only high-confidence
+   * market-technical readings. A lone overbought-RSI note is context (Market
+   * Context panel), not a safety push.
+   */
+  pushworthy: boolean;
+}
+
+/** The bar for market-technical observations to reach the Live Safety Feed on
+ *  their own — below this they are ambient context, not an event to push. */
+const MARKET_PUSH_THRESHOLD = 0.8;
+
+function isPushworthy(agent: string, confidence: number): boolean {
+  if (agent === 'emotion' || agent === 'trap-safety' || agent === 'orchestrator') return true;
+  if (agent === 'market-technical') return confidence >= MARKET_PUSH_THRESHOLD;
+  return false;
 }
 
 const ACTION_MAP: Record<string, ActionLabel> = {
@@ -291,6 +311,7 @@ export function extractSafetyFeed(observations: Observation[], synthesis: Synthe
       evidence: [],
       source: SOURCE_LABEL.orchestrator,
       pinned: true,
+      pushworthy: true, // a corroborated synthesis is the canonical "push"
     });
   }
 
@@ -305,10 +326,17 @@ export function extractSafetyFeed(observations: Observation[], synthesis: Synthe
       explanation: o.content,
       evidence: o.evidence,
       source: SOURCE_LABEL[o.agent] ?? 'Market signal',
+      pushworthy: isPushworthy(o.agent, o.confidence),
     });
   }
 
   return cards;
+}
+
+/** The subset that should actually surface in the Live Safety Feed now —
+ *  genuine setups/behaviors only. The full list still feeds the timeline. */
+export function pushworthyCards(cards: SafetyCardData[]): SafetyCardData[] {
+  return cards.filter((c) => c.pushworthy);
 }
 
 const LESSON_MAP: Record<ActionLabel, { title: string; blurb: string }> = {

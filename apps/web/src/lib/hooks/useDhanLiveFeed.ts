@@ -7,6 +7,14 @@ export type DhanFeedStatus = 'loading' | 'live' | 'closed' | 'unreachable';
 
 const DHAN_LIVE_URL = process.env.NEXT_PUBLIC_DHAN_LIVE_URL || 'http://localhost:4600';
 const POLL_MS = 5000;
+/**
+ * How long a transient interruption is tolerated before the pill is allowed to
+ * fall back to "Status unknown". The bridge streams continuously while the
+ * market is open and EventSource auto-reconnects on its own, so a dropped
+ * connection almost always recovers within a second — far inside this window.
+ * Only a genuine, sustained outage outlasts the grace period.
+ */
+const GRACE_MS = 20000;
 const EMPTY_SNAPSHOT: DhanLiveSnapshot = { marketOpen: false, indices: [], stocks: [], etfs: [], commodities: [] };
 
 type State = { snapshot: DhanLiveSnapshot | null; status: DhanFeedStatus };
@@ -27,6 +35,7 @@ let listeners = new Set<Listener>();
 let state: State = { snapshot: null, status: 'loading' };
 let source: EventSource | null = null;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
+let graceTimer: ReturnType<typeof setTimeout> | null = null;
 let started = false;
 
 function setState(next: State) {
@@ -34,11 +43,39 @@ function setState(next: State) {
   listeners.forEach((l) => l(state));
 }
 
-function apply(data: DhanLiveSnapshot) {
-  if (data.indices.length === 0 && data.stocks.length === 0 && data.etfs.length === 0 && data.commodities.length === 0) {
+function clearGrace() {
+  if (graceTimer) {
+    clearTimeout(graceTimer);
+    graceTimer = null;
+  }
+}
+
+/**
+ * A transient failure — an SSE reconnect, a failed poll, or a momentarily
+ * empty payload. Don't flip the pill straight to "Status unknown": hold the
+ * last known status and only fall back to 'unreachable' if nothing recovers
+ * within GRACE_MS. This is what stops the market-status pill flickering
+ * live -> unknown -> live every few seconds on an otherwise-healthy feed.
+ */
+function scheduleUnreachable() {
+  if (graceTimer || state.status === 'unreachable') return;
+  graceTimer = setTimeout(() => {
+    graceTimer = null;
     setState({ snapshot: state.snapshot, status: 'unreachable' });
+  }, GRACE_MS);
+}
+
+function apply(data: DhanLiveSnapshot) {
+  const empty =
+    data.indices.length === 0 &&
+    data.stocks.length === 0 &&
+    data.etfs.length === 0 &&
+    data.commodities.length === 0;
+  if (empty) {
+    scheduleUnreachable();
     return;
   }
+  clearGrace();
   setState({ snapshot: data, status: data.marketOpen ? 'live' : 'closed' });
 }
 
@@ -46,7 +83,7 @@ async function poll() {
   try {
     apply(await fetchDhanQuotes());
   } catch {
-    setState({ snapshot: state.snapshot, status: 'unreachable' });
+    scheduleUnreachable();
   } finally {
     pollTimer = setTimeout(poll, POLL_MS);
   }
@@ -60,7 +97,7 @@ function ensureStarted() {
     try {
       source = new EventSource(`${DHAN_LIVE_URL}/stream`);
       source.onmessage = (event) => apply(JSON.parse(event.data) as DhanLiveSnapshot);
-      source.onerror = () => setState({ snapshot: state.snapshot, status: 'unreachable' });
+      source.onerror = () => scheduleUnreachable();
       return;
     } catch {
       // fall through to polling
@@ -80,6 +117,7 @@ function subscribe(listener: Listener): () => void {
       source = null;
       if (pollTimer) clearTimeout(pollTimer);
       pollTimer = null;
+      clearGrace();
       started = false;
       state = { snapshot: null, status: 'loading' };
     }
@@ -107,7 +145,13 @@ export function useDhanLiveFeed(): {
   commodities: DhanLiveQuote[] | null;
   status: DhanFeedStatus;
 } {
-  const [local, setLocal] = useState<State>(state);
+  // Deliberately NOT seeded from the module-level `state` singleton. That
+  // singleton is empty during SSR but usually already holds a snapshot on the
+  // client (another widget started the feed first), so seeding from it made the
+  // first client render disagree with the server HTML — a React hydration
+  // mismatch. `subscribe` pushes the current state synchronously on mount, so
+  // the real snapshot still lands immediately, just after hydration.
+  const [local, setLocal] = useState<State>({ snapshot: null, status: 'loading' });
 
   useEffect(() => subscribe(setLocal), []);
 

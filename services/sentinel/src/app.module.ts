@@ -43,7 +43,7 @@ import { EmotionIntelligenceService } from './intelligence/emotion-intelligence.
 import { MARKET_DATA, MarketIntelligenceService } from './intelligence/market-intelligence.service';
 import { NewsIntelligenceService } from './intelligence/news-intelligence.service';
 import { TrapIntelligenceService } from './intelligence/trap-intelligence.service';
-import { SimulatedMarketDataProvider } from '@tradew/market-data';
+import { CandleMarketDataProvider } from './market-data/candle-market-data.provider';
 import { SentinelOrchestratorService } from './orchestrator/sentinel-orchestrator.service';
 import { PrismaService } from './prisma.service';
 
@@ -60,17 +60,16 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
     // MarketDataProvider is injected by token — swapping simulation for
     // historical/NSE/BSE/Dhan later changes only this one binding (Q6).
     //
-    // Now backed by the shared implementation in @tradew/market-data. Sentinel
-    // previously carried its own simulator with hardcoded price anchors, which
-    // disagreed with the one behind /market-data/* for the same symbol at the
-    // same instant — High-severity debt in MARKET-DATA-BASELINE.md §7. Both
-    // services now compute from one engine. The old file is preserved at
+    // Now bound to CandleMarketDataProvider: real persisted `Candle` history
+    // (backfilled from Dhan) for getCandles when rows exist, and the shared
+    // @tradew/market-data simulator for everything else and as the fallback.
+    // This is the seam finally carrying real data — Trap Detection and every
+    // candle-derived signal run on real market history for backfilled symbols,
+    // while an un-backfilled symbol or an absent Postgres degrades cleanly to
+    // simulation so Sentinel never loses the ability to observe (PrismaService
+    // fault-tolerance). The old standalone simulator file is preserved at
     // archive/sentinel-sim-market-data.provider.ts.txt per CLAUDE.md Rule 1.
-    //
-    // No anchor resolver is supplied: Sentinel must keep working when the
-    // database is away (see PrismaService), so it uses the provider's
-    // deterministic fallback anchors rather than depending on Instrument rows.
-    { provide: MARKET_DATA, useFactory: () => new SimulatedMarketDataProvider() },
+    { provide: MARKET_DATA, useClass: CandleMarketDataProvider },
     MarketIntelligenceService,
     EmotionIntelligenceService,
     TrapIntelligenceService,

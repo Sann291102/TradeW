@@ -273,6 +273,22 @@ interface LiveQuote {
 const byKey = new Map<string, LiveQuote>(); // key: `${kind}:${symbol}`
 const sseClients = new Set<http.ServerResponse>();
 
+/**
+ * Live LTP for individual OPTION contracts, keyed by Dhan securityId.
+ *
+ * Dhan's option-chain REST endpoint is rate-limited to roughly one call every
+ * 3s, so a chain built purely from it always lags the market — which is what
+ * made per-strike prices visibly "stop" between refreshes. The websocket feed
+ * has no such limit, so the strikes a user is actually looking at get
+ * subscribed on demand (see `ensureOptionSubscription`) and their prices are
+ * overlaid onto the chain response. OI / IV / Greeks still come from the REST
+ * chain at its own cadence; only the price ticks in real time.
+ *
+ * Not subscribed at boot: there are ~125k listed contracts and a connection
+ * holds 5,000 subscriptions, so slots are spent only where someone is looking.
+ */
+const optionLtpBySecurityId = new Map<string, number>();
+
 /** NSE cash session: 09:15-15:30 IST, Mon-Fri. No holiday calendar available
  *  (DHAN-MARKET-DATA-INTEGRATION.md §12 open question 5) — a trading holiday
  *  will show OPEN here when the exchange is actually closed. MCX runs a
@@ -329,6 +345,18 @@ function broadcast() {
   for (const res of sseClients) res.write(payload);
 }
 
+// Ticks arrive far faster than any UI needs — the whole F&O universe fires
+// many times a second. Serializing and pushing the entire snapshot on every
+// tick is a firehose that janks the browser and stresses the SSE connection
+// (which then flickers the market-status pill). Instead, mark the snapshot
+// dirty on each tick and flush at a steady, bounded cadence: smooth,
+// continuous updates without the per-tick storm.
+const BROADCAST_MS = 300;
+let dirty = false;
+function scheduleBroadcast() {
+  dirty = true;
+}
+
 let feedStatus = 'idle';
 let feedReason: string | undefined;
 
@@ -353,11 +381,26 @@ function startFeed(allInstruments: InstrumentMeta[], kindOf: (meta: InstrumentMe
     console.log(`[dhan] ${event.status}${event.reason ? ' — ' + event.reason : ''}`);
   });
 
+  // Keyed lookup instead of a linear scan. This runs on EVERY tick across the
+  // whole subscribed universe (553 instruments at boot, plus option contracts
+  // subscribed on demand), so an O(n) find here burned real CPU per tick.
+  const metaByRef = new Map(allInstruments.map((m) => [`${m.exchangeSegment}:${m.securityId}`, m]));
+
   feed.onTick((tick) => {
-    const meta = allInstruments.find((i) => i.securityId === tick.ref.securityId && i.exchangeSegment === tick.ref.exchangeSegment);
+    // Option contracts are subscribed on demand and are deliberately not part
+    // of `allInstruments` — their price is overlaid onto the option-chain
+    // response (see optionLtpBySecurityId) rather than broadcast as a quote.
+    // Any derivatives segment — NSE_FNO (NIFTY/BANKNIFTY/stocks) and BSE_FNO
+    // (SENSEX/BANKEX) alike. Matching only NSE_FNO silently dropped every
+    // SENSEX option tick.
+    if (tick.ref.exchangeSegment.endsWith('_FNO')) {
+      if (tick.ltp != null) optionLtpBySecurityId.set(tick.ref.securityId, tick.ltp);
+      return;
+    }
+    const meta = metaByRef.get(`${tick.ref.exchangeSegment}:${tick.ref.securityId}`);
     if (!meta) return;
     byKey.set(`${kindOf(meta)}:${meta.symbol}`, toLiveQuote(tick, meta));
-    broadcast();
+    scheduleBroadcast();
   });
 
   feed
@@ -402,7 +445,10 @@ const candleCache = new Map<string, { at: number; candles: CandleJson[] }>();
 // separate /charts/historical (daily) endpoint instead of /charts/intraday.
 const INTRADAY_INTERVAL: Record<string, string> = { '1m': '1', '5m': '5', '15m': '15', '1h': '60' };
 
-function instrumentTypeFor(meta: InstrumentMeta): string {
+function instrumentTypeFor(meta: InstrumentMeta & { instrument?: string }): string {
+  // An option contract carries its exact class (OPTIDX/OPTSTK) from the scrip
+  // master; it cannot be inferred from the segment, so honour it when present.
+  if (meta.instrument) return meta.instrument;
   if (meta.exchangeSegment === 'IDX_I') return 'INDEX';
   if (meta.exchangeSegment === 'NSE_EQ') return 'EQUITY';
   return 'FUTCOM';
@@ -417,6 +463,10 @@ function ymd(d: Date): string {
 const SESSION_WINDOWS: Record<string, { openMin: number; closeMin: number }> = {
   IDX_I: { openMin: 9 * 60 + 15, closeMin: 15 * 60 + 30 },
   NSE_EQ: { openMin: 9 * 60 + 15, closeMin: 15 * 60 + 30 },
+  // Equity derivatives keep cash-market hours; without these entries option
+  // candles would fall through the "unknown segment" branch unfiltered.
+  NSE_FNO: { openMin: 9 * 60 + 15, closeMin: 15 * 60 + 30 },
+  BSE_FNO: { openMin: 9 * 60 + 15, closeMin: 15 * 60 + 30 },
   MCX_COMM: { openMin: 9 * 60, closeMin: 23 * 60 + 30 },
 };
 
@@ -562,6 +612,12 @@ interface OptionStrikeOut {
 let optionChainQueue: Promise<unknown> = Promise.resolve();
 let lastOptionChainCallAt = 0;
 const OPTION_CHAIN_MIN_GAP_MS = 2_500;
+
+/** How many strikes either side of spot get a live websocket subscription per
+ *  underlying+expiry (each costs two slots, CE + PE). The chain table shows 9
+ *  and the chart reads one, so 15 covers the visible window plus room to scroll
+ *  without spending slots on deep-OTM strikes nobody is watching. */
+const OPTION_STREAM_STRIKES = 15;
 
 /** Serializes every Dhan option-chain-family call (expirylist + chain)
  *  through one FIFO queue with a floor gap between calls, regardless of how
@@ -710,13 +766,151 @@ async function main(): Promise<void> {
   const expiryListCache = new Map<string, { at: number; expiries: string[] }>();
   const EXPIRY_LIST_TTL_MS = 5 * 60_000; // expiry dates for a contract barely change
   const optionChainCache = new Map<string, { at: number; payload: { spot: number | null; strikes: OptionStrikeOut[] } }>();
-  const OPTION_CHAIN_TTL_MS = 5_000;
+  // Just long enough to collapse concurrent callers (the chain table and the
+  // contract chart both ask for the same underlying+expiry) onto one upstream
+  // call, without holding a stale chain past the queue's own gap. Was 5s, which
+  // stacked on top of the client's old 15s poll to make the chain visibly lag
+  // the market.
+  const OPTION_CHAIN_TTL_MS = 2_000;
+  /** In-flight upstream chain calls, so concurrent cache misses for the same
+   *  underlying+expiry share one Dhan request instead of each enqueuing their
+   *  own and tripping the rate limit. */
+  const optionChainInFlight = new Map<string, Promise<{ spot: number | null; strikes: OptionStrikeOut[] }>>();
+  /** Last non-empty chain per underlying+expiry. A rate-limited or failed
+   *  refresh serves this (with live websocket prices overlaid) rather than an
+   *  empty chain — a blank table reads as "the market stopped". */
+  const lastGoodChain = new Map<string, { spot: number | null; strikes: OptionStrikeOut[] }>();
+
+  // -------------------------------------------------------------------------
+  // Per-contract option index. The scrip master already carries every listed
+  // OPTIDX/OPTSTK contract with its own securityId, strike, option type and
+  // expiry (~125k rows); resolveUniverse keeps only the distinct underlyings
+  // (for lot sizes) and drops the contracts. This rebuilds that lost detail so
+  // an individual strike can be addressed on the websocket feed.
+  // Keyed `UNDERLYING|YYYY-MM-DD|strike|CE|PE`.
+  // -------------------------------------------------------------------------
+  interface OptionContract {
+    securityId: string;
+    /** NSE_FNO for NIFTY/BANKNIFTY/stocks, BSE_FNO for SENSEX/BANKEX. Taken
+     *  from the row, never assumed — hardcoding NSE_FNO silently excluded every
+     *  BSE contract (SENSEX) from both streaming and candles. */
+    exchangeSegment: string;
+    /** OPTIDX | OPTSTK — Dhan's historical API needs the exact instrument
+     *  class, and it is not derivable from the segment alone. */
+    instrument: string;
+  }
+  const optionContractIndex = new Map<string, OptionContract>();
+  for (const row of rows) {
+    if (row.instrument !== 'OPTIDX' && row.instrument !== 'OPTSTK') continue;
+    if (!row.expiryDate || row.strikePrice == null || !row.optionType) continue;
+    const underlying = (row.underlyingSymbol || underlyingFromContractSymbol(row.tradingSymbol) || '').toUpperCase();
+    if (!underlying) continue;
+    const type = row.optionType.toUpperCase().startsWith('C') ? 'CE' : 'PE';
+    optionContractIndex.set(`${underlying}|${ymd(row.expiryDate)}|${row.strikePrice}|${type}`, {
+      securityId: row.securityId,
+      exchangeSegment: row.exchangeSegment,
+      instrument: row.instrument,
+    });
+  }
+  console.log(`[scrip-master] indexed ${optionContractIndex.size} option contracts for real-time per-strike ticks`);
+
+  /** Resolve one contract's securityId. The scrip master's expiry is a parsed
+   *  Date and Dhan's expiry list is a plain ISO day, so a timezone-driven
+   *  off-by-one is possible — try the exact day first, then its neighbours,
+   *  rather than silently failing to subscribe. */
+  function optionContract(underlying: string, expiryIso: string, strike: number, type: string): OptionContract | null {
+    const base = Date.parse(`${expiryIso}T00:00:00Z`);
+    for (const offsetDays of [0, -1, 1]) {
+      const day = ymd(new Date(base + offsetDays * 86_400_000));
+      const hit = optionContractIndex.get(`${underlying.toUpperCase()}|${day}|${strike}|${type}`);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  /** Websocket slots already spent, so re-requesting a chain doesn't re-send
+   *  subscribe frames for strikes already streaming. */
+  const subscribedOptionIds = new Set<string>();
+
+  /**
+   * Subscribe the strikes around spot for one underlying+expiry so their prices
+   * tick in real time. Bounded deliberately: a full chain can be 200+ strikes
+   * (400+ legs) and the connection holds 5,000 subscriptions total, so only the
+   * window a trader actually reads is streamed.
+   */
+  function ensureOptionSubscription(
+    underlying: string,
+    expiryIso: string,
+    strikes: OptionStrikeOut[],
+    spot: number | null,
+  ): void {
+    if (!strikes.length) return;
+    const centre = spot ?? strikes[Math.floor(strikes.length / 2)].strike;
+    const near = [...strikes].sort((a, b) => Math.abs(a.strike - centre) - Math.abs(b.strike - centre)).slice(0, OPTION_STREAM_STRIKES);
+
+    const fresh: Array<{ securityId: string; exchangeSegment: string }> = [];
+    for (const s of near) {
+      for (const type of ['CE', 'PE'] as const) {
+        const contract = optionContract(underlying, expiryIso, s.strike, type);
+        if (!contract || subscribedOptionIds.has(contract.securityId)) continue;
+        subscribedOptionIds.add(contract.securityId);
+        fresh.push({ securityId: contract.securityId, exchangeSegment: contract.exchangeSegment });
+      }
+    }
+    if (!fresh.length) return;
+    // Fire and forget: a failed subscribe must never fail the chain response
+    // the user is waiting on — they still get REST prices, just not streaming.
+    Promise.resolve(feed.subscribe(fresh as never, 'quote')).catch((err) => {
+      for (const f of fresh) subscribedOptionIds.delete(f.securityId);
+      console.error('[dhan] option subscribe failed:', err instanceof Error ? err.message : err);
+    });
+    console.log(`[dhan] streaming ${fresh.length} new option legs for ${underlying} ${expiryIso} (${subscribedOptionIds.size} total)`);
+  }
+
+  /** Overlay real-time websocket prices onto a REST chain payload. The REST
+   *  values stay authoritative for OI/IV/Greeks; only `ltp` is superseded, and
+   *  only when a live tick actually exists for that leg. */
+  function withLiveOptionPrices(
+    underlying: string,
+    expiryIso: string,
+    payload: { spot: number | null; strikes: OptionStrikeOut[] },
+  ): { spot: number | null; strikes: OptionStrikeOut[] } {
+    return {
+      spot: payload.spot,
+      strikes: payload.strikes.map((s) => {
+        const apply = (leg: OptionLegOut | null, type: 'CE' | 'PE') => {
+          if (!leg) return leg;
+          const contract = optionContract(underlying, expiryIso, s.strike, type);
+          const live = contract ? optionLtpBySecurityId.get(contract.securityId) : undefined;
+          return live != null && live > 0 ? { ...leg, ltp: live } : leg;
+        };
+        return { strike: s.strike, ce: apply(s.ce, 'CE'), pe: apply(s.pe, 'PE') };
+      }),
+    };
+  }
 
   const feed = startFeed(ALL_INSTRUMENTS, kindOf);
 
   // Market can flip open/closed with no tick in between (e.g. right at 15:30);
   // re-broadcast on a timer too so the badge in the browser stays honest.
   setInterval(broadcast, 30_000);
+
+  // Flush coalesced ticks at a steady cadence (see scheduleBroadcast). Only
+  // pushes when something actually changed, so a quiet/closed market stays
+  // quiet instead of re-sending an identical snapshot four times a second.
+  setInterval(() => {
+    if (dirty) {
+      dirty = false;
+      broadcast();
+    }
+  }, BROADCAST_MS);
+
+  // SSE keep-alive: a comment frame — ignored by EventSource, never reaches
+  // onmessage — every 15s stops idle proxies/browsers from reaping a stream
+  // that goes quiet between pushes, another source of the reconnect flicker.
+  setInterval(() => {
+    for (const res of sseClients) res.write(': keep-alive\n\n');
+  }, 15_000);
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
@@ -772,6 +966,60 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Real OHLC for ONE option contract, straight from Dhan's historical API.
+    // This replaces the Black-Scholes-derived stand-in the chart used to draw:
+    // that series could only ever approximate the shape, and once its scale
+    // anchor drifted from the live premium it rendered a visible cliff at the
+    // last bar. Options are addressed exactly like any other instrument once
+    // the contract's own securityId is known (see optionContractIndex).
+    if (url.pathname === '/candles/option') {
+      res.setHeader('Content-Type', 'application/json');
+      const symbol = url.searchParams.get('symbol') ?? '';
+      const expiry = url.searchParams.get('expiry') ?? '';
+      const strike = Number(url.searchParams.get('strike'));
+      const type = (url.searchParams.get('type') ?? '').toUpperCase();
+      const interval = url.searchParams.get('interval') ?? '5m';
+      const days = Math.max(1, Math.min(90, Number(url.searchParams.get('days') || 5)));
+
+      if (!symbol || !expiry || !Number.isFinite(strike) || (type !== 'CE' && type !== 'PE')) {
+        res.end(JSON.stringify({ candles: [], source: 'none', error: 'symbol, expiry, strike and type are required' }));
+        return;
+      }
+      const contract = optionContract(symbol, expiry, strike, type);
+      if (!contract) {
+        res.end(JSON.stringify({ candles: [], source: 'none', error: 'contract not found in scrip master' }));
+        return;
+      }
+      const cacheKey = `opt:${contract.securityId}:${interval}:${days}`;
+      const cached = candleCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < CANDLE_CACHE_TTL_MS) {
+        res.end(JSON.stringify({ candles: cached.candles, source: 'dhan', cached: true }));
+        return;
+      }
+      const to = new Date();
+      const from = new Date(to.getTime() - days * 86_400_000);
+      fetchDhanCandles(
+        {
+          symbol,
+          displayName: `${symbol} ${strike} ${type}`,
+          securityId: contract.securityId,
+          exchangeSegment: contract.exchangeSegment,
+          instrument: contract.instrument,
+        } as never,
+        interval,
+        from,
+        to,
+      )
+        .then((candles) => {
+          candleCache.set(cacheKey, { at: Date.now(), candles });
+          res.end(JSON.stringify({ candles, source: 'dhan' }));
+        })
+        .catch((err) => {
+          res.end(JSON.stringify({ candles: [], source: 'error', error: err instanceof Error ? err.message : String(err) }));
+        });
+      return;
+    }
+
     if (url.pathname === '/optionchain/expirylist') {
       res.setHeader('Content-Type', 'application/json');
       const symbol = url.searchParams.get('symbol') ?? '';
@@ -812,15 +1060,50 @@ async function main(): Promise<void> {
       const cacheKey = `${symbol}:${expiry}`;
       const cached = optionChainCache.get(cacheKey);
       if (cached && Date.now() - cached.at < OPTION_CHAIN_TTL_MS) {
-        res.end(JSON.stringify(cached.payload));
+        // Serve the cached REST body but re-overlay live prices on the way out:
+        // the cache exists to spare Dhan's rate limit, and it must never pin a
+        // price for its whole TTL when a newer websocket tick already exists.
+        res.end(JSON.stringify(withLiveOptionPrices(symbol, expiry, cached.payload)));
         return;
       }
-      queueDhanCall(() => fetchOptionChain(underlying, expiry))
+
+      // Collapse concurrent misses onto ONE upstream call. Without this, several
+      // widgets (or a fast poll) each enqueue their own Dhan request, and the
+      // queue's rate limiting then starts returning empties — which blanked the
+      // whole chain in the UI. Prices must never "stop".
+      let pending = optionChainInFlight.get(cacheKey);
+      if (!pending) {
+        pending = queueDhanCall(() => fetchOptionChain(underlying, expiry)).finally(() =>
+          optionChainInFlight.delete(cacheKey),
+        );
+        optionChainInFlight.set(cacheKey, pending);
+      }
+
+      pending
         .then((payload) => {
+          // An empty result means rate-limited / no data right now, NOT that the
+          // chain ceased to exist. Fall back to the last good one so the table
+          // keeps rendering and keeps ticking off the websocket overlay.
+          if (!payload.strikes.length) {
+            const lastGood = lastGoodChain.get(cacheKey);
+            res.end(
+              JSON.stringify(lastGood ? withLiveOptionPrices(symbol, expiry, lastGood) : { spot: null, strikes: [] }),
+            );
+            return;
+          }
           optionChainCache.set(cacheKey, { at: Date.now(), payload });
-          res.end(JSON.stringify(payload));
+          lastGoodChain.set(cacheKey, payload);
+          // Start streaming this window's strikes so subsequent responses (and
+          // the overlay above) carry real-time prices rather than REST-cadence ones.
+          ensureOptionSubscription(symbol, expiry, payload.strikes, payload.spot);
+          res.end(JSON.stringify(withLiveOptionPrices(symbol, expiry, payload)));
         })
         .catch((err) => {
+          const lastGood = lastGoodChain.get(cacheKey);
+          if (lastGood) {
+            res.end(JSON.stringify(withLiveOptionPrices(symbol, expiry, lastGood)));
+            return;
+          }
           res.end(JSON.stringify({ spot: null, strikes: [], error: err instanceof Error ? err.message : String(err) }));
         });
       return;

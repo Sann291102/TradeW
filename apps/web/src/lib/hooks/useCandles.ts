@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Candle, CandleInterval } from '@tradew/types';
 import { mockMarketDataProvider } from '../mock/candles';
 import { fetchDhanCandles } from '../dhanLiveFeed';
@@ -26,6 +26,15 @@ export function useCandles(
 ): { candles: Candle[] | null; status: CandlesStatus } {
   const [candles, setCandles] = useState<Candle[] | null>(null);
   const [status, setStatus] = useState<CandlesStatus>('loading');
+  // anchorPrice moves on every live tick. It must NOT be an effect dependency —
+  // otherwise the series reloads (and the chart refits, wiping the user's zoom)
+  // several times a second, and the /candles route gets hammered. Read it via a
+  // ref so the simulated fallback still scales to the latest LTP at fetch time,
+  // while the reload only fires on a genuine symbol/interval/window change. The
+  // chart tracks live price separately, by patching its last bar (see
+  // TradeChart's `liveLast`).
+  const anchorRef = useRef(anchorPrice);
+  anchorRef.current = anchorPrice;
 
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +54,7 @@ export function useCandles(
       } catch {
         // fall through to the simulated generator below
       }
-      const mock = await mockMarketDataProvider.getCandles(symbol, interval, from, to, anchorPrice);
+      const mock = await mockMarketDataProvider.getCandles(symbol, interval, from, to, anchorRef.current);
       if (cancelled) return;
       setCandles(mock);
       setStatus('preview');
@@ -55,7 +64,7 @@ export function useCandles(
     return () => {
       cancelled = true;
     };
-  }, [symbol, interval, days, anchorPrice]);
+  }, [symbol, interval, days]);
 
   return { candles, status };
 }

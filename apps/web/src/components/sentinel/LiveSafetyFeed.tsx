@@ -17,7 +17,8 @@ export function LiveSafetyFeed({ cards }: { cards: SafetyCardData[] }) {
       <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-faint">Live Safety Feed</h2>
       {cards.length === 0 ? (
         <div className="rounded-xl border border-border bg-card p-5 text-[13px] text-muted">
-          Nothing flagged this session — Sentinel keeps watching in the background.
+          Nothing to flag right now. This feed stays quiet on purpose — it only surfaces when a genuine setup or a
+          behavioral pattern is actually detected, not on every market tick. Sentinel keeps watching in the background.
         </div>
       ) : (
         <motion.ul initial="hidden" animate="visible" variants={staggerContainer} className="space-y-2.5">
