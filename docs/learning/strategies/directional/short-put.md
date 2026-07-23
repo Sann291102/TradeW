@@ -29,11 +29,11 @@ chartNote: >
 # Short Put
 
 A short put is one sold put. Premium is received in exchange for the obligation
-to buy the underlying at the strike if assigned.
+to take delivery of the underlying at the strike if assigned.
 
 ## The structure
 
-One leg: sell a put, typically out of the money, in the near expiry. Margin is
+One leg: a short put, typically out of the money, in the near expiry. Margin is
 blocked at entry.
 
 Maximum loss is large but finite — the underlying cannot fall below zero, so

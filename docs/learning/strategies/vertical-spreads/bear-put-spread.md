@@ -4,7 +4,7 @@ name: Bear Put Spread
 category: vertical-spread
 tier: intermediate
 concept: option-greeks
-summary: Buy a put and sell a lower put in the same expiry. The sale reduces the cost and caps the gain at the lower strike.
+summary: A long put with a short put below it in the same expiry. The sale reduces the cost and caps the gain at the lower strike.
 legs:
   - action: BUY
     kind: PE
@@ -38,7 +38,7 @@ and a sold put at a lower strike. Also called a put debit spread.
 
 ## The structure
 
-Buy the higher strike, sell the lower strike, same expiry. Net debit, since the
+The higher strike is the long leg, the lower strike the short leg, same expiry. Net debit, since the
 higher put is worth more.
 
 ## What it is exposed to

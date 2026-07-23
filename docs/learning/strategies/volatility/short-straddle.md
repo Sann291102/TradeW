@@ -4,7 +4,7 @@ name: Short Straddle
 category: volatility
 tier: advanced
 concept: implied-volatility
-summary: Sell a call and a put at the same strike and expiry. Premium is kept if the underlying stays near the strike; loss grows without limit as it moves away in either direction.
+summary: A short call and a short put at the same strike and expiry. Premium is kept if the underlying stays near the strike; loss grows without limit as it moves away in either direction.
 legs:
   - action: SELL
     kind: CE
@@ -33,13 +33,13 @@ chartNote: >
 
 # Short Straddle
 
-Sell a call and a put at the same strike, same expiry. The mirror of the long
+A short call and a short put at the same strike, same expiry. The mirror of the long
 straddle, and the structure with the most concentrated risk profile in common
 retail use in the Indian market.
 
 ## The structure
 
-Two sold legs at one strike, usually at the money. Premium from both is
+Two short legs at one strike, usually at the money. Premium from both is
 credited at entry. Margin is blocked on both.
 
 Delta is near zero at entry. The position is short movement.

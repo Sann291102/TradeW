@@ -1,18 +1,23 @@
 'use client';
 
 import { useId, useMemo } from 'react';
+import Link from 'next/link';
 import { Badge, Panel, cn } from '@tradew/ui';
-import { buildPayoffProfile } from '@/lib/learning/payoff';
+import { buildPayoffProfile, payoffZones } from '@/lib/learning/payoff';
+import { centredOn, formatPrice, legFunction, legRole, zoneBehaviour, zoneRange } from '@/lib/learning/describe';
 import type { Strategy } from '@/lib/learning/types';
 import { fmt } from '@/lib/format';
 
 /**
- * The expiry payoff diagram and leg breakdown shown when a strategy is applied
+ * The expiry payoff and structural breakdown shown when a strategy is opened
  * from the Learning Hub.
  *
- * Visualise-only by design — this panel never places an order and never stages
- * one. It exists to answer "what shape is this position", which is the
- * Learning Hub's remit (LEARNING-HUB.md §6: education, not a signal service).
+ * Two rules govern everything rendered here.
+ *
+ * 1. **Nothing is ordered or staged.** This panel only describes a structure.
+ * 2. **Nothing is phrased as an instruction.** Bands and behaviour, never
+ *    "buy this" / "sell that" — LEARNING-HUB.md §6. All wording comes from
+ *    lib/learning/describe.ts so the rule is enforced in one place.
  */
 
 const CHART_WIDTH = 640;
@@ -45,6 +50,7 @@ export function StrategyOverlay({
     () => buildPayoffProfile(strategy, spot, strikeStep, yearsToExpiry),
     [strategy, spot, strikeStep, yearsToExpiry],
   );
+  const zones = useMemo(() => payoffZones(profile), [profile]);
 
   const geometry = useMemo(() => {
     const prices = profile.points.map((p) => p.price);
@@ -54,8 +60,6 @@ export function StrategyOverlay({
     const maxAbs = Math.max(Math.abs(Math.min(...pnls)), Math.abs(Math.max(...pnls)), 1);
 
     const x = (price: number) => PAD_X + ((price - minPrice) / (maxPrice - minPrice)) * (CHART_WIDTH - PAD_X * 2);
-    // Symmetric around zero so the zero line sits mid-height and profit/loss
-    // are visually comparable rather than one side being squashed.
     const y = (pnl: number) => CHART_HEIGHT / 2 - (pnl / maxAbs) * (CHART_HEIGHT / 2 - PAD_Y);
 
     const curve = profile.points.map((p) => `${x(p.price).toFixed(2)},${y(p.pnl).toFixed(2)}`).join(' ');
@@ -75,18 +79,20 @@ export function StrategyOverlay({
           <span className="text-[11px] text-muted">
             {symbol} · {expiryLabel}
           </span>
-          <Badge tone={strategy.net === 'credit' ? 'positive' : 'neutral'} className="px-1.5 py-0 text-[9px]">
-            {strategy.net === 'credit' ? 'net credit' : strategy.net === 'debit' ? 'net debit' : 'zero cost'}
+          <Badge tone="neutral" className="px-1.5 py-0 text-[9px]">
+            {strategy.net === 'credit' ? 'opens with a credit' : strategy.net === 'debit' ? 'opens with a debit' : 'zero cost'}
           </Badge>
         </span>
       }
     >
-      {/* The one-line explanation authored alongside the lesson. */}
-      <p className="mb-3 text-[11.5px] leading-relaxed text-muted">{strategy.chartNote}</p>
+      <p className="text-[12px] font-medium leading-relaxed text-text">
+        This setup is centred on {centredOn(profile.legs)}.
+      </p>
+      <p className="mt-1 text-[11.5px] leading-relaxed text-muted">{strategy.chartNote}</p>
 
       <svg
         viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
-        className="w-full"
+        className="mt-3 w-full"
         style={{ height: CHART_HEIGHT }}
         role="img"
         aria-label={`Expiry payoff for ${strategy.name} on ${symbol}. ${strategy.chartNote}`}
@@ -103,10 +109,8 @@ export function StrategyOverlay({
         <path d={geometry.area} fill="var(--green)" opacity="0.18" clipPath={`url(#${clipId}-profit)`} />
         <path d={geometry.area} fill="var(--red)" opacity="0.18" clipPath={`url(#${clipId}-loss)`} />
 
-        {/* Break-even axis */}
         <line x1={PAD_X} y1={geometry.zeroY} x2={CHART_WIDTH - PAD_X} y2={geometry.zeroY} stroke="var(--border2)" strokeWidth="1" />
 
-        {/* Each leg's strike */}
         {profile.legs.map((leg, i) => (
           <g key={`${leg.kind}-${leg.strikePrice}-${i}`}>
             <line
@@ -118,30 +122,13 @@ export function StrategyOverlay({
               strokeWidth="1"
               strokeDasharray="3 3"
             />
-            <text
-              x={geometry.x(leg.strikePrice)}
-              y={PAD_Y}
-              textAnchor="middle"
-              className="fill-faint"
-              style={{ fontSize: 9 }}
-            >
-              {leg.action === 'BUY' ? '+' : '−'}
-              {leg.kind}
+            <text x={geometry.x(leg.strikePrice)} y={PAD_Y} textAnchor="middle" className="fill-faint" style={{ fontSize: 9 }}>
+              {formatPrice(leg.strikePrice)}
             </text>
           </g>
         ))}
 
-        {/* Spot */}
-        <line
-          x1={geometry.x(spot)}
-          y1={PAD_Y / 2}
-          x2={geometry.x(spot)}
-          y2={CHART_HEIGHT - PAD_Y / 2}
-          stroke="var(--teal)"
-          strokeWidth="1"
-        />
-
-        {/* Break-even crossings */}
+        <line x1={geometry.x(spot)} y1={PAD_Y / 2} x2={geometry.x(spot)} y2={CHART_HEIGHT - PAD_Y / 2} stroke="var(--teal)" strokeWidth="1" />
         {profile.breakevens.map((be) => (
           <circle key={be} cx={geometry.x(be)} cy={geometry.zeroY} r="3" fill="var(--teal)" />
         ))}
@@ -149,44 +136,69 @@ export function StrategyOverlay({
         <polyline points={geometry.curve} fill="none" stroke="var(--text)" strokeWidth="1.75" strokeLinejoin="round" />
       </svg>
 
+      {/* How the structure behaves across each price band — the teaching core
+          of this panel, and deliberately the largest thing on it. */}
+      <h3 className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-muted">How it behaves by price</h3>
+      <ul className="mt-1.5 grid gap-1">
+        {zones.map((zone, i) => (
+          <li
+            key={i}
+            className={cn(
+              'flex flex-col gap-0.5 rounded-lg border-l-2 bg-bg px-2.5 py-1.5 sm:flex-row sm:items-baseline sm:gap-3',
+              zone.kind === 'gain' ? 'border-l-up' : 'border-l-down',
+            )}
+          >
+            <span className="w-32 shrink-0 font-mono text-[11px] font-semibold tabular-nums text-text">{zoneRange(zone)}</span>
+            <span className="text-[11px] leading-relaxed text-muted">{zoneBehaviour(zone)}</span>
+          </li>
+        ))}
+      </ul>
+
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] sm:grid-cols-4">
-        <Stat label="Net at entry" value={`${profile.netPremium >= 0 ? '+' : ''}${fmt(profile.netPremium)}`} tone={profile.netPremium >= 0 ? 'up' : 'down'} />
-        <Stat label="Max profit" value={profile.maxProfit === null ? 'Unlimited' : fmt(profile.maxProfit)} tone="up" />
-        <Stat label="Max loss" value={profile.maxLoss === null ? 'Unlimited' : fmt(Math.abs(profile.maxLoss))} tone="down" />
+        <Stat label="At entry" value={`${profile.netPremium >= 0 ? '+' : ''}${fmt(profile.netPremium)}`} tone={profile.netPremium >= 0 ? 'up' : 'down'} />
+        <Stat label="Best case" value={profile.maxProfit === null ? 'No fixed limit' : fmt(profile.maxProfit)} tone="up" />
+        <Stat label="Worst case" value={profile.maxLoss === null ? 'No fixed limit' : fmt(Math.abs(profile.maxLoss))} tone="down" />
         <Stat label="Breakeven" value={profile.breakevens.map((b) => fmt(b)).join(' / ') || '—'} />
       </dl>
 
-      <table className="mt-3 w-full text-left text-[11px]">
+      <h3 className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-muted">What it is made of</h3>
+      <table className="mt-1.5 w-full text-left text-[11px]">
         <thead>
           <tr className="text-faint">
             <th className="pb-1 font-medium">Leg</th>
             <th className="pb-1 font-medium">Strike</th>
-            <th className="pb-1 text-right font-medium">Est. premium</th>
+            <th className="pb-1 font-medium">Role in the structure</th>
           </tr>
         </thead>
-        <tbody className="font-mono tabular-nums">
+        <tbody>
           {profile.legs.map((leg, i) => (
-            <tr key={`${leg.kind}-${leg.strikePrice}-${i}`} className="border-t border-border">
-              <td className="py-1">
-                <span className={cn('font-semibold', leg.action === 'BUY' ? 'text-up' : 'text-down')}>{leg.action}</span>{' '}
-                <span className="text-text">
+            <tr key={`${leg.kind}-${leg.strikePrice}-${i}`} className="border-t border-border align-top">
+              <td className="py-1 pr-2">
+                <span className={cn('font-semibold', leg.action === 'BUY' ? 'text-up' : 'text-down')}>
                   {leg.ratio > 1 ? `${leg.ratio}× ` : ''}
-                  {leg.kind}
+                  {legRole(leg)}
                 </span>
-                <span className="ml-1 text-faint">({leg.strike})</span>
               </td>
-              <td className="py-1 text-text">{fmt(leg.strikePrice)}</td>
-              <td className="py-1 text-right text-muted">{leg.premium ? fmt(leg.premium) : '—'}</td>
+              <td className="py-1 pr-2 font-mono tabular-nums text-text">{formatPrice(leg.strikePrice)}</td>
+              <td className="py-1 text-muted">{legFunction(leg)}</td>
             </tr>
           ))}
         </tbody>
       </table>
 
-      <p className="mt-3 border-t border-border pt-2 text-[10px] leading-relaxed text-faint">
-        Illustration only — nothing is ordered. Strikes are resolved from the {fmt(strikeStep)}-point step around the{' '}
-        {fmt(profile.atm)} ATM. Premiums are estimated with Black-Scholes at a flat implied volatility, not live option
-        quotes, so the shape and breakevens are structurally correct while the rupee values are indicative. Per-lot
-        figures exclude STT, brokerage and the bid-ask spread, which are material on multi-leg structures.
+      <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border pt-2">
+        <Link href={`/learning/${strategy.id}`} className="text-[11px] font-semibold text-teal hover:underline">
+          Read the full lesson →
+        </Link>
+        <span className="text-[10px] text-faint">including how this structure typically fails</span>
+      </div>
+
+      <p className="mt-2 text-[10px] leading-relaxed text-faint">
+        An illustration of structure, not a recommendation — nothing is ordered and no position is opened. Strikes are
+        resolved from the {fmt(strikeStep)}-point step around the {formatPrice(profile.atm)} at-the-money level.
+        Premiums are estimated with Black-Scholes at a flat implied volatility, not live option quotes, so the shape and
+        the bands are structurally correct while rupee values are indicative. Figures are per unit and exclude STT,
+        brokerage and the bid-ask spread, which are material on multi-leg structures.
       </p>
     </Panel>
   );

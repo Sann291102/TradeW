@@ -128,10 +128,11 @@ export function ApplyStrategyDialog({ strategyId, strategyName, legCount, onClos
         className="w-full max-w-md rounded-card border border-border bg-card p-4 shadow-card focus:outline-none"
       >
         <h2 id="apply-strategy-title" className="text-sm font-bold text-text">
-          Apply {strategyName}
+          See {strategyName} on a chart
         </h2>
         <p className="mt-1 text-[11px] text-faint">
-          Draws all {legCount} {legCount === 1 ? 'leg' : 'legs'} on the chart with a payoff curve. No order is placed.
+          Draws the structure&apos;s {legCount} {legCount === 1 ? 'leg' : 'legs'} against live prices, with the bands
+          where it gains and loses. Nothing is ordered and no position is opened.
         </p>
 
         <div className="mt-4">

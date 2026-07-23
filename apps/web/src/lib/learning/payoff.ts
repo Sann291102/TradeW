@@ -80,6 +80,33 @@ export interface PayoffPoint {
   pnl: number;
 }
 
+/**
+ * A contiguous price band over which the structure behaves one way.
+ *
+ * Zones are how this app describes a strategy WITHOUT issuing instructions.
+ * "Full gain is retained below 24,050" states what the structure does; "sell
+ * the 24,050 call" tells someone what to do. Only the first belongs in a
+ * teaching surface — see LEARNING-HUB.md §6 and the knowledge-base
+ * non-directive rule.
+ */
+export interface PayoffZone {
+  kind: 'gain' | 'loss';
+  /** Flat across the band — the gain or loss does not grow further here. */
+  capped: boolean;
+  /**
+   * Which way P&L moves as price RISES through the band.
+   *
+   * Needed because "gain" alone does not say whether the gain is growing or
+   * shrinking. In a bear call spread's band just above the short strike the
+   * position is still profitable while its profit falls toward zero — calling
+   * that "gain increases" is precisely backwards.
+   */
+  slope: 'rising' | 'falling' | 'flat';
+  /** null means the band continues past the sampled window. */
+  from: number | null;
+  to: number | null;
+}
+
 export interface PayoffProfile {
   points: PayoffPoint[];
   breakevens: number[];
@@ -160,4 +187,73 @@ export function buildPayoffProfile(
     legs,
     atm: atmStrike(spot, strikeStep),
   };
+}
+
+/**
+ * Splits a payoff into the price bands where it gains and where it loses,
+ * marking which of those bands are capped.
+ *
+ * Boundaries are the STRIKES as well as the breakevens. An expiry payoff is
+ * piecewise-linear with kinks only at strikes, so a band bounded by both is
+ * guaranteed to have a single constant slope — which is what makes "is this
+ * band flat?" a well-defined question.
+ *
+ * Using breakevens alone (the first attempt) let one band straddle a strike,
+ * covering a flat region and a sloping one at once. The flatness test then
+ * failed for the whole band, and a bull call spread reported its capped gain
+ * as continuing to infinity — the payoff diagram said one thing and the words
+ * said the opposite.
+ */
+export function payoffZones(profile: PayoffProfile): PayoffZone[] {
+  const { points, breakevens, legs } = profile;
+  if (!points.length) return [];
+
+  const first = points[0].price;
+  const last = points[points.length - 1].price;
+
+  const pnls = points.map((p) => p.pnl);
+  const span = Math.max(...pnls) - Math.min(...pnls);
+  // "Flat" is relative to the payoff's own scale — an absolute epsilon would
+  // call every band flat on a small structure and none flat on a large one.
+  const flatTolerance = Math.max(span * 0.01, 1e-6);
+
+  const interior = [...legs.map((l) => l.strikePrice), ...breakevens]
+    .filter((price) => price > first && price < last)
+    .sort((a, b) => a - b)
+    .filter((price, i, all) => i === 0 || price - all[i - 1] > 1e-9);
+
+  const edges = [first, ...interior, last];
+  const raw: PayoffZone[] = [];
+
+  for (let i = 0; i < edges.length - 1; i += 1) {
+    const lo = edges[i];
+    const hi = edges[i + 1];
+    const inside = points.filter((p) => p.price > lo && p.price < hi);
+    if (!inside.length) continue;
+
+    const values = inside.map((p) => p.pnl);
+    const capped = Math.max(...values) - Math.min(...values) <= flatTolerance;
+    const change = values[values.length - 1] - values[0];
+
+    raw.push({
+      kind: values[Math.floor(values.length / 2)] >= 0 ? 'gain' : 'loss',
+      capped,
+      slope: capped ? 'flat' : change > 0 ? 'rising' : 'falling',
+      // A band touching the sampled edge continues beyond it.
+      from: i === 0 ? null : lo,
+      to: i === edges.length - 2 ? null : hi,
+    });
+  }
+
+  // Adjacent bands that behave identically are one band as far as a reader is
+  // concerned — splitting them at a strike the payoff does not actually bend
+  // at would be noise.
+  const zones: PayoffZone[] = [];
+  for (const zone of raw) {
+    const previous = zones[zones.length - 1];
+    if (previous && previous.kind === zone.kind && previous.capped === zone.capped && previous.slope === zone.slope) previous.to = zone.to;
+    else zones.push({ ...zone });
+  }
+
+  return zones;
 }

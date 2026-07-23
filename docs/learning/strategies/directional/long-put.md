@@ -34,7 +34,7 @@ one asymmetry that matters.
 
 ## The structure
 
-One leg: buy a put, usually at or near the money, in the near expiry. Premium
+One leg: a long put, usually at or near the money, in the near expiry. Premium
 is paid upfront in full.
 
 ## What it is exposed to

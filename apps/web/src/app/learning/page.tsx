@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { Card, Badge, cn } from '@tradew/ui';
 import { LearningIcon } from '@/components/shell/icons';
 import { LEARNING_CATEGORIES as CATEGORIES, LEARNING_PATHS as PATHS } from '@/lib/mock/learning';
@@ -40,7 +41,7 @@ export default function LearningPage() {
         <div className="mb-2 flex items-baseline justify-between">
           <h2 className="text-sm font-bold text-text">Strategies</h2>
           <span className="text-[11px] text-faint">
-            {strategies.length} with payoff diagrams · Apply draws one on a live chart
+            {strategies.length} explained · each one can be drawn against live prices
           </span>
         </div>
         <div className="space-y-3">
@@ -53,7 +54,11 @@ export default function LearningPage() {
           <h2 className="mb-2 text-sm font-bold text-text">Market structure &amp; concepts</h2>
           <div className="grid gap-2 sm:grid-cols-2">
             {lessons.map((lesson) => (
-              <div key={lesson.id} className="rounded-lg border border-border bg-card p-3 shadow-card">
+              <Link
+                key={lesson.id}
+                href={`/learning/${lesson.id}`}
+                className="rounded-lg border border-border bg-card p-3 shadow-card transition-colors duration-micro hover:border-teal"
+              >
                 <div className="flex items-center gap-1.5">
                   <span className="text-sm font-semibold text-text">{lesson.name}</span>
                   <Badge tone="neutral" className="px-1.5 py-0 text-[9px]">
@@ -61,7 +66,7 @@ export default function LearningPage() {
                   </Badge>
                 </div>
                 <p className="mt-1 text-[11.5px] leading-relaxed text-muted">{lesson.summary}</p>
-              </div>
+              </Link>
             ))}
           </div>
         </div>

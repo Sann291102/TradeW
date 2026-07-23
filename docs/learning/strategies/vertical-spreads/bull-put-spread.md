@@ -4,7 +4,7 @@ name: Bull Put Spread
 category: vertical-spread
 tier: intermediate
 concept: option-greeks
-summary: Sell a put and buy a lower put in the same expiry. Premium is received upfront and the long leg caps the loss at the spread width.
+summary: A short put with a long put below it in the same expiry. Premium is received upfront and the long leg caps the loss at the spread width.
 legs:
   - action: SELL
     kind: PE
@@ -39,7 +39,7 @@ spread, expressed for a credit rather than a debit.
 
 ## The structure
 
-Sell the higher strike, buy the lower strike. Net credit, since the higher put
+The higher strike is the short leg, the lower strike the long leg. Net credit, since the higher put
 is worth more.
 
 The long leg is not there to make money. It is there to convert an unbounded

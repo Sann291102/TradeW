@@ -4,7 +4,7 @@ name: Long Straddle
 category: volatility
 tier: intermediate
 concept: implied-volatility
-summary: Buy a call and a put at the same strike and expiry. The position gains on a large move in either direction and loses if the underlying stays still.
+summary: A long call and a long put at the same strike and expiry. The position gains on a large move in either direction and loses if the underlying stays still.
 legs:
   - action: BUY
     kind: CE
@@ -33,12 +33,12 @@ chartNote: >
 
 # Long Straddle
 
-Buy a call and a put at the same strike, same expiry — almost always at the
+A long call and a long put at the same strike, same expiry — almost always at the
 money. The position has no directional view; it has a view about magnitude.
 
 ## The structure
 
-Two bought legs, one strike. Total premium is the sum of both, and that total
+Two long legs, one strike. Total premium is the sum of both, and that total
 is the maximum loss.
 
 Delta is roughly zero at entry because the call's positive delta and the put's

@@ -4,7 +4,7 @@ name: Bull Call Spread
 category: vertical-spread
 tier: intermediate
 concept: option-greeks
-summary: Buy a call and sell a higher call in the same expiry. The sale funds part of the purchase, which lowers breakeven and caps the gain at the short strike.
+summary: A long call with a short call above it in the same expiry. The sale funds part of the purchase, which lowers breakeven and caps the gain at the short strike.
 legs:
   - action: BUY
     kind: CE
@@ -38,7 +38,7 @@ Also called a call debit spread.
 
 ## The structure
 
-Buy the lower strike, sell the higher strike, same expiry. The net cost is the
+The lower strike is the long leg, the higher strike the short leg, same expiry. The net cost is the
 difference between the two premiums — always a debit, since the lower strike is
 always worth more.
 

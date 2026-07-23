@@ -36,7 +36,7 @@ the risk profile is comparable to the others in this section.
 
 ## The structure
 
-One leg: sell a call, typically out of the money. Premium is credited at entry.
+One leg: a short call, typically out of the money. Premium is credited at entry.
 Margin is blocked and marked to market daily.
 
 Unlike a long option, where the maximum loss is known at entry and already

@@ -4,7 +4,7 @@ name: Short Strangle
 category: volatility
 tier: advanced
 concept: implied-volatility
-summary: Sell an out-of-the-money call and an out-of-the-money put in the same expiry. Full premium is kept anywhere between the strikes; loss beyond them is unbounded.
+summary: A short out-of-the-money call paired with a short out-of-the-money put in the same expiry. Full premium is kept anywhere between the strikes; loss beyond them is unbounded.
 legs:
   - action: SELL
     kind: PE
@@ -33,13 +33,13 @@ chartNote: >
 
 # Short Strangle
 
-Sell an out-of-the-money call and an out-of-the-money put, same expiry. The
+A short out-of-the-money call and a short out-of-the-money put, same expiry. The
 most widely used undefined-risk premium-selling structure in the Indian retail
 market.
 
 ## The structure
 
-Two sold legs, both out of the money. Premium from both is credited. Margin is
+Two short legs, both out of the money. Premium from both is credited. Margin is
 blocked on both legs, though exchanges grant some offset for the opposing
 directional exposure.
 

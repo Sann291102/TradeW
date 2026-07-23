@@ -26,9 +26,10 @@
  * field into a machine-checked invariant.
  */
 
-import { getStrategies } from '../src/lib/learning/catalog';
-import { buildPayoffProfile, type PayoffProfile } from '../src/lib/learning/payoff';
+import { getLessons, getStrategies } from '../src/lib/learning/catalog';
+import { buildPayoffProfile, payoffZones, type PayoffProfile } from '../src/lib/learning/payoff';
 import type { Strategy } from '../src/lib/learning/types';
+import { zoneRange } from '../src/lib/learning/describe';
 
 /** A representative NIFTY-like underlying: spot, strike step, one week out. */
 const SPOT = 24_800;
@@ -168,6 +169,104 @@ for (const [longId, shortId] of [
     `${a.profile.breakevens} vs ${b.profile.breakevens}`,
   );
 }
+
+
+// --- Payoff zones -----------------------------------------------------------
+// Zones are what the UI renders instead of buy/sell instructions, so a wrong
+// zone is a wrong lesson. These assert the shapes that are true by definition.
+
+console.log('\nPayoff zones:');
+for (const strategy of strategies) {
+  const profile = profiles.get(strategy.id)!;
+  const zones = payoffZones(profile);
+  const render = (z: (typeof zones)[number]) =>
+    `${z.kind}/${z.slope} ${z.from === null ? '−∞' : z.from.toFixed(0)}..${z.to === null ? '+∞' : z.to.toFixed(0)}`;
+  console.log(`  ${strategy.id.padEnd(20)} ${zones.map(render).join('  |  ')}`);
+
+  // The stated slope must match what the sampled curve actually does. A zone
+  // that says "gain builds" while the curve falls is a wrong lesson, not a
+  // cosmetic slip — this is the check that caught exactly that.
+  for (const zone of zones) {
+    const lo = zone.from ?? profile.points[0].price;
+    const hi = zone.to ?? profile.points[profile.points.length - 1].price;
+    const inside = profile.points.filter((p) => p.price > lo && p.price < hi);
+    if (inside.length < 2) continue;
+    const delta = inside[inside.length - 1].pnl - inside[0].pnl;
+    const expected = zone.capped ? 'flat' : delta > 0 ? 'rising' : 'falling';
+    check(`${strategy.id}: zone ${zoneRange(zone)} slope is ${expected}`, zone.slope === expected, `declared ${zone.slope}, curve moves ${delta.toFixed(2)}`);
+    // And a gain zone must actually be positive throughout, likewise loss.
+    const allPositive = inside.every((p) => p.pnl >= -1e-6);
+    const allNegative = inside.every((p) => p.pnl <= 1e-6);
+    check(`${strategy.id}: zone ${zoneRange(zone)} sign matches its kind`, zone.kind === 'gain' ? allPositive : allNegative, `kind=${zone.kind}`);
+  }
+
+  check(`${strategy.id}: has at least one gain and one loss zone`, zones.some((z) => z.kind === 'gain') && zones.some((z) => z.kind === 'loss'), `zones=${zones.length}`);
+
+  // Zones must tile the window in order, with no gaps between them.
+  for (let i = 1; i < zones.length; i += 1) {
+    check(`${strategy.id}: zone ${i} is contiguous with the previous`, zones[i - 1].to === zones[i].from, `${zones[i - 1].to} != ${zones[i].from}`);
+  }
+
+  // An unbounded max profit must show an uncapped gain zone at an open end,
+  // and likewise for loss. This is the property the UI depends on to avoid
+  // claiming a limit that does not exist.
+  if (profile.maxProfit === null) {
+    check(`${strategy.id}: unbounded profit shows an uncapped open gain zone`, zones.some((z) => z.kind === 'gain' && !z.capped && (z.from === null || z.to === null)), render(zones[zones.length - 1]));
+  }
+  if (profile.maxLoss === null) {
+    check(`${strategy.id}: unbounded loss shows an uncapped open loss zone`, zones.some((z) => z.kind === 'loss' && !z.capped && (z.from === null || z.to === null)), render(zones[zones.length - 1]));
+  }
+  // Conversely, a bounded structure must not present an open uncapped band.
+  if (profile.maxProfit !== null && profile.maxLoss !== null) {
+    check(`${strategy.id}: fully bounded, no uncapped open band`, !zones.some((z) => !z.capped && (z.from === null || z.to === null)), zones.map(render).join(' | '));
+  }
+}
+
+
+// --- Non-directive language lint --------------------------------------------
+// LEARNING-HUB.md §6: the Hub teaches, it does not instruct. Prose that says
+// "sell the lower strike" reads as a signal; "the lower strike is the short
+// leg" states the same fact as a property. This lint exists because the first
+// draft of every strategy lesson used the imperative form without anyone
+// noticing until it was rendered in the product.
+//
+// It scans the authored markdown, not the UI, since that is where the prose
+// actually lives.
+
+console.log('\nNon-directive language:');
+
+const IMPERATIVES: Array<{ pattern: RegExp; note: string }> = [
+  { pattern: /\b(buy|sell)\s+(the|a|an|one|two)\b/gi, note: 'imperative "buy/sell the …" — describe the leg as long/short instead' },
+  { pattern: /^\s*[-*]\s*(buy|sell)\b/gim, note: 'list item starting with buy/sell — name the leg, do not instruct' },
+  { pattern: /\byou should\b|\bmake sure to\b|\bconsider (buying|selling)\b/gi, note: 'direct instruction to the reader' },
+  { pattern: /\b(enter|exit) (this|the) (trade|position) when\b/gi, note: 'entry/exit timing instruction' },
+];
+
+// Descriptive uses that are not instructions to the reader.
+const ALLOWED = [
+  /must (buy|sell) it/i,          // describing a settlement obligation
+  /obliged to (buy|sell)/i,
+  /obliging .{0,40}(buy|sell)/i,
+  /a trader without the stock must buy/i,
+];
+
+for (const entry of [...strategies, ...getLessons()]) {
+  const text = `${entry.summary}\n${entry.body}`;
+  for (const { pattern, note } of IMPERATIVES) {
+    // exec-in-a-loop rather than matchAll: this file is typechecked by
+    // `next build`, whose target does not allow iterating a RegExp iterator.
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      const around = text.slice(Math.max(0, match.index - 60), match.index + 60).replace(/\s+/g, ' ');
+      if (!ALLOWED.some((ok) => ok.test(around))) {
+        check(`${entry.id}: non-directive prose`, false, `${note} — "…${around}…"`);
+      }
+      if (match.index === pattern.lastIndex) pattern.lastIndex += 1; // zero-width guard
+    }
+  }
+}
+if (!failures) console.log('  no directive phrasing found');
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);

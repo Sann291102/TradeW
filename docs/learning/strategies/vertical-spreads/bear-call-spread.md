@@ -4,7 +4,7 @@ name: Bear Call Spread
 category: vertical-spread
 tier: intermediate
 concept: option-greeks
-summary: Sell a call and buy a higher call in the same expiry. Premium is received upfront and the long leg caps the loss at the spread width.
+summary: A short call with a long call above it in the same expiry. Premium is received upfront and the long leg caps the loss at the spread width.
 legs:
   - action: SELL
     kind: CE
@@ -38,7 +38,7 @@ Also called a call credit spread.
 
 ## The structure
 
-Sell the lower strike, buy the higher strike. Net credit.
+The lower strike is the short leg, the higher strike the long leg. Net credit.
 
 The bought call converts the naked short call's unbounded obligation into a
 defined maximum loss, and reduces margin to a fraction of the naked

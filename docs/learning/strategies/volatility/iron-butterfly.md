@@ -49,10 +49,10 @@ spread sharing the same short strike.
 
 ## The structure
 
-- Buy a put below the centre
-- Sell a put at the centre
-- Sell a call at the centre
-- Buy a call above the centre
+- A long put below the centre
+- A short put at the centre
+- A short call at the centre
+- A long call above the centre
 
 Net credit, and a larger one than an iron condor of the same wing width,
 because the short legs are at the money rather than out of it.

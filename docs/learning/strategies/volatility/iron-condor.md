@@ -49,10 +49,10 @@ spread above it. Equivalently, a short strangle with protective wings.
 
 ## The structure
 
-- Buy a far out-of-the-money put
-- Sell a nearer out-of-the-money put
-- Sell a nearer out-of-the-money call
-- Buy a far out-of-the-money call
+- A long put, far out of the money
+- A short put, nearer the money
+- A short call, nearer the money
+- A long call, far out of the money
 
 Net credit. The two bought wings cost less than the two sold inner legs bring
 in, since they are further from the money.

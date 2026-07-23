@@ -35,7 +35,7 @@ failure modes are the most commonly misunderstood.
 
 ## The structure
 
-One leg: buy a call, usually at or near the money, in the near expiry.
+One leg: a long call, usually at or near the money, in the near expiry.
 
 The premium is paid in full at entry. Since October 2024 SEBI requires upfront
 collection of option premium, so the debit leaves the account immediately —

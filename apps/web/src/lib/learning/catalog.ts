@@ -141,6 +141,9 @@ function build(): Catalog {
       summary: str(fm.summary, path, 'summary'),
       concept: optionalStr(fm.concept, path, 'concept'),
       path,
+      // The lesson prose itself. Without this the app can show a strategy's
+      // shape but never explain it, which is the whole point of the Hub.
+      body: split.body.trim(),
     };
 
     if (fm.legs === undefined) {
@@ -168,14 +171,22 @@ function build(): Catalog {
 }
 
 /**
- * Memoised for the process lifetime — the markdown does not change within a
- * build. A plain module-level cache rather than React's `cache()`, which only
- * exists in the react-server bundle and would make this module unloadable from
- * a plain Node script (it is covered by a standalone test).
+ * Memoised in production, re-read every call in development.
+ *
+ * The markdown lives outside Next's module graph, so nothing invalidates this
+ * when a lesson is edited — with an unconditional cache the dev server served
+ * the copy it read at boot and a lesson edit only appeared after a restart,
+ * which makes authoring miserable. Re-reading in dev costs a few milliseconds
+ * on a route that is statically generated in production anyway.
+ *
+ * A plain module-level cache rather than React's `cache()`, which only exists
+ * in the react-server bundle and would make this module unloadable from a
+ * plain Node script (it is covered by a standalone test).
  */
 let catalog: Catalog | null = null;
 
 export function getCatalog(): Catalog {
+  if (process.env.NODE_ENV !== 'production') return build();
   if (!catalog) catalog = build();
   return catalog;
 }
@@ -190,4 +201,16 @@ export function getStrategy(id: string): Strategy | undefined {
 
 export function getLessons(): Lesson[] {
   return getCatalog().lessons;
+}
+
+/** Any lesson by id, strategy or not — what the `/learning/[id]` route needs. */
+export function getEntry(id: string): Strategy | Lesson | undefined {
+  const { strategies, lessons } = getCatalog();
+  return strategies.find((s) => s.id === id) ?? lessons.find((l) => l.id === id);
+}
+
+/** Every id, for static generation of the lesson routes. */
+export function getAllIds(): string[] {
+  const { strategies, lessons } = getCatalog();
+  return [...strategies.map((s) => s.id), ...lessons.map((l) => l.id)];
 }

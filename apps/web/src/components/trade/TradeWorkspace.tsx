@@ -7,6 +7,7 @@ import { useWorkspaceStore } from '@/lib/store/workspaceStore';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { resolveExpiry, mockIvPct, strikeStepFor, ATM_STRIKE, STRIKE_STEP } from '@/lib/mock/optionChain';
 import { resolveLegs } from '@/lib/learning/payoff';
+import { legMarker } from '@/lib/learning/describe';
 import type { Strategy } from '@/lib/learning/types';
 import type { ChartPriceLine } from '@/components/charts/TradeChart';
 import { StrategyOverlay } from './StrategyOverlay';
@@ -89,7 +90,10 @@ export function TradeWorkspace({ strategies = [] }: { strategies?: Strategy[] })
     strategy && strategySpot && strategyYears !== undefined
       ? resolveLegs(strategy.legs, strategySpot, strikeStep, strategyYears).map((leg) => ({
           price: leg.strikePrice,
-          title: `${leg.action === 'BUY' ? '+' : '−'}${leg.kind} ${leg.strikePrice}`,
+          // Descriptive position state, never an action. "+CE 24000" was both
+          // cryptic and read as an instruction; "long 24,000" states what the
+          // structure holds without telling anyone to do anything.
+          title: legMarker(leg),
           colorToken: leg.action === 'BUY' ? '--green' : '--red',
           dashed: true,
         }))

@@ -4,7 +4,7 @@ name: Long Strangle
 category: volatility
 tier: intermediate
 concept: implied-volatility
-summary: Buy an out-of-the-money call and an out-of-the-money put in the same expiry. Cheaper than a straddle, with wider breakevens and a flat loss zone between the strikes.
+summary: A long out-of-the-money call paired with a long out-of-the-money put in the same expiry. Cheaper than a straddle, with wider breakevens and a flat loss zone between the strikes.
 legs:
   - action: BUY
     kind: PE
@@ -33,12 +33,12 @@ chartNote: >
 
 # Long Strangle
 
-Buy an out-of-the-money call and an out-of-the-money put, same expiry. The
+A long out-of-the-money call and a long out-of-the-money put, same expiry. The
 lower-cost relative of the long straddle.
 
 ## The structure
 
-Two bought legs at different strikes, both out of the money, usually placed
+Two long legs at different strikes, both out of the money, usually placed
 symmetrically around spot. Total premium is lower than the equivalent straddle
 because neither leg has intrinsic value and both are further from the money.
 

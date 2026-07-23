@@ -57,6 +57,8 @@ export interface Strategy {
   chartNote: string;
   /** Repo-relative path of the lesson, for provenance and deep links. */
   path: string;
+  /** The lesson markdown below the frontmatter. */
+  body: string;
 }
 
 /** A non-strategy lesson — everything without `legs` frontmatter. */
@@ -68,4 +70,6 @@ export interface Lesson {
   summary: string;
   concept?: string;
   path: string;
+  /** The lesson markdown below the frontmatter. */
+  body: string;
 }
