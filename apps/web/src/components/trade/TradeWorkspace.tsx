@@ -6,6 +6,7 @@ import { Panel } from '@tradew/ui';
 import { useWorkspaceStore } from '@/lib/store/workspaceStore';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { useOptionQuote } from '@/lib/hooks/useOptionQuote';
+import { buildOptionSymbol } from '@/lib/oms';
 import { resolveExpiry, mockIvPct, ATM_STRIKE, STRIKE_STEP } from '@/lib/mock/optionChain';
 import { LayoutMenu } from '@/components/workspace/LayoutMenu';
 import { ClosedPanelsMenu } from '@/components/workspace/ClosedPanelsMenu';
@@ -101,6 +102,18 @@ export function TradeWorkspace() {
   );
   const livePrice = contract ? contractQuote?.ltp : underlyingPrice;
 
+  // The symbol the OMS actually trades. For an option we need the real ISO
+  // expiry to build the canonical contract symbol the engine resolves; a
+  // mock-expiry contract (no expiryIso) can't be placed, so orderSymbol stays
+  // undefined and the ticket blocks with a clear reason instead of trading the
+  // underlying. For an underlying it's just the symbol.
+  const orderSymbol =
+    contract && symbol
+      ? contract.expiryIso
+        ? buildOptionSymbol(symbol, contract.expiryIso, contract.strike, contract.optionType)
+        : undefined
+      : symbol;
+
   return (
     <div className="mx-auto max-w-[1440px] space-y-4 p-4">
       <ChartPanel
@@ -116,6 +129,7 @@ export function TradeWorkspace() {
         defaultSide={orderAction ?? undefined}
         currentPrice={livePrice}
         isOptionContract={!!contract}
+        orderSymbol={orderSymbol}
         contractLabel={
           contract
             ? `${symbol ?? 'NIFTY'} ${contract.strike} ${contract.optionType} · ${contract.expiryLabel}`

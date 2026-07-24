@@ -100,6 +100,23 @@ export function isSignedIn(): boolean {
   return getToken() != null;
 }
 
+/**
+ * Canonical option-contract symbol the OMS trades by:
+ * `UNDERLYING:YYYYMMDD:STRIKE:CE|PE` (e.g. `NIFTY:20260728:23800:CE`). MUST
+ * stay byte-for-byte identical to the backend's `buildOptionSymbol`
+ * (services/api/src/sim/market-price.service.ts) — the engine parses this exact
+ * shape to resolve the contract. Colon-delimited so NSE symbols that contain
+ * `-`/`&` (BAJAJ-AUTO, M&M) round-trip unambiguously.
+ */
+export function buildOptionSymbol(
+  underlying: string,
+  expiryIso: string,
+  strike: number,
+  optionType: 'CE' | 'PE',
+): string {
+  return `${underlying.toUpperCase()}:${expiryIso.replace(/-/g, '')}:${strike}:${optionType}`;
+}
+
 export function placeOrder(req: PlaceOrderRequest): Promise<OrderDto> {
   return api('/sim/orders', { method: 'POST', body: JSON.stringify(req) });
 }

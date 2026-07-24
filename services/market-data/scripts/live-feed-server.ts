@@ -798,6 +798,13 @@ async function main(): Promise<void> {
     /** OPTIDX | OPTSTK — Dhan's historical API needs the exact instrument
      *  class, and it is not derivable from the segment alone. */
     instrument: string;
+    /** Contract lot size + tick, straight from the scrip-master row, so the
+     *  paper OMS can create an Instrument row addressing THIS contract (not the
+     *  underlying) — see the /instrument/option route. */
+    lotSize?: number;
+    tickSize?: number;
+    tradingSymbol: string;
+    displayName: string;
   }
   const optionContractIndex = new Map<string, OptionContract>();
   for (const row of rows) {
@@ -810,6 +817,10 @@ async function main(): Promise<void> {
       securityId: row.securityId,
       exchangeSegment: row.exchangeSegment,
       instrument: row.instrument,
+      lotSize: row.lotSize,
+      tickSize: row.tickSize,
+      tradingSymbol: row.tradingSymbol,
+      displayName: row.displayName || row.symbolName,
     });
   }
   console.log(`[scrip-master] indexed ${optionContractIndex.size} option contracts for real-time per-strike ticks`);
@@ -933,6 +944,46 @@ async function main(): Promise<void> {
       const symbol = url.searchParams.get('symbol') ?? '';
       const meta = resolveInstrumentMetadata(symbol);
       res.end(JSON.stringify({ instrument: meta }));
+      return;
+    }
+
+    // Resolve ONE option contract's tradeable metadata (securityId, lot, tick,
+    // Dhan instrument class) from the scrip master — what the paper OMS needs to
+    // upsert an Instrument row addressing THAT contract rather than the
+    // underlying. Deliberately price-free and un-rate-limited: the engine reads
+    // the live premium from /optionchain (the same real source the UI uses).
+    if (url.pathname === '/instrument/option') {
+      res.setHeader('Content-Type', 'application/json');
+      const symbol = (url.searchParams.get('symbol') ?? '').toUpperCase();
+      const expiry = url.searchParams.get('expiry') ?? '';
+      const strike = Number(url.searchParams.get('strike'));
+      const type = (url.searchParams.get('type') ?? '').toUpperCase();
+      if (!symbol || !expiry || !Number.isFinite(strike) || (type !== 'CE' && type !== 'PE')) {
+        res.end(JSON.stringify({ instrument: null, error: 'symbol, expiry, strike and type are required' }));
+        return;
+      }
+      const contract = optionContract(symbol, expiry, strike, type);
+      if (!contract) {
+        res.end(JSON.stringify({ instrument: null, error: 'contract not found in scrip master' }));
+        return;
+      }
+      res.end(
+        JSON.stringify({
+          instrument: {
+            securityId: contract.securityId,
+            exchangeSegment: contract.exchangeSegment,
+            dhanInstrument: contract.instrument,
+            lotSize: contract.lotSize ?? derivativeLotSizeByUnderlying.get(symbol) ?? null,
+            tickSize: contract.tickSize ?? 0.05,
+            tradingSymbol: contract.tradingSymbol,
+            displayName: contract.displayName,
+            underlying: symbol,
+            expiry,
+            strike,
+            optionType: type,
+          },
+        }),
+      );
       return;
     }
 
