@@ -70,24 +70,25 @@ enum OrderStatus {
 }
 
 model User {
-  id                 String           @id @default(uuid())
-  email              String           @unique
-  passwordHash       String
-  country            String           @default("IN")
-  experienceLevel    String?
-  optionsFamiliarity String?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
-  orders             Order[]
-  trades             Trade[]
-  positions          Position[]
-  paperWallet        PaperWallet?
-  refreshTokens      RefreshToken[]
-  preferences        UserPreference[]
-  auditEvents        AuditEvent[]
+  id                    String           @id @default(uuid())
+  email                 String           @unique
+  passwordHash          String
+  country               String           @default("IN")
+  experienceLevel       String?
+  optionsFamiliarity    String?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  orders                Order[]
+  trades                Trade[]
+  positions             Position[]
+  paperWallet           PaperWallet?
+  refreshTokens         RefreshToken[]
+  preferences           UserPreference[]
+  auditEvents           AuditEvent[]
   subscriptions         Subscription[]
   entitlementOverrides  EntitlementOverride[]
   journalEntries        JournalEntry[]
+  notifications         Notification[]
 }
 
 model RefreshToken {
@@ -723,6 +724,31 @@ model JournalEntry {
   user         User     @relation(fields: [userId], references: [id])
 
   @@index([userId, createdAt])
+}
+
+enum NotificationCategory {
+  trade
+  sentinel
+  learning
+  research
+  portfolio
+  broker
+  announcement
+}
+
+model Notification {
+  id        String               @id @default(uuid())
+  userId    String
+  category  NotificationCategory
+  title     String
+  body      String
+  read      Boolean              @default(false)
+  metadata  Json?                // flexible payload: orderId, symbol, link, etc.
+  createdAt DateTime             @default(now())
+  user      User                 @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([userId, read])
 }
 
 // ============================================================================
