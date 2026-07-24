@@ -48,7 +48,9 @@ interface FeedCandle {
 interface FeedQuote {
   symbol: string;
   ltp: number;
+  change?: number;
   changePct?: number;
+  volume?: number;
 }
 interface FeedSnapshot {
   indices?: FeedQuote[];
@@ -172,12 +174,41 @@ export class CandleMarketDataProvider implements MarketDataProvider {
     }
   }
 
-  // --- still delegated to the simulator (quote is derived from candles in the
-  //     snapshot anyway; option chain + news are separate integrations) ---
-
-  getQuote(symbol: string): Promise<Quote> {
+  /**
+   * Real Dhan LTP/quote from the live bridge's snapshot for any symbol it
+   * covers (indices, stocks, ETFs, commodities); simulator only if the bridge
+   * is unset/unreachable or doesn't carry the symbol.
+   */
+  async getQuote(symbol: string): Promise<Quote> {
+    const live = await this.quoteFromLiveFeed(symbol);
+    if (live) return live;
     return this.fallback.getQuote(symbol);
   }
+
+  private async quoteFromLiveFeed(symbol: string): Promise<Quote | null> {
+    if (!LIVE_FEED_URL) return null;
+    const snap = await this.fetchJson<FeedSnapshot>(`${LIVE_FEED_URL}/quotes`);
+    if (!snap) return null;
+    const target = symbol.toUpperCase();
+    const row = [
+      ...(snap.indices ?? []),
+      ...(snap.stocks ?? []),
+      ...(snap.etfs ?? []),
+      ...(snap.commodities ?? []),
+    ].find((r) => r.symbol?.toUpperCase() === target);
+    if (!row || typeof row.ltp !== 'number') return null;
+    return {
+      symbol,
+      lastPrice: row.ltp,
+      change: row.change ?? 0,
+      changePercent: row.changePct ?? 0,
+      volume: row.volume ?? 0,
+      timestamp: new Date(),
+    };
+  }
+
+  // --- still delegated to the simulator (option chain + news are separate
+  //     integrations not yet served by the bridge) ---
 
   getOptionChain(symbol: string, expiry?: Date): Promise<OptionChainEntry[]> {
     return this.fallback.getOptionChain(symbol, expiry);
