@@ -70,24 +70,25 @@ enum OrderStatus {
 }
 
 model User {
-  id                 String           @id @default(uuid())
-  email              String           @unique
-  passwordHash       String
-  country            String           @default("IN")
-  experienceLevel    String?
-  optionsFamiliarity String?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
-  orders             Order[]
-  trades             Trade[]
-  positions          Position[]
-  paperWallet        PaperWallet?
-  refreshTokens      RefreshToken[]
-  preferences        UserPreference[]
-  auditEvents        AuditEvent[]
+  id                    String           @id @default(uuid())
+  email                 String           @unique
+  passwordHash          String
+  country               String           @default("IN")
+  experienceLevel       String?
+  optionsFamiliarity    String?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  orders                Order[]
+  trades                Trade[]
+  positions             Position[]
+  paperWallet           PaperWallet?
+  refreshTokens         RefreshToken[]
+  preferences           UserPreference[]
+  auditEvents           AuditEvent[]
   subscriptions         Subscription[]
   entitlementOverrides  EntitlementOverride[]
   journalEntries        JournalEntry[]
+  notifications         Notification[]
 }
 
 model RefreshToken {
@@ -177,6 +178,7 @@ model Instrument {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   quotes    Quote[]
+  candles   Candle[]
   orders    Order[]
   trades    Trade[]
   positions Position[]
@@ -204,6 +206,35 @@ model Quote {
   instrument     Instrument @relation(fields: [instrumentId], references: [id])
 
   @@index([instrumentId])
+}
+
+/// Historical OHLCV time series, one row per (instrument, timeframe, bar).
+/// Distinct from Quote (a single latest-snapshot row per instrument): Candle is
+/// append-only history, range-queried by (instrument + timeframe + time window),
+/// and retained long for backtesting/replay/historical-similarity. Design:
+/// docs/product-architecture/MARKET-DATA-ARCHITECTURE.md §5 (Migration 2). It is
+/// the missing dependency behind Sentinel Trap Detection, Charts, and TradingView.
+model Candle {
+  id           String     @id @default(uuid())
+  instrumentId String
+  /// Bar timeframe — mirrors CandleInterval in @tradew/types: 1m | 5m | 15m | 1h | 1d.
+  timeframe    String
+  /// Bar open time in UTC; bars are addressed by their opening instant.
+  bucketStart  DateTime
+  open         Decimal    @db.Decimal(12, 2)
+  high         Decimal    @db.Decimal(12, 2)
+  low          Decimal    @db.Decimal(12, 2)
+  close        Decimal    @db.Decimal(12, 2)
+  volume       BigInt     @default(0)
+  /// Open interest at bar close — derivatives only, null for cash/index.
+  openInterest BigInt?
+  /// Provenance of the bar: 'dhan' | 'simulated' | 'yahoo' | 'tradingview' | ...
+  source       String     @default("simulated")
+  createdAt    DateTime   @default(now())
+  instrument   Instrument @relation(fields: [instrumentId], references: [id])
+
+  @@unique([instrumentId, timeframe, bucketStart])
+  @@index([instrumentId, timeframe, bucketStart])
 }
 
 model Order {
@@ -693,6 +724,31 @@ model JournalEntry {
   user         User     @relation(fields: [userId], references: [id])
 
   @@index([userId, createdAt])
+}
+
+enum NotificationCategory {
+  trade
+  sentinel
+  learning
+  research
+  portfolio
+  broker
+  announcement
+}
+
+model Notification {
+  id        String               @id @default(uuid())
+  userId    String
+  category  NotificationCategory
+  title     String
+  body      String
+  read      Boolean              @default(false)
+  metadata  Json?                // flexible payload: orderId, symbol, link, etc.
+  createdAt DateTime             @default(now())
+  user      User                 @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([userId, read])
 }
 
 // ============================================================================

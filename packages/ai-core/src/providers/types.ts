@@ -37,6 +37,8 @@ export interface CompletionRequest {
   model?: string;
   maxTokens?: number;
   temperature?: number;
+  /** nucleus sampling; providers that don't support it ignore the field */
+  topP?: number;
   tools?: ToolSpec[];
   /** force JSON output when supported */
   jsonMode?: boolean;
@@ -53,6 +55,12 @@ export interface CompletionResponse {
   toolCalls: ToolCall[];
   stopReason: 'end' | 'max_tokens' | 'tool_use' | 'stop_sequence' | 'other';
   usage: TokenUsage;
+  /**
+   * Chain-of-thought emitted by reasoning models, separated from `text` so
+   * consumers never render it. Kept for the audit trail only — Sentinel
+   * surfaces `text`, never this (observation-only contract).
+   */
+  reasoning?: string;
   /** which provider/model actually served the request (for audit logging) */
   servedBy: { provider: string; model: string };
 }

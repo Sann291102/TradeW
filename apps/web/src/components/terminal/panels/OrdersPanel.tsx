@@ -19,7 +19,15 @@ export interface OrdersPanelProps extends DockPanelContentProps {
    *  underlying itself — options trade in the underlying's DERIVATIVE lot
    *  size (NIFTY 65), cash equity in 1s. */
   isOptionContract?: boolean;
-  /** Live price, used to prefill the limit price and show order value. */
+  /** The instrument the order is actually placed against. For an underlying
+   *  this equals `symbol`; for an option it's the canonical option symbol
+   *  (`NIFTY:20260728:23800:CE`, see buildOptionSymbol) the engine resolves the
+   *  real contract from. Undefined for an option whose live expiry isn't known
+   *  yet — placement stays blocked rather than trading the wrong instrument. */
+  orderSymbol?: string;
+  /** Live price, used to prefill the limit price and show order value. For an
+   *  option this is the strike's PREMIUM (not the underlying), so order value =
+   *  qty x premium. */
   currentPrice?: number;
 }
 
@@ -48,6 +56,7 @@ export function OrdersPanel({
   defaultSide,
   contractLabel,
   isOptionContract,
+  orderSymbol,
   currentPrice,
 }: OrdersPanelProps) {
   const [side, setSide] = useState<OrderSide>(defaultSide ?? 'BUY');
@@ -77,6 +86,10 @@ export function OrdersPanel({
   const usesDerivativeLot = isOptionContract || meta?.instrumentType === 'INDEX';
   const lotSize = (usesDerivativeLot ? meta?.derivativeLotSize : meta?.lotSize) ?? meta?.lotSize ?? 1;
   const signedIn = mounted && isSignedIn();
+  // The instrument actually sent to the engine: the canonical option symbol for
+  // a contract, the plain symbol for an underlying. Never silently fall back to
+  // the underlying for an option — that would trade the wrong instrument.
+  const placementSymbol = isOptionContract ? orderSymbol : symbol;
 
   useEffect(() => setSide(defaultSide ?? 'BUY'), [defaultSide]);
   useEffect(() => {
@@ -97,12 +110,11 @@ export function OrdersPanel({
     ? 'Loading…'
     : !symbol
     ? 'No instrument selected'
-    : // The engine prices underlyings (index/stock/ETF/commodity) only —
-      // placing here with the underlying's symbol would buy the STOCK, not
-      // the option contract shown in the title. Blocked rather than silently
-      // trading the wrong instrument; option routing is the next phase.
-      isOptionContract
-      ? 'Option contract orders arrive next phase — underlyings only today'
+    : // An option can only be placed once its live contract is resolved (a real
+      // ISO expiry → canonical option symbol the engine can price). Without it,
+      // block rather than trade the underlying by mistake.
+      isOptionContract && !placementSymbol
+      ? 'Live option chain needed to place this strike'
       : !signedIn
         ? 'Sign in to place paper orders'
         : !meta
@@ -116,12 +128,12 @@ export function OrdersPanel({
                 : null;
 
   async function submit() {
-    if (disabledReason || !symbol) return;
+    if (disabledReason || !placementSymbol) return;
     setSubmitting(true);
     setResult(null);
     try {
       const order = await placeOrder({
-        symbol,
+        symbol: placementSymbol,
         side,
         type: orderType,
         quantity,

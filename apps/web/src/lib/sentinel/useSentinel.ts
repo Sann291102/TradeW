@@ -5,11 +5,15 @@ import { api } from '@/lib/api';
 import { DEMO, DEMO_JOURNAL, DEMO_SUMMARY, type JournalEntry, type ObserveResponse, type SessionSummaryData } from './types';
 
 /**
- * Sentinel data/logic — extracted verbatim from the original `/sentinel`
- * page so behavior (both live endpoints + demo-mode fallback) is unchanged
- * across the shared-shell migration. See docs/product-architecture/SENTINEL.md §5.
+ * Sentinel data/logic — extracted from the original `/sentinel` page so
+ * behavior (both live endpoints + demo-mode fallback) is unchanged across the
+ * shared-shell migration. See docs/product-architecture/SENTINEL.md §5.
+ *
+ * `symbol` is user-centric market selection: the whole workspace re-derives
+ * for whichever market the "market head" selector points at, and `/observe`
+ * re-runs whenever it changes. Defaults to NIFTY.
  */
-export function useSentinel() {
+export function useSentinel(symbol: string = 'NIFTY') {
   const [data, setData] = useState<ObserveResponse | null>(null);
   const [summary, setSummary] = useState<SessionSummaryData | null>(null);
   const [journal, setJournal] = useState<JournalEntry[]>([]);
@@ -19,7 +23,7 @@ export function useSentinel() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const observe = (await api('/sentinel/observe', { method: 'POST', body: JSON.stringify({ symbol: 'NIFTY' }) })) as ObserveResponse;
+      const observe = (await api('/sentinel/observe', { method: 'POST', body: JSON.stringify({ symbol }) })) as ObserveResponse;
       setData(observe);
       setDemoMode(false);
       try {
@@ -37,7 +41,7 @@ export function useSentinel() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [symbol]);
 
   useEffect(() => {
     void refresh();

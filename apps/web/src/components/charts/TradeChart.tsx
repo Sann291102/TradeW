@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { createChart, type IChartApi, type ISeriesApi, type Time, type UTCTimestamp, ColorType, CrosshairMode, TickMarkType } from 'lightweight-charts';
 import {
   createChart,
   LineStyle,
@@ -39,6 +40,18 @@ export interface TradeChartProps {
    *  final bar of an NSE session reads 15:15 even though it runs to the
    *  15:30 close; showing the range removes that ambiguity. */
   intervalMinutes?: number;
+  /** Live last-traded price. When provided, the most recent (forming) candle's
+   *  close/high/low track this in real time via `series.update()` — so the
+   *  chart stays in sync with the live feed without a full re-fetch and,
+   *  crucially, without resetting the user's zoom/pan (setData + fitContent
+   *  would). Omit for a purely historical chart. */
+  liveLast?: number;
+  /** Identity of the series being shown — e.g. `SYMBOL|contract|timeframe`.
+   *  The view is auto-fitted ONLY when this changes. Any other data update
+   *  (a reload, a re-derive, a live tick) leaves the user's zoom/pan exactly as
+   *  they set it. Without this, a trader's zoom was silently thrown away every
+   *  time the series object was rebuilt. */
+  fitKey?: string;
 }
 
 function readToken(name: string): string {
@@ -92,6 +105,16 @@ function makeIstCrosshairFormatter(intervalMinutes?: number) {
  * so light/dark/high-contrast all render correctly with no chart-specific
  * theme branching here.
  */
+export function TradeChart({ candles, height = 320, className, intervalMinutes, liveLast, fitKey, ...aria }: TradeChartProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  // Latest live price, read inside the setData effect without making it a
+  // dependency — otherwise every tick would re-run setData (and refit).
+  const liveLastRef = useRef<number | undefined>(liveLast);
+  liveLastRef.current = liveLast;
+  /** Which series the current view was last auto-fitted for (see `fitKey`). */
+  const lastFitKeyRef = useRef<string | null>(null);
 export function TradeChart({ candles, height = 320, className, intervalMinutes, priceLines, ...aria }: TradeChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -164,6 +187,9 @@ export function TradeChart({ candles, height = 320, className, intervalMinutes, 
     chartRef.current?.applyOptions({ localization: { timeFormatter: makeIstCrosshairFormatter(intervalMinutes) } });
   }, [intervalMinutes]);
 
+  // The mount effect only sizes width (via ResizeObserver); height comes in as
+  // a prop, so a height change (e.g. entering full screen) must be applied to
+  // the chart canvas explicitly or it stays at its original size.
   // Strategy strike/breakeven markers. Every line is removed and redrawn on
   // change — lightweight-charts has no update-in-place for price lines, and
   // the count is small (at most a handful of legs plus breakevens).
@@ -196,17 +222,62 @@ export function TradeChart({ candles, height = 320, className, intervalMinutes, 
   }, [priceLines]);
 
   useEffect(() => {
-    seriesRef.current?.setData(
-      candles.map((c) => ({
-        time: Math.floor(c.timestamp.getTime() / 1000) as import('lightweight-charts').UTCTimestamp,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      })),
-    );
-    chartRef.current?.timeScale().fitContent();
+    chartRef.current?.applyOptions({ height });
+  }, [height]);
+
+  // Full history load — runs only when the candle *series* itself changes
+  // (symbol / timeframe), NOT on every live tick, because live ticks no longer
+  // reload the series (see useCandles). fitContent here is therefore a
+  // deliberate "fit the new series", and it no longer fights the user's zoom
+  // on every price update the way it used to.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const data = candles.map((c) => ({
+      time: Math.floor(c.timestamp.getTime() / 1000) as UTCTimestamp,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }));
+    // Fold the current live price into the forming bar so the newly-loaded
+    // series already reflects the feed, before the per-tick effect below
+    // takes over.
+    const live = liveLastRef.current;
+    if (live != null && data.length > 0) {
+      const last = data[data.length - 1];
+      last.close = live;
+      last.high = Math.max(last.high, live);
+      last.low = Math.min(last.low, live);
+    }
+    series.setData(data);
+    // Fit ONLY for a genuinely new series (symbol / contract / timeframe).
+    // Re-fitting on any other data change is what used to wipe the user's zoom.
+    const key = fitKey ?? '';
+    if (lastFitKeyRef.current !== key) {
+      lastFitKeyRef.current = key;
+      chartRef.current?.timeScale().fitContent();
+    }
+    // fitKey is read intentionally without being a dependency — it gates the
+    // fit, it must not by itself trigger a data reload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candles]);
+
+  // Live tick — patch just the last (forming) candle in place. series.update()
+  // mutates the final bar without touching the visible range, so the chart
+  // tracks the live price while preserving whatever zoom/pan the user set.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series || liveLast == null || candles.length === 0) return;
+    const last = candles[candles.length - 1];
+    series.update({
+      time: Math.floor(last.timestamp.getTime() / 1000) as UTCTimestamp,
+      open: last.open,
+      high: Math.max(last.high, liveLast),
+      low: Math.min(last.low, liveLast),
+      close: liveLast,
+    });
+  }, [liveLast, candles]);
 
   return <div ref={containerRef} className={cn('w-full', className)} style={{ height }} {...aria} />;
 }

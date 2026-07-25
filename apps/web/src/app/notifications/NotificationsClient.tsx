@@ -1,38 +1,98 @@
 'use client';
 
-import { Card, EmptyState, Badge } from '@tradew/ui';
+import { useEffect, useState } from 'react';
+import { Card, EmptyState, Badge, Button, Spinner } from '@tradew/ui';
 import { BellIcon } from '@/components/shell/icons';
-import { useWorkspaceStore, NOTIFICATION_CATEGORY_TONE } from '@/lib/store/workspaceStore';
+import { NOTIFICATION_CATEGORY_TONE } from '@/lib/store/workspaceStore';
+import { fetchNotifications, markNotificationRead, markAllNotificationsRead, type NotificationItem } from '@/lib/notifications';
 
 /**
- * Reads the SAME store-seeded list the top-bar bell badge and the
- * NotificationCenter drawer use (Milestone 3 §10: one notification
- * architecture, not three copies of mock data). Real alerts (Sentinel
- * fanout, order fills) wire via services/notification later
- * (N8N-WORKFLOWS.md) — this page/store already has the right shape for that.
- *
- * Split from page.tsx because a Client Component (needed for the store hook)
- * can't export `metadata` — page.tsx stays a Server Component for that.
+ * Full /notifications page — fetches from the real API (services/api /notifications/*).
+ * The top-bar NotificationCenter drawer still reads from workspaceStore (seeded mock)
+ * for now; that drawer is a preview and will be synced in a later milestone when
+ * services/notification fanout is live (N8N-WORKFLOWS.md).
  */
 export function NotificationsClient() {
-  const notifications = useWorkspaceStore((s) => s.notifications);
-  const markRead = useWorkspaceStore((s) => s.markNotificationRead);
-  const markAllRead = useWorkspaceStore((s) => s.markAllNotificationsRead);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchNotifications(100);
+      setNotifications(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load notifications');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
+
   const unread = notifications.filter((n) => !n.read).length;
+
+  async function handleMarkRead(id: string) {
+    try {
+      await markNotificationRead(id);
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    } catch {
+      // optimistic UI — if it fails, the next load will sync
+    }
+  }
+
+  async function handleMarkAllRead() {
+    if (unread === 0) return;
+    try {
+      await markAllNotificationsRead();
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    } catch {
+      // optimistic UI — if it fails, the next load will sync
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-[720px] space-y-4 p-4">
+        <Card title="Notifications" actions={<Spinner size="sm" />}>
+          <div className="flex justify-center py-8">
+            <Spinner size="lg" />
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="mx-auto max-w-[720px] space-y-4 p-4">
+        <Card title="Notifications">
+          <div className="text-center py-8 text-red-400">{error}</div>
+          <Button variant="outline" size="sm" onClick={load}>
+            Retry
+          </Button>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-[720px] space-y-4 p-4">
       <Card
         title="Notifications"
         actions={
-          <button
-            type="button"
-            onClick={markAllRead}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleMarkAllRead}
             disabled={unread === 0}
-            className="text-[11px] font-semibold text-teal hover:underline disabled:pointer-events-none disabled:text-faint disabled:no-underline"
           >
             Mark all read
-          </button>
+          </Button>
         }
       >
         {notifications.length === 0 ? (
@@ -43,15 +103,20 @@ export function NotificationsClient() {
               <li key={n.id}>
                 <button
                   type="button"
-                  onClick={() => markRead(n.id)}
+                  onClick={() => handleMarkRead(n.id)}
                   className="flex w-full items-start gap-3 py-3 text-left transition-colors duration-micro hover:bg-hover"
                 >
-                  <Badge tone={NOTIFICATION_CATEGORY_TONE[n.category]} className="mt-0.5 shrink-0 px-1.5 py-0 text-[9px]">
+                  <Badge
+                    tone={NOTIFICATION_CATEGORY_TONE[n.category]}
+                    className="mt-0.5 shrink-0 px-1.5 py-0 text-[9px]"
+                  >
                     {n.category.toUpperCase()}
                   </Badge>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-text">
-                      {!n.read && <span aria-hidden className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-teal" />}
+                      {!n.read && (
+                        <span aria-hidden className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-teal" />
+                      )}
                       {n.title}
                     </p>
                     <p className="text-xs text-muted">{n.body}</p>

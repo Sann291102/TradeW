@@ -66,6 +66,39 @@ export async function fetchDhanCandles(symbol: string, interval: string, days: n
   return data.source === 'dhan' && Array.isArray(data.candles) ? data.candles : [];
 }
 
+/**
+ * REAL OHLC for one option contract, from the bridge's `/candles/option` route
+ * (Dhan's historical API addressed by the contract's own securityId, resolved
+ * out of the scrip master).
+ *
+ * This replaces the Black-Scholes-derived stand-in the contract chart used to
+ * draw. That series could only approximate the shape, and once its scale anchor
+ * drifted from the live premium it rendered a visible cliff at the final bar.
+ * Returns [] when the contract can't be resolved or Dhan declines, so the
+ * caller can fall back and say so.
+ */
+export async function fetchDhanOptionCandles(
+  symbol: string,
+  expiryIso: string,
+  strike: number,
+  optionType: 'CE' | 'PE',
+  interval: string,
+  days: number,
+): Promise<DhanCandle[]> {
+  const url =
+    `${DHAN_LIVE_URL}/candles/option?symbol=${encodeURIComponent(symbol)}` +
+    `&expiry=${encodeURIComponent(expiryIso)}&strike=${strike}&type=${optionType}` +
+    `&interval=${encodeURIComponent(interval)}&days=${days}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { candles?: DhanCandle[]; source?: string };
+    return data.source === 'dhan' && Array.isArray(data.candles) ? data.candles : [];
+  } catch {
+    return [];
+  }
+}
+
 /** One option leg (CE or PE) from Dhan's real Option Chain API. */
 export interface DhanOptionLeg {
   ltp: number;
