@@ -68,7 +68,7 @@ export function MarketMovers() {
         ))}
       </div>
       {rows.length === 0 ? (
-        <p className="py-4 text-center text-xs text-faint">No real {tab === 'g' ? 'gainers' : 'losers'} in today's tracked universe.</p>
+        <p className="py-4 text-center text-xs text-faint">No real {tab === 'g' ? 'gainers' : 'losers'} in today&apos;s tracked universe.</p>
       ) : (
         <ul className="divide-y divide-border">
           {rows.map((r) => {

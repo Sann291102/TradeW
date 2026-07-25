@@ -11,6 +11,7 @@ import { useHasOptionChain } from '@/lib/hooks/useHasOptionChain';
 import { useOptionQuote } from '@/lib/hooks/useOptionQuote';
 import { useOptionCandles } from '@/lib/hooks/useOptionCandles';
 import { TradeChart } from '@/components/charts/TradeChart';
+import { TradeChart, type ChartPriceLine } from '@/components/charts/TradeChart';
 import { deriveOptionCandles } from '@/lib/mock/optionCandles';
 import { blackScholesPrice } from '@/lib/black-scholes';
 import { MarketsTab } from './chart-tabs/MarketsTab';
@@ -95,6 +96,11 @@ export interface ChartPanelProps extends DockPanelContentProps {
   /** Pre-selects this expiry when the Option Chain tab first renders, so
    *  arriving from a specific contract lands on the right expiry. */
   initialExpiryLabel?: string;
+  /** Horizontal markers drawn over the Charts tab — used by the Learning Hub's
+   *  Apply action to show a strategy's strikes against the underlying. Only
+   *  applied to the underlying's chart, not to a single contract's premium
+   *  chart, where a strike line would be meaningless. */
+  priceLines?: ChartPriceLine[];
 }
 
 export default function ChartPanel({
@@ -105,6 +111,7 @@ export default function ChartPanel({
   trailingControls,
   contract,
   initialExpiryLabel,
+  priceLines,
 }: ChartPanelProps) {
   const [view, setView] = useState<View>('charts');
   const [tf, setTf] = useState<(typeof TIMEFRAMES)[number]>('15m');
@@ -373,6 +380,13 @@ export default function ChartPanel({
               )
             ) : candles ? (
               <TradeChart candles={candles} height={chartHeight} liveLast={liveMatch?.ltp} fitKey={`${q.symbol}|${tf}`} intervalMinutes={TF_MINUTES[tf]} aria-label={`${q.symbol} ${tf} chart`} />
+              <TradeChart
+                candles={candles}
+                height={280}
+                intervalMinutes={TF_MINUTES[tf]}
+                priceLines={priceLines}
+                aria-label={`${q.symbol} ${tf} chart`}
+              />
             ) : (
               <div className="w-full animate-pulse rounded bg-hover" style={{ height: chartHeight }} />
             )}

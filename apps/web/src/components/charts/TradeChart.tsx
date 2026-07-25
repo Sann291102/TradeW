@@ -2,14 +2,38 @@
 
 import { useEffect, useRef } from 'react';
 import { createChart, type IChartApi, type ISeriesApi, type Time, type UTCTimestamp, ColorType, CrosshairMode, TickMarkType } from 'lightweight-charts';
+import {
+  createChart,
+  LineStyle,
+  type IChartApi,
+  type IPriceLine,
+  type ISeriesApi,
+  type Time,
+  ColorType,
+  CrosshairMode,
+  TickMarkType,
+} from 'lightweight-charts';
 import type { Candle } from '@tradew/types';
 import { cn } from '@tradew/ui';
+
+/** A horizontal marker drawn across the chart — used for strategy strikes. */
+export interface ChartPriceLine {
+  price: number;
+  /** Shown on the price axis and at the line's right edge. */
+  title: string;
+  /** A design token name (e.g. '--up'), resolved at draw time so the line
+   *  re-themes with everything else. Falls back to the muted token. */
+  colorToken?: string;
+  dashed?: boolean;
+}
 
 export interface TradeChartProps {
   candles: Candle[];
   height?: number;
   className?: string;
   'aria-label'?: string;
+  /** Horizontal lines drawn over the series — strategy strikes, breakevens. */
+  priceLines?: ChartPriceLine[];
   /** Candle duration in minutes. When given (intraday only), the crosshair
    *  label shows the bar's full span — "22 Jul 15:15–15:30" — instead of
    *  just its open time. Candles are open-stamped by convention, so the
@@ -91,6 +115,11 @@ export function TradeChart({ candles, height = 320, className, intervalMinutes, 
   liveLastRef.current = liveLast;
   /** Which series the current view was last auto-fitted for (see `fitKey`). */
   const lastFitKeyRef = useRef<string | null>(null);
+export function TradeChart({ candles, height = 320, className, intervalMinutes, priceLines, ...aria }: TradeChartProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const priceLineRefs = useRef<IPriceLine[]>([]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -161,6 +190,37 @@ export function TradeChart({ candles, height = 320, className, intervalMinutes, 
   // The mount effect only sizes width (via ResizeObserver); height comes in as
   // a prop, so a height change (e.g. entering full screen) must be applied to
   // the chart canvas explicitly or it stays at its original size.
+  // Strategy strike/breakeven markers. Every line is removed and redrawn on
+  // change — lightweight-charts has no update-in-place for price lines, and
+  // the count is small (at most a handful of legs plus breakevens).
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+
+    for (const line of priceLineRefs.current) series.removePriceLine(line);
+    priceLineRefs.current = [];
+
+    for (const spec of priceLines ?? []) {
+      priceLineRefs.current.push(
+        series.createPriceLine({
+          price: spec.price,
+          color: readToken(spec.colorToken ?? '--muted') || '#888',
+          lineWidth: 1,
+          lineStyle: spec.dashed ? LineStyle.Dashed : LineStyle.Solid,
+          axisLabelVisible: true,
+          title: spec.title,
+        }),
+      );
+    }
+
+    return () => {
+      const current = seriesRef.current;
+      if (!current) return;
+      for (const line of priceLineRefs.current) current.removePriceLine(line);
+      priceLineRefs.current = [];
+    };
+  }, [priceLines]);
+
   useEffect(() => {
     chartRef.current?.applyOptions({ height });
   }, [height]);
