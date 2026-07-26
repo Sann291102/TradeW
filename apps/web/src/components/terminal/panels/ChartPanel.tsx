@@ -95,6 +95,11 @@ export interface ChartPanelProps extends DockPanelContentProps {
   /** Pre-selects this expiry when the Option Chain tab first renders, so
    *  arriving from a specific contract lands on the right expiry. */
   initialExpiryLabel?: string;
+  /** Which tab to open on. Lets a caller deep-link straight to Option Chain /
+   *  Technicals / Depth — these are tabs in THIS panel, not separate dock
+   *  panels, so there is no other way to address them from a URL. Used by the
+   *  TradeW AI assistant's "show the option chain" command. */
+  initialView?: View;
 }
 
 export default function ChartPanel({
@@ -105,8 +110,9 @@ export default function ChartPanel({
   trailingControls,
   contract,
   initialExpiryLabel,
+  initialView,
 }: ChartPanelProps) {
-  const [view, setView] = useState<View>('charts');
+  const [view, setView] = useState<View>(initialView ?? 'charts');
   const [tf, setTf] = useState<(typeof TIMEFRAMES)[number]>('15m');
   const [maximized, setMaximized] = useState(false);
 

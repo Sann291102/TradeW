@@ -40,6 +40,15 @@ export function TradeWorkspace() {
   const typeParam = searchParams.get('type');
   const expiryParam = searchParams.get('expiry');
   const actionParam = searchParams.get('action');
+  // Which ChartPanel tab to land on. Option Chain / Technicals / Depth are tabs
+  // inside ChartPanel rather than separate dock panels, so a URL param is the
+  // only way to address them — used by the TradeW AI assistant ("show the
+  // option chain"). Validated against the known set so a bad param can't put
+  // the panel into an unrenderable view.
+  const viewParam = searchParams.get('view');
+  const initialView = (['markets', 'charts', 'technicals', 'optionChain', 'depth'] as const).find(
+    (v) => v === viewParam,
+  );
 
   const strike = strikeParam ? Number(strikeParam) : null;
   const optionType: 'CE' | 'PE' | null = typeParam === 'CE' || typeParam === 'PE' ? typeParam : null;
@@ -120,6 +129,7 @@ export function TradeWorkspace() {
         symbol={symbol}
         contract={contract}
         initialExpiryLabel={expiry?.label}
+        initialView={initialView}
         trailingControls={<><LayoutMenu /><ClosedPanelsMenu /></>}
       />
 
