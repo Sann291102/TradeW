@@ -6,14 +6,14 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:api"],
       "port": 4000,
-      "autoPort": true
+      "autoPort": false
     },
     {
       "name": "web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:web"],
       "port": 3000,
-      "autoPort": true
+      "autoPort": false
     },
     {
       "name": "sentinel",
@@ -24,13 +24,8 @@
     },
     {
       "name": "dhan-bridge",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": [
-        "ts-node",
-        "--project",
-        "services/market-data/tsconfig.scripts.json",
-        "services/market-data/scripts/live-feed-server.ts"
-      ],
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "live:server", "-w", "@tradew/market-data-service"],
       "port": 4600,
       "autoPort": false
     }

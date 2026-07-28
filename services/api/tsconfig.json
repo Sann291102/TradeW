@@ -1,4 +1,22 @@
 {
+  // NOTE ON OUTPUT LAYOUT — the two configs here deliberately emit to
+  // different places, and changing either breaks one of the two runners:
+  //
+  //   dev  `nest start --watch` uses THIS file. vitest.config.ts sits at the
+  //        package root, so TypeScript infers rootDir as the package root and
+  //        emits to dist/src/**. That is exactly where nest-cli looks for its
+  //        entry (dist/<sourceRoot>/main), so dev works.
+  //
+  //   prod `nest build` uses tsconfig.build.json, which excludes
+  //        vitest.config.ts and the specs. rootDir then infers to src/ and
+  //        output lands in dist/**, which is what the Dockerfile's
+  //        `node dist/main.js` expects.
+  //
+  // Pinning "rootDir": "./src" here looks like the tidy fix and is NOT: it
+  // moves dev output to dist/** while nest-cli keeps resolving its entry to
+  // dist/src/main, so the dev server silently runs whatever stale tree is left
+  // there and newly added modules 404 with nothing in the logs. Tried on
+  // 2026-07-28, reverted for that reason.
   "compilerOptions": {
     "module": "commonjs",
     "declaration": true,
@@ -9,20 +27,9 @@
     "target": "ES2021",
     "sourceMap": true,
     "outDir": "./dist",
-    // Pinned explicitly. Without it TypeScript INFERS rootDir from the common
-    // directory of all inputs, so adding any file at the package root (this
-    // happened when vitest.config.ts was added) silently moves every emitted
-    // file from dist/** to dist/src/**. The result is two parallel compiled
-    // trees, with `nest start --watch` still resolving its entry to the old
-    // one — the dev server then runs stale code and newly added modules 404
-    // with nothing in the logs to explain it.
-    "rootDir": "./src",
     "baseUrl": "./",
     "incremental": true,
     "strict": true,
     "skipLibCheck": true
-  },
-  // Scoped to src for the same reason: a stray root-level .ts file must not be
-  // able to change where the build lands.
-  "include": ["src/**/*"]
+  }
 }
