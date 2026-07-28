@@ -75,6 +75,25 @@ export interface PositionDto {
   priceStatus: 'live' | 'stale';
 }
 
+/**
+ * One executed fill, from GET /sim/trades. Decimal columns arrive as strings
+ * over the wire (Prisma serialises Decimal that way) — callers must Number()
+ * them rather than assuming a numeric type.
+ */
+export interface TradeDto {
+  id: string;
+  orderId: string;
+  instrumentId: string;
+  side: OrderSide;
+  quantity: number;
+  fillPrice: string;
+  charges: string;
+  /** Set only when this fill closed or reduced a position; null when it opened one. */
+  realizedPnl: string | null;
+  executedAt: string;
+  instrument?: { symbol: string; displayName: string; lotSize: number };
+}
+
 export interface PortfolioSummary {
   startingBalance: number;
   availableBalance: number;
@@ -130,7 +149,7 @@ export function cancelOrder(orderId: string): Promise<OrderDto> {
   return api(`/sim/orders/${orderId}`, { method: 'DELETE' });
 }
 
-export function fetchTrades(): Promise<unknown[]> {
+export function fetchTrades(): Promise<TradeDto[]> {
   return api('/sim/trades');
 }
 
