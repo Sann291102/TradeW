@@ -16,7 +16,8 @@ import { MarketsTab } from './chart-tabs/MarketsTab';
 import { TechnicalsTab } from './chart-tabs/TechnicalsTab';
 import { OptionChainTab } from './chart-tabs/OptionChainTab';
 import { DepthTab } from './chart-tabs/DepthTab';
-import { SparkleIcon, PopOutIcon, CloseIcon } from '../../shell/icons';
+import { SparkleIcon, CloseIcon } from '../../shell/icons';
+import { ChartExpandButton } from '@/components/charts/ChartExpandButton';
 import type { DockPanelContentProps } from './types';
 
 export interface ContractContext {
@@ -345,15 +346,10 @@ export default function ChartPanel({
               ))}
             </div>
           )}
-          {view === 'charts' && (
-            <IconButton
-              aria-label={maximized ? 'Exit full screen' : 'Full screen chart'}
-              onClick={() => setMaximized((m) => !m)}
-              className="h-7 w-7"
-            >
-              {maximized ? <CloseIcon className="h-4 w-4" /> : <PopOutIcon className="h-4 w-4" />}
-            </IconButton>
-          )}
+          {/* The full-screen toggle moved out of this header row and onto the
+              chart's own bottom-right corner (ChartExpandButton), where every
+              charting package puts it. Here it was a small icon among several
+              and went unnoticed. */}
           <IconButton aria-label="Analyze this chart with TradeW AI" className="h-7 w-7 text-teal">
             <SparkleIcon className="h-4 w-4" />
           </IconButton>
@@ -444,7 +440,9 @@ export default function ChartPanel({
               </div>
             </div>
           )}
-          <div className="flex flex-1 items-center justify-center">
+          {/* `relative` anchors the expand control to the chart's own corner. */}
+          <div className="relative flex flex-1 items-center justify-center">
+            <ChartExpandButton expanded={maximized} onToggle={() => setMaximized((m) => !m)} />
             {contract ? (
               contractCandles ? (
                 <TradeChart candles={contractCandles} height={chartHeight} liveLast={contractLtp ?? undefined} fitKey={`${q.symbol}|${contractKey}|${tf}`} intervalMinutes={TF_MINUTES[tf]} aria-label={`${q.symbol} ${contract.strike} ${contract.optionType} chart`} />

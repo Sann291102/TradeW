@@ -227,3 +227,11 @@ export const NewsIcon = (p: IconProps) => (
     <path d="M7 8.5h7M7 11.5h7M7 14.5h4" />
   </svg>
 );
+
+/** Expand to full screen — the four-corner bracket every charting package uses.
+ *  Reads as "[ ]" at small sizes, which is the affordance traders look for. */
+export const ExpandIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M9 4H4v5M15 4h5v5M15 20h5v-5M9 20H4v-5" />
+  </svg>
+);

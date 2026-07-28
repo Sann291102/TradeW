@@ -91,6 +91,9 @@ model User {
   notifications         Notification[]
   disciplineSessions    DisciplineSession[]
   disciplineOverrides   DisciplineOverride[]
+  cryptoWallet          CryptoWallet?
+  cryptoOrders          CryptoOrder[]
+  cryptoPositions       CryptoPosition[]
 }
 
 model RefreshToken {
@@ -363,6 +366,100 @@ model PaperWallet {
   updatedAt       DateTime @updatedAt
   createdAt       DateTime @default(now())
   user            User     @relation(fields: [userId], references: [id])
+}
+
+// ============================================================================
+// Crypto — a SEPARATE trading space, denominated in USD.
+//
+// Deliberately its own tables rather than widening Order/Trade/Position:
+//
+//  · Precision. Crypto quantities are fractional (0.00042 BTC) and prices span
+//    $100k down to $0.00002. The rupee OMS stores quantity as Int and prices as
+//    Decimal(12,2) — there, the smallest possible crypto order is 1 whole BTC
+//    and any asset under ₹0.01 rounds to zero. Decimal(28,8)/Decimal(20,8) here
+//    matches what exchanges actually quote.
+//  · Currency. The paper wallet is rupees end to end — margin, P&L, the
+//    portfolio rollup, the discipline session's realizedPnl. There is no FX
+//    conversion anywhere in that path, and adding one to satisfy crypto would
+//    put a conversion rate inside every existing money calculation.
+//  · Blast radius. The rupee order path has a known concurrency defect and no
+//    test coverage. Widening its column types to serve a new asset class means
+//    re-verifying arithmetic that is already load-bearing for real paper
+//    accounts. A separate space touches none of it.
+//
+// SPOT ONLY — no margin, no leverage, no short selling. A buy costs its full
+// USD notional and a sell requires already holding the asset, so there is no
+// margin model here at all and none of the short-option class of error is
+// reachable. That is a deliberate scope choice, not a gap.
+//
+// No FK to Instrument: crypto symbols are Binance pairs, not exchange-listed
+// instruments in that table, and nothing needs to join them.
+// ============================================================================
+
+enum CryptoOrderStatus {
+  FILLED
+  REJECTED
+}
+
+/// One USD paper wallet per user, separate from the rupee PaperWallet.
+/// Created lazily on the first crypto order.
+model CryptoWallet {
+  id     String @id @default(uuid())
+  userId String @unique
+
+  /// USD paper capital, granted once at creation.
+  startingBalance Decimal @default(10000) @db.Decimal(20, 2)
+  /// Free USD. Spot only, so there is no margin component — cash is simply
+  /// startingBalance + realizedPnl - cost of what is currently held.
+  cashBalance     Decimal @default(10000) @db.Decimal(20, 2)
+  realizedPnl     Decimal @default(0) @db.Decimal(20, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model CryptoOrder {
+  id     String @id @default(uuid())
+  userId String
+  /// Binance pair, e.g. 'BTCUSDT'.
+  symbol String
+
+  side   OrderSide
+  status CryptoOrderStatus @default(FILLED)
+
+  /// Fractional by design — 8dp is Binance's own quote precision.
+  quantity   Decimal  @db.Decimal(28, 8)
+  /// Fill price in USD. 8dp so sub-cent assets (SHIB, PEPE) are representable.
+  fillPrice  Decimal? @db.Decimal(20, 8)
+  /// quantity × fillPrice, in USD.
+  notional   Decimal? @db.Decimal(20, 2)
+  fee        Decimal  @default(0) @db.Decimal(20, 2)
+
+  rejectReason String?
+
+  placedAt DateTime @default(now())
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, placedAt])
+}
+
+model CryptoPosition {
+  id     String @id @default(uuid())
+  userId String
+  symbol String
+
+  /// Always >= 0. Spot only — there is no short side to represent.
+  quantity    Decimal @db.Decimal(28, 8)
+  avgPrice    Decimal @db.Decimal(20, 8)
+  realizedPnl Decimal @default(0) @db.Decimal(20, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, symbol])
+  @@index([userId])
 }
 
 // ============================================================================
