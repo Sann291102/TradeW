@@ -9,9 +9,20 @@
     "target": "ES2021",
     "sourceMap": true,
     "outDir": "./dist",
+    // Pinned explicitly. Without it TypeScript INFERS rootDir from the common
+    // directory of all inputs, so adding any file at the package root (this
+    // happened when vitest.config.ts was added) silently moves every emitted
+    // file from dist/** to dist/src/**. The result is two parallel compiled
+    // trees, with `nest start --watch` still resolving its entry to the old
+    // one — the dev server then runs stale code and newly added modules 404
+    // with nothing in the logs to explain it.
+    "rootDir": "./src",
     "baseUrl": "./",
     "incremental": true,
     "strict": true,
     "skipLibCheck": true
-  }
+  },
+  // Scoped to src for the same reason: a stray root-level .ts file must not be
+  // able to change where the build lands.
+  "include": ["src/**/*"]
 }

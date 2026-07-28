@@ -6,6 +6,8 @@ import { EntitlementsModule } from './entitlements/entitlements.module';
 import { InstrumentsModule } from './instruments/instruments.module';
 import { MarketDataModule } from './market-data/market-data.module';
 import { SimModule } from './sim/sim.module';
+import { DisciplineModule } from './discipline/discipline.module';
+import { CryptoModule } from './crypto/crypto.module';
 import { SentinelModule } from './sentinel/sentinel.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
 import { NotificationModule } from './notification/notification.module';
@@ -19,6 +21,8 @@ import { HealthController } from './health.controller';
     EntitlementsModule,
     InstrumentsModule,
     MarketDataModule,
+    CryptoModule,
+    DisciplineModule,
     SimModule,
     SentinelModule,
     KnowledgeModule,

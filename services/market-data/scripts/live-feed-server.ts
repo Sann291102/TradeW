@@ -1,7 +1,14 @@
 import 'dotenv/config';
 import * as http from 'node:http';
 import WebSocket = require('ws');
-import { DhanMarketFeed, MarketTick, WebSocketLike, parseScripMaster, type ScripMasterRow } from '@tradew/market-data';
+import {
+  DhanMarketFeed,
+  MarketTick,
+  WebSocketLike,
+  isBrokerAddressable,
+  parseScripMaster,
+  type ScripMasterRow,
+} from '@tradew/market-data';
 
 /**
  * Standalone live-quote server — deliberately outside services/api and
@@ -393,6 +400,13 @@ function startFeed(allInstruments: InstrumentMeta[], kindOf: (meta: InstrumentMe
     // Any derivatives segment — NSE_FNO (NIFTY/BANKNIFTY/stocks) and BSE_FNO
     // (SENSEX/BANKEX) alike. Matching only NSE_FNO silently dropped every
     // SENSEX option tick.
+    // `InstrumentRef` declares securityId/exchangeSegment optional (a
+    // symbol-only ref is legal — see contracts/instrument-ref.ts), so both must
+    // be narrowed before use. `isBrokerAddressable` is the contract's own type
+    // guard for exactly this; without it this file does not compile, which is
+    // why the bridge could not start.
+    if (!isBrokerAddressable(tick.ref)) return;
+
     if (tick.ref.exchangeSegment.endsWith('_FNO')) {
       if (tick.ltp != null) optionLtpBySecurityId.set(tick.ref.securityId, tick.ltp);
       return;
@@ -991,7 +1005,13 @@ async function main(): Promise<void> {
       res.setHeader('Content-Type', 'application/json');
       const symbol = url.searchParams.get('symbol') ?? '';
       const interval = url.searchParams.get('interval') ?? '5m';
-      const days = Math.max(1, Math.min(365, Number(url.searchParams.get('days') || 5)));
+      // Ceiling raised from 365 to 3650. Note this does NOT buy deeper daily
+      // history today: measured 2026-07-27, /charts/historical returns the same
+      // ~1 year for a 730- or 1825-day range, and /charts/intraday returns HTTP
+      // 400 past ~90 days. The higher cap only stops this proxy being the thing
+      // that truncates, so the real limit is always Dhan's and is visible as
+      // such — and so a future Candle-table-backed path can ask for more.
+      const days = Math.max(1, Math.min(3650, Number(url.searchParams.get('days') || 5)));
       const meta = ALL_INSTRUMENTS.find((i) => i.symbol === symbol);
       if (!meta) {
         // Not a symbol the bridge covers — frontend falls back to mock candles.

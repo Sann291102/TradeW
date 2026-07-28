@@ -7,6 +7,8 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "seed": "npm run seed -w @tradew/database",
     "prisma:generate": "prisma generate --schema ../../packages/database/prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema ../../packages/database/prisma/schema.prisma"
@@ -36,6 +38,7 @@
     "@types/node": "^22.10.2",
     "prisma": "^5.22.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }

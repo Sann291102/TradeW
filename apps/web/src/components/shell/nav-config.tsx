@@ -11,6 +11,8 @@ import {
   ProfileIcon,
   BellIcon,
   ResearchIcon,
+  CryptoIcon,
+  ForexIcon,
 } from './icons';
 
 export interface NavItem {
@@ -39,6 +41,12 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: HomeIcon, group: 'primary' },
   { href: '/trade', label: 'Trade', icon: TradeIcon, group: 'primary' },
   { href: '/markets', label: 'Markets', icon: MarketsIcon, group: 'primary' },
+  // Global markets, served by providers other than Dhan (Binance / Twelve
+  // Data). Placed next to Markets because that is what they are — a different
+  // venue, not a different kind of feature. Read-only: neither is placeable in
+  // the rupee-denominated paper OMS, see services/api/src/crypto.
+  { href: '/crypto', label: 'Crypto', icon: CryptoIcon, group: 'primary' },
+  { href: '/forex', label: 'Forex', icon: ForexIcon, group: 'primary' },
   { href: '/portfolio', label: 'Portfolio', icon: PortfolioIcon, group: 'primary' },
   { href: '/research', label: 'Research', icon: ResearchIcon, group: 'primary' },
   { href: '/learning', label: 'Learning', icon: LearningIcon, group: 'primary' },

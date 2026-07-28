@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { Instrument, Order, OrderSide, OrderStatus, OrderType, OrderValidity, PaperWallet, Position, ProductType } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { computeOrderIntent } from '../discipline/discipline-limits';
+import { DisciplineService } from '../discipline/discipline.service';
 import { MarketPriceService } from './market-price.service';
 import { istDayKey, todayIstSessionEnd } from './ist-time.util';
 
@@ -16,6 +18,14 @@ export interface PlaceOrderInput {
   price?: number;
   /** Required for SL and SL_M, ignored otherwise. */
   triggerPrice?: number;
+  /**
+   * Discipline override — supplied only on a retry, after the trader has sat
+   * through the friction prompt raised by a previous attempt. The token is
+   * server-signed and single-use; the reason is the trader's own words.
+   * Ignored entirely when no limit is breached.
+   */
+  overrideToken?: string;
+  overrideReason?: string;
 }
 
 export interface ModifyOrderInput {
@@ -85,7 +95,11 @@ function applyFill(
 export class OrderService {
   private readonly logger = new Logger(OrderService.name);
 
-  constructor(private readonly prisma: PrismaService, private readonly marketPrice: MarketPriceService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly marketPrice: MarketPriceService,
+    private readonly discipline: DisciplineService,
+  ) {}
 
   /** Every user gets one lazily-created paper wallet, seeded on first order
    *  rather than at signup — accounts that never trade never get a row. */
@@ -117,6 +131,33 @@ export class OrderService {
     const productType = input.productType ?? 'MIS';
     const validity = input.validity ?? 'DAY';
 
+    // ---- Discipline limits (self-imposed session limits) -----------------
+    // Placed here, after input/instrument validation and before either
+    // transaction, because this is the single point both MARKET and resting
+    // orders pass through. A malformed order is still rejected on its own
+    // merits above rather than being frictioned.
+    //
+    // `intent` is derived from the position this server holds, never from
+    // anything the caller sent — a client-supplied "this is a close" flag
+    // would be the obvious way to skip the prompt. Reducing orders bypass the
+    // checks entirely: the loss limit is breached exactly when the trader is
+    // holding a loser, and standing between them and the exit would invert the
+    // point of the feature.
+    //
+    // Throws 409 with a signed override token when a limit is breached and no
+    // valid override accompanies the order. It never hard-blocks.
+    const openPosition = await this.prisma.position.findUnique({
+      where: { userId_instrumentId_productType: { userId, instrumentId: instrument.id, productType } },
+      select: { quantity: true },
+    });
+    const intent = computeOrderIntent(openPosition?.quantity ?? 0, input.side, input.quantity);
+    const disciplinePlan = await this.discipline.evaluatePlacement(
+      userId,
+      intent,
+      { token: input.overrideToken, reason: input.overrideReason },
+      new Date(),
+    );
+
     if (input.type === 'MARKET') {
       const price = await this.marketPrice.getPrice(instrument);
       const fillPrice = input.side === 'BUY' ? price.ask : price.bid;
@@ -137,6 +178,10 @@ export class OrderService {
             quantity: input.quantity,
           },
         });
+        // Same transaction as the order: the trade counter can never drift
+        // from the order book, and a replayed override token collides on
+        // DisciplineOverride.tokenNonce and rolls this order back with it.
+        await this.discipline.recordPlacement(tx, disciplinePlan);
         return this.executeFill(tx, order, instrument, fillPrice, input.quantity, price.ltp);
       });
     }
@@ -169,6 +214,11 @@ export class OrderService {
         where: { userId },
         data: { marginUsed: { increment: margin }, cashBalance: { decrement: margin } },
       });
+      // A resting order counts against the trade limit at placement, not at
+      // fill — the decision the limit governs is the one being made now. The
+      // matching engine deliberately does not re-check discipline when this
+      // order later fills.
+      await this.discipline.recordPlacement(tx, disciplinePlan);
       return order;
     });
   }
@@ -311,6 +361,14 @@ export class OrderService {
         realizedPnl: { increment: realizedPnlDelta },
       },
     });
+
+    // Mirror the realized P&L this fill locked in onto today's discipline
+    // session, in this same transaction — the loss-limit check is a single
+    // point read against that counter rather than an aggregate over trades,
+    // so it must never be able to drift from the fills that moved it. Also
+    // where the one-time profit-target notice fires. A no-op when the trader
+    // never opened a session today.
+    await this.discipline.applyRealizedPnl(tx, order.userId, realizedPnlDelta);
 
     return tx.order.update({
       where: { id: order.id },

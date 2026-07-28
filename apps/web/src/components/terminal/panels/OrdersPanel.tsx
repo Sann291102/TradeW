@@ -4,7 +4,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { Panel, Badge, cn } from '@tradew/ui';
 import { fmt } from '@/lib/format';
 import { useInstrumentMeta } from '@/lib/hooks/useInstrumentMeta';
-import { placeOrder, isSignedIn, type OrderSide, type OrderType, type ProductType } from '@/lib/oms';
+import { isSignedIn, type OrderSide, type OrderType, type ProductType } from '@/lib/oms';
+import {
+  DisciplineBreachError,
+  placeOrderWithDiscipline,
+  type PlaceOrderWithOverride,
+} from '@/lib/discipline';
+import { useDisciplineStore } from '@/lib/store/disciplineStore';
+import { FrictionPrompt } from '@/components/discipline/FrictionPrompt';
 import type { DockPanelContentProps } from './types';
 
 export interface OrdersPanelProps extends DockPanelContentProps {
@@ -67,6 +74,17 @@ export function OrdersPanel({
   const [limitPrice, setLimitPrice] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  /** The order that hit a discipline limit, frozen as it was at that moment. */
+  const [pendingRequest, setPendingRequest] = useState<PlaceOrderWithOverride | null>(null);
+  const openBreach = useDisciplineStore((s) => s.openBreach);
+  const breach = useDisciplineStore((s) => s.breach);
+
+  // "Not now — keep my limit" closes the prompt from inside FrictionPrompt, so
+  // drop the snapshot here rather than leaving a stale order primed to be
+  // re-sent by the next unrelated breach.
+  useEffect(() => {
+    if (!breach) setPendingRequest(null);
+  }, [breach]);
 
   // `isSignedIn()` reads localStorage, which doesn't exist during SSR —
   // reading it straight in render made the server and client disagree on the
@@ -127,35 +145,63 @@ export function OrdersPanel({
                 ? 'Enter a limit price'
                 : null;
 
+  /**
+   * Issue one placement and report it. Throws rather than swallowing, so both
+   * callers below can decide what a discipline breach means to them.
+   */
+  async function place(request: PlaceOrderWithOverride) {
+    const order = await placeOrderWithDiscipline(request);
+    setResult(
+      order.status === 'REJECTED'
+        ? { ok: false, message: order.rejectReason ?? 'Order rejected' }
+        : {
+            ok: true,
+            message:
+              order.status === 'FILLED'
+                ? `Filled ${order.filledQuantity} @ ${fmt(Number(order.avgFillPrice))}`
+                : `${order.status.replace('_', ' ').toLowerCase()} · ${order.quantity} qty`,
+          },
+    );
+  }
+
   async function submit() {
     if (disabledReason || !placementSymbol) return;
+    const request: PlaceOrderWithOverride = {
+      symbol: placementSymbol,
+      side,
+      type: orderType,
+      quantity,
+      productType: product,
+      ...(orderType === 'LIMIT' ? { price: Number(limitPrice) } : {}),
+    };
     setSubmitting(true);
     setResult(null);
     try {
-      const order = await placeOrder({
-        symbol: placementSymbol,
-        side,
-        type: orderType,
-        quantity,
-        productType: product,
-        ...(orderType === 'LIMIT' ? { price: Number(limitPrice) } : {}),
-      });
-      setResult(
-        order.status === 'REJECTED'
-          ? { ok: false, message: order.rejectReason ?? 'Order rejected' }
-          : {
-              ok: true,
-              message:
-                order.status === 'FILLED'
-                  ? `Filled ${order.filledQuantity} @ ${fmt(Number(order.avgFillPrice))}`
-                  : `${order.status.replace('_', ' ').toLowerCase()} · ${order.quantity} qty`,
-            },
-      );
+      await place(request);
     } catch (err) {
-      setResult({ ok: false, message: err instanceof Error ? err.message : 'Order failed' });
+      if (err instanceof DisciplineBreachError) {
+        // Not a failure — the order is waiting on the trader. Snapshot the
+        // request as it stood when the limit was hit: the prompt takes ~20s to
+        // clear, and the form is still editable behind it. Retrying whatever
+        // the inputs happen to say later would apply the typed reason to a
+        // different order than the one the prompt described.
+        setPendingRequest(request);
+        openBreach(err);
+      } else {
+        setResult({ ok: false, message: err instanceof Error ? err.message : 'Order failed' });
+      }
     } finally {
       setSubmitting(false);
     }
+  }
+
+  /** Retry the snapshotted order carrying the override. Deliberately does NOT
+   *  catch: FrictionPrompt handles a refused retry by replacing itself, and a
+   *  genuine failure by showing its own banner. */
+  async function confirmOverride(override: { overrideToken: string; overrideReason: string }) {
+    if (!pendingRequest) return;
+    await place({ ...pendingRequest, ...override });
+    setPendingRequest(null);
   }
 
   return (
@@ -296,6 +342,12 @@ export function OrdersPanel({
           {disabledReason ?? 'Simulated execution against live market prices — no real money.'}
         </p>
       )}
+
+      {/* Fixed-position overlay, so its position in this tree doesn't matter —
+          it renders nothing unless a limit was breached. Mounted here, on the
+          surface that owns the order, because the retry is this component's
+          request to re-issue. */}
+      <FrictionPrompt onConfirm={confirmOverride} />
     </Panel>
   );
 }

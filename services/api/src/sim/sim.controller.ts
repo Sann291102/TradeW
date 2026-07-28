@@ -39,6 +39,20 @@ class PlaceOrderDto {
   @IsNumber()
   @Min(0.01)
   triggerPrice?: number;
+
+  /**
+   * Discipline override, sent only on a retry after the friction prompt.
+   * Both are validated by `DisciplineService` (signature, single use,
+   * mandatory dwell, reason quality), not here — these decorators only keep
+   * `ValidationPipe({ whitelist: true })` from stripping them off the body.
+   */
+  @IsOptional()
+  @IsString()
+  overrideToken?: string;
+
+  @IsOptional()
+  @IsString()
+  overrideReason?: string;
 }
 
 class ModifyOrderDto {

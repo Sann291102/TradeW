@@ -200,3 +200,21 @@ export const LayersIcon = (p: IconProps) => (
     <path d="M4 12l8 4 8-4M4 16l8 4 8-4" strokeLinejoin="round" />
   </svg>
 );
+
+/** Crypto — a coin. Deliberately generic rather than a Bitcoin glyph: the
+ *  board covers many assets, not one. */
+export const CryptoIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M9.5 8.5h4a2 2 0 0 1 0 4h-4h4a2 2 0 0 1 0 4h-4" />
+    <path d="M11 6.5v11" />
+  </svg>
+);
+
+/** Forex — two currencies exchanging. */
+export const ForexIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M4 8h13l-3-3" />
+    <path d="M20 16H7l3 3" />
+  </svg>
+);

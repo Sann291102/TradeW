@@ -109,6 +109,11 @@ export function deriveExchangeSegment(exchange: string, segment: string): Exchan
   const seg = segment.trim().toUpperCase();
   if (ex === 'NSE' && (seg === 'E' || seg === 'EQUITY')) return 'NSE_EQ';
   if (ex === 'NSE' && (seg === 'D' || seg === 'DERIVATIVE')) return 'NSE_FNO';
+  // Currency derivatives (USDINR/EURINR/GBPINR/JPYINR). Dhan's master uses the
+  // 'C' segment letter; spelled-out forms accepted for the same reason the
+  // cases above accept them.
+  if (ex === 'NSE' && (seg === 'C' || seg === 'CURRENCY')) return 'NSE_CURRENCY';
+  if (ex === 'BSE' && (seg === 'C' || seg === 'CURRENCY')) return 'BSE_CURRENCY';
   if (ex === 'BSE' && (seg === 'E' || seg === 'EQUITY')) return 'BSE_EQ';
   if (ex === 'BSE' && (seg === 'D' || seg === 'DERIVATIVE')) return 'BSE_FNO';
   if (ex === 'MCX') return 'MCX_COMM';

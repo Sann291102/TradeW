@@ -26,6 +26,14 @@ export * from './providers/simulated/simulated.feed';
 export * from './providers/dhan/dhan-binary-parser';
 export * from './providers/dhan/dhan-scrip-master';
 export * from './providers/dhan/dhan.feed';
+// Binance — crypto only, public/keyless, read-only. Unlike the Dhan provider
+// this needs no secret and no persistent subscription set, so it is consumed
+// directly by services/api rather than through the standalone feed bridge.
+export * from './providers/binance/binance.client';
+// Twelve Data — foreign exchange. Dhan has no live currency contracts and
+// Binance lists no fiat/fiat pair, so FX needs its own vendor; see the client's
+// docstring for the evidence behind that.
+export * from './providers/twelvedata/twelvedata.client';
 
 // infrastructure
 export * from './cache/in-memory-quote-cache';
