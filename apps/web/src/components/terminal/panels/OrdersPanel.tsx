@@ -124,6 +124,29 @@ export function OrdersPanel({
   const priceForValue = orderType === 'LIMIT' ? Number(limitPrice) : currentPrice;
   const orderValue = quantity > 0 && priceForValue ? quantity * priceForValue : null;
 
+  /**
+   * Margin a SHORT option actually costs.
+   *
+   * "Order value" (premium × quantity) is what a short option PAYS you, not
+   * what it costs — showing it alone on a sell ticket read as though ₹620 was
+   * the requirement, when the real figure is ~₹2L. Mirrors
+   * SHORT_OPTION_MARGIN_RATE in services/api/src/sim/order.service.ts, taken on
+   * the underlying notional.
+   *
+   * The strike is parsed from the canonical option symbol
+   * (UNDERLYING:YYYYMMDD:STRIKE:CE|PE), which is the same fallback the server
+   * uses when the option chain has no spot — so the estimate here and the
+   * charge there agree. This duplicates a server constant; a /sim/margin-preview
+   * endpoint would be the better long-term answer.
+   */
+  const SHORT_OPTION_MARGIN_RATE = 0.13;
+  const shortOptionMargin = useMemo(() => {
+    if (!isOptionContract || side !== 'SELL' || quantity <= 0) return null;
+    const strike = Number(orderSymbol?.split(':')[2]);
+    if (!Number.isFinite(strike) || strike <= 0) return null;
+    return strike * quantity * SHORT_OPTION_MARGIN_RATE;
+  }, [isOptionContract, side, quantity, orderSymbol]);
+
   const disabledReason = !mounted
     ? 'Loading…'
     : !symbol
@@ -310,8 +333,18 @@ export function OrdersPanel({
 
         {orderValue != null && (
           <div className="flex items-center justify-between rounded-lg bg-bg px-2 py-1.5">
-            <span className="text-faint">Order value</span>
+            {/* On a short option the premium is received, not paid — labelling
+                it "Order value" made ₹620 look like the cost of a position that
+                actually blocks ~₹2L. */}
+            <span className="text-faint">{shortOptionMargin != null ? 'Premium received' : 'Order value'}</span>
             <span className="font-mono font-semibold text-text">{fmt(orderValue)}</span>
+          </div>
+        )}
+
+        {shortOptionMargin != null && (
+          <div className="flex items-center justify-between rounded-lg bg-amber-bg px-2 py-1.5">
+            <span className="text-amber">Margin required</span>
+            <span className="font-mono font-semibold text-amber">≈ {fmt(shortOptionMargin)}</span>
           </div>
         )}
       </div>

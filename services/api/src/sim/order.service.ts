@@ -40,18 +40,76 @@ const STARTING_BALANCE = 1_000_000; // ₹10L paper capital, matches PaperWallet
 const CHARGES_RATE = 0.0003; // 3bps of gross trade value — same convention as the original market-only engine
 
 /**
- * Simplified simulated margin — NOT real SPAN/exposure margin. A paper
- * engine needs *some* number to block so "available balance" is meaningful
- * and "insufficient margin" can genuinely reject an order, without
- * reimplementing an exchange's actual margin engine. Documented here rather
- * than silently presented as authoritative.
+ * Approximate SPAN+exposure rate for a short option, as a fraction of the
+ * UNDERLYING notional. Calibrated against a live broker quote: NIFTY 28 Jul
+ * 23950 PE, 1 lot (65), underlying ~23,900 → broker required ₹2,02,475.
+ * 23,900 × 65 × 0.13 = ₹2,01,955, within 0.3%.
  */
-function computeMargin(instrument: Instrument, side: OrderSide, productType: ProductType, price: number, quantity: number): number {
-  const notional = price * quantity;
-  if (instrument.type === 'OPTION' && side === 'BUY') return notional; // full premium paid
-  if (productType === 'CNC') return notional; // cash delivery — no leverage
-  if (instrument.type === 'FUTURE' || (instrument.type === 'OPTION' && side === 'SELL')) return notional * 0.15; // ~SPAN+exposure approximation
-  return notional * 0.2; // MIS equity/ETF/index intraday — ~5x simulated leverage
+const SHORT_OPTION_MARGIN_RATE = 0.13;
+/** Futures margin, also on the underlying notional (the future's own price). */
+const FUTURES_MARGIN_RATE = 0.15;
+/** MIS equity/index intraday — ~5x simulated leverage. */
+const INTRADAY_EQUITY_MARGIN_RATE = 0.2;
+
+/**
+ * Simplified simulated margin — NOT real SPAN/exposure margin. A paper engine
+ * needs *some* number to block so "available balance" is meaningful and
+ * "insufficient margin" can genuinely reject an order, without reimplementing
+ * an exchange's margin engine.
+ *
+ * SHORT OPTIONS ARE THE CASE THIS FUNCTION EXISTS TO GET RIGHT. It previously
+ * computed every leg off `price × quantity`, where `price` for an option is the
+ * PREMIUM. For a long option that is correct — the premium is the whole cost
+ * and the whole risk. For a SHORT option it is meaningless: the premium is what
+ * the trader receives, and the risk is on the underlying. Selling one NIFTY
+ * 23900 PE at ₹9.55 blocked 0.15 × 9.55 × 65 = ₹93, against a real broker
+ * requirement of ₹2,02,475 — under-margined by a factor of ~2,175.
+ *
+ * That is the most dangerous possible error in a teaching account: it lets a
+ * ₹10L paper wallet short unlimited options for free, and rewards the one
+ * strategy that can actually bankrupt a real trader. Short-option and futures
+ * margin is now taken on the underlying notional.
+ *
+ * `underlyingSpot` is the live underlying price when the caller has one (the
+ * option-chain response carries it). When absent, the contract's own strike is
+ * used — a close proxy near the money, and always far closer than the premium.
+ */
+function computeMargin(
+  instrument: Instrument,
+  side: OrderSide,
+  productType: ProductType,
+  price: number,
+  quantity: number,
+  underlyingSpot?: number,
+): number {
+  const premiumNotional = price * quantity;
+
+  // Long option: premium paid in full, no leverage. Risk is capped at it.
+  if (instrument.type === 'OPTION' && side === 'BUY') return premiumNotional;
+
+  if (instrument.type === 'OPTION' && side === 'SELL') {
+    // Reference price for the underlying, best available first.
+    const reference =
+      underlyingSpot && underlyingSpot > 0
+        ? underlyingSpot
+        : instrument.strikePrice != null
+          ? Number(instrument.strikePrice)
+          : null;
+    // No way to value the underlying — refuse to invent a number. Falling back
+    // to the premium here is exactly the bug this function is fixing.
+    if (reference == null || !(reference > 0)) {
+      throw new BadRequestException(
+        `Cannot compute margin for ${instrument.symbol}: the underlying price is unavailable. Try again shortly.`,
+      );
+    }
+    return reference * quantity * SHORT_OPTION_MARGIN_RATE;
+  }
+
+  if (productType === 'CNC') return premiumNotional; // cash delivery — no leverage
+  // A future's own price IS its underlying notional, so premiumNotional is the
+  // right base here despite the name.
+  if (instrument.type === 'FUTURE') return premiumNotional * FUTURES_MARGIN_RATE;
+  return premiumNotional * INTRADAY_EQUITY_MARGIN_RATE;
 }
 
 /** Applies one fill to a position's (quantity, avgPrice), correctly handling
@@ -161,7 +219,7 @@ export class OrderService {
     if (input.type === 'MARKET') {
       const price = await this.marketPrice.getPrice(instrument);
       const fillPrice = input.side === 'BUY' ? price.ask : price.bid;
-      const margin = computeMargin(instrument, input.side, productType, fillPrice, input.quantity);
+      const margin = computeMargin(instrument, input.side, productType, fillPrice, input.quantity, price.underlyingSpot);
       if (margin > Number(wallet.cashBalance)) {
         return this.rejectNewOrder(userId, instrument, input, productType, validity, 'Insufficient margin');
       }
@@ -188,7 +246,18 @@ export class OrderService {
 
     // LIMIT / SL / SL_M — rests until MatchingEngineService fills it.
     const referencePrice = input.type === 'LIMIT' ? input.price! : input.triggerPrice!;
-    const margin = computeMargin(instrument, input.side, productType, referencePrice, input.quantity);
+    // A resting SHORT OPTION still needs the underlying to size its margin, and
+    // the limit price is a premium. One extra quote read here is worth far more
+    // than blocking ₹93 against a ₹2L risk; a failure degrades to the strike,
+    // which computeMargin handles.
+    const restingSpot =
+      instrument.type === 'OPTION' && input.side === 'SELL'
+        ? await this.marketPrice
+            .getPrice(instrument)
+            .then((p) => p.underlyingSpot)
+            .catch(() => undefined)
+        : undefined;
+    const margin = computeMargin(instrument, input.side, productType, referencePrice, input.quantity, restingSpot);
     if (margin > Number(wallet.cashBalance)) {
       return this.rejectNewOrder(userId, instrument, input, productType, validity, 'Insufficient margin');
     }
@@ -300,7 +369,21 @@ export class OrderService {
     }
 
     const newRealizedTotal = Number(existing?.realizedPnl ?? 0) + realizedPnlDelta;
-    const newMargin = newQuantity === 0 ? 0 : computeMargin(instrument, newQuantity >= 0 ? 'BUY' : 'SELL', order.productType, Math.abs(newAvgPrice), Math.abs(newQuantity));
+    // No live underlying spot on this path (executeFill is also reached from
+    // the matching engine, which holds only the contract's own price), so a
+    // short-option position re-margins off its strike. Near the money that is
+    // within a percent or two of spot, and it is the same basis the placement
+    // check used if the chain was briefly unavailable.
+    const newMargin =
+      newQuantity === 0
+        ? 0
+        : computeMargin(
+            instrument,
+            newQuantity >= 0 ? 'BUY' : 'SELL',
+            order.productType,
+            Math.abs(newAvgPrice),
+            Math.abs(newQuantity),
+          );
 
     let position: Position;
     if (!existing) {
