@@ -13,6 +13,7 @@ import {
   ResearchIcon,
   CryptoIcon,
   ForexIcon,
+  NewsIcon,
 } from './icons';
 
 export interface NavItem {
@@ -47,6 +48,9 @@ export const NAV_ITEMS: NavItem[] = [
   // the rupee-denominated paper OMS, see services/api/src/crypto.
   { href: '/crypto', label: 'Crypto', icon: CryptoIcon, group: 'primary' },
   { href: '/forex', label: 'Forex', icon: ForexIcon, group: 'primary' },
+  // Moved off the dashboard, where it was capped at six items and competing
+  // with the market widgets for space. Real newswires, not the former mock feed.
+  { href: '/news', label: 'Market News', icon: NewsIcon, group: 'primary' },
   { href: '/portfolio', label: 'Portfolio', icon: PortfolioIcon, group: 'primary' },
   { href: '/research', label: 'Research', icon: ResearchIcon, group: 'primary' },
   { href: '/learning', label: 'Learning', icon: LearningIcon, group: 'primary' },

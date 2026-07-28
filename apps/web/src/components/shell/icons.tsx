@@ -218,3 +218,12 @@ export const ForexIcon = (p: IconProps) => (
     <path d="M20 16H7l3 3" />
   </svg>
 );
+
+/** Market News — a newspaper. */
+export const NewsIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M4 5h13v14H5.5A1.5 1.5 0 0 1 4 17.5V5z" />
+    <path d="M17 8h3v9.5a1.5 1.5 0 0 1-3 0V8z" />
+    <path d="M7 8.5h7M7 11.5h7M7 14.5h4" />
+  </svg>
+);
