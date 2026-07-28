@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Panel, IconButton, cn } from '@tradew/ui';
 import type { CandleInterval } from '@tradew/types';
 import { INDEX_QUOTES, TOP_GAINERS, TOP_LOSERS, COMMODITIES } from '@/lib/mock/market';
@@ -11,8 +12,6 @@ import { useHasOptionChain } from '@/lib/hooks/useHasOptionChain';
 import { useOptionQuote } from '@/lib/hooks/useOptionQuote';
 import { useOptionCandles } from '@/lib/hooks/useOptionCandles';
 import { TradeChart } from '@/components/charts/TradeChart';
-import { deriveOptionCandles } from '@/lib/mock/optionCandles';
-import { blackScholesPrice } from '@/lib/black-scholes';
 import { MarketsTab } from './chart-tabs/MarketsTab';
 import { TechnicalsTab } from './chart-tabs/TechnicalsTab';
 import { OptionChainTab } from './chart-tabs/OptionChainTab';
@@ -43,15 +42,48 @@ const VIEW_LABEL: Record<View, string> = {
   depth: 'Depth',
 };
 
+/**
+ * Shown wherever real data is missing. The panel states the reason and draws
+ * nothing — no placeholder series, no last-known number. Per the 2026-07-26
+ * no-fabricated-data rule: a trading screen that invents a plausible price is
+ * worse than one that admits it is offline.
+ */
+function DataUnavailable({ title, detail }: { title: string; detail?: string }) {
+  return (
+    <div className="flex h-full min-h-[120px] w-full flex-col items-center justify-center gap-1 px-4 text-center">
+      <p className="text-[12px] font-semibold text-muted">{title}</p>
+      {detail && <p className="max-w-md text-[11px] leading-relaxed text-faint">{detail}</p>}
+    </div>
+  );
+}
+
 /** Pill label -> shared `CandleInterval` + lookback window. No weekly
  *  interval exists on the type yet, so '1W' reuses '1d' candles over a
  *  longer window rather than inventing a parallel interval. */
 const TF_CONFIG: Record<(typeof TIMEFRAMES)[number], { interval: CandleInterval; days: number }> = {
-  '1m': { interval: '1m', days: 1 },
-  '5m': { interval: '5m', days: 3 },
-  '15m': { interval: '15m', days: 5 },
-  '1H': { interval: '1h', days: 14 },
-  '1D': { interval: '1d', days: 90 },
+  // Depths raised 2026-07-27. The old values (1/3/5/14/90/365) were a
+  // client-side constant, not an API limit — 5m was capped at 3 days here while
+  // Dhan returns 30 days of 5m bars in one call without complaint.
+  //
+  // Every number below was MEASURED against Dhan's own API, not assumed, and
+  // each sits at or under the point where it starts refusing:
+  //
+  //   1m   5d   -> 1500 bars
+  //   5m   30d  -> 1578 bars
+  //   15m  60d  -> 1032 bars
+  //   1h   90d  ->  434 bars   (180d returns HTTP 400 — this is the ceiling)
+  //   1d   365d ->  245 bars   (730d and 1825d BOTH return the same 245 bars;
+  //                             /charts/historical caps daily at ~1 year, so
+  //                             asking for more is a slower request for
+  //                             identical data)
+  //
+  // 1D and 1W therefore share a depth. That is Dhan's limit, not an oversight —
+  // going deeper needs the persisted Candle table, not a bigger number here.
+  '1m': { interval: '1m', days: 5 },
+  '5m': { interval: '5m', days: 30 },
+  '15m': { interval: '15m', days: 60 },
+  '1H': { interval: '1h', days: 90 },
+  '1D': { interval: '1d', days: 365 },
   '1W': { interval: '1d', days: 365 },
 };
 
@@ -116,6 +148,31 @@ export default function ChartPanel({
   const [tf, setTf] = useState<(typeof TIMEFRAMES)[number]>('15m');
   const [maximized, setMaximized] = useState(false);
 
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  /**
+   * Trade from the full-screen chart.
+   *
+   * Maximised, the order ticket is off screen entirely — the chart was a
+   * read-only surface, which is why a full-screen chart was reported as not
+   * being tradeable.
+   *
+   * Deliberately NOT a one-click market order the way a broker terminal does
+   * it. This sets the side and drops back to the ticket, where quantity,
+   * product and order type are visible before anything is sent. A single
+   * mis-click on a full-screen chart should never be able to place a lot.
+   * `?action=` is the mechanism TradeWorkspace already uses to preselect a
+   * side, so this reuses it rather than adding a parallel path.
+   */
+  function tradeFromChart(side: 'buy' | 'sell') {
+    const params = new URLSearchParams(searchParams?.toString() ?? '');
+    params.set('action', side);
+    setMaximized(false);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
+
   // Full-screen chart: an in-app maximized overlay (not the native Fullscreen
   // API, which the app shell can restrict). Esc exits; the height is derived
   // from the viewport so the chart actually fills the screen.
@@ -165,30 +222,40 @@ export default function ChartPanel({
     ? [...(liveIndices ?? []), ...(liveStocks ?? []), ...(liveEtfs ?? []), ...(liveCommodities ?? [])].find((lq) => lq.symbol === symbolKey)
     : undefined;
 
-  // Base (mock) quote — mainly for `name` and as a last-resort price when
-  // the bridge is unreachable. Checked by the real symbolKey too; when
-  // nothing matches (most of the F&O/ETF universe isn't in these small
-  // illustrative lists), fall back to the live feed's own display name
-  // rather than a hardcoded NIFTY object.
-  const mockQuote: { symbol: string; name: string; ltp: number; changePct: number } =
-    INDEX_QUOTES.find((i) => i.symbol === symbolKey) ??
-    TOP_GAINERS.find((i) => i.symbol === symbolKey) ??
-    TOP_LOSERS.find((i) => i.symbol === symbolKey) ??
-    COMMODITIES.find((i) => i.symbol === symbolKey) ??
-    { symbol: symbolKey, name: liveMatch?.displayName ?? symbolKey, ltp: liveMatch?.ltp ?? 0, changePct: liveMatch?.changePct ?? 0 };
-  const q = liveMatch ? { ...mockQuote, ltp: liveMatch.ltp, changePct: liveMatch.changePct } : mockQuote;
-  const up = q.changePct >= 0;
+  // Display NAME only — these illustrative lists are NOT a price source.
+  // When the bridge is unreachable the panel shows no price at all rather
+  // than a hardcoded one: a stale fake LTP under a real ticker is
+  // indistinguishable from a live quote, which is exactly how the 23,882.15
+  // mock NIFTY in lib/mock/market.ts rendered as if it were the market.
+  // Name falls back to the feed's own display name, then the symbol itself.
+  const displayName =
+    INDEX_QUOTES.find((i) => i.symbol === symbolKey)?.name ??
+    TOP_GAINERS.find((i) => i.symbol === symbolKey)?.name ??
+    TOP_LOSERS.find((i) => i.symbol === symbolKey)?.name ??
+    COMMODITIES.find((i) => i.symbol === symbolKey)?.name ??
+    liveMatch?.displayName ??
+    symbolKey;
+  const q: { symbol: string; name: string; ltp: number | null; changePct: number | null } = {
+    symbol: symbolKey,
+    name: displayName,
+    ltp: liveMatch?.ltp ?? null,
+    changePct: liveMatch?.changePct ?? null,
+  };
+  const up = (q.changePct ?? 0) >= 0;
+  /** No live quote — bridge down, or the feed doesn't cover this symbol. */
+  const quoteUnavailable = q.ltp == null;
   const { interval, days } = TF_CONFIG[tf];
-  const { candles, status: candlesStatus } = useCandles(q.symbol, interval, days, liveMatch?.ltp);
-  const { candles: dailyCandles } = useCandles(q.symbol, '1d', 300, liveMatch?.ltp);
+  const { candles, status: candlesStatus, reason: candlesReason } = useCandles(q.symbol, interval, days);
+  const { candles: dailyCandles } = useCandles(q.symbol, '1d', 300);
   const realCandles = candlesStatus === 'live';
 
   // The contract's REAL premium, straight from Dhan's option chain — the exact
-  // number the Option Chain table shows for this strike. Previously this panel
-  // displayed a Black-Scholes theoretical price instead, which disagreed with
-  // the chain (e.g. chain 160.75 vs chart ~220 for NIFTY 23800 CE). The
-  // theoretical price is now only a labelled fallback for contracts with no
-  // live chain (simulated expiries, closed/unlisted markets).
+  // number the Option Chain table shows for this strike. This panel used to
+  // display a Black-Scholes theoretical price when the chain was missing,
+  // which disagreed with the chain (e.g. chain 160.75 vs chart ~220 for NIFTY
+  // 23800 CE); that fallback is gone, along with the implied-vol clamp and
+  // series scale-anchor that existed only to keep the derived curve stable.
+  // No chain row now means no premium shown.
   const { quote: optionQuote, status: optionQuoteStatus } = useOptionQuote(
     contract ? q.symbol : undefined,
     contract?.expiryIso,
@@ -196,33 +263,6 @@ export default function ChartPanel({
     contract?.optionType,
   );
   const realOptionLtp = optionQuote?.ltp && optionQuote.ltp > 0 ? optionQuote.ltp : null;
-  // Real implied vol from the same chain row beats the mock IV smile for the
-  // derived series' shape; fall back to the mock only when there's no chain.
-  // Clamped to a sane band. Implied vol is a percentage (single/low-double
-  // digits for index options); anything outside this is a bad input, not a real
-  // market reading, and feeding it to Black-Scholes produced a flat, meaningless
-  // series. Guards the fallback path in particular — see TradeWorkspace's note
-  // on the old NIFTY-shaped IV smile that yielded ~37,225% on SENSEX strikes.
-  const rawIv = optionQuote?.iv && optionQuote.iv > 0 ? optionQuote.iv : contract?.ivPct ?? 0;
-  const liveIvPct = Math.min(150, Math.max(1, rawIv || 12.5));
-
-  // The derived series must keep a STABLE array identity across price ticks.
-  // Rebuilding it on every quote refresh re-ran TradeChart's setData +
-  // fitContent, which silently threw away the user's zoom/pan every few
-  // seconds. So the scale anchor and IV are captured once per (contract,
-  // timeframe, candle series) and held; the live price then moves only the last
-  // bar, via TradeChart's `liveLast` -> series.update(), which never touches the
-  // visible range.
-  const seriesKey = `${contractKey ?? ''}|${tf}|${candles?.length ?? 0}`;
-  const anchorRef = useRef<{ key: string; ltp: number | null; iv: number }>({ key: '', ltp: null, iv: 0 });
-  if (anchorRef.current.key !== seriesKey) {
-    anchorRef.current = { key: seriesKey, ltp: realOptionLtp, iv: liveIvPct };
-  } else if (anchorRef.current.ltp == null && realOptionLtp != null) {
-    // First real quote for this series — adopt it once, then hold it.
-    anchorRef.current = { key: seriesKey, ltp: realOptionLtp, iv: liveIvPct };
-  }
-  const anchorLtp = anchorRef.current.ltp;
-  const contractIvPct = anchorRef.current.iv || liveIvPct;
 
   // REAL per-contract OHLC from Dhan. This is the contract's own traded
   // history, so no implied-vol guess and no scale anchoring are involved at all.
@@ -236,41 +276,29 @@ export default function ChartPanel({
   );
   const hasRealContractCandles = !!realContractCandles?.length;
 
-  // Fallback only — used when Dhan has no history for this contract (illiquid
-  // or newly listed strike). Clearly labelled as derived in the caption below;
-  // never presented as traded data.
-  const derivedContractCandles = useMemo(
-    () =>
-      contract && candles && !hasRealContractCandles
-        ? deriveOptionCandles(
-            candles,
-            contract.strike,
-            contract.optionType,
-            contract.yearsToExpiry,
-            contractIvPct,
-            // Anchor the series onto the real premium so the last bar reads the
-            // same price as the chain.
-            anchorLtp ?? undefined,
-          )
-        : null,
-    [contract?.strike, contract?.optionType, contract?.yearsToExpiry, contractIvPct, candles, anchorLtp, hasRealContractCandles],
-  );
-  const contractCandles = realContractCandles ?? derivedContractCandles;
-  const contractLtp = contract
-    ? realOptionLtp ??
-      blackScholesPrice(q.ltp, contract.strike, contract.yearsToExpiry, contractIvPct, contract.optionType === 'CE' ? 'call' : 'put')
-    : null;
+  // No derived series, and no theoretical premium. Black-Scholes could only
+  // approximate the shape, and a synthetic curve drawn on a price chart is
+  // fabricated market data however carefully it is captioned. When Dhan has
+  // no traded history (or no live chain) for a contract, the panel says so
+  // instead of drawing something. deriveOptionCandles/blackScholesPrice are
+  // untouched in lib/ — they still serve the pricing maths elsewhere.
+  const contractCandles = realContractCandles ?? null;
+  /** Real traded premium from Dhan's chain, or null. Never theoretical. */
+  const contractLtp = contract ? realOptionLtp : null;
 
   // Whether this symbol has a live options market — determined dynamically
   // per-symbol from Dhan's own Option Chain API (no hardcoded stock/
   // commodity list, see useHasOptionChain), so a stock with real listed
   // derivatives shows the tab and one without doesn't, automatically.
-  // Defaults to hidden until resolved, so the tab never flashes in and then
-  // disappears — chart/price rendering above is unaffected either way.
+  // Hidden ONLY on a confirmed 'no'. On 'unknown' (bridge unreachable) the tab
+  // stays and reports that it isn't connected — hiding it on an outage made
+  // NIFTY, the exchange's most heavily traded options underlying, render with
+  // no Option Chain tab at all. An outage must never look like an instrument
+  // fact. See useHasOptionChain's three-state contract.
   const optionable = useHasOptionChain(q.symbol);
-  const views = optionable ? VIEWS : VIEWS.filter((v) => v !== 'optionChain');
+  const views = optionable === 'no' ? VIEWS.filter((v) => v !== 'optionChain') : VIEWS;
   useEffect(() => {
-    if (!optionable && view === 'optionChain') setView('charts');
+    if (optionable === 'no' && view === 'optionChain') setView('charts');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [optionable]);
 
@@ -287,10 +315,13 @@ export default function ChartPanel({
             {q.symbol}
             {contract && ` ${contract.strike} ${contract.optionType}`}
           </span>
-          <span className="font-mono text-[12px] tabular-nums text-text">{fmt(contract ? contractLtp ?? 0 : q.ltp)}</span>
-          {!contract && (
+          <span className="font-mono text-[12px] tabular-nums text-text">
+            {contract ? (contractLtp != null ? fmt(contractLtp) : '—') : q.ltp != null ? fmt(q.ltp) : '—'}
+          </span>
+          {!contract && q.changePct != null && (
             <span className={cn('font-mono text-[11px] tabular-nums', up ? 'text-up' : 'text-down')}>{pct(q.changePct)}</span>
           )}
+          {!contract && quoteUnavailable && <span className="text-[10.5px] text-faint">live feed not connected</span>}
           {contract && <span className="text-[10.5px] text-faint">{contract.expiryLabel} expiry</span>}
         </span>
       }
@@ -350,9 +381,30 @@ export default function ChartPanel({
 
       {view === 'markets' && <MarketsTab dailyCandles={dailyCandles ?? []} />}
 
-      {view === 'technicals' && <TechnicalsTab dailyCandles={dailyCandles ?? []} ltp={q.ltp} />}
+      {view === 'technicals' &&
+        (q.ltp != null ? (
+          <TechnicalsTab dailyCandles={dailyCandles ?? []} ltp={q.ltp} />
+        ) : (
+          <DataUnavailable
+            title="Live feed not connected"
+            detail={`No live price for ${q.symbol}, so indicators cannot be computed. Start the Dhan live-feed bridge on port 4600 and reload.`}
+          />
+        ))}
 
-      {view === 'optionChain' && <OptionChainTab underlyingSymbol={q.symbol} spotPrice={q.ltp} initialExpiryLabel={initialExpiryLabel} onOpenChart={() => setView('charts')} />}
+      {view === 'optionChain' &&
+        (optionable === 'unknown' ? (
+          <DataUnavailable
+            title="Option chain not connected"
+            detail={`Could not reach Dhan's option-chain API to load ${q.symbol}. This is a connection problem, not a statement about whether ${q.symbol} has listed options.`}
+          />
+        ) : q.ltp != null ? (
+          <OptionChainTab underlyingSymbol={q.symbol} spotPrice={q.ltp} initialExpiryLabel={initialExpiryLabel} onOpenChart={() => setView('charts')} />
+        ) : (
+          <DataUnavailable
+            title="Live feed not connected"
+            detail={`No live spot price for ${q.symbol}; the chain cannot be centred without one.`}
+          />
+        ))}
 
       {view === 'depth' && <DepthTab />}
 
@@ -363,24 +415,61 @@ export default function ChartPanel({
               <span className="text-sm font-bold text-text">
                 {q.symbol}
                 {contract && ` ${contract.strike} ${contract.optionType}`} · {tf}
-                <span className="ml-2 font-mono text-[13px] tabular-nums">{fmt(contract ? contractLtp ?? 0 : q.ltp)}</span>
+                <span className="ml-2 font-mono text-[13px] tabular-nums">
+                  {contract ? (contractLtp != null ? fmt(contractLtp) : '—') : q.ltp != null ? fmt(q.ltp) : '—'}
+                </span>
               </span>
-              <IconButton aria-label="Exit full screen" onClick={() => setMaximized(false)} className="h-7 w-7">
-                <CloseIcon className="h-4 w-4" />
-              </IconButton>
+              <div className="flex items-center gap-1.5">
+                {/* Bid/ask-style SELL and BUY, the way a broker terminal puts
+                    them on the chart. These preselect the side and return to
+                    the ticket rather than firing a market order — see
+                    tradeFromChart. */}
+                <button
+                  type="button"
+                  onClick={() => tradeFromChart('sell')}
+                  className="rounded-lg bg-down px-3 py-1.5 text-xs font-bold text-white transition-opacity duration-micro hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                >
+                  SELL
+                </button>
+                <button
+                  type="button"
+                  onClick={() => tradeFromChart('buy')}
+                  className="rounded-lg bg-up px-3 py-1.5 text-xs font-bold text-white transition-opacity duration-micro hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                >
+                  BUY
+                </button>
+                <IconButton aria-label="Exit full screen" onClick={() => setMaximized(false)} className="ml-1 h-7 w-7">
+                  <CloseIcon className="h-4 w-4" />
+                </IconButton>
+              </div>
             </div>
           )}
           <div className="flex flex-1 items-center justify-center">
             {contract ? (
               contractCandles ? (
                 <TradeChart candles={contractCandles} height={chartHeight} liveLast={contractLtp ?? undefined} fitKey={`${q.symbol}|${contractKey}|${tf}`} intervalMinutes={TF_MINUTES[tf]} aria-label={`${q.symbol} ${contract.strike} ${contract.optionType} chart`} />
-              ) : (
+              ) : optionCandlesStatus === 'loading' ? (
                 <div className="w-full animate-pulse rounded bg-hover" style={{ height: chartHeight }} />
+              ) : (
+                <DataUnavailable
+                  title="No traded history for this contract"
+                  detail={`Dhan has no traded candles for ${q.symbol} ${contract.strike} ${contract.optionType}. Nothing is drawn — this panel no longer derives a Black-Scholes shape to fill the gap.`}
+                />
               )
             ) : candles ? (
               <TradeChart candles={candles} height={chartHeight} liveLast={liveMatch?.ltp} fitKey={`${q.symbol}|${tf}`} intervalMinutes={TF_MINUTES[tf]} aria-label={`${q.symbol} ${tf} chart`} />
-            ) : (
+            ) : candlesStatus === 'loading' ? (
               <div className="w-full animate-pulse rounded bg-hover" style={{ height: chartHeight }} />
+            ) : candlesReason === 'api-unreachable' ? (
+              <DataUnavailable
+                title="Market data API not connected"
+                detail="The Dhan live-feed bridge (port 4600) is not reachable, so no real candles could be loaded. Start it and reload — no simulated series will be drawn in the meantime."
+              />
+            ) : (
+              <DataUnavailable
+                title="No history available"
+                detail={`Dhan returned no candles for ${q.symbol} at ${tf}. Try a different timeframe, or check that this symbol is covered by the feed.`}
+              />
             )}
           </div>
           <p className="pt-2 text-center text-[10px] text-faint">
@@ -388,13 +477,13 @@ export default function ChartPanel({
               ? hasRealContractCandles
                 ? `${q.symbol} ${contract.strike} ${contract.optionType} · ${tf} — real traded OHLC for this contract from Dhan${realOptionLtp ? `, live premium ${fmt(realOptionLtp)} (matches the Option Chain tab)` : ''}.`
                 : realOptionLtp
-                  ? `${q.symbol} ${contract.strike} ${contract.optionType} · ${fmt(realOptionLtp)} — live premium is real (matches the Option Chain tab), but Dhan has no traded candle history for this contract${optionCandlesStatus === 'loading' ? ' loaded yet' : ''}; the shape below is derived from the underlying via Black-Scholes at IV ${contractIvPct.toFixed(1)}% and is NOT traded data.`
-                  : `${q.symbol} ${contract.strike} ${contract.optionType} — no live chain for this contract${optionQuoteStatus === 'loading' ? ' yet' : ''}; showing a Black-Scholes theoretical premium, NOT a traded price.`
+                  ? `${q.symbol} ${contract.strike} ${contract.optionType} · ${fmt(realOptionLtp)} — live premium is real (matches the Option Chain tab); Dhan has no traded candle history for this contract, so no chart is drawn.`
+                  : `${q.symbol} ${contract.strike} ${contract.optionType} — no live chain for this contract${optionQuoteStatus === 'loading' ? ' yet' : ''}. No premium and no chart: nothing here is estimated.`
               : realCandles
                 ? `${q.symbol} · ${tf} — real OHLC history from Dhan (charting by TradingView).`
-                : liveMatch
-                  ? `${q.symbol} · ${tf} — simulated history, rescaled to today's real Dhan LTP.`
-                  : `${q.symbol} · ${tf} — simulated candles (no live history for this symbol).`}
+                : candlesStatus === 'loading'
+                  ? `${q.symbol} · ${tf} — loading real history from Dhan…`
+                  : `${q.symbol} · ${tf} — no real data. Nothing is simulated.`}
           </p>
         </div>
       )}
