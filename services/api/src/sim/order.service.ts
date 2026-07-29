@@ -73,6 +73,14 @@ const INTRADAY_EQUITY_MARGIN_RATE = 0.2;
  * `underlyingSpot` is the live underlying price when the caller has one (the
  * option-chain response carries it). When absent, the contract's own strike is
  * used — a close proxy near the money, and always far closer than the premium.
+ *
+ * CALLERS MUST NOT APPLY THIS TO A REDUCING ORDER. This function answers "what
+ * does opening this exposure cost", and a closing order does the opposite — it
+ * releases the position's margin. Charging it as new exposure made positions
+ * impossible to exit: a SELL closing a long 780 NIFTY CALL was billed
+ * 24,250 × 780 × 0.13 = ₹24.6L against a ₹10L wallet and rejected as
+ * "Insufficient margin", three times in a row, with no way out of the trade.
+ * `placeOrder` gates on `computeOrderIntent` for exactly this reason.
  */
 function computeMargin(
   instrument: Instrument,
@@ -219,7 +227,12 @@ export class OrderService {
     if (input.type === 'MARKET') {
       const price = await this.marketPrice.getPrice(instrument);
       const fillPrice = input.side === 'BUY' ? price.ask : price.bid;
-      const margin = computeMargin(instrument, input.side, productType, fillPrice, input.quantity, price.underlyingSpot);
+      // A reducing order costs no margin — it RELEASES the position's own. See
+      // `requiredMargin`.
+      const margin =
+        intent === 'reduce'
+          ? 0
+          : computeMargin(instrument, input.side, productType, fillPrice, input.quantity, price.underlyingSpot);
       if (margin > Number(wallet.cashBalance)) {
         return this.rejectNewOrder(userId, instrument, input, productType, validity, 'Insufficient margin');
       }
@@ -251,13 +264,18 @@ export class OrderService {
     // than blocking ₹93 against a ₹2L risk; a failure degrades to the strike,
     // which computeMargin handles.
     const restingSpot =
-      instrument.type === 'OPTION' && input.side === 'SELL'
+      intent === 'open' && instrument.type === 'OPTION' && input.side === 'SELL'
         ? await this.marketPrice
             .getPrice(instrument)
             .then((p) => p.underlyingSpot)
             .catch(() => undefined)
         : undefined;
-    const margin = computeMargin(instrument, input.side, productType, referencePrice, input.quantity, restingSpot);
+    // Same rule as the MARKET branch — a resting order that reduces an existing
+    // position blocks nothing.
+    const margin =
+      intent === 'reduce'
+        ? 0
+        : computeMargin(instrument, input.side, productType, referencePrice, input.quantity, restingSpot);
     if (margin > Number(wallet.cashBalance)) {
       return this.rejectNewOrder(userId, instrument, input, productType, validity, 'Insufficient margin');
     }

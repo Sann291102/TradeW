@@ -17,6 +17,13 @@ export class ComplianceService {
   categoryFor(signal: Signal): string {
     if (signal.agent === 'emotion') return 'behavioral_pattern_observation';
     if (signal.agent === 'trap-safety') return 'market_risk_awareness';
+    // Risk Intelligence (Master Plan Module 6) reports the same class of
+    // concern as the trap agent — account, timing and volatility exposure —
+    // so it shares the risk-awareness label rather than inventing a second one.
+    if (signal.agent === 'risk') return 'market_risk_awareness';
+    // Strategy Engine (Module 2) describes structure, never a recommendation,
+    // so it belongs with the other structural observations.
+    if (signal.agent === 'strategy') return 'market_structure_observation';
     return 'market_structure_observation';
   }
 

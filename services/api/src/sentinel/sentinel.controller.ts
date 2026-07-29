@@ -71,6 +71,28 @@ export class SentinelController {
     return this.sentinel.observations(req.user.sub, limit ? Number(limit) : 50);
   }
 
+  /**
+   * Module 8 — the running session narrative. `since` returns only entries
+   * after that ISO timestamp, so a polling client appends rather than
+   * re-rendering the whole session.
+   */
+  @Get('timeline')
+  timeline(@Req() req: AuthedRequest, @Query('symbol') symbol?: string, @Query('since') since?: string) {
+    return this.sentinel.timeline(req.user.sub, symbol ?? 'NIFTY', since);
+  }
+
+  /** Module 2 — the strategy handbook Sentinel is currently monitoring. */
+  @Get('strategies')
+  strategies() {
+    return this.sentinel.strategies();
+  }
+
+  /** Module 11 — end-of-day review of the session Sentinel narrated. */
+  @Post('market-close/review')
+  marketCloseReview(@Req() req: AuthedRequest, @Body() body: { symbol?: string }) {
+    return this.sentinel.marketCloseReview(req.user.sub, body?.symbol ?? 'NIFTY');
+  }
+
   @Get('session-summary')
   sessionSummary(@Req() req: AuthedRequest) {
     return this.sentinel.sessionSummary(req.user.sub);

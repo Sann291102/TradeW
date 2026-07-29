@@ -1,23 +1,33 @@
-import { pretty, type Observation, type Signal, type Synthesis } from './types';
+import {
+  pretty,
+  type ConfidenceBreakdown,
+  type MarketProfile,
+  type MarketProfileType,
+  type Observation,
+  type Signal,
+  type Synthesis,
+} from './types';
 
 /**
- * Sentinel homepage redesign — market-context derivation layer.
+ * Sentinel — market-context presentation layer.
  *
- * `/sentinel/observe` returns raw `signals`/`observations`/`synthesis` (see
- * types.ts) — there is no backend concept yet of "day classification",
- * "market context tags", or "side confirmation". Rather than wait on new
- * endpoints, these are derived client-side from the real triggered-signal
- * data already returned today. Every derived field traces back to a real
- * `signal.weight`/`signal.evidence`/`observation.confidence` — nothing here
- * invents a number that isn't backed by an actual signal.
+ * This file used to *derive* the day classification and market context from
+ * raw signals, because the backend had no concept of either. That is no
+ * longer true: the Market Intelligence Engine now classifies the session into
+ * one of ten market profiles and the Confidence Engine publishes a scored,
+ * weighted figure (SENTINEL_MASTER_PLAN.md §4 Modules 1 and 7), both of which
+ * arrive on the `/observe` response.
  *
- * Where the underlying data genuinely doesn't exist yet (institutional
- * participation, trend/EMA state, options-side confirmation — none of which
- * have a backing signal in the current schema per
- * docs/product-architecture/MARKET-DATA-BASELINE.md), this reports "not
- * enough data yet" rather than fabricating a plausible-looking value. This
- * matters more here than almost anywhere else in the app: Sentinel's entire
- * premise is that its conclusions are trustworthy because they're
+ * So the server's reading is authoritative whenever it is present, and this
+ * layer only maps it into the page's vocabulary. The signal-derived path is
+ * retained solely as the fallback for demo mode and for a response that
+ * predates those fields — it is no longer a second opinion competing with the
+ * engine.
+ *
+ * One rule survives from the original design and still governs both paths:
+ * where the underlying data genuinely does not exist, report "not enough data
+ * yet" rather than fabricate a plausible-looking value. Sentinel's whole
+ * premise is that its conclusions are trustworthy because they are
  * evidence-backed, so a guessed value defeats the point.
  */
 
@@ -61,7 +71,6 @@ export const DAY_TYPES: DayTypeInfo[] = [
     label: 'Trend Day',
     summary: 'Direction resolves early and holds through to the close.',
     character: 'Pullbacks stay shallow and follow-through is unusually persistent — the opposite of a range session, where fading extremes is what tends to work.',
-    note: 'Needs trend and moving-average data, which Sentinel does not receive yet — this classification cannot be reached from today’s signals.',
   },
   {
     label: 'Selective Day',
@@ -120,18 +129,58 @@ function marketSignals(signals: Signal[]): Signal[] {
   return signals.filter((s) => s.agent === 'market-technical' || s.agent === 'trap-safety');
 }
 
-export function classifyDay(signals: Signal[]): DayClassification {
+/**
+ * Market Intelligence Engine profile → the page's day vocabulary.
+ * A ten-way structural classification collapses into the six labels the hero
+ * card speaks; the profile's own name and description are carried through in
+ * the explanation so nothing is lost in the mapping.
+ */
+const PROFILE_TO_DAY: Record<MarketProfileType, DayLabel> = {
+  'Bullish Trend Day': 'Trend Day',
+  'Bearish Trend Day': 'Trend Day',
+  'Gap & Go': 'Trend Day',
+  'Rally Continuation': 'Selective Day',
+  'Descent Continuation': 'Selective Day',
+  'Gap Fill / Mean Reversion': 'Selective Day',
+  'High Volatility Range': 'Choppy Day',
+  'Outside Day / Expansion': 'Choppy Day',
+  'Low Volatility Compression': 'Quiet Day',
+  'Inside Day': 'Quiet Day',
+};
+
+export function classifyDay(
+  signals: Signal[],
+  profile?: MarketProfile | null,
+  confidence?: ConfidenceBreakdown,
+): DayClassification {
   const market = marketSignals(signals);
   const triggered = market.filter((s) => s.triggered);
   const trapTriggered = triggered.filter((s) => s.agent === 'trap-safety');
   const names = triggered.map((s) => s.name);
+
+  // Structural risk still outranks the structural profile: a session can be a
+  // textbook trend day and still be one where breakouts are failing. Those
+  // two escalations are checked first, exactly as before.
+  const severeRisk = trapTriggered.length >= 2 && names.includes('elevated_vix');
+
+  if (profile && !severeRisk && trapTriggered.length === 0) {
+    const tags = [profile.type, ...triggered.map((s) => marketTag(s.name))];
+    return {
+      label: PROFILE_TO_DAY[profile.type],
+      confidence: confidence ? confidence.score / 100 : avgWeight(triggered),
+      explanation:
+        `${profile.type}: ${profile.description.toLowerCase()}. ${profile.evidence.join('. ')}.` +
+        (confidence ? ` Sentinel scores this at ${confidence.score}% confidence against a ${confidence.threshold}% threshold.` : ''),
+      supportingSignals: tags,
+    };
+  }
 
   // Sit Out Day sits above Trap-Prone Day in severity, so it is checked first
   // and deliberately requires corroboration rather than one bad signal:
   // multiple structural risks AND elevated volatility together. A single trap
   // signal is a Trap-Prone Day — never this. (SENTINEL.md §3: the orchestrator
   // only escalates when enough signals confirm each other.)
-  if (trapTriggered.length >= 2 && names.includes('elevated_vix')) {
+  if (severeRisk) {
     const tags = triggered.map((s) => marketTag(s.name));
     return {
       label: 'Sit Out Day',
@@ -179,16 +228,41 @@ export interface MarketContextDimension {
   known: boolean;
 }
 
-export function extractMarketContext(signals: Signal[]): { tags: string[]; dimensions: MarketContextDimension[] } {
+const STRUCTURE_LABEL: Record<MarketProfile['structure'], string> = {
+  trending: 'Trending',
+  ranging: 'Range-bound',
+  consolidating: 'Consolidating',
+  'breaking-out': 'Breaking out',
+};
+
+export function extractMarketContext(
+  signals: Signal[],
+  context?: { profile?: MarketProfile | null; confidence?: ConfidenceBreakdown; risk?: { level: string } },
+): { tags: string[]; dimensions: MarketContextDimension[] } {
   const market = marketSignals(signals);
   const triggered = market.filter((s) => s.triggered);
   const names = new Set(triggered.map((s) => s.name));
   const trapCount = triggered.filter((s) => s.agent === 'trap-safety').length;
+  const profile = context?.profile ?? null;
+
+  // Trend state and institutional participation used to read "not enough data
+  // yet" because nothing computed them. The Market Intelligence Engine now
+  // classifies structure, and the Confidence Engine's option-chain factor
+  // reports real front-expiry PCR and max pain, so both are answerable —
+  // but only when the response actually carries them.
+  const optionFactor = context?.confidence?.factors.find((f) => f.name === 'option_chain_pcr_support');
+  const optionKnown = !!optionFactor && optionFactor.evidence.some((e) => e.startsWith('Put-Call OI ratio'));
+  const liquiditySignal = names.has('liquidity_sweep') || names.has('stop_hunt');
+  const thinParticipation = names.has('below_average_participation');
 
   const dimensions: MarketContextDimension[] = [
     {
       label: 'Volatility',
-      value: names.has('elevated_vix') ? 'Elevated' : 'Normal',
+      value: profile
+        ? `${profile.volatility === 'high' ? 'Elevated' : profile.volatility === 'low' ? 'Compressed' : 'Normal'}${names.has('elevated_vix') ? ' · VIX elevated' : ''}`
+        : names.has('elevated_vix')
+          ? 'Elevated'
+          : 'Normal',
       known: true,
     },
     {
@@ -198,7 +272,11 @@ export function extractMarketContext(signals: Signal[]): { tags: string[]; dimen
     },
     {
       label: 'Market structure',
-      value: names.has('weak_breadth') ? 'Narrow / weak breadth' : 'Broad participation',
+      value: profile
+        ? `${STRUCTURE_LABEL[profile.structure]} — ${profile.type}`
+        : names.has('weak_breadth')
+          ? 'Narrow / weak breadth'
+          : 'Broad participation',
       known: true,
     },
     {
@@ -208,22 +286,35 @@ export function extractMarketContext(signals: Signal[]): { tags: string[]; dimen
     },
     {
       label: 'Liquidity condition',
-      value: names.has('liquidity_sweep') || names.has('stop_hunt') ? 'Stress detected' : 'Not enough data yet',
-      known: names.has('liquidity_sweep') || names.has('stop_hunt'),
+      value: liquiditySignal
+        ? 'Stress detected'
+        : thinParticipation
+          ? 'Thin participation'
+          : profile
+            ? 'No participation stress detected'
+            : 'Not enough data yet',
+      known: liquiditySignal || thinParticipation || !!profile,
     },
     {
       label: 'Trend state',
-      value: 'Not enough data yet',
-      known: false,
+      value: profile ? `${profile.trend === 'choppy' ? 'Choppy / two-sided' : capitalise(profile.trend)}` : 'Not enough data yet',
+      known: !!profile,
     },
     {
       label: 'Institutional participation',
-      value: 'Not enough data yet — needs option-flow data',
-      known: false,
+      value: optionKnown
+        ? optionFactor!.evidence.filter((e) => e.startsWith('Put-Call') || e.startsWith('Max pain')).join(' · ')
+        : 'Not enough data yet — this instrument publishes no option chain',
+      known: optionKnown,
     },
   ];
 
-  return { tags: triggered.map((s) => marketTag(s.name)), dimensions };
+  const tags = [...(profile ? [profile.type] : []), ...triggered.map((s) => marketTag(s.name))];
+  return { tags, dimensions };
+}
+
+function capitalise(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 export type ActionLabel = 'Wait & Watch' | 'Setup Forming' | 'Side in Focus' | 'Enough' | 'Book & Breathe' | 'Trail or Exit' | 'Pause';
@@ -257,6 +348,12 @@ const MARKET_PUSH_THRESHOLD = 0.8;
 
 function isPushworthy(agent: string, confidence: number): boolean {
   if (agent === 'emotion' || agent === 'trap-safety' || agent === 'orchestrator') return true;
+  // Risk Intelligence only emits a signal once a factor is already in the
+  // elevated band, so anything it produces is an event, not ambient context.
+  if (agent === 'risk') return true;
+  // A strategy observation only reaches the feed once its rules fully
+  // confirmed — a forming setup is context, not something to interrupt with.
+  if (agent === 'strategy') return confidence >= MARKET_PUSH_THRESHOLD;
   if (agent === 'market-technical') return confidence >= MARKET_PUSH_THRESHOLD;
   return false;
 }
@@ -278,6 +375,25 @@ const ACTION_MAP: Record<string, ActionLabel> = {
   gamma_squeeze_iv_crush: 'Setup Forming',
   elevated_vix: 'Setup Forming',
   overbought_rsi: 'Trail or Exit',
+  // Strategy Engine (Master Plan Module 2) — a confirmed setup is the one
+  // case the page can honestly call a side.
+  orb_retest: 'Side in Focus',
+  cpr_breakout_bounce: 'Side in Focus',
+  vwap_pullback: 'Side in Focus',
+  ema_cross_bounce: 'Side in Focus',
+  liquidity_sweep_strategy: 'Wait & Watch',
+  fake_breakout: 'Wait & Watch',
+  ict_smart_money: 'Setup Forming',
+  wyckoff_spring_upthrust: 'Setup Forming',
+  // Risk Intelligence (Module 6) — every elevated factor is a reason to slow down.
+  elevated_market_risk: 'Wait & Watch',
+  elevated_trade_risk: 'Wait & Watch',
+  elevated_position_risk: 'Enough',
+  elevated_volatility_risk: 'Setup Forming',
+  elevated_news_risk: 'Wait & Watch',
+  elevated_emotional_risk: 'Pause',
+  elevated_liquidity_risk: 'Wait & Watch',
+  elevated_time_risk: 'Book & Breathe',
 };
 
 /** Neutral, non-implementation-revealing source labels — replaces the
@@ -287,6 +403,8 @@ const SOURCE_LABEL: Record<string, string> = {
   'market-technical': 'Market signal',
   emotion: 'Behavioral signal',
   'trap-safety': 'Structural risk signal',
+  strategy: 'Strategy rule match',
+  risk: 'Risk factor',
   'compliance-audit': 'Compliance note',
   orchestrator: 'Corroborated across signals',
 };

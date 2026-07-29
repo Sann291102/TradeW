@@ -38,6 +38,22 @@ async function refreshAccessToken() {
   return true;
 }
 
+/**
+ * An API call that reached the server and came back non-OK. Carries the HTTP
+ * status so callers can tell "not signed in" (401) from "the service behind
+ * this route is down" (5xx) — a distinction the UI must surface accurately
+ * rather than collapsing every failure into one message. A thrown TypeError
+ * (rather than this) means the API itself was unreachable.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 export async function api(path: string, options: RequestInit = {}) {
   const token = getToken();
   const res = await fetch(`${API_URL}${path}`, {
@@ -60,11 +76,11 @@ export async function api(path: string, options: RequestInit = {}) {
       },
     });
     const retryData = await retry.json().catch(() => ({}));
-    if (!retry.ok) throw new Error(retryData.message || 'API request failed');
+    if (!retry.ok) throw new ApiError(retryData.message || 'API request failed', retry.status);
     return retryData;
   }
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || 'API request failed');
+  if (!res.ok) throw new ApiError(data.message || 'API request failed', res.status);
   return data;
 }

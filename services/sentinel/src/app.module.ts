@@ -38,14 +38,21 @@ import {
   RETRIEVER,
 } from './brain/tokens';
 import { ComplianceService } from './compliance/compliance.service';
+import { ConfidenceEngine } from './confidence/confidence.engine';
 import { ExplainService } from './explain/explain.service';
+import { ContinuousImprovementService } from './improvement/continuous-improvement.service';
 import { EmotionIntelligenceService } from './intelligence/emotion-intelligence.service';
 import { MARKET_DATA, MarketIntelligenceService } from './intelligence/market-intelligence.service';
 import { NewsIntelligenceService } from './intelligence/news-intelligence.service';
+import { RiskIntelligenceService } from './intelligence/risk-intelligence.service';
+import { StrategyEngineService } from './intelligence/strategy-engine.service';
 import { TrapIntelligenceService } from './intelligence/trap-intelligence.service';
 import { CandleMarketDataProvider } from './market-data/candle-market-data.provider';
+import { MarketCloseAnalysisService } from './market-close/market-close-analysis.service';
 import { SentinelOrchestratorService } from './orchestrator/sentinel-orchestrator.service';
 import { PrismaService } from './prisma.service';
+import { MarketStateMachineService } from './state-machine/state-machine.service';
+import { MarketTimelineEngine } from './timeline/timeline.engine';
 
 const SENTINEL_BRAIN_SYSTEM_PROMPT =
   'You are the TradeW Sentinel Neural Brain — persistent market intelligence and trading-psychology memory. ' +
@@ -70,10 +77,23 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
     // fault-tolerance). The old standalone simulator file is preserved at
     // archive/sentinel-sim-market-data.provider.ts.txt per CLAUDE.md Rule 1.
     { provide: MARKET_DATA, useClass: CandleMarketDataProvider },
+    // ---- Sentinel Intelligence Core (SENTINEL_MASTER_PLAN.md §4) ----
+    // Module 1 Market Intelligence, 2 Strategy Engine, 4 News, 6 Risk,
+    // 7 Confidence, 8 Timeline, 9 State Machine, 11 Market Close,
+    // 12 Continuous Improvement. Modules 3 (Historical) and 5 (Learning) are
+    // served by the Brain providers below, and Module 10 (Vocabulary) is a
+    // pure module applied by the orchestrator and explain service.
     MarketIntelligenceService,
     EmotionIntelligenceService,
     TrapIntelligenceService,
     NewsIntelligenceService,
+    StrategyEngineService,
+    RiskIntelligenceService,
+    ConfidenceEngine,
+    MarketStateMachineService,
+    MarketTimelineEngine,
+    MarketCloseAnalysisService,
+    ContinuousImprovementService,
     ComplianceService,
     SentinelOrchestratorService,
     ExplainService,

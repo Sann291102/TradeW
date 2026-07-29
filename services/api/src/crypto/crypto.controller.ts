@@ -1,15 +1,25 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
-import { AuthGuard } from '../auth/auth.guard';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import { CryptoService } from './crypto.service';
 
 /**
  * Crypto market data (Binance). Read-only — there is deliberately no order
  * route here; see CryptoService for why crypto is not placeable yet.
- *
- * Authenticated like every other market-data surface, but not entitlement-
- * gated: this is base market data, not premium intelligence.
  */
-@UseGuards(AuthGuard)
+/**
+ * PUBLIC — no AuthGuard.
+ *
+ * This is read-only public market data: no user scoping, no account state,
+ * nothing that varies by who is asking. It was auth-gated while the Dhan feed
+ * (Indian quotes, charts, option chain) was already fully public through the
+ * bridge, so a signed-out visitor saw live NIFTY prices but "Missing bearer
+ * token" on crypto and news. That was an inconsistency, not a security
+ * boundary — anyone can read these numbers from Binance, the newswires or the
+ * vendor directly.
+ *
+ * Everything user-scoped (orders, positions, wallet, discipline) stays behind
+ * AuthGuard. Vendor quota is protected by the server-side cache, not by auth:
+ * upstream cost is a function of time, not of how many callers there are.
+ */
 @Controller('crypto')
 export class CryptoController {
   constructor(private readonly crypto: CryptoService) {}

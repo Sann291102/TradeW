@@ -1,5 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { AuthGuard } from '../auth/auth.guard';
+import { Controller, Get, Query } from '@nestjs/common';
 import { StocksService } from './stocks.service';
 
 /**
@@ -9,7 +8,21 @@ import { StocksService } from './stocks.service';
  * Routed under /us-stocks rather than /stocks so it can never be confused with
  * the Indian equity surface, which is served by Dhan through /market-data.
  */
-@UseGuards(AuthGuard)
+/**
+ * PUBLIC — no AuthGuard.
+ *
+ * This is read-only public market data: no user scoping, no account state,
+ * nothing that varies by who is asking. It was auth-gated while the Dhan feed
+ * (Indian quotes, charts, option chain) was already fully public through the
+ * bridge, so a signed-out visitor saw live NIFTY prices but "Missing bearer
+ * token" on crypto and news. That was an inconsistency, not a security
+ * boundary — anyone can read these numbers from Binance, the newswires or the
+ * vendor directly.
+ *
+ * Everything user-scoped (orders, positions, wallet, discipline) stays behind
+ * AuthGuard. Vendor quota is protected by the server-side cache, not by auth:
+ * upstream cost is a function of time, not of how many callers there are.
+ */
 @Controller('us-stocks')
 export class StocksController {
   constructor(private readonly stocks: StocksService) {}

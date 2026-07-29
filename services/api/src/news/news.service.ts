@@ -1,4 +1,6 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { securityLog } from '../common/security-log';
+import { validateFeedUrl } from './feed-url';
 
 /**
  * Market news — real headlines from Indian financial newswires.
@@ -134,10 +136,19 @@ export class NewsService {
  * one endpoint. It reads only well-formed <item> blocks and skips anything it
  * cannot make a title and link out of, so a malformed feed yields fewer items
  * rather than throwing.
+ *
+ * SECURITY: `<link>` is validated by `validateFeedUrl` before it can reach the
+ * response. The value ends up in an `<a href>` in the browser, and React does
+ * not block dangerous URL schemes in `href` — so a `javascript:` link in a feed
+ * would be a click-to-execute XSS in the origin that holds the API bearer token.
+ * Only http/https survive; an item whose link is rejected is DROPPED, because a
+ * headline with no working link is not worth rendering. Title and summary
+ * handling is unchanged (React escapes them as text content).
  */
 function parseRss(xml: string, feed: FeedSource): NewsItemDto[] {
   const out: NewsItemDto[] = [];
   const blocks = xml.split('<item>').slice(1);
+  const rejected: Record<string, number> = {};
 
   for (const raw of blocks) {
     const block = raw.split('</item>')[0];
@@ -145,19 +156,42 @@ function parseRss(xml: string, feed: FeedSource): NewsItemDto[] {
     const link = tag(block, 'link');
     if (!title || !link) continue;
 
+    const validated = validateFeedUrl(link);
+    if (!validated.ok) {
+      // Counted and logged in aggregate below rather than one line per item: a
+      // broken feed would otherwise flood the log, and the useful signal is
+      // "this publisher started emitting links we refuse", not each instance.
+      rejected[validated.reason] = (rejected[validated.reason] ?? 0) + 1;
+      continue;
+    }
+
     const pubDate = tag(block, 'pubDate');
     const published = pubDate ? new Date(pubDate) : null;
 
     out.push({
-      // The publisher's own guid when present; the link is a stable fallback
-      // and is what de-duplication keys on anyway.
-      id: tag(block, 'guid') || link,
+      // The publisher's own guid when present; the VALIDATED link is the
+      // fallback — never the raw one, or an unvalidated URL could re-enter
+      // through the id field.
+      id: tag(block, 'guid') || validated.url,
       title: decodeEntities(title),
       summary: decodeEntities(stripHtml(tag(block, 'description') ?? '')).slice(0, 400),
-      url: link,
+      url: validated.url,
       publishedAt: published && !Number.isNaN(published.getTime()) ? published.toISOString() : new Date().toISOString(),
       category: feed.label,
       publisher: feed.publisher,
+    });
+  }
+
+  // A publisher that suddenly emits unusable links is worth knowing about, and a
+  // `disallowed_scheme` count above zero is a security signal rather than a
+  // parsing nuisance — it means feed content tried to reach the browser with a
+  // scheme this application will not render.
+  const rejectedCount = Object.values(rejected).reduce((a, b) => a + b, 0);
+  if (rejectedCount > 0) {
+    securityLog({
+      event: 'news.feed.links_rejected',
+      outcome: 'denied',
+      detail: { publisher: feed.publisher, category: feed.label, rejectedCount, reasons: rejected },
     });
   }
   return out;

@@ -1,46 +1,41 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Candle, CandleInterval } from '@tradew/types';
-import { mockMarketDataProvider } from '../mock/candles';
 import { fetchDhanCandles } from '../dhanLiveFeed';
 
-export type CandlesStatus = 'loading' | 'live' | 'preview';
+export type CandlesStatus = 'loading' | 'live' | 'unavailable';
 
 /**
- * Loads OHLCV candles for a symbol/interval.
+ * Why no series is available. The UI states this instead of drawing something.
+ *  - 'api-unreachable' — the Dhan bridge could not be reached at all.
+ *  - 'no-history'      — the bridge answered, Dhan has no bars for this symbol.
+ */
+export type CandlesUnavailableReason = 'api-unreachable' | 'no-history';
+
+/**
+ * Loads REAL OHLCV candles for a symbol/interval from the Dhan bridge's
+ * `/candles` route (which proxies Dhan's Historical Data REST API).
  *
- * Prefers REAL history from the Dhan bridge's /candles route (which proxies
- * Dhan's Historical Data API) — that's genuine OHLC for the TradingView
- * (lightweight-charts) chart, status 'live'. Falls back to the simulated
- * generator (rescaled to `anchorPrice` when given) for symbols the bridge
- * doesn't cover, or if the bridge/Data-API call fails — status 'preview'.
+ * There is deliberately NO fallback series. Per the 2026-07-26 no-fabricated-
+ * data rule, a chart with no real history renders nothing and says why. The
+ * previous behaviour — dropping to a simulated generator rescaled onto the
+ * live LTP — made a bridge outage look like a quiet but functioning market,
+ * which is the single most expensive kind of wrong a trading screen can be.
  */
 export function useCandles(
   symbol: string,
   interval: CandleInterval,
   days = 5,
-  /** Real live LTP (Dhan bridge) — used only for the simulated fallback,
-   *  which rescales its series to end on it. Ignored when real candles load. */
-  anchorPrice?: number,
-): { candles: Candle[] | null; status: CandlesStatus } {
+): { candles: Candle[] | null; status: CandlesStatus; reason: CandlesUnavailableReason | null } {
   const [candles, setCandles] = useState<Candle[] | null>(null);
   const [status, setStatus] = useState<CandlesStatus>('loading');
-  // anchorPrice moves on every live tick. It must NOT be an effect dependency —
-  // otherwise the series reloads (and the chart refits, wiping the user's zoom)
-  // several times a second, and the /candles route gets hammered. Read it via a
-  // ref so the simulated fallback still scales to the latest LTP at fetch time,
-  // while the reload only fires on a genuine symbol/interval/window change. The
-  // chart tracks live price separately, by patching its last bar (see
-  // TradeChart's `liveLast`).
-  const anchorRef = useRef(anchorPrice);
-  anchorRef.current = anchorPrice;
+  const [reason, setReason] = useState<CandlesUnavailableReason | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setStatus('loading');
-    const to = new Date();
-    const from = new Date(to.getTime() - days * 86_400_000);
+    setReason(null);
 
     async function load() {
       try {
@@ -49,22 +44,27 @@ export function useCandles(
         if (real.length > 0) {
           setCandles(real.map((c) => ({ ...c, timestamp: new Date(c.timestamp) })));
           setStatus('live');
+          setReason(null);
           return;
         }
+        // Bridge answered; Dhan simply has no bars for this symbol/interval.
+        setCandles(null);
+        setStatus('unavailable');
+        setReason('no-history');
       } catch {
-        // fall through to the simulated generator below
+        // fetch threw — the bridge process is not running or not reachable.
+        if (cancelled) return;
+        setCandles(null);
+        setStatus('unavailable');
+        setReason('api-unreachable');
       }
-      const mock = await mockMarketDataProvider.getCandles(symbol, interval, from, to, anchorRef.current);
-      if (cancelled) return;
-      setCandles(mock);
-      setStatus('preview');
     }
 
-    load();
+    void load();
     return () => {
       cancelled = true;
     };
   }, [symbol, interval, days]);
 
-  return { candles, status };
+  return { candles, status, reason };
 }

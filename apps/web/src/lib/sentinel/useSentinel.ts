@@ -1,13 +1,35 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '@/lib/api';
-import { DEMO, DEMO_JOURNAL, DEMO_SUMMARY, type JournalEntry, type ObserveResponse, type SessionSummaryData } from './types';
+import { api, ApiError } from '@/lib/api';
+import type { JournalEntry, ObserveResponse, SessionSummaryData } from './types';
 
 /**
- * Sentinel data/logic — extracted from the original `/sentinel` page so
- * behavior (both live endpoints + demo-mode fallback) is unchanged across the
- * shared-shell migration. See docs/product-architecture/SENTINEL.md §5.
+ * Why the workspace has no observation to show.
+ *
+ * There is deliberately no demo/sample fallback. Rendering canned DEMO data
+ * on failure meant an expired session, an API outage and a dead Sentinel
+ * service all looked like a working product — and the banner told every one
+ * of them "sign in for live analysis", which was wrong in two cases out of
+ * three. Sentinel now shows nothing and names the actual fault.
+ */
+export type SentinelUnavailable =
+  | { kind: 'unauthenticated' }
+  | { kind: 'api-unreachable' }
+  | { kind: 'service-error'; status: number; message: string };
+
+function classify(err: unknown): SentinelUnavailable {
+  if (err instanceof ApiError) {
+    if (err.status === 401 || err.status === 403) return { kind: 'unauthenticated' };
+    return { kind: 'service-error', status: err.status, message: err.message };
+  }
+  // fetch itself threw — services/api is not reachable at NEXT_PUBLIC_API_URL.
+  return { kind: 'api-unreachable' };
+}
+
+/**
+ * Sentinel data/logic for the `/sentinel` workspace.
+ * See docs/product-architecture/SENTINEL.md §5.
  *
  * `symbol` is user-centric market selection: the whole workspace re-derives
  * for whichever market the "market head" selector points at, and `/observe`
@@ -17,7 +39,7 @@ export function useSentinel(symbol: string = 'NIFTY') {
   const [data, setData] = useState<ObserveResponse | null>(null);
   const [summary, setSummary] = useState<SessionSummaryData | null>(null);
   const [journal, setJournal] = useState<JournalEntry[]>([]);
-  const [demoMode, setDemoMode] = useState(false);
+  const [unavailable, setUnavailable] = useState<SentinelUnavailable | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
@@ -25,19 +47,20 @@ export function useSentinel(symbol: string = 'NIFTY') {
     try {
       const observe = (await api('/sentinel/observe', { method: 'POST', body: JSON.stringify({ symbol }) })) as ObserveResponse;
       setData(observe);
-      setDemoMode(false);
+      setUnavailable(null);
       try {
         setSummary((await api('/sentinel/session-summary')) as SessionSummaryData);
         setJournal((await api('/sentinel/journal?limit=10')) as JournalEntry[]);
       } catch {
-        /* secondary panels degrade independently */
+        /* secondary panels degrade independently — primary observation stands */
       }
-    } catch {
-      // API offline or not signed in — render the workspace with sample data
-      setData(DEMO);
-      setSummary(DEMO_SUMMARY);
-      setJournal(DEMO_JOURNAL);
-      setDemoMode(true);
+    } catch (err) {
+      // No fallback data. Clear everything so no stale or canned observation
+      // can be mistaken for a live read.
+      setData(null);
+      setSummary(null);
+      setJournal([]);
+      setUnavailable(classify(err));
     } finally {
       setLoading(false);
     }
@@ -47,15 +70,21 @@ export function useSentinel(symbol: string = 'NIFTY') {
     void refresh();
   }, [refresh]);
 
-  const addJournal = useCallback(async (content: string, mood: string) => {
-    if (!content.trim()) return;
+  /**
+   * Returns false when the entry could not be persisted. The previous
+   * behaviour pushed a local-only entry into the list on failure, so the
+   * trader saw a journal entry that did not exist on the server.
+   */
+  const addJournal = useCallback(async (content: string, mood: string): Promise<boolean> => {
+    if (!content.trim()) return false;
     try {
       await api('/sentinel/journal', { method: 'POST', body: JSON.stringify({ content, mood }) });
       setJournal((await api('/sentinel/journal?limit=10')) as JournalEntry[]);
+      return true;
     } catch {
-      setJournal((j) => [{ id: `local-${Date.now()}`, mood, content, flaggedByAi: false, createdAt: new Date().toISOString() }, ...j]);
+      return false;
     }
   }, []);
 
-  return { data, summary, journal, demoMode, loading, refresh, addJournal };
+  return { data, summary, journal, unavailable, loading, refresh, addJournal };
 }

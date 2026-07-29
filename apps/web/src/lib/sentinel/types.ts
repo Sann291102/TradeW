@@ -12,7 +12,15 @@
  * them there with neutral, non-implementation-revealing labels).
  */
 
-export type Synthesis = { content: string; pattern: string; confidence: number; disclaimer: string };
+export type Synthesis = {
+  content: string;
+  pattern: string;
+  confidence: number;
+  disclaimer: string;
+  /** non-directive headline, e.g. "Bullish side in focus" (Master Plan Module 10) */
+  status?: string;
+  state?: MarketStateValue;
+};
 export type Observation = {
   agent: string;
   category: string;
@@ -25,7 +33,127 @@ export type Observation = {
   surfaced?: boolean;
 };
 export type Signal = { name: string; agent: string; triggered: boolean; weight: number; evidence: string[] };
-export type ObserveResponse = { synthesis: Synthesis | null; observations: Observation[]; signals: Signal[] };
+
+// ---------------------------------------------------------------------------
+// Sentinel Master Plan modules. Mirrors services/sentinel/src/domain.ts, which
+// services/api proxies through verbatim. Every field is optional here: the
+// offline/demo fixture below and any older cached response must still satisfy
+// the type, and each panel already has a signal-derived fallback path.
+
+export type MarketProfileType =
+  | 'Bullish Trend Day'
+  | 'Bearish Trend Day'
+  | 'High Volatility Range'
+  | 'Low Volatility Compression'
+  | 'Gap & Go'
+  | 'Gap Fill / Mean Reversion'
+  | 'Inside Day'
+  | 'Outside Day / Expansion'
+  | 'Rally Continuation'
+  | 'Descent Continuation';
+
+export type MarketProfile = {
+  type: MarketProfileType;
+  description: string;
+  trend: 'bullish' | 'bearish' | 'neutral' | 'choppy';
+  volatility: 'high' | 'low' | 'normal';
+  structure: 'trending' | 'ranging' | 'consolidating' | 'breaking-out';
+  evidence: string[];
+};
+
+export type StrategyMatch = {
+  strategyId: string;
+  strategyName: string;
+  confidence: number;
+  bias: 'bullish' | 'bearish' | 'neutral';
+  rulesMatched: string[];
+  rulesUnmet: string[];
+  invalidationsTriggered: string[];
+  detectedAt: string;
+};
+
+export type RiskFactor = { name: string; score: number; weight: number; evidence: string[] };
+export type RiskAssessment = {
+  overallRisk: number;
+  level: 'very_low' | 'low' | 'moderate' | 'high' | 'extreme';
+  factors: RiskFactor[];
+  assessedAt: string;
+};
+
+export type ConfidenceFactor = { name: string; label: string; score: number; weight: number; evidence: string[] };
+export type ConfidenceBreakdown = {
+  score: number;
+  weightedScore: number;
+  threshold: number;
+  meetsThreshold: boolean;
+  factors: ConfidenceFactor[];
+  deductions: { reason: string; points: number }[];
+  computedAt: string;
+};
+
+export type MarketStateValue =
+  | 'PRE_MARKET'
+  | 'OBSERVATION'
+  | 'MARKET_UNDERSTANDING'
+  | 'STRATEGY_DETECTION'
+  | 'VALIDATION'
+  | 'WAIT_AND_WATCH'
+  | 'SIDE_IN_FOCUS'
+  | 'OPPORTUNITY_ACTIVE'
+  | 'MOVE_DEVELOPING'
+  | 'MOMENTUM_WEAKENING'
+  | 'MOVE_COMPLETE'
+  | 'MARKET_CLOSE';
+
+export type MarketStateSnapshot = {
+  current: MarketStateValue;
+  previous: MarketStateValue | null;
+  since: string;
+  sessionPhase: 'pre-market' | 'active' | 'closing' | 'closed';
+  history: { from: MarketStateValue; to: MarketStateValue; at: string; trigger: string }[];
+};
+
+export type TimelineLevel = 'info' | 'observation' | 'setup' | 'guidance' | 'transition';
+export type TimelineEntry = {
+  at: string;
+  /** HH:mm IST, precomputed server-side so every surface renders it identically */
+  time: string;
+  event: string;
+  level: TimelineLevel;
+  confidence?: number;
+  state?: MarketStateValue;
+};
+
+/** The "Why?" inspector payload (Master Plan §5). */
+export type ConfidenceExplanation = {
+  status: string;
+  score: number;
+  threshold: number;
+  meetsThreshold: boolean;
+  matchedStrategies: string[];
+  confirmingIndicators: string[];
+  historicalPrecedent: string;
+  newsEnvironment: string;
+  riskNotes: string[];
+  deductions: string[];
+  timingRationale: string;
+  learningReferences: string[];
+  factorScores: Record<string, number>;
+};
+
+export type ObserveResponse = {
+  synthesis: Synthesis | null;
+  observations: Observation[];
+  signals: Signal[];
+  marketContext?: string;
+  marketProfile?: MarketProfile | null;
+  strategyMatches?: StrategyMatch[];
+  risk?: RiskAssessment;
+  confidence?: ConfidenceBreakdown;
+  marketState?: MarketStateSnapshot;
+  timeline?: TimelineEntry[];
+  explanation?: ConfidenceExplanation;
+};
 export type SessionSummaryData = { tradesToday: number; flaggedEvents: number; realizedPnl: number };
 export type JournalEntry = { id: string; mood?: string | null; content: string; flaggedByAi: boolean; createdAt: string };
 
