@@ -17,6 +17,23 @@ class RefreshDto {
   refreshToken!: string;
 }
 
+class ForgotPasswordDto {
+  @IsEmail()
+  email!: string;
+}
+
+class ResetPasswordDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  code!: string;
+
+  @IsString()
+  @MinLength(6)
+  newPassword!: string;
+}
+
 class UpdateProfileDto {
   @IsOptional()
   @IsString()
@@ -52,6 +69,18 @@ export class AuthController {
 
   @Post('refresh')
   refresh(@Req() req: any, @Body() dto: RefreshDto) { return this.auth.refresh(dto.refreshToken, meta(req)); }
+
+  /** Password reset step 1 — email a one-time code. Public and enumeration-safe. */
+  @Post('password/forgot')
+  forgotPassword(@Req() req: any, @Body() dto: ForgotPasswordDto) {
+    return this.auth.requestPasswordReset(dto.email, meta(req));
+  }
+
+  /** Password reset step 2 — verify the code and set the new password. Public. */
+  @Post('password/reset')
+  resetPassword(@Req() req: any, @Body() dto: ResetPasswordDto) {
+    return this.auth.resetPassword(dto.email, dto.code, dto.newPassword, meta(req));
+  }
 
   @UseGuards(AuthGuard)
   @Post('logout')

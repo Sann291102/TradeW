@@ -8,15 +8,15 @@ import { useSessionStore } from '@/lib/store/sessionStore';
 
 function friendlyError(message: string): string {
   if (/fetch|network|load failed/i.test(message)) {
-    return "Couldn't reach the TradeW server. Check that the API is running and NEXT_PUBLIC_API_URL is set correctly — you can still explore the workspace without signing in.";
+    return "Couldn't reach the TradeW server. Check that the API is running and NEXT_PUBLIC_API_URL is set correctly.";
   }
   return message || 'Something went wrong. Please try again.';
 }
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('founder@tradew.local');
-  const [password, setPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -76,8 +76,8 @@ export default function LoginPage() {
           <Link className="text-teal hover:underline" href="/signup">
             Need an account?
           </Link>
-          <Link className="text-muted hover:text-text" href="/dashboard">
-            Explore without signing in →
+          <Link className="text-muted hover:text-text" href="/reset">
+            Forgot password?
           </Link>
         </div>
       </Card>

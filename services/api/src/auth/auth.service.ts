@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes, createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { OtpService } from './otp.service';
 
 type RequestMeta = { ip?: string; userAgent?: string };
 
@@ -10,7 +11,59 @@ type RequestMeta = { ip?: string; userAgent?: string };
 export class AuthService {
   private readonly refreshDays = Number(process.env.REFRESH_TOKEN_DAYS || 30);
 
-  constructor(private readonly prisma: PrismaService, private readonly jwt: JwtService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwt: JwtService,
+    private readonly otp: OtpService,
+  ) {}
+
+  /**
+   * Password reset — step 1: email a one-time code.
+   *
+   * Account enumeration is the whole risk here, so the response is IDENTICAL
+   * whether or not the address has an account: a code is only actually minted
+   * and sent when the user exists, but the caller can never tell the
+   * difference from the return value. `devCode` is surfaced only in dev (SMTP
+   * unconfigured), and only when a user genuinely exists, so it cannot be used
+   * to probe for accounts on a properly-configured deployment.
+   */
+  async requestPasswordReset(email: string, meta: RequestMeta = {}): Promise<{ ok: true; devCode?: string }> {
+    const normalized = email.trim().toLowerCase();
+    const user = await this.prisma.user.findUnique({ where: { email: normalized } });
+    if (!user) {
+      // Deliberately do nothing observable — same shape, no email sent.
+      return { ok: true };
+    }
+    const { devCode } = await this.otp.request(normalized, 'password_reset');
+    await this.audit('user.password_reset.requested', user.id, meta);
+    return devCode ? { ok: true, devCode } : { ok: true };
+  }
+
+  /**
+   * Password reset — step 2: verify the code and set the new password.
+   *
+   * On success EVERY existing session is revoked: a reset is exactly the
+   * action you take when you fear the account is compromised, so leaving old
+   * refresh tokens alive would defeat it.
+   */
+  async resetPassword(email: string, code: string, newPassword: string, meta: RequestMeta = {}): Promise<{ ok: true }> {
+    const normalized = email.trim().toLowerCase();
+    // Throws BadRequest on a wrong/expired/exhausted code — same generic
+    // message the OTP service uses, so nothing leaks here either.
+    await this.otp.verify(normalized, 'password_reset', code);
+
+    const user = await this.prisma.user.findUnique({ where: { email: normalized } });
+    if (!user) throw new BadRequestException('That code is invalid or has expired.');
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await this.prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+    await this.prisma.refreshToken.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    await this.audit('user.password_reset.success', user.id, meta);
+    return { ok: true };
+  }
 
   async signup(email: string, password: string, meta: RequestMeta = {}) {
     const normalizedEmail = email.trim().toLowerCase();
