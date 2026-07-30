@@ -1,117 +1,75 @@
 /**
- * Types for the AI Learning Platform frontend — mirror the services/api
- * `/learning/*` responses (Slice 2). Kept minimal: only the fields the UI
- * renders.
+ * Learning Hub content model. The source of truth is the markdown frontmatter
+ * in `docs/learning/` — see that folder's README for the authoring contract.
+ * These types mirror it exactly; when the contract changes, both move together.
  */
 
-export type AccessReason = 'admin' | 'free' | 'pro' | 'requires_pro';
+export type LegAction = 'BUY' | 'SELL';
+export type LegKind = 'CE' | 'PE' | 'FUT' | 'EQ';
+export type LegExpiry = 'near' | 'next' | 'far';
+export type NetFlow = 'debit' | 'credit' | 'zero';
+export type Tier = 'beginner' | 'intermediate' | 'advanced';
 
-export interface LessonStub {
-  id: string;
-  title: string;
-  conceptId: string;
-  order: number;
+/**
+ * A strategy leg as authored — strike is RELATIVE (`ATM`, `ATM+2`, `ATM-3`),
+ * never absolute. `strikeOffset` is that offset already parsed into a signed
+ * number of strike steps, so resolving against a live underlying is
+ * `atm + strikeOffset * strikeStep` and nothing else.
+ *
+ * Relative strikes are what let one lesson apply to NIFTY at 24,800 and to a
+ * stock at 430 without editing the lesson.
+ */
+export interface StrategyLeg {
+  action: LegAction;
+  kind: LegKind;
+  /** Verbatim authored value, e.g. "ATM+2" — kept for display. */
+  strike: string;
+  /** Parsed offset in strike steps. "ATM" -> 0, "ATM+2" -> 2, "ATM-3" -> -3. */
+  strikeOffset: number;
+  ratio: number;
+  expiry: LegExpiry;
 }
 
-export interface CourseCard {
+/** A leg with its strike resolved against a real underlying price. */
+export interface ResolvedLeg extends StrategyLeg {
+  /** Absolute strike in rupees. */
+  strikePrice: number;
+  /** Estimated premium per unit, from Black-Scholes. Never a live quote. */
+  premium: number;
+}
+
+export interface Strategy {
   id: string;
   name: string;
-  tier: string;
+  category: string;
+  tier: Tier;
   summary: string;
-  free: boolean;
-  lessonCount: number;
-  lessons: LessonStub[];
-  locked: boolean;
-  accessReason: AccessReason;
-  progress: { completed: number; total: number; pct: number };
+  /** Backing knowledge-base concept id, if the lesson declares one. */
+  concept?: string;
+  legs: StrategyLeg[];
+  net: NetFlow;
+  outlook: string;
+  maxProfit: string;
+  maxLoss: string;
+  breakeven: string;
+  greeks: Record<string, string>;
+  /** One sentence shown under the chart after Apply. */
+  chartNote: string;
+  /** Repo-relative path of the lesson, for provenance and deep links. */
+  path: string;
+  /** The lesson markdown below the frontmatter. */
+  body: string;
 }
 
-export interface CoursesResponse {
-  isAdmin: boolean;
-  hasPro: boolean;
-  courses: CourseCard[];
-  progress: {
-    overallPct: number;
-    streak: number;
-    lastActivityAt: string | null;
-    continueLearning: { lessonId: string; courseId: string } | null;
-  };
-}
-
-export interface LessonExample {
-  title: string;
-  context: string;
-  outcome: string;
-  date?: string;
-}
-
-export interface PracticeExercise {
-  id: string;
-  conceptId: string;
-  title: string;
-  task: string;
-  successCriteria: string[];
-  suggestedSymbols: string[];
-  disclaimer: string;
-}
-
+/** A non-strategy lesson — everything without `legs` frontmatter. */
 export interface Lesson {
   id: string;
-  courseId: string;
-  conceptId: string;
-  title: string;
-  order: number;
-  introduction: string;
-  learningObjectives: string[];
-  aiExplanation: string;
-  visualConcepts: string[];
-  tradingExamples: LessonExample[];
-  realMarketExamples: string[];
-  commonMistakes: string[];
-  practicalTips: string[];
-  summary: string;
-  keyTakeaways: string[];
-  relatedConcepts: { id: string; name: string; relation: string }[];
-  nextLesson: LessonStub | null;
-  practice: PracticeExercise | null;
-  source: { conceptId: string; domain: string; strategyId?: string };
-}
-
-export interface QuizQuestion {
-  id: string;
-  type: 'multiple-choice' | 'true-false' | 'scenario';
-  prompt: string;
-  options: string[];
-  answerIndex: number;
-  explanation: string;
-  conceptId: string;
-}
-
-export interface Quiz {
-  lessonId: string;
-  courseId: string;
-  questions: QuizQuestion[];
-}
-
-export interface Flashcard {
-  id: string;
-  front: string;
-  back: string;
+  name: string;
   category: string;
-  conceptId: string;
-}
-
-export interface TeacherAnswer {
-  answer: string;
-  usedInternalKnowledge: boolean;
-  sources: { kind: string; ref: string; summary: string }[];
-  lessonConceptId: string | null;
-}
-
-/** The upgrade payload returned by a locked course. */
-export interface LockedPayload {
-  locked: true;
-  title: string;
-  unlocks: string[];
-  upgradeHref: string;
+  tier: Tier;
+  summary: string;
+  concept?: string;
+  path: string;
+  /** The lesson markdown below the frontmatter. */
+  body: string;
 }

@@ -1,5 +1,6 @@
 import { Suspense } from 'react';
 import { TradeWorkspace } from '@/components/trade/TradeWorkspace';
+import { getStrategies } from '@/lib/learning/catalog';
 
 export const metadata = { title: 'Trade — TradeW Terminal' };
 
@@ -16,9 +17,12 @@ export const metadata = { title: 'Trade — TradeW Terminal' };
  * archive/web-terminal-workspace-static-grid.tsx.txt.
  */
 export default function TradePage() {
+  // The strategy catalogue is read from docs/learning/ at build time and passed
+  // down, so `?strategy=<id>` (arrived at from the Learning Hub's Apply action)
+  // resolves without a client fetch. See lib/learning/catalog.ts.
   return (
     <Suspense fallback={<div className="p-4 text-sm text-faint">Loading…</div>}>
-      <TradeWorkspace />
+      <TradeWorkspace strategies={getStrategies()} />
     </Suspense>
   );
 }
