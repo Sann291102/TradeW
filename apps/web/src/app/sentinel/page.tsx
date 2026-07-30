@@ -5,7 +5,11 @@ import { useSentinel } from '@/lib/sentinel/useSentinel';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { classifyDay, extractMarketContext, extractSafetyFeed, pushworthyCards, suggestedLesson } from '@/lib/sentinel/deriveContext';
 import { DEFAULT_MARKET, findMarket } from '@/lib/sentinel/markets';
+import type { StrategyMode } from '@/lib/sentinel/types';
 import { MarketSelector } from '@/components/sentinel/MarketSelector';
+import { OptionChainPanel } from '@/components/sentinel/OptionChainPanel';
+import { StrategySelector } from '@/components/sentinel/StrategySelector';
+import { SideInFocusCard, WaitingForConfirmation } from '@/components/sentinel/SideInFocusCard';
 import { DayClassificationCard } from '@/components/sentinel/DayClassificationCard';
 import { MarketContextPanel } from '@/components/sentinel/MarketContextPanel';
 import { LiveSafetyFeed } from '@/components/sentinel/LiveSafetyFeed';
@@ -36,9 +40,18 @@ export default function SentinelPage() {
   // entire workspace. Changing it re-runs /observe for that symbol
   // (useSentinel) and every panel below re-derives.
   const [symbol, setSymbol] = useState(DEFAULT_MARKET);
-  const { data, unavailable, loading } = useSentinel(symbol);
+  // Phase 3 — strategy focus (Auto by default) drives the observe call, and
+  // the option-chain selection is passed to the panel as observation context.
+  const [strategyMode, setStrategyMode] = useState<StrategyMode>('auto');
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string | undefined>(undefined);
+  const { data, unavailable, loading } = useSentinel(symbol, { strategyMode, selectedStrategyId });
   const status = useSessionStore((s) => s.status);
   const hasCapability = useSessionStore((s) => s.hasCapability);
+
+  const onStrategyChange = (next: { mode: StrategyMode; selectedStrategyId?: string }) => {
+    setStrategyMode(next.mode);
+    setSelectedStrategyId(next.selectedStrategyId);
+  };
 
   const market = findMarket(symbol);
   const observations = data?.observations ?? [];
@@ -80,7 +93,10 @@ export default function SentinelPage() {
                 Reading <span className="font-semibold text-text">{market.name}</span> · {fault.title.toLowerCase()}
               </p>
             </div>
-            <MarketSelector value={symbol} onChange={setSymbol} />
+            <div className="flex items-end gap-2">
+              <OptionChainPanel symbol={symbol} />
+              <MarketSelector value={symbol} onChange={setSymbol} />
+            </div>
           </div>
 
           <div className="rounded-lg border border-border bg-surface p-6 text-center">
@@ -124,11 +140,21 @@ export default function SentinelPage() {
               {loading && ' · refreshing…'}
             </p>
           </div>
-          <MarketSelector value={symbol} onChange={setSymbol} />
+          <div className="flex items-end gap-2">
+            <OptionChainPanel symbol={symbol} />
+            <MarketSelector value={symbol} onChange={setSymbol} />
+          </div>
         </div>
 
         <DayClassificationCard day={day} lastUpdated={lastUpdated} explanation={data?.explanation} />
         <MarketContextPanel tags={tags} dimensions={dimensions} />
+        <StrategySelector
+          mode={strategyMode}
+          selectedStrategyId={selectedStrategyId}
+          advice={data?.strategyAdvice}
+          onChange={onStrategyChange}
+        />
+        {data?.sideInFocus ? <SideInFocusCard focus={data.sideInFocus} /> : <WaitingForConfirmation />}
         <LiveSafetyFeed cards={pushworthyCards(safetyCards)} />
         <ContextualTraining title={lesson.title} blurb={lesson.blurb} />
         <SentinelTimeline cards={safetyCards} entries={data?.timeline} />

@@ -29,6 +29,7 @@ export class SentinelApiService {
     symbol?: string,
     context?: string,
     clientSupplied?: { clientTrades?: unknown[]; clientPositions?: unknown[] },
+    focus?: { strategyMode?: 'auto' | 'manual'; selectedStrategyId?: string; confidenceThreshold?: number },
   ) {
     // Demo/paper-account bridge (see SentinelController.observe): a client
     // that supplies its own recent trades/positions (apps/terminal's paper
@@ -78,7 +79,19 @@ export class SentinelApiService {
     // assuming a number.
     const account = await this.accountSummary(userId);
 
-    const body = { userId, symbol, context, recentTrades, positions, account };
+    const body = {
+      userId,
+      symbol,
+      context,
+      recentTrades,
+      positions,
+      account,
+      // Phase 3 strategy focus — only forwarded when supplied so the default
+      // (auto mode, service-default threshold) is untouched for existing callers.
+      strategyMode: focus?.strategyMode,
+      selectedStrategyId: focus?.selectedStrategyId,
+      confidenceThreshold: focus?.confidenceThreshold,
+    };
 
     const res = await fetch(`${this.baseUrl}/observe`, {
       method: 'POST',
@@ -156,6 +169,11 @@ export class SentinelApiService {
   /** Module 2 — the trader's strategy handbook as Sentinel currently holds it. */
   async strategies() {
     return this.get('/strategies');
+  }
+
+  /** Phase 3 — the educational strategy registry that drives the UI selector. */
+  async strategyRegistry(exposedOnly = true) {
+    return this.get(`/learning/strategies?exposed=${exposedOnly ? 'true' : 'false'}`);
   }
 
   private async get(path: string) {

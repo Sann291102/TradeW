@@ -12,11 +12,20 @@
     "ontology:seed": "ts-node -T --project tsconfig.scripts.json scripts/seed-ontology.ts",
     "ontology:smoke": "ts-node -T --project tsconfig.scripts.json scripts/smoke-concept-graph.ts",
     "nim:smoke": "ts-node -T --project tsconfig.scripts.json scripts/smoke-nvidia-nim.ts",
-    "backtest:ema": "ts-node -T --project tsconfig.scripts.json scripts/backtest-ema-cross.ts"
+    "backtest:ema": "ts-node -T --project tsconfig.scripts.json scripts/backtest-ema-cross.ts",
+    "learning:test": "ts-node -T --project tsconfig.scripts.json scripts/test-learning.ts",
+    "learning:scan": "ts-node -T --project tsconfig.scripts.json scripts/scan-books.ts",
+    "learning:preview": "ts-node -T --project tsconfig.scripts.json scripts/preview-chunks.ts",
+    "reasoning:test": "ts-node -T --project tsconfig.scripts.json scripts/test-reasoning.ts",
+    "advisor:test": "ts-node -T --project tsconfig.scripts.json scripts/test-strategy-advisor.ts",
+    "verify:runtime": "ts-node -T --project tsconfig.scripts.json scripts/verify-runtime.ts",
+    "learning-platform:test": "ts-node -T --project tsconfig.scripts.json scripts/test-learning-platform.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
     "js-yaml": "^4.1.0",
+    "mammoth": "^1.8.0",
+    "pdf-parse": "^1.1.1",
     "@nestjs/common": "^10.4.15",
     "@nestjs/core": "^10.4.15",
     "@nestjs/platform-express": "^10.4.15",
@@ -31,6 +40,7 @@
     "@nestjs/cli": "^10.4.8",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.10.2",
+    "@types/pdf-parse": "^1.1.4",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.2"
   }

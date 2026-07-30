@@ -73,6 +73,84 @@ export interface ObserveRequest {
   context?: string;
   /** overrides the trader's configured confidence threshold for this call (0-100) */
   confidenceThreshold?: number;
+  /**
+   * Phase 3 — strategy focus. 'auto' (default) lets Sentinel pick the
+   * best-corroborated setup as reasoning context; 'manual' pins a specific
+   * educational strategy from the registry and validates it against live
+   * conditions. Neither mode ever forces a setup or emits a directive.
+   */
+  strategyMode?: 'auto' | 'manual';
+  /** registry strategy id when strategyMode === 'manual' */
+  selectedStrategyId?: string;
+}
+
+// ------------------------------------------------------ Phase 3 strategy focus
+
+/** Whether the selected/auto strategy is a good fit for the live market. */
+export type MarketSuitability = 'high' | 'moderate' | 'low' | 'unknown';
+
+/** Validation of a manually-selected strategy against live conditions. */
+export interface StrategyValidation {
+  regimeCompatible: boolean;
+  volatilityOk: boolean;
+  liquidityOk: boolean;
+  /** rule names the strategy needs confirmed */
+  requiredConfirmations: string[];
+  /** required rules not yet confirmed on the live setup */
+  missingConfirmations: string[];
+  /** true only when every gate passed AND confidence cleared its threshold */
+  passed: boolean;
+}
+
+/**
+ * The strategy-focus read attached to every observation. Educational context,
+ * never a directive: `activeStrategyId` is what the Brain treats as additional
+ * reasoning context, not an instruction to trade it.
+ */
+export interface StrategyAdvice {
+  mode: 'auto' | 'manual';
+  /** null in auto mode */
+  requestedStrategyId: string | null;
+  /** the strategy the Brain is currently reasoning with, if any */
+  activeStrategyId: string | null;
+  activeStrategyName: string | null;
+  /** true when the Brain chose the strategy (auto mode with a live match) */
+  aiSelected: boolean;
+  /** 0..100 — the observation's aggregate confidence */
+  confidence: number;
+  meetsThreshold: boolean;
+  marketSuitability: MarketSuitability;
+  /** compact status line, e.g. "AI Selected: ICT Liquidity Sweep" */
+  status: string;
+  /** one-line human-readable explanation */
+  message: string;
+  /** present only in manual mode */
+  validation?: StrategyValidation;
+}
+
+/** Educational trade-management framing. Never an order, never a guarantee. */
+export interface TradeManagementGuidance {
+  /** default risk:reward framing, e.g. "1:3" */
+  riskReward: string;
+  /** trailing progression, e.g. ["1:1","1:2","1:3"] */
+  trailing: string[];
+  note: string;
+}
+
+/**
+ * Which side the corroborated evidence favours, surfaced only above the
+ * confidence threshold. `side` is CE or PE for the educational option lens;
+ * it is never a buy/sell instruction.
+ */
+export interface SideInFocus {
+  side: 'CE' | 'PE';
+  bias: 'bullish' | 'bearish';
+  /** nearest at-the-money strike in the favoured direction, or null if unknown */
+  strike: number | null;
+  confidence: number;
+  rationale: string[];
+  tradeManagement: TradeManagementGuidance;
+  disclaimer: string;
 }
 
 // ---------------------------------------------------------------- Module 1
@@ -299,6 +377,10 @@ export interface ObserveResponse {
   timeline: TimelineEntry[];
   /** §5 — the "Why?" inspector payload for the current reading */
   explanation: ConfidenceExplainResult;
+  /** Phase 3 — auto/manual strategy focus read for this observation */
+  strategyAdvice?: StrategyAdvice;
+  /** Phase 3 — favoured side, surfaced only above the confidence threshold (null otherwise) */
+  sideInFocus?: SideInFocus | null;
 }
 
 export const SENTINEL_DISCLAIMER =

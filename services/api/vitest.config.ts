@@ -30,6 +30,9 @@ export default defineConfig({
       'src/news/feed-url.spec.ts',
       // Proof that a secret cannot be logged through the security logger.
       'src/common/security-log.spec.ts',
+      // Learning Platform: entitlement/admin access decisions, and progress math.
+      'src/learning/learning-access.spec.ts',
+      'src/learning/learning-progress.spec.ts',
     ],
     environment: 'node',
     // The suite is deterministic and clock-injected; a slow test means a real

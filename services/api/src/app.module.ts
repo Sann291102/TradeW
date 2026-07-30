@@ -12,6 +12,7 @@ import { NewsModule } from './news/news.module';
 import { BrokerModule } from './broker/broker.module';
 import { MailModule } from './mail/mail.module';
 import { SentinelModule } from './sentinel/sentinel.module';
+import { LearningModule } from './learning/learning.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
 import { NotificationModule } from './notification/notification.module';
 import { HealthController } from './health.controller';
@@ -31,6 +32,7 @@ import { HealthController } from './health.controller';
     DisciplineModule,
     SimModule,
     SentinelModule,
+    LearningModule,
     KnowledgeModule,
     NotificationModule,
   ],

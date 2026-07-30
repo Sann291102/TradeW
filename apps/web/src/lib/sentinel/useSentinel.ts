@@ -2,7 +2,21 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
-import type { JournalEntry, ObserveResponse, SessionSummaryData } from './types';
+import type { JournalEntry, ObserveResponse, SessionSummaryData, StrategyMode } from './types';
+
+/**
+ * Sentinel's default confidence gate for the workspace (Phase 3). Insights and
+ * side-in-focus below this are held back as "Waiting for stronger confirmation"
+ * rather than shown weak. Kept here as the single source of truth so the gate
+ * the UI enforces matches the threshold observe was run with.
+ */
+export const SENTINEL_CONFIDENCE_THRESHOLD = 72;
+
+export interface SentinelFocus {
+  strategyMode?: StrategyMode;
+  /** registry strategy id when strategyMode === 'manual' */
+  selectedStrategyId?: string;
+}
 
 /**
  * Why the workspace has no observation to show.
@@ -35,17 +49,28 @@ function classify(err: unknown): SentinelUnavailable {
  * for whichever market the "market head" selector points at, and `/observe`
  * re-runs whenever it changes. Defaults to NIFTY.
  */
-export function useSentinel(symbol: string = 'NIFTY') {
+export function useSentinel(symbol: string = 'NIFTY', focus: SentinelFocus = {}) {
   const [data, setData] = useState<ObserveResponse | null>(null);
   const [summary, setSummary] = useState<SessionSummaryData | null>(null);
   const [journal, setJournal] = useState<JournalEntry[]>([]);
   const [unavailable, setUnavailable] = useState<SentinelUnavailable | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const strategyMode = focus.strategyMode ?? 'auto';
+  const selectedStrategyId = focus.selectedStrategyId;
+
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const observe = (await api('/sentinel/observe', { method: 'POST', body: JSON.stringify({ symbol }) })) as ObserveResponse;
+      const observe = (await api('/sentinel/observe', {
+        method: 'POST',
+        body: JSON.stringify({
+          symbol,
+          strategyMode,
+          selectedStrategyId: strategyMode === 'manual' ? selectedStrategyId : undefined,
+          confidenceThreshold: SENTINEL_CONFIDENCE_THRESHOLD,
+        }),
+      })) as ObserveResponse;
       setData(observe);
       setUnavailable(null);
       try {
@@ -64,7 +89,7 @@ export function useSentinel(symbol: string = 'NIFTY') {
     } finally {
       setLoading(false);
     }
-  }, [symbol]);
+  }, [symbol, strategyMode, selectedStrategyId]);
 
   useEffect(() => {
     void refresh();

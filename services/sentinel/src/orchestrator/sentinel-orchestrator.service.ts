@@ -32,6 +32,8 @@ import { TrapIntelligenceService } from '../intelligence/trap-intelligence.servi
 import { MarketStateMachineService, StateEvaluation } from '../state-machine/state-machine.service';
 import { MarketTimelineEngine, RecordInput } from '../timeline/timeline.engine';
 import { enforceVocabulary, statusHeadline } from '../vocabulary/vocabulary';
+import { StrategyAdvisorService } from '../reasoning/strategy-advisor.service';
+import { RegimeIntelligenceService } from '../reasoning/regime-intelligence.service';
 
 /**
  * Sentinel Orchestrator — the only component that produces user-facing copy.
@@ -104,6 +106,8 @@ export class SentinelOrchestratorService {
     private readonly marketContext: MarketContextService,
     private readonly researchTrigger: ResearchTriggerService,
     private readonly outcomeLearning: OutcomeLearningService,
+    private readonly strategyAdvisor: StrategyAdvisorService,
+    private readonly regimeIntel: RegimeIntelligenceService,
   ) {
     this.providers = createProviderManager(loadProvidersConfigFromEnv());
   }
@@ -227,6 +231,30 @@ export class SentinelOrchestratorService {
       at,
     });
 
+    // ---- Phase 3: strategy focus + side-in-focus ------------------------
+    // Pure, synchronous framing over what was already computed — no extra
+    // retrieval, no second scan. Auto picks the leading corroborated setup as
+    // context; manual validates the user's pick against live conditions. Side
+    // in focus surfaces only above the confidence threshold.
+    const currentState = stateEval.snapshot.current;
+    const regime = this.regimeIntel.classify(snapshot.marketProfile);
+    const strategyAdvice = this.strategyAdvisor.advise({
+      mode: request.strategyMode ?? 'auto',
+      requestedStrategyId: request.selectedStrategyId ?? null,
+      detections,
+      confidence,
+      snapshot,
+      regime,
+      state: currentState,
+    });
+    const sideInFocus = this.strategyAdvisor.sideInFocus({
+      symbol,
+      detections,
+      confidence,
+      snapshot,
+      state: currentState,
+    });
+
     return {
       synthesis,
       observations,
@@ -239,6 +267,8 @@ export class SentinelOrchestratorService {
       marketState: stateEval.snapshot,
       timeline: this.timeline.entries(sessionKey),
       explanation,
+      strategyAdvice,
+      sideInFocus,
     };
   }
 

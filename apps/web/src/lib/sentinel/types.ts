@@ -141,6 +141,70 @@ export type ConfidenceExplanation = {
   factorScores: Record<string, number>;
 };
 
+// ------------------------------------------------------ Phase 3 strategy focus
+
+export type MarketSuitability = 'high' | 'moderate' | 'low' | 'unknown';
+
+export type StrategyValidation = {
+  regimeCompatible: boolean;
+  volatilityOk: boolean;
+  liquidityOk: boolean;
+  requiredConfirmations: string[];
+  missingConfirmations: string[];
+  passed: boolean;
+};
+
+export type StrategyAdvice = {
+  mode: 'auto' | 'manual';
+  requestedStrategyId: string | null;
+  activeStrategyId: string | null;
+  activeStrategyName: string | null;
+  aiSelected: boolean;
+  confidence: number;
+  meetsThreshold: boolean;
+  marketSuitability: MarketSuitability;
+  status: string;
+  message: string;
+  validation?: StrategyValidation;
+};
+
+export type TradeManagementGuidance = {
+  riskReward: string;
+  trailing: string[];
+  note: string;
+};
+
+export type SideInFocus = {
+  side: 'CE' | 'PE';
+  bias: 'bullish' | 'bearish';
+  strike: number | null;
+  confidence: number;
+  rationale: string[];
+  tradeManagement: TradeManagementGuidance;
+  disclaimer: string;
+};
+
+/** One entry from the educational strategy registry (GET /sentinel/strategies/registry). */
+export type RegistryStrategy = {
+  id: string;
+  name: string;
+  detectionStrategyId: string | null;
+  exposed: boolean;
+  order: number;
+  purpose: string;
+  marketConditions: string[];
+  timeframes: string[];
+  requiredIndicators: string[];
+  riskConsiderations: string[];
+  confidenceFactors: string[];
+  whenNotToUse: string[];
+  educational: string;
+  regimes: string[];
+};
+
+/** Strategy focus the UI drives observe with. */
+export type StrategyMode = 'auto' | 'manual';
+
 export type ObserveResponse = {
   synthesis: Synthesis | null;
   observations: Observation[];
@@ -153,6 +217,8 @@ export type ObserveResponse = {
   marketState?: MarketStateSnapshot;
   timeline?: TimelineEntry[];
   explanation?: ConfidenceExplanation;
+  strategyAdvice?: StrategyAdvice;
+  sideInFocus?: SideInFocus | null;
 };
 export type SessionSummaryData = { tradesToday: number; flaggedEvents: number; realizedPnl: number };
 export type JournalEntry = { id: string; mood?: string | null; content: string; flaggedByAi: boolean; createdAt: string };

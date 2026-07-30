@@ -35,14 +35,32 @@ export class SentinelController {
       // already live in Postgres and are read there instead.
       clientTrades?: unknown[];
       clientPositions?: unknown[];
+      // Phase 3 strategy focus — auto (default) or a manually selected
+      // educational strategy, plus an optional confidence-threshold override.
+      strategyMode?: 'auto' | 'manual';
+      selectedStrategyId?: string;
+      confidenceThreshold?: number;
     },
   ) {
-    const result = await this.sentinel.observe(req.user.sub, body?.symbol, body?.context, {
-      clientTrades: body?.clientTrades,
-      clientPositions: body?.clientPositions,
-    });
+    const result = await this.sentinel.observe(
+      req.user.sub,
+      body?.symbol,
+      body?.context,
+      { clientTrades: body?.clientTrades, clientPositions: body?.clientPositions },
+      {
+        strategyMode: body?.strategyMode,
+        selectedStrategyId: body?.selectedStrategyId,
+        confidenceThreshold: body?.confidenceThreshold,
+      },
+    );
     await this.entitlements.recordUsage(req.user.sub, 'sentinel_requests');
     return result;
+  }
+
+  /** Phase 3 — the educational strategy registry driving the strategy selector. */
+  @Get('strategies/registry')
+  strategyRegistry(@Query('exposed') exposed?: string) {
+    return this.sentinel.strategyRegistry(exposed === undefined ? true : exposed === 'true');
   }
 
   @Post('explain')
