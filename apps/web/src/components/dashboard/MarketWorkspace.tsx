@@ -7,7 +7,6 @@ import { PortfolioSummary } from './PortfolioSummary';
 import { MarketMovers } from './MarketMovers';
 import { SectorHeatmap } from './SectorHeatmap';
 import { TrendingStocks } from './TrendingStocks';
-import { MarketNews } from './MarketNews';
 import { WatchlistWidget } from './WatchlistWidget';
 import { GlobalMarkets } from './GlobalMarkets';
 import { CommodityMarkets } from './CommodityMarkets';
@@ -67,8 +66,10 @@ export function MarketWorkspace() {
         <PortfolioSummary />
       </motion.div>
 
-      <motion.div variants={item} className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <MarketNews />
+      {/* Market News moved to its own route (/news, "Market News" in the
+          sidebar). Here it was capped at six items and sharing a row; there it
+          carries the full live feed. EconomicCalendar keeps the row. */}
+      <motion.div variants={item}>
         <EconomicCalendar />
       </motion.div>
 

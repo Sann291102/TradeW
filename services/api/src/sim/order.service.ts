@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { Instrument, Order, OrderSide, OrderStatus, OrderType, OrderValidity, PaperWallet, Position, ProductType } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { computeOrderIntent } from '../discipline/discipline-limits';
+import { DisciplineService } from '../discipline/discipline.service';
 import { MarketPriceService } from './market-price.service';
 import { istDayKey, todayIstSessionEnd } from './ist-time.util';
 
@@ -16,6 +18,14 @@ export interface PlaceOrderInput {
   price?: number;
   /** Required for SL and SL_M, ignored otherwise. */
   triggerPrice?: number;
+  /**
+   * Discipline override — supplied only on a retry, after the trader has sat
+   * through the friction prompt raised by a previous attempt. The token is
+   * server-signed and single-use; the reason is the trader's own words.
+   * Ignored entirely when no limit is breached.
+   */
+  overrideToken?: string;
+  overrideReason?: string;
 }
 
 export interface ModifyOrderInput {
@@ -30,18 +40,84 @@ const STARTING_BALANCE = 1_000_000; // ₹10L paper capital, matches PaperWallet
 const CHARGES_RATE = 0.0003; // 3bps of gross trade value — same convention as the original market-only engine
 
 /**
- * Simplified simulated margin — NOT real SPAN/exposure margin. A paper
- * engine needs *some* number to block so "available balance" is meaningful
- * and "insufficient margin" can genuinely reject an order, without
- * reimplementing an exchange's actual margin engine. Documented here rather
- * than silently presented as authoritative.
+ * Approximate SPAN+exposure rate for a short option, as a fraction of the
+ * UNDERLYING notional. Calibrated against a live broker quote: NIFTY 28 Jul
+ * 23950 PE, 1 lot (65), underlying ~23,900 → broker required ₹2,02,475.
+ * 23,900 × 65 × 0.13 = ₹2,01,955, within 0.3%.
  */
-function computeMargin(instrument: Instrument, side: OrderSide, productType: ProductType, price: number, quantity: number): number {
-  const notional = price * quantity;
-  if (instrument.type === 'OPTION' && side === 'BUY') return notional; // full premium paid
-  if (productType === 'CNC') return notional; // cash delivery — no leverage
-  if (instrument.type === 'FUTURE' || (instrument.type === 'OPTION' && side === 'SELL')) return notional * 0.15; // ~SPAN+exposure approximation
-  return notional * 0.2; // MIS equity/ETF/index intraday — ~5x simulated leverage
+const SHORT_OPTION_MARGIN_RATE = 0.13;
+/** Futures margin, also on the underlying notional (the future's own price). */
+const FUTURES_MARGIN_RATE = 0.15;
+/** MIS equity/index intraday — ~5x simulated leverage. */
+const INTRADAY_EQUITY_MARGIN_RATE = 0.2;
+
+/**
+ * Simplified simulated margin — NOT real SPAN/exposure margin. A paper engine
+ * needs *some* number to block so "available balance" is meaningful and
+ * "insufficient margin" can genuinely reject an order, without reimplementing
+ * an exchange's margin engine.
+ *
+ * SHORT OPTIONS ARE THE CASE THIS FUNCTION EXISTS TO GET RIGHT. It previously
+ * computed every leg off `price × quantity`, where `price` for an option is the
+ * PREMIUM. For a long option that is correct — the premium is the whole cost
+ * and the whole risk. For a SHORT option it is meaningless: the premium is what
+ * the trader receives, and the risk is on the underlying. Selling one NIFTY
+ * 23900 PE at ₹9.55 blocked 0.15 × 9.55 × 65 = ₹93, against a real broker
+ * requirement of ₹2,02,475 — under-margined by a factor of ~2,175.
+ *
+ * That is the most dangerous possible error in a teaching account: it lets a
+ * ₹10L paper wallet short unlimited options for free, and rewards the one
+ * strategy that can actually bankrupt a real trader. Short-option and futures
+ * margin is now taken on the underlying notional.
+ *
+ * `underlyingSpot` is the live underlying price when the caller has one (the
+ * option-chain response carries it). When absent, the contract's own strike is
+ * used — a close proxy near the money, and always far closer than the premium.
+ *
+ * CALLERS MUST NOT APPLY THIS TO A REDUCING ORDER. This function answers "what
+ * does opening this exposure cost", and a closing order does the opposite — it
+ * releases the position's margin. Charging it as new exposure made positions
+ * impossible to exit: a SELL closing a long 780 NIFTY CALL was billed
+ * 24,250 × 780 × 0.13 = ₹24.6L against a ₹10L wallet and rejected as
+ * "Insufficient margin", three times in a row, with no way out of the trade.
+ * `placeOrder` gates on `computeOrderIntent` for exactly this reason.
+ */
+function computeMargin(
+  instrument: Instrument,
+  side: OrderSide,
+  productType: ProductType,
+  price: number,
+  quantity: number,
+  underlyingSpot?: number,
+): number {
+  const premiumNotional = price * quantity;
+
+  // Long option: premium paid in full, no leverage. Risk is capped at it.
+  if (instrument.type === 'OPTION' && side === 'BUY') return premiumNotional;
+
+  if (instrument.type === 'OPTION' && side === 'SELL') {
+    // Reference price for the underlying, best available first.
+    const reference =
+      underlyingSpot && underlyingSpot > 0
+        ? underlyingSpot
+        : instrument.strikePrice != null
+          ? Number(instrument.strikePrice)
+          : null;
+    // No way to value the underlying — refuse to invent a number. Falling back
+    // to the premium here is exactly the bug this function is fixing.
+    if (reference == null || !(reference > 0)) {
+      throw new BadRequestException(
+        `Cannot compute margin for ${instrument.symbol}: the underlying price is unavailable. Try again shortly.`,
+      );
+    }
+    return reference * quantity * SHORT_OPTION_MARGIN_RATE;
+  }
+
+  if (productType === 'CNC') return premiumNotional; // cash delivery — no leverage
+  // A future's own price IS its underlying notional, so premiumNotional is the
+  // right base here despite the name.
+  if (instrument.type === 'FUTURE') return premiumNotional * FUTURES_MARGIN_RATE;
+  return premiumNotional * INTRADAY_EQUITY_MARGIN_RATE;
 }
 
 /** Applies one fill to a position's (quantity, avgPrice), correctly handling
@@ -85,7 +161,11 @@ function applyFill(
 export class OrderService {
   private readonly logger = new Logger(OrderService.name);
 
-  constructor(private readonly prisma: PrismaService, private readonly marketPrice: MarketPriceService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly marketPrice: MarketPriceService,
+    private readonly discipline: DisciplineService,
+  ) {}
 
   /** Every user gets one lazily-created paper wallet, seeded on first order
    *  rather than at signup — accounts that never trade never get a row. */
@@ -117,10 +197,42 @@ export class OrderService {
     const productType = input.productType ?? 'MIS';
     const validity = input.validity ?? 'DAY';
 
+    // ---- Discipline limits (self-imposed session limits) -----------------
+    // Placed here, after input/instrument validation and before either
+    // transaction, because this is the single point both MARKET and resting
+    // orders pass through. A malformed order is still rejected on its own
+    // merits above rather than being frictioned.
+    //
+    // `intent` is derived from the position this server holds, never from
+    // anything the caller sent — a client-supplied "this is a close" flag
+    // would be the obvious way to skip the prompt. Reducing orders bypass the
+    // checks entirely: the loss limit is breached exactly when the trader is
+    // holding a loser, and standing between them and the exit would invert the
+    // point of the feature.
+    //
+    // Throws 409 with a signed override token when a limit is breached and no
+    // valid override accompanies the order. It never hard-blocks.
+    const openPosition = await this.prisma.position.findUnique({
+      where: { userId_instrumentId_productType: { userId, instrumentId: instrument.id, productType } },
+      select: { quantity: true },
+    });
+    const intent = computeOrderIntent(openPosition?.quantity ?? 0, input.side, input.quantity);
+    const disciplinePlan = await this.discipline.evaluatePlacement(
+      userId,
+      intent,
+      { token: input.overrideToken, reason: input.overrideReason },
+      new Date(),
+    );
+
     if (input.type === 'MARKET') {
       const price = await this.marketPrice.getPrice(instrument);
       const fillPrice = input.side === 'BUY' ? price.ask : price.bid;
-      const margin = computeMargin(instrument, input.side, productType, fillPrice, input.quantity);
+      // A reducing order costs no margin — it RELEASES the position's own. See
+      // `requiredMargin`.
+      const margin =
+        intent === 'reduce'
+          ? 0
+          : computeMargin(instrument, input.side, productType, fillPrice, input.quantity, price.underlyingSpot);
       if (margin > Number(wallet.cashBalance)) {
         return this.rejectNewOrder(userId, instrument, input, productType, validity, 'Insufficient margin');
       }
@@ -137,13 +249,33 @@ export class OrderService {
             quantity: input.quantity,
           },
         });
+        // Same transaction as the order: the trade counter can never drift
+        // from the order book, and a replayed override token collides on
+        // DisciplineOverride.tokenNonce and rolls this order back with it.
+        await this.discipline.recordPlacement(tx, disciplinePlan);
         return this.executeFill(tx, order, instrument, fillPrice, input.quantity, price.ltp);
       });
     }
 
     // LIMIT / SL / SL_M — rests until MatchingEngineService fills it.
     const referencePrice = input.type === 'LIMIT' ? input.price! : input.triggerPrice!;
-    const margin = computeMargin(instrument, input.side, productType, referencePrice, input.quantity);
+    // A resting SHORT OPTION still needs the underlying to size its margin, and
+    // the limit price is a premium. One extra quote read here is worth far more
+    // than blocking ₹93 against a ₹2L risk; a failure degrades to the strike,
+    // which computeMargin handles.
+    const restingSpot =
+      intent === 'open' && instrument.type === 'OPTION' && input.side === 'SELL'
+        ? await this.marketPrice
+            .getPrice(instrument)
+            .then((p) => p.underlyingSpot)
+            .catch(() => undefined)
+        : undefined;
+    // Same rule as the MARKET branch — a resting order that reduces an existing
+    // position blocks nothing.
+    const margin =
+      intent === 'reduce'
+        ? 0
+        : computeMargin(instrument, input.side, productType, referencePrice, input.quantity, restingSpot);
     if (margin > Number(wallet.cashBalance)) {
       return this.rejectNewOrder(userId, instrument, input, productType, validity, 'Insufficient margin');
     }
@@ -169,6 +301,11 @@ export class OrderService {
         where: { userId },
         data: { marginUsed: { increment: margin }, cashBalance: { decrement: margin } },
       });
+      // A resting order counts against the trade limit at placement, not at
+      // fill — the decision the limit governs is the one being made now. The
+      // matching engine deliberately does not re-check discipline when this
+      // order later fills.
+      await this.discipline.recordPlacement(tx, disciplinePlan);
       return order;
     });
   }
@@ -250,7 +387,21 @@ export class OrderService {
     }
 
     const newRealizedTotal = Number(existing?.realizedPnl ?? 0) + realizedPnlDelta;
-    const newMargin = newQuantity === 0 ? 0 : computeMargin(instrument, newQuantity >= 0 ? 'BUY' : 'SELL', order.productType, Math.abs(newAvgPrice), Math.abs(newQuantity));
+    // No live underlying spot on this path (executeFill is also reached from
+    // the matching engine, which holds only the contract's own price), so a
+    // short-option position re-margins off its strike. Near the money that is
+    // within a percent or two of spot, and it is the same basis the placement
+    // check used if the chain was briefly unavailable.
+    const newMargin =
+      newQuantity === 0
+        ? 0
+        : computeMargin(
+            instrument,
+            newQuantity >= 0 ? 'BUY' : 'SELL',
+            order.productType,
+            Math.abs(newAvgPrice),
+            Math.abs(newQuantity),
+          );
 
     let position: Position;
     if (!existing) {
@@ -311,6 +462,14 @@ export class OrderService {
         realizedPnl: { increment: realizedPnlDelta },
       },
     });
+
+    // Mirror the realized P&L this fill locked in onto today's discipline
+    // session, in this same transaction — the loss-limit check is a single
+    // point read against that counter rather than an aggregate over trades,
+    // so it must never be able to drift from the fills that moved it. Also
+    // where the one-time profit-target notice fires. A no-op when the trader
+    // never opened a session today.
+    await this.discipline.applyRealizedPnl(tx, order.userId, realizedPnlDelta);
 
     return tx.order.update({
       where: { id: order.id },

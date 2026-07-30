@@ -28,3 +28,7 @@ __pycache__/
 *.env.bak
 .env.bak
 *.bak
+
+# Tailscale funnel cert/key (never commit the private key)
+tradew-demo.*.ts.net.crt
+tradew-demo.*.ts.net.key

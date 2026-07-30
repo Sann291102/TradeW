@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { cn, fadeInUp } from '@tradew/ui';
 import { DAY_TYPES, type DayClassification, type DayLabel } from '@/lib/sentinel/deriveContext';
+import type { ConfidenceExplanation } from '@/lib/sentinel/types';
 import { ChevronDownIcon } from '../shell/icons';
 
 const LABEL_TONE: Record<DayLabel, string> = {
@@ -24,8 +25,18 @@ const LABEL_TONE: Record<DayLabel, string> = {
  * This is the single most important surface on the page: everything below
  * elaborates on this one conclusion, never the reverse.
  */
-export function DayClassificationCard({ day, lastUpdated }: { day: DayClassification; lastUpdated: string }) {
+export function DayClassificationCard({
+  day,
+  lastUpdated,
+  explanation,
+}: {
+  day: DayClassification;
+  lastUpdated: string;
+  /** Master Plan §5 — the full basis for the confidence figure, when the server sent one. */
+  explanation?: ConfidenceExplanation;
+}) {
   const [legendOpen, setLegendOpen] = useState(false);
+  const [whyOpen, setWhyOpen] = useState(false);
   const reduce = useReducedMotion();
 
   return (
@@ -51,7 +62,34 @@ export function DayClassificationCard({ day, lastUpdated }: { day: DayClassifica
         </button>
 
         <span className="font-mono text-sm font-semibold tabular-nums text-muted">Confidence {(day.confidence * 100).toFixed(0)}%</span>
+
+        {explanation && (
+          <button
+            type="button"
+            onClick={() => setWhyOpen((v) => !v)}
+            aria-expanded={whyOpen}
+            aria-controls="confidence-explainer"
+            className="rounded-lg border border-border2 px-2.5 py-1 text-[12px] font-semibold text-muted transition-colors duration-micro hover:bg-hover hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          >
+            Why?
+          </button>
+        )}
       </div>
+
+      <AnimatePresence initial={false}>
+        {whyOpen && explanation && (
+          <motion.div
+            id="confidence-explainer"
+            initial={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
+            animate={reduce ? { opacity: 1 } : { opacity: 1, height: 'auto' }}
+            exit={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
+            transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+            className="overflow-hidden"
+          >
+            <ConfidenceExplainer explanation={explanation} />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence initial={false}>
         {legendOpen && (
@@ -79,6 +117,75 @@ export function DayClassificationCard({ day, lastUpdated }: { day: DayClassifica
       )}
       <p className="mt-5 text-[11px] text-faint">Last updated {lastUpdated}</p>
     </motion.section>
+  );
+}
+
+/**
+ * Confidence Explainability — the "Why?" inspector (SENTINEL_MASTER_PLAN.md §5).
+ *
+ * Master Plan principle 7: every surfaced observation must let the trader
+ * inspect every matching strategy, indicator value, historical precedent,
+ * news impact and confidence deduction behind it. This renders exactly what
+ * the server computed — the payload is built deterministically from the same
+ * factors that produced the score, so nothing here is a restatement or a
+ * client-side approximation of the number above it.
+ */
+function ConfidenceExplainer({ explanation: e }: { explanation: ConfidenceExplanation }) {
+  const sections: { title: string; items: string[] }[] = [
+    { title: 'Matched strategies', items: e.matchedStrategies },
+    { title: 'Confirming indicators', items: e.confirmingIndicators },
+    { title: 'Historical precedent', items: [e.historicalPrecedent] },
+    { title: 'News & environment', items: [e.newsEnvironment] },
+    { title: 'Risk factors', items: e.riskNotes },
+    { title: 'Confidence deductions', items: e.deductions },
+    { title: 'From the Learning Hub', items: e.learningReferences },
+    { title: 'Timing rationale', items: [e.timingRationale] },
+  ].filter((s) => s.items.length > 0 && s.items.some(Boolean));
+
+  const factors = Object.entries(e.factorScores);
+
+  return (
+    <div className="mt-5 rounded-xl border border-border bg-bg">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-4 py-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-faint">Why this reading</p>
+        <p className="font-mono text-[12px] tabular-nums text-muted">
+          {e.score}% vs {e.threshold}% threshold ·{' '}
+          <span className={e.meetsThreshold ? 'text-up' : 'text-amber'}>{e.meetsThreshold ? 'met' : 'not met'}</span>
+        </p>
+      </div>
+
+      {factors.length > 0 && (
+        <div className="border-b border-border px-4 py-3.5">
+          <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-faint">Factor breakdown</p>
+          <ul className="space-y-2">
+            {factors.map(([label, score]) => (
+              <li key={label} className="flex items-center gap-3">
+                <span className="w-52 shrink-0 text-[12px] text-muted">{label}</span>
+                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-hover">
+                  <span className="block h-full rounded-full bg-teal" style={{ width: `${Math.max(0, Math.min(100, score))}%` }} />
+                </span>
+                <span className="w-12 shrink-0 text-right font-mono text-[11.5px] tabular-nums text-muted">{score}/100</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="divide-y divide-border">
+        {sections.map((s) => (
+          <div key={s.title} className="px-4 py-3.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-faint">{s.title}</p>
+            <ul className="mt-1.5 space-y-1">
+              {s.items.filter(Boolean).map((item, i) => (
+                <li key={i} className="max-w-3xl text-[12.5px] leading-snug text-muted">
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

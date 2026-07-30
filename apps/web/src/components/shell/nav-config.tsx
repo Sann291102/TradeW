@@ -11,6 +11,9 @@ import {
   ProfileIcon,
   BellIcon,
   ResearchIcon,
+  CryptoIcon,
+  ForexIcon,
+  NewsIcon,
 } from './icons';
 
 export interface NavItem {
@@ -20,6 +23,9 @@ export interface NavItem {
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   /** Premium surface — shows a lock/upgrade affordance until entitled (SUBSCRIPTIONS.md §4). */
   premium?: boolean;
+  /** Built but not finished. Stays navigable — the route works and shows real
+   *  data — while the badge sets the expectation that it is not complete. */
+  comingSoon?: boolean;
   /** Grouping for the sidebar (primary rail vs. secondary/footer). */
   group: 'primary' | 'secondary';
 }
@@ -39,6 +45,19 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: HomeIcon, group: 'primary' },
   { href: '/trade', label: 'Trade', icon: TradeIcon, group: 'primary' },
   { href: '/markets', label: 'Markets', icon: MarketsIcon, group: 'primary' },
+  // Global markets, served by providers other than Dhan (Binance / Twelve
+  // Data). Placed next to Markets because that is what they are — a different
+  // venue, not a different kind of feature. Read-only: neither is placeable in
+  // the rupee-denominated paper OMS, see services/api/src/crypto.
+  { href: '/crypto', label: 'Crypto', icon: CryptoIcon, group: 'primary' },
+  // Forex stays reachable and its data is real, but it is not a finished
+  // surface: no charts, no order controls, and it cannot be traded (spot FX is
+  // fractional and the OMS is rupee-denominated with Int quantities). Badged so
+  // the gap is stated rather than discovered.
+  { href: '/forex', label: 'Forex', icon: ForexIcon, comingSoon: true, group: 'primary' },
+  // Moved off the dashboard, where it was capped at six items and competing
+  // with the market widgets for space. Real newswires, not the former mock feed.
+  { href: '/news', label: 'Market News', icon: NewsIcon, group: 'primary' },
   { href: '/portfolio', label: 'Portfolio', icon: PortfolioIcon, group: 'primary' },
   { href: '/research', label: 'Research', icon: ResearchIcon, group: 'primary' },
   { href: '/learning', label: 'Learning', icon: LearningIcon, group: 'primary' },

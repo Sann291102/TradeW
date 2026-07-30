@@ -1,0 +1,60 @@
+/**
+ * Timer Service — records timing events for the Sentinel workflow
+ */
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class TimerService {
+  private events: Record<string, number[]> = {};
+
+  /**
+   * Record a timed event
+   */
+  recordEvent(name: string, startTime: number): void {
+    const duration = Date.now() - startTime;
+    if (!this.events[name]) {
+      this.events[name] = [];
+    }
+    this.events[name].push(duration);
+  }
+
+  /**
+   * Get statistics for an event
+   */
+  getStats(name: string): { count: number; avg: number; min: number; max: number } | null {
+    const times = this.events[name];
+    if (!times || times.length === 0) return null;
+
+    const sum = times.reduce((a, b) => a + b, 0);
+    return {
+      count: times.length,
+      avg: sum / times.length,
+      min: Math.min(...times),
+      max: Math.max(...times),
+    };
+  }
+
+  /**
+   * Get all event statistics
+   */
+  getAllStats(): Record<string, { count: number; avg: number; min: number; max: number }> {
+    const result: Record<string, { count: number; avg: number; min: number; max: number }> = {};
+    for (const [name, times] of Object.entries(this.events)) {
+      const sum = times.reduce((a, b) => a + b, 0);
+      result[name] = {
+        count: times.length,
+        avg: sum / times.length,
+        min: Math.min(...times),
+        max: Math.max(...times),
+      };
+    }
+    return result;
+  }
+
+  /**
+   * Clear all recorded events
+   */
+  clear(): void {
+    this.events = {};
+  }
+}

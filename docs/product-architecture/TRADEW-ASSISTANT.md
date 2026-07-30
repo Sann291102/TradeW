@@ -53,6 +53,19 @@ Per the direction update (§5), the assistant is capable of opening and navigati
 
 ## 6. Auto-invoking Sentinel (premium reasoning)
 
+> **Superseded in part — direction call 2026-07-26.** Sentinel is *the* premium
+> product, and the assistant must not relay, summarise or explain what Sentinel
+> is doing. The escalate-and-merge flow described in this section is therefore
+> **not the current intent**: the assistant navigates *to* Sentinel (a route
+> like any other) and stops there. Paraphrasing Sentinel's reasoning through the
+> free assistant would give away the thing users pay for. Implemented as a hard
+> boundary in `apps/web/src/lib/assistant/domain-guard.ts` (refuses only when
+> "sentinel" co-occurs with an explain-verb, so "open Sentinel" still works) —
+> see [[../../knowledge/Patterns/2026-07-26 - TradeW AI assistant control layer (Comet-style app control)]].
+> The architectural point this section makes — that any such orchestration
+> belongs at `services/api`, never as a direct `tradew-ai → sentinel` call
+> (ARCHITECTURE.md §9) — still stands, and applies if the direction reverses.
+
 **Scope (2026-07-21):** this flow applies platform-wide. The docked assistant is part of the shared shell, so it is available in every workspace — including Sentinel's, where a user is already looking at Sentinel's own output and the escalation is correspondingly less likely to add anything. A scope note briefly claimed the assistant was absent from Sentinel entirely, on the assumption Sentinel was becoming a standalone application; that direction was reversed the same day (`SENTINEL.md` §5, `TRADEW-OS.md` §1).
 
 When an analysis intent needs premium institutional reasoning — "Analyze this chart" with full market/behavior/historical context, "Why is my P&L negative?" — and the user's entitlement allows it, TradeW AI **automatically escalates to Sentinel** without the user having to switch to the Sentinel application.

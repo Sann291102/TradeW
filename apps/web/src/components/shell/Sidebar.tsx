@@ -51,6 +51,11 @@ function NavLink({
             PRO
           </Badge>
         )}
+        {!collapsed && item.comingSoon && (
+          <Badge tone="neutral" className="ml-auto px-1.5 py-0 text-[9px]">
+            SOON
+          </Badge>
+        )}
       </Link>
     </li>
   );

@@ -1,0 +1,9 @@
+{
+  "baseFontSize": 16,
+  "showLineNumber": true,
+  "strictLineBreaks": false,
+  "readableLineLength": true,
+  "showFrontmatter": true,
+  "foldHeading": true,
+  "foldIndent": true
+}

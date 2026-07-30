@@ -13,8 +13,21 @@
  * fail loudly when they are absent, rather than silently returning wrong data.
  */
 
-/** Dhan exchange-and-segment codes. Closed set — see the DhanHQ annexure. */
-export const EXCHANGE_SEGMENTS = ['NSE_EQ', 'NSE_FNO', 'BSE_EQ', 'BSE_FNO', 'MCX_COMM', 'IDX_I'] as const;
+/** Dhan exchange-and-segment codes. Closed set — see the DhanHQ annexure.
+ *
+ *  NSE_CURRENCY / BSE_CURRENCY added 2026-07-28 for the currency-derivatives
+ *  (forex) surface: USDINR, EURINR, GBPINR, JPYINR futures and options. They
+ *  were absent, which is why code 3 below had to be mis-mapped. */
+export const EXCHANGE_SEGMENTS = [
+  'NSE_EQ',
+  'NSE_FNO',
+  'NSE_CURRENCY',
+  'BSE_EQ',
+  'BSE_FNO',
+  'BSE_CURRENCY',
+  'MCX_COMM',
+  'IDX_I',
+] as const;
 export type ExchangeSegment = (typeof EXCHANGE_SEGMENTS)[number];
 
 const SEGMENT_SET: ReadonlySet<string> = new Set(EXCHANGE_SEGMENTS);
@@ -31,9 +44,14 @@ export const SEGMENT_BY_CODE: Readonly<Record<number, ExchangeSegment | 'IDX_I'>
   0: 'IDX_I',
   1: 'NSE_EQ',
   2: 'NSE_FNO',
-  3: 'BSE_EQ', // NSE_CURRENCY in Dhan's table; mapped conservatively, see note
+  // Was mapped to BSE_EQ because NSE_CURRENCY did not exist in the closed set
+  // above. That silently relabelled every currency tick as a BSE equity — a
+  // USDINR tick and a BSE stock tick became indistinguishable downstream.
+  // Corrected now that the segment exists.
+  3: 'NSE_CURRENCY',
   4: 'BSE_EQ',
   5: 'MCX_COMM',
+  7: 'BSE_CURRENCY',
   8: 'BSE_FNO',
 };
 

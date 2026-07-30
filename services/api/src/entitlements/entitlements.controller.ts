@@ -1,30 +1,18 @@
-import {
-  Body,
-  CanActivate,
-  Controller,
-  ExecutionContext,
-  Get,
-  Injectable,
-  Param,
-  Post,
-  Req,
-  UnauthorizedException,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '../auth/auth.guard';
+import { AdminTokenGuard } from '../auth/admin-token.guard';
 import { EntitlementsService } from './entitlements.service';
 
-/** Guards ops-only endpoints with a static service token (ADMIN_API_TOKEN). */
-@Injectable()
-export class AdminTokenGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
-    const expected = process.env.ADMIN_API_TOKEN;
-    if (!expected) throw new UnauthorizedException('Admin API disabled (ADMIN_API_TOKEN not configured)');
-    const req = context.switchToHttp().getRequest();
-    if (req.headers['x-admin-token'] !== expected) throw new UnauthorizedException('Invalid admin token');
-    return true;
-  }
-}
+/**
+ * `AdminTokenGuard` was declared inline here. It moved to
+ * `../auth/admin-token.guard` so the broker module gates its operator routes
+ * with the SAME check instead of a second admin concept, and it gained a
+ * constant-time comparison plus denial logging in the move.
+ *
+ * Re-exported so existing `from './entitlements.controller'` imports keep
+ * resolving — this is a refactor, not an API change.
+ */
+export { AdminTokenGuard };
 
 @Controller('entitlements')
 export class EntitlementsController {

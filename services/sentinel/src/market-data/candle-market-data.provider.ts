@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { SimulatedMarketDataProvider } from '@tradew/market-data';
 import type {
   Candle,
   CandleInterval,
@@ -12,8 +11,7 @@ import type {
 import { PrismaService } from '../prisma.service';
 
 /**
- * Sentinel's market-data provider — real data first, simulator only as a last
- * resort.
+ * Sentinel's market-data provider — REAL data only.
  *
  * Resolution order for candles (and breadth/VIX):
  *   1. Live feed  — the standalone Dhan bridge (live-feed-server.ts) when
@@ -23,15 +21,36 @@ import { PrismaService } from '../prisma.service';
  *   2. Candle table — persisted real history backfilled from Dhan
  *      (services/market-data/scripts/backfill-candles.ts). Used when the live
  *      bridge is unset/unreachable but the symbol was backfilled.
- *   3. Simulator  — deterministic fallback, so Sentinel can still observe when
- *      neither real source is available. This is the ONLY simulated path.
+ *   3. Nothing. There is no simulator fallback.
+ *
+ * Removed 2026-07-26: the third tier used to be a SimulatedMarketDataProvider
+ * so /observe could always answer. That meant Sentinel produced a complete,
+ * confident-looking observation — day classification, signals, timeline — off
+ * invented candles whenever the bridge was down, with nothing in the response
+ * marking it as fabricated. An observation-and-education product whose whole
+ * value is trustworthy context cannot afford that. It now raises
+ * MarketDataUnavailableError and the workspace reports that it is not
+ * connected.
  *
  * The live bridge is a pragmatic step, not the final architecture: the Phase 4
  * ingestion pipeline (DHAN-MARKET-DATA-INTEGRATION.md) will write live Candle
- * rows to Postgres and this provider will read only the table. Keeping it
- * env-gated means that migration is a config change, and an absent/slow bridge
- * degrades cleanly rather than breaking /observe.
+ * rows to Postgres and this provider will read only the table.
  */
+
+/**
+ * Raised when neither real source can serve a request. Mapped to HTTP 503 by
+ * the controller so the web workspace can say exactly what is disconnected.
+ */
+export class MarketDataUnavailableError extends Error {
+  constructor(what: string, symbol?: string) {
+    super(
+      `No real market data available${symbol ? ` for ${symbol}` : ''} (${what}). ` +
+        'The Dhan live-feed bridge is unreachable and no backfilled candles exist for it. ' +
+        'Sentinel does not substitute simulated data.',
+    );
+    this.name = 'MarketDataUnavailableError';
+  }
+}
 
 const LIVE_FEED_URL = (process.env.SENTINEL_LIVE_FEED_URL ?? '').replace(/\/$/, '');
 const LIVE_FEED_TIMEOUT_MS = Number(process.env.SENTINEL_LIVE_FEED_TIMEOUT_MS ?? 4000);
@@ -61,9 +80,8 @@ interface FeedSnapshot {
 
 @Injectable()
 export class CandleMarketDataProvider implements MarketDataProvider {
-  readonly name = LIVE_FEED_URL ? 'live-feed+db-candle+simulated' : 'db-candle+simulated';
+  readonly name = LIVE_FEED_URL ? 'live-feed+db-candle' : 'db-candle';
   private readonly logger = new Logger(CandleMarketDataProvider.name);
-  private readonly fallback = new SimulatedMarketDataProvider();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -74,7 +92,8 @@ export class CandleMarketDataProvider implements MarketDataProvider {
     const stored = await this.candlesFromTable(symbol, interval, from, to);
     if (stored && stored.length) return stored;
 
-    return this.fallback.getCandles(symbol, interval, from, to);
+    this.logger.warn(`no real candles for ${symbol} ${interval} — refusing to simulate`);
+    throw new MarketDataUnavailableError(`${interval} candles`, symbol);
   }
 
   /** Real Dhan candles for any symbol the live bridge covers (incl. commodities). */
@@ -156,7 +175,12 @@ export class CandleMarketDataProvider implements MarketDataProvider {
         }
       }
     }
-    return this.fallback.getMarketBreadth();
+    // Unknown, not flat. Zeros are how "no breadth reading" is expressed to
+    // composeSnapshot: `declines > 0` is false so breadthRatio becomes null,
+    // and an absent vix becomes null. Both factors then report "no data"
+    // rather than contributing an invented neutral reading. Breadth is
+    // optional context, so unlike candles this does not fail the observation.
+    return { advances: 0, declines: 0, unchanged: 0 };
   }
 
   private async fetchJson<T>(url: string): Promise<T | null> {
@@ -182,7 +206,7 @@ export class CandleMarketDataProvider implements MarketDataProvider {
   async getQuote(symbol: string): Promise<Quote> {
     const live = await this.quoteFromLiveFeed(symbol);
     if (live) return live;
-    return this.fallback.getQuote(symbol);
+    throw new MarketDataUnavailableError('quote', symbol);
   }
 
   private async quoteFromLiveFeed(symbol: string): Promise<Quote | null> {
@@ -207,18 +231,24 @@ export class CandleMarketDataProvider implements MarketDataProvider {
     };
   }
 
-  // --- still delegated to the simulator (option chain + news are separate
-  //     integrations not yet served by the bridge) ---
+  // --- not yet served by the bridge ---
+  // These used to return generated chains and headlines. Empty is the honest
+  // answer: MarketIntelligenceService already degrades the option factor to
+  // "no data" on an empty chain, and NewsIntelligenceService reports no
+  // published flow rather than inventing sentiment. Real integrations land
+  // with the Phase 4 pipeline.
 
-  getOptionChain(symbol: string, expiry?: Date): Promise<OptionChainEntry[]> {
-    return this.fallback.getOptionChain(symbol, expiry);
+  async getOptionChain(_symbol: string, _expiry?: Date): Promise<OptionChainEntry[]> {
+    return [];
   }
 
-  getNews(symbols?: string[], sinceHours?: number): Promise<NewsItem[]> {
-    return this.fallback.getNews(symbols, sinceHours);
+  async getNews(_symbols?: string[], _sinceHours?: number): Promise<NewsItem[]> {
+    return [];
   }
 
-  healthCheck(): Promise<boolean> {
-    return this.fallback.healthCheck();
+  /** Healthy only when a real source can actually answer. */
+  async healthCheck(): Promise<boolean> {
+    if (!LIVE_FEED_URL) return false;
+    return (await this.fetchJson<FeedSnapshot>(`${LIVE_FEED_URL}/quotes`)) !== null;
   }
 }

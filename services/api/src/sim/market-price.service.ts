@@ -12,6 +12,15 @@ export interface LivePrice {
   bid: number;
   ask: number;
   marketOpen: boolean;
+  /**
+   * Spot price of the underlying, for OPTION instruments only.
+   *
+   * Short-option margin is a fraction of the UNDERLYING notional, not of the
+   * premium (see computeMargin in order.service.ts). The option-chain response
+   * already carries spot, so surfacing it here avoids a second round trip on
+   * the order path.
+   */
+  underlyingSpot?: number;
 }
 
 interface BridgeQuote {
@@ -307,6 +316,10 @@ export class MarketPriceService {
       bid: leg.bid > 0 ? leg.bid : leg.ltp * 0.9995,
       ask: leg.ask > 0 ? leg.ask : leg.ltp * 1.0005,
       marketOpen,
+      // Carried through for short-option margin. `chain.spot` is the same
+      // underlying price the Option Chain table displays, so the margin a
+      // trader is charged is derived from the number on their screen.
+      underlyingSpot: chain.spot != null && chain.spot > 0 ? chain.spot : undefined,
     };
   }
 }

@@ -6,14 +6,28 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:api"],
       "port": 4000,
-      "autoPort": true
+      "autoPort": false
     },
     {
       "name": "web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:web"],
       "port": 3000,
-      "autoPort": true
+      "autoPort": false
+    },
+    {
+      "name": "sentinel",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:sentinel"],
+      "port": 4010,
+      "autoPort": false
+    },
+    {
+      "name": "dhan-bridge",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "live:server", "-w", "@tradew/market-data-service"],
+      "port": 4600,
+      "autoPort": false
     }
   ]
 }

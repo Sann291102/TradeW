@@ -61,8 +61,22 @@ function PaperLiveToggle() {
 function MarketStatus() {
   const { status } = useDhanLiveFeed();
   const open = status === 'live';
-  const label = status === 'unreachable' ? 'Status unknown' : open ? 'Market open' : 'Market closed';
-  const dotColor = status === 'unreachable' ? 'bg-faint' : open ? 'bg-up' : 'bg-down';
+  // 'loading' is NOT 'closed'. Collapsing the two made the pill assert "Market
+  // closed" during the seconds before the first tick arrives — and for as long
+  // as the feed took to connect — so a session that was wide open read as shut
+  // on every page load. Not knowing yet is its own state, and saying so is the
+  // same rule the charts follow: never state something as fact before it has
+  // been checked.
+  const label =
+    status === 'loading'
+      ? 'Checking market…'
+      : status === 'unreachable'
+        ? 'Status unknown'
+        : open
+          ? 'Market open'
+          : 'Market closed';
+  const dotColor =
+    status === 'loading' || status === 'unreachable' ? 'bg-faint' : open ? 'bg-up' : 'bg-down';
 
   return (
     <div className="hidden items-center gap-2 rounded-full bg-hover px-3 py-1.5 text-xs text-muted sm:flex">

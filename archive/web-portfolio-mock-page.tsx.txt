@@ -1,0 +1,76 @@
+Archived 2026-07-28 — superseded by apps/web/src/app/portfolio/page.tsx +
+PortfolioClient.tsx, which read the real paper account.
+
+Why it was replaced: this version rendered PORTFOLIO_SUMMARY from
+lib/mock/market.ts — a hardcoded ₹4,86,500 invested / ₹5,12,840 current /
++₹26,340 overall, with hand-written "+5.41%" and "+0.94%" deltas — above an
+EmptyState reading "Your paper-account data appears here once the trading
+backend is connected."
+
+That copy was already inaccurate when written. `/sim/portfolio`,
+`/sim/positions` and `/sim/trades` were live and serving real fills, so a user
+with genuine open positions saw fabricated figures presented as their own
+account and an empty table telling them the backend did not exist. Reported as
+a P1 in the 2026-07-27 production-readiness audit ("fabricated financial
+figures shown as the user's own account"), and confirmed in the field when a
+filled NIFTY 24000 CE position (1820 qty @ 30.59) did not appear here.
+
+The Holdings and Journal tabs were not carried forward: the paper engine has no
+holdings concept distinct from positions, and the trading journal lives on the
+Sentinel surface, which owns the JournalEntry model.
+
+--------------------------------------------------------------------------------
+
+'use client';
+
+import { useState } from 'react';
+import { Card, StatCard, EmptyState, cn } from '@tradew/ui';
+import { PORTFOLIO_SUMMARY as P } from '@/lib/mock/market';
+import { inr, sign } from '@/lib/format';
+
+const TABS = ['Holdings', 'Positions', 'Performance', 'Journal'] as const;
+type Tab = (typeof TABS)[number];
+
+/**
+ * Portfolio workspace — converted from the canonical `pagePortfolio`. Summary
+ * stat cards + tabbed sections (Holdings/Positions/Performance/Journal). M2
+ * shows summary metrics from mock data and empty states for the tables (the
+ * backend holdings/positions data wires in a later milestone).
+ */
+export default function PortfolioPage() {
+  const [tab, setTab] = useState<Tab>('Holdings');
+  return (
+    <div className="mx-auto max-w-[1200px] space-y-4 p-4">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard label="Invested" value={inr(P.investment)} />
+        <StatCard label="Current" value={inr(P.currentValue)} />
+        <StatCard label="Overall P&L" value={`${sign(P.overallPnl)}${inr(P.overallPnl)}`} delta={`${sign(P.overallPnl)}5.41%`} />
+        <StatCard label="Today's P&L" value={`${sign(P.todayPnl)}${inr(P.todayPnl)}`} delta={`${sign(P.todayPnl)}0.94%`} />
+      </section>
+
+      <div role="tablist" aria-label="Portfolio sections" className="flex flex-wrap gap-1.5">
+        {TABS.map((t) => (
+          <button
+            key={t}
+            role="tab"
+            aria-selected={tab === t}
+            onClick={() => setTab(t)}
+            className={cn(
+              'rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+              tab === t ? 'bg-teal-bg text-teal' : 'text-muted hover:bg-hover hover:text-text',
+            )}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      <Card title={tab}>
+        <EmptyState
+          title={`No ${tab.toLowerCase()} to show yet`}
+          description="Your paper-account data appears here once the trading backend is connected."
+        />
+      </Card>
+    </div>
+  );
+}

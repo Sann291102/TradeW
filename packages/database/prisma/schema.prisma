@@ -70,25 +70,32 @@ enum OrderStatus {
 }
 
 model User {
-  id                    String           @id @default(uuid())
-  email                 String           @unique
-  passwordHash          String
-  country               String           @default("IN")
-  experienceLevel       String?
-  optionsFamiliarity    String?
-  createdAt             DateTime         @default(now())
-  updatedAt             DateTime         @updatedAt
-  orders                Order[]
-  trades                Trade[]
-  positions             Position[]
-  paperWallet           PaperWallet?
-  refreshTokens         RefreshToken[]
-  preferences           UserPreference[]
-  auditEvents           AuditEvent[]
-  subscriptions         Subscription[]
-  entitlementOverrides  EntitlementOverride[]
-  journalEntries        JournalEntry[]
-  notifications         Notification[]
+  id                   String                @id @default(uuid())
+  email                String                @unique
+  passwordHash         String
+  country              String                @default("IN")
+  experienceLevel      String?
+  optionsFamiliarity   String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  orders               Order[]
+  trades               Trade[]
+  positions            Position[]
+  paperWallet          PaperWallet?
+  refreshTokens        RefreshToken[]
+  preferences          UserPreference[]
+  auditEvents          AuditEvent[]
+  subscriptions        Subscription[]
+  entitlementOverrides EntitlementOverride[]
+  journalEntries       JournalEntry[]
+  notifications        Notification[]
+  disciplineSessions   DisciplineSession[]
+  disciplineOverrides  DisciplineOverride[]
+  cryptoWallet         CryptoWallet?
+  cryptoOrders         CryptoOrder[]
+  cryptoPositions      CryptoPosition[]
+  brokerCredentials    BrokerCredential[]
+  brokerOAuthStates    BrokerOAuthState[]
 }
 
 model RefreshToken {
@@ -190,20 +197,20 @@ model Instrument {
 }
 
 model Quote {
-  id             String     @id @default(uuid())
-  instrumentId   String     @unique
-  ltp            Decimal    @db.Decimal(12, 2)
-  previousClose  Decimal?   @db.Decimal(12, 2)
-  open           Decimal?   @db.Decimal(12, 2)
-  high           Decimal?   @db.Decimal(12, 2)
-  low            Decimal?   @db.Decimal(12, 2)
-  bid            Decimal?   @db.Decimal(12, 2)
-  ask            Decimal?   @db.Decimal(12, 2)
-  volume         BigInt?    @default(0)
-  source         String     @default("simulated")
-  updatedAt      DateTime   @updatedAt
-  createdAt      DateTime   @default(now())
-  instrument     Instrument @relation(fields: [instrumentId], references: [id])
+  id            String     @id @default(uuid())
+  instrumentId  String     @unique
+  ltp           Decimal    @db.Decimal(12, 2)
+  previousClose Decimal?   @db.Decimal(12, 2)
+  open          Decimal?   @db.Decimal(12, 2)
+  high          Decimal?   @db.Decimal(12, 2)
+  low           Decimal?   @db.Decimal(12, 2)
+  bid           Decimal?   @db.Decimal(12, 2)
+  ask           Decimal?   @db.Decimal(12, 2)
+  volume        BigInt?    @default(0)
+  source        String     @default("simulated")
+  updatedAt     DateTime   @updatedAt
+  createdAt     DateTime   @default(now())
+  instrument    Instrument @relation(fields: [instrumentId], references: [id])
 
   @@index([instrumentId])
 }
@@ -238,52 +245,52 @@ model Candle {
 }
 
 model Order {
-  id             String        @id @default(uuid())
-  userId         String
-  instrumentId   String
+  id           String @id @default(uuid())
+  userId       String
+  instrumentId String
 
-  side           OrderSide
-  type           OrderType     @default(MARKET)
-  validity       OrderValidity @default(DAY)
-  productType    ProductType   @default(MIS)
-  status         OrderStatus   @default(PENDING)
+  side        OrderSide
+  type        OrderType     @default(MARKET)
+  validity    OrderValidity @default(DAY)
+  productType ProductType   @default(MIS)
+  status      OrderStatus   @default(PENDING)
 
   quantity       Int
   /// Sum of every Trade's quantity against this order so far.
-  filledQuantity Int           @default(0)
+  filledQuantity Int      @default(0)
   /// Limit price — required for LIMIT and SL, ignored for MARKET/SL_M.
-  price          Decimal?      @db.Decimal(12, 2)
+  price          Decimal? @db.Decimal(12, 2)
   /// Trigger price — required for SL and SL_M, ignored otherwise. Once the
   /// live price crosses this, status moves TRIGGER_PENDING -> OPEN (SL) or
   /// straight to filling (SL_M).
-  triggerPrice   Decimal?      @db.Decimal(12, 2)
+  triggerPrice   Decimal? @db.Decimal(12, 2)
   /// Quantity-weighted average across this order's trades — null until the
   /// first fill.
-  avgFillPrice   Decimal?      @db.Decimal(12, 2)
-  slippage       Decimal?      @db.Decimal(12, 2)
-  charges        Decimal       @default(0) @db.Decimal(12, 2)
+  avgFillPrice   Decimal? @db.Decimal(12, 2)
+  slippage       Decimal? @db.Decimal(12, 2)
+  charges        Decimal  @default(0) @db.Decimal(12, 2)
   /// Simulated margin blocked while this order is open; released on
   /// fill/cancel/reject (fill converts it into the position's marginUsed).
-  marginBlocked  Decimal       @default(0) @db.Decimal(12, 2)
+  marginBlocked  Decimal  @default(0) @db.Decimal(12, 2)
 
-  rejectReason   String?
+  rejectReason String?
 
   /// Bracket/Target order future-readiness (spec: "future-ready", not
   /// implemented this phase) — a child SL or target order would reference
   /// the entry order that spawned it. Nothing populates this yet.
-  parentOrderId  String?
-  parentOrder    Order?        @relation("OrderChildren", fields: [parentOrderId], references: [id])
-  childOrders    Order[]       @relation("OrderChildren")
+  parentOrderId String?
+  parentOrder   Order?  @relation("OrderChildren", fields: [parentOrderId], references: [id])
+  childOrders   Order[] @relation("OrderChildren")
 
-  placedAt       DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  placedAt  DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   /// DAY validity: end of the current session, set at placement. IOC: not used
   /// (resolved immediately at placement time).
-  expiresAt      DateTime?
+  expiresAt DateTime?
 
-  user           User          @relation(fields: [userId], references: [id])
-  instrument     Instrument    @relation(fields: [instrumentId], references: [id])
-  trades         Trade[]
+  user       User       @relation(fields: [userId], references: [id])
+  instrument Instrument @relation(fields: [instrumentId], references: [id])
+  trades     Trade[]
 
   @@index([userId, placedAt])
   @@index([status])
@@ -313,32 +320,32 @@ model Trade {
 }
 
 model Position {
-  id            String      @id @default(uuid())
-  userId        String
-  instrumentId  String
-  productType   ProductType @default(MIS)
-  quantity      Int
-  avgPrice      Decimal     @db.Decimal(12, 2)
+  id           String      @id @default(uuid())
+  userId       String
+  instrumentId String
+  productType  ProductType @default(MIS)
+  quantity     Int
+  avgPrice     Decimal     @db.Decimal(12, 2)
   /// Lifetime realized P&L for this position row (survives flatten-and-reopen
   /// only in the sense that a fresh row starts back at 0 — closing to zero
   /// quantity does not delete the row, see PositionService).
-  realizedPnl   Decimal     @default(0) @db.Decimal(12, 2)
+  realizedPnl  Decimal     @default(0) @db.Decimal(12, 2)
 
   /// Session-open snapshot (IST calendar day), refreshed once per day on
   /// first touch — see PositionService.dailyPnl. Distinguishes "today's P&L"
   /// from lifetime unrealized/realized without a separate time-series table.
-  sessionOpenQty         Int      @default(0)
-  sessionOpenAvgPrice    Decimal? @db.Decimal(12, 2)
-  sessionOpenMarketPrice Decimal? @db.Decimal(12, 2)
+  sessionOpenQty         Int       @default(0)
+  sessionOpenAvgPrice    Decimal?  @db.Decimal(12, 2)
+  sessionOpenMarketPrice Decimal?  @db.Decimal(12, 2)
   sessionAnchorAt        DateTime?
 
   /// Simulated margin currently blocked for this open position.
-  marginUsed    Decimal     @default(0) @db.Decimal(12, 2)
+  marginUsed Decimal @default(0) @db.Decimal(12, 2)
 
-  updatedAt     DateTime    @updatedAt
-  createdAt     DateTime    @default(now())
-  user          User        @relation(fields: [userId], references: [id])
-  instrument    Instrument  @relation(fields: [instrumentId], references: [id])
+  updatedAt  DateTime   @updatedAt
+  createdAt  DateTime   @default(now())
+  user       User       @relation(fields: [userId], references: [id])
+  instrument Instrument @relation(fields: [instrumentId], references: [id])
 
   @@unique([userId, instrumentId, productType])
   @@index([userId])
@@ -361,6 +368,198 @@ model PaperWallet {
   updatedAt       DateTime @updatedAt
   createdAt       DateTime @default(now())
   user            User     @relation(fields: [userId], references: [id])
+}
+
+// ============================================================================
+// Crypto — a SEPARATE trading space, denominated in USD.
+//
+// Deliberately its own tables rather than widening Order/Trade/Position:
+//
+//  · Precision. Crypto quantities are fractional (0.00042 BTC) and prices span
+//    $100k down to $0.00002. The rupee OMS stores quantity as Int and prices as
+//    Decimal(12,2) — there, the smallest possible crypto order is 1 whole BTC
+//    and any asset under ₹0.01 rounds to zero. Decimal(28,8)/Decimal(20,8) here
+//    matches what exchanges actually quote.
+//  · Currency. The paper wallet is rupees end to end — margin, P&L, the
+//    portfolio rollup, the discipline session's realizedPnl. There is no FX
+//    conversion anywhere in that path, and adding one to satisfy crypto would
+//    put a conversion rate inside every existing money calculation.
+//  · Blast radius. The rupee order path has a known concurrency defect and no
+//    test coverage. Widening its column types to serve a new asset class means
+//    re-verifying arithmetic that is already load-bearing for real paper
+//    accounts. A separate space touches none of it.
+//
+// SPOT ONLY — no margin, no leverage, no short selling. A buy costs its full
+// USD notional and a sell requires already holding the asset, so there is no
+// margin model here at all and none of the short-option class of error is
+// reachable. That is a deliberate scope choice, not a gap.
+//
+// No FK to Instrument: crypto symbols are Binance pairs, not exchange-listed
+// instruments in that table, and nothing needs to join them.
+// ============================================================================
+
+enum CryptoOrderStatus {
+  FILLED
+  REJECTED
+}
+
+/// One USD paper wallet per user, separate from the rupee PaperWallet.
+/// Created lazily on the first crypto order.
+model CryptoWallet {
+  id     String @id @default(uuid())
+  userId String @unique
+
+  /// USD paper capital, granted once at creation.
+  startingBalance Decimal @default(10000) @db.Decimal(20, 2)
+  /// Free USD. Spot only, so there is no margin component — cash is simply
+  /// startingBalance + realizedPnl - cost of what is currently held.
+  cashBalance     Decimal @default(10000) @db.Decimal(20, 2)
+  realizedPnl     Decimal @default(0) @db.Decimal(20, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model CryptoOrder {
+  id     String @id @default(uuid())
+  userId String
+  /// Binance pair, e.g. 'BTCUSDT'.
+  symbol String
+
+  side   OrderSide
+  status CryptoOrderStatus @default(FILLED)
+
+  /// Fractional by design — 8dp is Binance's own quote precision.
+  quantity  Decimal  @db.Decimal(28, 8)
+  /// Fill price in USD. 8dp so sub-cent assets (SHIB, PEPE) are representable.
+  fillPrice Decimal? @db.Decimal(20, 8)
+  /// quantity × fillPrice, in USD.
+  notional  Decimal? @db.Decimal(20, 2)
+  fee       Decimal  @default(0) @db.Decimal(20, 2)
+
+  rejectReason String?
+
+  placedAt DateTime @default(now())
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, placedAt])
+}
+
+model CryptoPosition {
+  id     String @id @default(uuid())
+  userId String
+  symbol String
+
+  /// Always >= 0. Spot only — there is no short side to represent.
+  quantity    Decimal @db.Decimal(28, 8)
+  avgPrice    Decimal @db.Decimal(20, 8)
+  realizedPnl Decimal @default(0) @db.Decimal(20, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, symbol])
+  @@index([userId])
+}
+
+// ============================================================================
+// Discipline — self-imposed session limits.
+//
+// The trader states three limits before the first order of a trading day
+// (time, trade count, loss budget) plus an optional profit target. The OMS
+// checks them on the order-placement path; a breach never hard-blocks, it
+// costs the trader a typed reason which is recorded here as behavioural data.
+//
+// Observation only: nothing in these tables expresses a view on any
+// instrument or direction. They record what the trader asked of themselves.
+// ============================================================================
+
+/// Which self-imposed limit an override was taken against.
+enum DisciplineLimitType {
+  MAX_TRADES
+  MAX_LOSS
+  MAX_MINUTES
+}
+
+/// One row per user per trading day. Created when the trader fills in the
+/// discipline panel; its existence is what stops the panel re-appearing on a
+/// background/reopen, so this is server truth, never a client-side flag.
+model DisciplineSession {
+  id     String @id @default(uuid())
+  userId String
+
+  /// IST calendar day as 'YYYY-MM-DD'. Deliberately a String, not a DateTime:
+  /// the unique key below must mean "one per IST trading day" exactly, and a
+  /// DateTime would let a server in another zone open a second session for
+  /// what the trader experiences as the same day.
+  tradingDate String
+
+  // ---- limits, set once at session start ----
+  maxMinutes   Int
+  maxTrades    Int
+  maxLoss      Decimal  @db.Decimal(12, 2)
+  /// Optional by design — the panel advises setting one but never blocks on
+  /// it, and no enforcement path reads it. Only the one-time notice does.
+  targetProfit Decimal? @db.Decimal(12, 2)
+
+  // ---- counters, maintained by the OMS ----
+  startedAt   DateTime @default(now())
+  /// Accepted order placements, not fills — "how many trades will you take"
+  /// is a decision count. Rejected orders never increment it.
+  tradesTaken Int      @default(0)
+  /// Mirrors the realized P&L booked through OrderService.executeFill for
+  /// this session, incremented in that same transaction.
+  realizedPnl Decimal  @default(0) @db.Decimal(12, 2)
+
+  /// Set the first time realizedPnl reaches targetProfit, in the same
+  /// transaction as the notification — that is what makes the notice
+  /// genuinely one-time rather than once-per-fill.
+  targetNoticeSentAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  overrides DisciplineOverride[]
+
+  @@unique([userId, tradingDate])
+  @@index([userId, startedAt])
+}
+
+/// Append-only record of a trader choosing to trade past a limit they set.
+///
+/// A child table rather than a Json[] column on the session: this data exists
+/// to be read back across dates ("every loss-limit override this quarter"),
+/// which a JSON array cannot be indexed for. Same reasoning as
+/// ConceptObservation — derived views query it, so it stays queryable.
+model DisciplineOverride {
+  id        String @id @default(uuid())
+  sessionId String
+  /// Denormalised from the session so cross-date queries never need the join.
+  userId    String
+
+  limitType DisciplineLimitType
+  /// The trader's own words. Length is enforced in the service, not here —
+  /// a DB constraint would turn a UX rule into a 500.
+  reason    String
+
+  /// Nonce of the signed override token this row consumed. Unique, and that
+  /// uniqueness IS the single-use guarantee: one typed reason authorises
+  /// exactly one order because a replayed token collides here. Enforced by
+  /// Postgres inside the same transaction as the order create, so it holds
+  /// under concurrent placement — an application-level check would not.
+  tokenNonce String @unique
+
+  createdAt DateTime @default(now())
+
+  session DisciplineSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, limitType, createdAt])
+  @@index([sessionId])
 }
 
 // ============================================================================
@@ -634,13 +833,13 @@ model ConceptEdge {
 /// learned weights are derived from these rows, so mutating one would rewrite
 /// history that a past explanation already cited.
 model ConceptObservation {
-  id       String  @id @default(uuid())
+  id        String  @id @default(uuid())
   conceptId String // FK to ConceptNode.id (not the slug)
-  edgeId   String? // set when the observation is about a relation, not a concept
-  symbol   String? // bridge to the entity graph / market data
-  outcome  String // confirmed | refuted | inconclusive
-  strength Float   @default(0.5)
-  context  Json    @default("{}")
+  edgeId    String? // set when the observation is about a relation, not a concept
+  symbol    String? // bridge to the entity graph / market data
+  outcome   String // confirmed | refuted | inconclusive
+  strength  Float   @default(0.5)
+  context   Json    @default("{}")
 
   /// SentinelObservation.id that produced this, for audit traceability.
   observationId String?
@@ -743,7 +942,7 @@ model Notification {
   title     String
   body      String
   read      Boolean              @default(false)
-  metadata  Json?                // flexible payload: orderId, symbol, link, etc.
+  metadata  Json? // flexible payload: orderId, symbol, link, etc.
   createdAt DateTime             @default(now())
   user      User                 @relation(fields: [userId], references: [id])
 
@@ -756,6 +955,140 @@ model Notification {
 // (NVIDIA AI Model Distillation blueprint; served by any LlmProvider, incl.
 // a distilled student model on NVIDIA NIM, selected purely by config)
 // ============================================================================
+
+// ============================================================================
+// Broker credentials — tokens obtained through a broker's OAuth/consent flow.
+//
+// Exists because a token minted at RUNTIME has nowhere else to go. Dhan's
+// app-key flow returns an access token after the user completes 2FA in a
+// browser; environment variables are read once at process start and cannot be
+// rewritten, so the token has to be persisted somewhere the API and the feed
+// bridge can both read.
+//
+// Dhan tokens are valid for 24 hours (their docs, verified 2026-07-29). This
+// table is what makes re-consent a button rather than a manual edit of
+// services/market-data/.env followed by a restart.
+// ============================================================================
+
+model BrokerCredential {
+  id String @id @default(uuid())
+
+  /// 'dhan' today. A second broker would be a second row, not a second table.
+  ///
+  /// SECURITY: this used to be `@unique` on its own, which made the table a
+  /// single global slot — every credential write targeted the same row
+  /// regardless of who initiated it, so "whoever completed consent last owns
+  /// the platform's broker session". Uniqueness is now (provider, userId): a
+  /// credential belongs to exactly one user and is only ever read or written
+  /// through an explicit ownership check.
+  provider String
+
+  /// Owning user. Every read and write of this row is authorized against this
+  /// column — there is no code path that resolves a credential by provider
+  /// alone. Cascade so deleting a user cannot leave an orphaned broker token
+  /// behind with no owner to authorize against.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The broker's own account identifier (Dhan: dhanClientId).
+  brokerClientId   String?
+  brokerClientName String?
+
+  /// The access token itself, still plaintext at rest.
+  ///
+  /// SECURITY: the previous comment here justified plaintext on the grounds
+  /// that there was "exactly one operator account behind the feed" and told
+  /// the next reader to encrypt before adding per-user linking. Per-user
+  /// linking is what this column now carries, so that condition has been met
+  /// and encryption at rest is genuinely outstanding. It is NOT solved by this
+  /// change; what this change removes is the cross-user exposure — a user can
+  /// no longer read, overwrite or displace another user's token through the
+  /// API. Encrypting the column is tracked separately because it needs a key
+  /// management decision (KMS vs. app-held key) rather than a code edit.
+  accessToken String
+
+  /// Broker-reported expiry. The refresh job and the /status route both read
+  /// this rather than assuming 24h from issue.
+  expiresAt DateTime?
+
+  /// Provenance: 'consent' (OAuth flow) | 'manual' (pasted into .env).
+  source String @default("consent")
+
+  /// Marks the ONE credential the shared live-feed bridge runs on.
+  ///
+  /// The bridge is a single process serving public market data to everybody, so
+  /// it needs one designated token. Previously it took "the only row in the
+  /// table", which is the single-operator assumption this migration removes:
+  /// with per-user credentials that would silently mean "whichever row the
+  /// query happened to return". The designation is now explicit, operator-only
+  /// (ADMIN_API_TOKEN), and enforced unique per provider by a partial index in
+  /// the migration — Prisma cannot express `WHERE isFeedDefault = true`, so the
+  /// constraint lives in SQL and is documented here.
+  isFeedDefault Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, userId])
+  @@index([provider, isFeedDefault])
+}
+
+// ============================================================================
+// Broker OAuth/consent state — CSRF and replay protection for the broker
+// connect flow.
+//
+// The broker redirect (`GET /broker/dhan/callback`) cannot carry a bearer
+// token: it arrives as a top-level browser navigation from the broker's own
+// domain. Without a server-side record of which authenticated user started the
+// flow, that endpoint accepts any well-formed callback from anyone — the exact
+// gap this table closes.
+//
+// One row per initiated flow. Created only by an authenticated request to
+// /connect, consumed exactly once by the callback, and useless after
+// `expiresAt`. A callback that matches no live row is rejected and logged.
+// ============================================================================
+
+model BrokerOAuthState {
+  id String @id @default(uuid())
+
+  /// 'dhan'. Scopes a state to the provider that issued it, so a state minted
+  /// for one broker cannot be replayed against another's callback.
+  provider String
+
+  /// The authenticated user who started this flow. The credential written when
+  /// the callback completes is attributed to THIS user — never to anything
+  /// supplied in the callback request.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the state value, never the value itself — same rule as
+  /// RefreshToken.tokenHash. A database read cannot recover a usable state, and
+  /// verification is a hash-and-compare. Unique so a replayed value collides
+  /// rather than creating a second usable row.
+  stateHash String @unique
+
+  /// The broker's consent id for this flow, when the provider returns one
+  /// (Dhan does). Used to correlate a callback that does not echo `state` back.
+  consentAppId String?
+
+  /// Set the moment the state is used. A non-null value means "already
+  /// consumed", which is what makes replay detectable rather than silent.
+  consumedAt DateTime?
+
+  /// Short by design (minutes). An abandoned flow must stop being usable
+  /// quickly; an expired row is rejected exactly like a missing one.
+  expiresAt DateTime
+
+  /// Request provenance for the security log. Not used for authorization —
+  /// both are attacker-controlled headers — only for after-the-fact review.
+  ip        String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@index([provider, userId, consumedAt])
+  @@index([expiresAt])
+}
 
 model NewsEvent {
   id           String   @id @default(uuid())
@@ -772,4 +1105,37 @@ model NewsEvent {
 
   @@index([eventType, publishedAt])
   @@index([publishedAt])
+}
+
+/// What a one-time code is allowed to do. A code minted to log in must never
+/// be replayable to change a password, so purpose is part of the lookup and is
+/// never inferred from context.
+enum OtpPurpose {
+  login
+  password_reset
+  email_verify
+}
+
+/// Short-lived email one-time codes.
+///
+/// Keyed by email rather than userId on purpose: a login code is requested
+/// before we know whether the address belongs to an account, and revealing
+/// that difference to the caller is an account-enumeration leak.
+///
+/// The code is stored as a SHA-256 hash for the same reason RefreshToken is —
+/// database read access must not yield a usable credential. `attempts` bounds
+/// brute force against a 6-digit space; the row is consumed (not deleted) so
+/// a replay is distinguishable from an expiry in the audit trail.
+model EmailOtp {
+  id         String     @id @default(uuid())
+  email      String
+  purpose    OtpPurpose
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int        @default(0)
+  createdAt  DateTime   @default(now())
+
+  @@index([email, purpose, consumedAt])
+  @@index([expiresAt])
 }

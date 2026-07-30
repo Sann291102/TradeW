@@ -1,26 +1,64 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { cn, Badge } from '@tradew/ui';
 import { useWorkspaceStore } from '@/lib/store/workspaceStore';
+import { useAssistant, type AssistantTurn } from '@/lib/assistant/useAssistant';
 import { SparkleIcon } from './icons';
-
-const QUICK_CHIPS = ['Explain this chart', 'Market pulse', 'Explain my portfolio', 'Open Option Chain'];
 
 /**
  * TradeW AI floating assistant (shell chrome) — the permanent bottom-right dock
  * from the canonical terminal (#aiFab + #aiDock) and TRADEW-ASSISTANT.md.
- * Milestone 2 delivers the VISUAL surface only: FAB, animated dock, message
- * scaffold, quick-action chips, and the required observation-only disclaimer.
- * No AI/routing logic yet (that's a later milestone) — this is the slot.
  *
- * Open state lives in the workspace store (Milestone 3) so Escape/the command
- * palette can close it centrally alongside every other overlay.
+ * Phase 1 (2026-07-26) makes this a WORKING command surface: the dock now
+ * resolves what the user types and takes control of the application — opens
+ * routes and option contracts, shows/hides panels, applies layouts, switches
+ * theme — and shows a Comet-style trace of what it actually did. Resolution
+ * lives in `lib/assistant/` (pure, no LLM call, no network); execution lives in
+ * `lib/assistant/useAssistant.ts`.
+ *
+ * The previous visual-only scaffold ("responses arrive in a later milestone")
+ * is preserved at `archive/web-floating-ai-visual-scaffold.tsx.txt` per repo
+ * Rule 1. All of its layout, classnames and animation are kept here unchanged
+ * — only the inert body was replaced with a live transcript and input.
+ *
+ * NOT built yet (Phase 2): the analysis half — chart reads, support/resistance,
+ * option-chain interpretation. Those utterances are classified and parked with
+ * an honest "not wired up yet" rather than answered.
+ *
+ * Open state lives in the workspace store so Escape/the command palette can
+ * close it centrally alongside every other overlay.
  */
+
+/** Quick chips — every one is a real command the resolver handles. */
+const QUICK_CHIPS = [
+  'Open NIFTY 24300 call of 21st July',
+  'Show the option chain',
+  'Open Research',
+  'What can you do',
+];
+
 export function FloatingAI() {
   const open = useWorkspaceStore((s) => s.aiDockOpen);
   const setOpen = useWorkspaceStore((s) => s.setAiDockOpen);
   const reduce = useReducedMotion();
+  const { turns, send } = useAssistant();
+  const [draft, setDraft] = useState('');
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Keep the newest turn in view — the trace lines mean an answer is often
+  // several lines tall, so without this the reply scrolls off as it renders.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [turns]);
+
+  function submit(text: string) {
+    send(text);
+    setDraft('');
+  }
+
   return (
     <>
       {/* FAB */}
@@ -71,16 +109,15 @@ export function FloatingAI() {
               </button>
             </header>
 
-            <div className="flex-1 space-y-3 overflow-auto p-4">
-              <div className="max-w-[85%] rounded-card rounded-tl-sm border border-border bg-bg px-3 py-2 text-sm text-text">
-                Hi — I&apos;m TradeW AI, your workspace assistant. Ask me to open a chart, explain
-                your portfolio, or navigate anywhere in the app.
-              </div>
+            <div ref={scrollRef} className="flex-1 space-y-3 overflow-auto p-4">
+              {turns.map((turn) => (
+                <Turn key={turn.id} turn={turn} />
+              ))}
               <div className="flex items-center gap-2 text-[11px] text-faint">
                 <Badge tone="brand" className="px-1.5 py-0 text-[9px]">
                   BETA
                 </Badge>
-                Interface preview — responses arrive in a later milestone.
+                App control is live · market analysis is next
               </div>
             </div>
 
@@ -89,6 +126,7 @@ export function FloatingAI() {
                 <button
                   key={c}
                   type="button"
+                  onClick={() => submit(c)}
                   className="rounded-full border border-border2 px-2.5 py-1 text-[11px] font-semibold text-muted transition-colors duration-micro hover:border-teal hover:text-teal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
                 >
                   {c}
@@ -96,19 +134,28 @@ export function FloatingAI() {
               ))}
             </div>
 
-            <div className="flex items-center gap-2 border-t border-border p-3">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                submit(draft);
+              }}
+              className="flex items-center gap-2 border-t border-border p-3"
+            >
               <input
                 aria-label="Message TradeW AI"
                 placeholder="Ask TradeW AI…"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
                 className="flex-1 rounded-lg border border-border2 bg-bg px-3 py-2 text-sm text-text placeholder:text-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
               />
               <button
-                type="button"
-                className="rounded-lg bg-teal px-3 py-2 text-sm font-semibold text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                type="submit"
+                disabled={!draft.trim()}
+                className="rounded-lg bg-teal px-3 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
               >
                 Send
               </button>
-            </div>
+            </form>
             <p className="border-t border-border px-4 py-2 text-[10px] leading-tight text-faint">
               TradeW AI shares observations only — never investment advice.
             </p>
@@ -116,5 +163,75 @@ export function FloatingAI() {
         )}
       </AnimatePresence>
     </>
+  );
+}
+
+/**
+ * One transcript turn. Refusals get a distinct (warning-toned) treatment rather
+ * than reading like a normal answer — a boundary should look like a boundary,
+ * not like a failure to understand.
+ */
+function Turn({ turn }: { turn: AssistantTurn }) {
+  if (turn.role === 'user') {
+    return (
+      <div className="ml-auto max-w-[85%] rounded-card rounded-br-sm bg-teal px-3 py-2 text-sm text-white">
+        {turn.text}
+      </div>
+    );
+  }
+
+  const isRefusal = turn.intent === 'refusal';
+
+  return (
+    <div className="max-w-[92%] space-y-1.5">
+      <div
+        className={cn(
+          'rounded-card rounded-tl-sm border px-3 py-2 text-sm',
+          // amber, not red: a boundary is a deliberate limit, not an error —
+          // and red/green are reserved for market direction (DESIGN-SYSTEM.md
+          // §1). Opacity modifiers don't apply to var() colors, so this uses
+          // the paired `amber-bg` token rather than `bg-amber/5`.
+          isRefusal ? 'border-amber bg-amber-bg text-text' : 'border-border bg-bg text-text',
+        )}
+      >
+        {turn.text.split('\n').map((line, i) => (
+          <p key={i} className={cn(line === '' && 'h-2', 'whitespace-pre-wrap')}>
+            {renderInlineBold(line)}
+          </p>
+        ))}
+      </div>
+
+      {turn.steps && (
+        <ul className="space-y-0.5 pl-1 text-[11px] text-faint">
+          {turn.steps.map((s, i) => (
+            <li key={i} className="flex gap-1.5">
+              <span aria-hidden className="text-teal">
+                ›
+              </span>
+              <span>{s}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {turn.disclaimer && (
+        <p className="pl-1 text-[10px] text-faint">Observations only — never investment advice.</p>
+      )}
+    </div>
+  );
+}
+
+/** Minimal `**bold**` support — the capability reply uses it for section heads.
+ *  Deliberately not a markdown renderer; the assistant emits plain text. */
+function renderInlineBold(line: string) {
+  const parts = line.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((p, i) =>
+    p.startsWith('**') && p.endsWith('**') ? (
+      <strong key={i} className="font-bold text-text">
+        {p.slice(2, -2)}
+      </strong>
+    ) : (
+      <span key={i}>{p}</span>
+    ),
   );
 }

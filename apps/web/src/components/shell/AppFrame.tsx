@@ -15,6 +15,8 @@ import { useKeyboardShortcuts } from '@/lib/store/useKeyboardShortcuts';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { CommandPalette } from '../workspace/CommandPalette';
 import { ShortcutsHelp } from '../workspace/ShortcutsHelp';
+import { DisciplinePanel } from '../discipline/DisciplinePanel';
+import { useDisciplineStore } from '@/lib/store/disciplineStore';
 
 /**
  * AppFrame — the permanent application shell (Milestone 2, Step 1; overlay
@@ -34,6 +36,7 @@ export function AppFrame({ children }: { children: ReactNode }) {
   const mobileNavOpen = useWorkspaceStore((s) => s.mobileNavOpen);
   const setMobileNavOpen = useWorkspaceStore((s) => s.setMobileNavOpen);
   const theme = useWorkspaceStore((s) => s.theme);
+  const sessionStatus = useSessionStore((s) => s.status);
 
   useHydrateWorkspaceStore();
   useKeyboardShortcuts();
@@ -45,6 +48,16 @@ export function AppFrame({ children }: { children: ReactNode }) {
   useEffect(() => {
     void useSessionStore.getState().init();
   }, []);
+
+  // Start the discipline session check once the user is known to be signed in.
+  // Gated on `authenticated` rather than run unconditionally like the session
+  // init above, because `/discipline/today` is an authenticated route — firing
+  // it for a signed-out visitor would only produce a 401 and push the store
+  // into its retry backoff for nothing. `init` is idempotent, so the
+  // SessionBudgetCard calling it too is a no-op.
+  useEffect(() => {
+    if (sessionStatus === 'authenticated') useDisciplineStore.getState().init();
+  }, [sessionStatus]);
 
   // The inline script in layout.tsx only runs once, pre-hydration (prevents
   // FOUC on load). Subsequent theme changes — ThemeMenu, the command palette's
@@ -100,6 +113,11 @@ export function AppFrame({ children }: { children: ReactNode }) {
       <NotificationCenter />
       <CommandPalette />
       <ShortcutsHelp />
+      {/* Last, and at the highest z-index of the shell overlays: when a
+          discipline session is required it must sit over everything, including
+          the command palette. It renders nothing unless the server says a
+          session is needed — see DisciplinePanel / disciplineStore. */}
+      <DisciplinePanel />
     </div>
   );
 }

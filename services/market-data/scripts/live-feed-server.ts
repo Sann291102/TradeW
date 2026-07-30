@@ -1,7 +1,14 @@
 import 'dotenv/config';
 import * as http from 'node:http';
 import WebSocket = require('ws');
-import { DhanMarketFeed, MarketTick, WebSocketLike, parseScripMaster, type ScripMasterRow } from '@tradew/market-data';
+import {
+  DhanMarketFeed,
+  MarketTick,
+  WebSocketLike,
+  isBrokerAddressable,
+  parseScripMaster,
+  type ScripMasterRow,
+} from '@tradew/market-data';
 
 /**
  * Standalone live-quote server — deliberately outside services/api and
@@ -17,6 +24,95 @@ import { DhanMarketFeed, MarketTick, WebSocketLike, parseScripMaster, type Scrip
  */
 
 const PORT = Number(process.env.DHAN_LIVE_PORT || 4600);
+
+/**
+ * Browser origins allowed to read this server cross-origin.
+ *
+ * Sourced from FRONTEND_URL (comma-separated, same convention as services/api's
+ * CORS config) so there is one place that lists the app's origins. Any
+ * localhost/127.0.0.1 port is additionally accepted OUTSIDE production, because
+ * the web dev server takes whatever port is free and a fixed list would break
+ * on every restart.
+ *
+ * An origin that is not listed simply gets no CORS header — the request still
+ * succeeds for non-browser callers, which is the correct behaviour for a
+ * read-only public data server: CORS is a browser-side read restriction, not an
+ * access control, and pretending otherwise would be security theatre. The real
+ * boundary for this process is that it is bound to localhost and reachable
+ * publicly only through the web origin's explicit `/feed` route allowlist
+ * (apps/web/feed-proxy-routes.mjs).
+ */
+const ALLOWED_ORIGINS = (process.env.FRONTEND_URL || 'http://localhost:3000')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+function isAllowedFeedOrigin(origin: string): boolean {
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  if (process.env.NODE_ENV === 'production') return false;
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+}
+
+/**
+ * Where the Dhan access token comes from.
+ *
+ * Preferred source is the `BrokerCredential` row written by the API's
+ * app-key consent flow (services/api/src/broker/dhan-auth.service.ts), so a
+ * daily renewal is a click in the UI rather than an edit to
+ * services/market-data/.env plus a restart of this process.
+ *
+ * `DHAN_ACCESS_TOKEN` remains the fallback, for two reasons: this bridge is
+ * documented above as running without Postgres, and a machine that has never
+ * run the consent flow must keep working exactly as before. The Prisma import
+ * is therefore dynamic — no database, no crash, just the env value.
+ *
+ * Note this changes only WHERE the token is read, not how long it lasts. Dhan
+ * caps every access token at 24 hours (SEBI rule on API access management), so
+ * the app key removes the file edit, not the daily renewal.
+ */
+let DHAN_TOKEN = process.env.DHAN_ACCESS_TOKEN || '';
+let DHAN_TOKEN_SOURCE = 'env';
+
+async function resolveDhanToken(): Promise<void> {
+  try {
+    const { PrismaClient } = (await import('@prisma/client')) as typeof import('@prisma/client');
+    const prisma = new PrismaClient();
+    try {
+      // SECURITY: reads only the credential explicitly designated
+      // `isFeedDefault`, never "the row for this provider".
+      //
+      // BrokerCredential used to be a single global row, so `provider: 'dhan'`
+      // identified it unambiguously. Credentials are now per-user
+      // ((provider, userId), see 20260729020000_broker_credential_ownership), so
+      // that query would resolve to "whichever user's row came back first" —
+      // meaning any user who linked their own broker account could end up
+      // powering the shared public feed as a side effect. The designation is an
+      // operator action (POST /broker/dhan/admin/feed-default/:userId, gated by
+      // ADMIN_API_TOKEN) and is unique per provider by a partial index.
+      //
+      // No designation set is a normal, expected state: it falls through to
+      // DHAN_ACCESS_TOKEN below, exactly as an empty table always did.
+      const row = await prisma.brokerCredential.findFirst({
+        where: { provider: 'dhan', isFeedDefault: true },
+      });
+      // An expired stored token is worse than the env one: it is guaranteed to
+      // fail on first use, so skip it rather than prefer it for being newer.
+      if (row && (!row.expiresAt || row.expiresAt.getTime() > Date.now())) {
+        DHAN_TOKEN = row.accessToken;
+        DHAN_TOKEN_SOURCE = `db:${row.source ?? 'unknown'}`;
+        const expiry = row.expiresAt ? row.expiresAt.toISOString() : 'no stated expiry';
+        console.log(`[dhan] token from BrokerCredential (${DHAN_TOKEN_SOURCE}), expires ${expiry}`);
+        return;
+      }
+      if (row) console.warn('[dhan] stored token has expired — falling back to DHAN_ACCESS_TOKEN');
+    } finally {
+      await prisma.$disconnect();
+    }
+  } catch (err) {
+    console.warn(`[dhan] BrokerCredential unavailable (${err instanceof Error ? err.message : String(err)}) — using DHAN_ACCESS_TOKEN`);
+  }
+  if (DHAN_TOKEN) console.log('[dhan] token from DHAN_ACCESS_TOKEN (env)');
+}
 
 type InstrumentMeta = { symbol: string; displayName: string; securityId: string; exchangeSegment: 'IDX_I' | 'NSE_EQ' | 'MCX_COMM' };
 
@@ -361,12 +457,15 @@ let feedStatus = 'idle';
 let feedReason: string | undefined;
 
 function startFeed(allInstruments: InstrumentMeta[], kindOf: (meta: InstrumentMeta) => 'index' | 'stock' | 'etf' | 'commodity') {
-  const accessToken = process.env.DHAN_ACCESS_TOKEN;
+  const accessToken = DHAN_TOKEN;
   const clientId = process.env.DHAN_CLIENT_ID;
   if (!accessToken || !clientId) {
-    console.error('Missing DHAN_ACCESS_TOKEN / DHAN_CLIENT_ID — set them in services/market-data/.env');
+    console.error(
+      'No Dhan access token — connect the broker in Settings (app-key consent flow), or set DHAN_ACCESS_TOKEN / DHAN_CLIENT_ID in services/market-data/.env',
+    );
     process.exit(1);
   }
+  console.log(`[dhan] starting feed with token source: ${DHAN_TOKEN_SOURCE}`);
 
   const feed = new DhanMarketFeed({
     accessToken,
@@ -393,6 +492,13 @@ function startFeed(allInstruments: InstrumentMeta[], kindOf: (meta: InstrumentMe
     // Any derivatives segment — NSE_FNO (NIFTY/BANKNIFTY/stocks) and BSE_FNO
     // (SENSEX/BANKEX) alike. Matching only NSE_FNO silently dropped every
     // SENSEX option tick.
+    // `InstrumentRef` declares securityId/exchangeSegment optional (a
+    // symbol-only ref is legal — see contracts/instrument-ref.ts), so both must
+    // be narrowed before use. `isBrokerAddressable` is the contract's own type
+    // guard for exactly this; without it this file does not compile, which is
+    // why the bridge could not start.
+    if (!isBrokerAddressable(tick.ref)) return;
+
     if (tick.ref.exchangeSegment.endsWith('_FNO')) {
       if (tick.ltp != null) optionLtpBySecurityId.set(tick.ref.securityId, tick.ltp);
       return;
@@ -509,7 +615,7 @@ function toCandles(data: DhanChartResponse, sessionSegment?: string): CandleJson
 }
 
 async function fetchDhanCandles(meta: InstrumentMeta, interval: string, from: Date, to: Date): Promise<CandleJson[]> {
-  const accessToken = process.env.DHAN_ACCESS_TOKEN!;
+  const accessToken = DHAN_TOKEN;
   const isDaily = interval === '1d';
   const body: Record<string, string> = {
     securityId: meta.securityId,
@@ -641,7 +747,7 @@ function queueDhanCall<T>(fn: () => Promise<T>): Promise<T> {
 async function fetchExpiryList(u: OptionUnderlying): Promise<string[]> {
   const resp = await fetch(`${DHAN_API}/optionchain/expirylist`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'access-token': process.env.DHAN_ACCESS_TOKEN!, 'client-id': process.env.DHAN_CLIENT_ID! },
+    headers: { 'Content-Type': 'application/json', 'access-token': DHAN_TOKEN, 'client-id': process.env.DHAN_CLIENT_ID! },
     body: JSON.stringify({ UnderlyingScrip: Number(u.securityId), UnderlyingSeg: u.underlyingSeg }),
   });
   if (resp.status >= 400 && resp.status < 500) {
@@ -679,7 +785,7 @@ function toLegOut(raw: DhanOptionLegRaw | undefined): OptionLegOut | null {
 async function fetchOptionChain(u: OptionUnderlying, expiry: string): Promise<{ spot: number | null; strikes: OptionStrikeOut[] }> {
   const resp = await fetch(`${DHAN_API}/optionchain`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'access-token': process.env.DHAN_ACCESS_TOKEN!, 'client-id': process.env.DHAN_CLIENT_ID! },
+    headers: { 'Content-Type': 'application/json', 'access-token': DHAN_TOKEN, 'client-id': process.env.DHAN_CLIENT_ID! },
     body: JSON.stringify({ UnderlyingScrip: Number(u.securityId), UnderlyingSeg: u.underlyingSeg, Expiry: expiry }),
   });
   if (resp.status >= 400 && resp.status < 500) return { spot: null, strikes: [] }; // no derivatives market — see fetchExpiryList
@@ -692,6 +798,9 @@ async function fetchOptionChain(u: OptionUnderlying, expiry: string): Promise<{ 
 }
 
 async function main(): Promise<void> {
+  // Before anything touches Dhan — the REST helpers below read DHAN_TOKEN too,
+  // not just the websocket feed.
+  await resolveDhanToken();
   const rows = await loadScripMaster();
   const { stocks, etfs, commodities, indexBySymbol, equityBySymbol, etfBySymbol, commodityRowBySymbol, derivativeLotSizeByUnderlying } =
     resolveUniverse(rows);
@@ -925,7 +1034,29 @@ async function main(): Promise<void> {
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
-    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    // CORS: reflect an allowlisted origin instead of the previous `*`.
+    //
+    // Everything served here is public read-only market data, so `*` leaked
+    // nothing today. It was still the wrong default: it makes every future route
+    // on this server readable by script from any website, and this process is
+    // unauthenticated, so CORS is the only thing standing between a browser on
+    // any origin and whatever gets added here next. Combined with the web
+    // origin's `/feed` allowlist, the normal path is now same-origin and this
+    // header only matters for direct access in development.
+    //
+    // `Vary: Origin` because the response body is origin-independent but this
+    // header is not — without it a shared cache can serve one origin's allowed
+    // response to another origin.
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : null;
+    if (origin && isAllowedFeedOrigin(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
+    // No `Access-Control-Allow-Credentials`: this server has no sessions and no
+    // cookies, and sending it would let a browser attach ambient credentials to
+    // requests here.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
 
     if (url.pathname === '/status') {
       res.setHeader('Content-Type', 'application/json');
@@ -991,7 +1122,13 @@ async function main(): Promise<void> {
       res.setHeader('Content-Type', 'application/json');
       const symbol = url.searchParams.get('symbol') ?? '';
       const interval = url.searchParams.get('interval') ?? '5m';
-      const days = Math.max(1, Math.min(365, Number(url.searchParams.get('days') || 5)));
+      // Ceiling raised from 365 to 3650. Note this does NOT buy deeper daily
+      // history today: measured 2026-07-27, /charts/historical returns the same
+      // ~1 year for a 730- or 1825-day range, and /charts/intraday returns HTTP
+      // 400 past ~90 days. The higher cap only stops this proxy being the thing
+      // that truncates, so the real limit is always Dhan's and is visible as
+      // such — and so a future Candle-table-backed path can ask for more.
+      const days = Math.max(1, Math.min(3650, Number(url.searchParams.get('days') || 5)));
       const meta = ALL_INSTRUMENTS.find((i) => i.symbol === symbol);
       if (!meta) {
         // Not a symbol the bridge covers — frontend falls back to mock candles.
@@ -1163,7 +1300,18 @@ async function main(): Promise<void> {
     if (url.pathname === '/stream') {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
+        // `no-transform` is the load-bearing part. Browsers always send
+        // `Accept-Encoding: gzip`, and a proxy that honours it will gzip this
+        // response — gzip buffers until its window fills, so a low-rate event
+        // stream produces NOTHING at the client while appearing connected
+        // (HTTP 200, EventSource.readyState OPEN, zero messages). curl hid the
+        // bug for exactly as long as it took to test with a browser: curl does
+        // not request compression by default, so it streamed fine end to end
+        // while every real page sat on "LOADING" and fell back to mock prices.
+        'Cache-Control': 'no-cache, no-transform',
+        // Belt and braces for proxies that buffer regardless of no-transform
+        // (nginx and several CDNs honour this one specifically).
+        'X-Accel-Buffering': 'no',
         Connection: 'keep-alive',
       });
       res.write(`data: ${JSON.stringify(snapshot())}\n\n`);

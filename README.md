@@ -8,6 +8,11 @@
 [![NestJS](https://img.shields.io/badge/NestJS-10-E0234E?logo=nestjs)](https://nestjs.com/)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev/)
 [![License](https://img.shields.io/badge/License-AGPL%203.0-blue)]()
+[![Status](https://img.shields.io/badge/Status-~80%25%20complete-brightgreen)]()
+
+---
+
+> **Project status (2026-07-29): ~80% complete.** The core platform is live end to end — real Dhan market data, a full paper-trading OMS (equities, F&O and per-strike option premiums), broker OAuth, an in-app AI assistant that drives the application, the Sentinel safety-net service (backtest engine on real candles, ontology, orchestrator), crypto/forex boards, discipline limits, real market news, notifications, and a hardened security layer with 112 automated tests. Remaining work is largely the standalone Python trading engine, the TradeW-AI *backend* research service, cloud IaC automation, and the admin/mobile apps. See [Project Status](#project-status) for the current matrix.
 
 ---
 
@@ -41,11 +46,13 @@
 
 ### What TradeW Does
 
-- **Core Platform:** Live market data, charts, portfolio tracking, order management (paper-trading), watchlists, symbol search, option chains
-- **TradeW AI (Research):** AI-powered research agents, company/technical/option analysis, news intelligence, strategy builder, portfolio insights
-- **Sentinel (Safety Nets):** Behavioral pattern detection, trap recognition, emotional intelligence, compliance logging, market/technical intelligence
-- **Learning Hub:** Curated research vault, validated knowledge graph, continuous learning pipeline
-- **Paper Trading:** Full order lifecycle with margin simulation (MIS/CNC/NRML), fill reconciliation, P&L tracking
+- **Core Platform:** ✅ Live Dhan market data, real TradingView charts, portfolio tracking, order management (paper-trading), watchlists, symbol search, option chains, crypto & forex market boards, real financial newswires
+- **In-App AI Assistant:** ✅ A natural-language copilot that *drives the application* — navigates screens, opens exact option contracts, toggles panels, applies layouts — while strictly refusing to place orders or give trade calls (see [AI Architecture](#ai-architecture))
+- **TradeW AI (Research):** 🚧 AI-powered research agents, company/technical/option analysis, news intelligence, strategy builder, portfolio insights (`packages/ai-core` foundation built; dedicated backend research service not yet populated)
+- **Sentinel (Safety Nets):** 🚧 Behavioral pattern detection, trap recognition, EMA-cross backtest engine on real candles, compliance logging, market/technical intelligence — running as its own service
+- **Discipline & Guardrails:** ✅ Per-session trade/loss limits, cooldowns, market-calendar awareness
+- **Learning Hub:** 📅 Curated research vault, validated knowledge graph, continuous learning pipeline
+- **Paper Trading:** ✅ Full order lifecycle with margin simulation (MIS/CNC/NRML), fill matching, position and P&L tracking, real per-strike option premiums
 
 ---
 
@@ -91,22 +98,25 @@
 ```
 TradeW/
 ├── apps/
-│   ├── web/           🟢 Next.js — Core Platform, Research, Sentinel, Learning workspaces
+│   ├── web/           🟢 Next.js — Core Platform, Research, Sentinel, Learning workspaces + in-app AI assistant
+│   ├── terminal/      🟢 Static full-screen trading terminal shell
 │   ├── admin/         🟡 Internal ops console — KYC, audit logs, DLQ, user mgmt
 │   └── mobile/        🟡 React Native — roadmap v0.9
 │
 ├── services/
-│   ├── api/           🟢 NestJS — single public ingress, auth, aggregation
-│   ├── trading-engine/🟢 Python/Flask — order execution, webhook intake, paper-trading
-│   ├── market-data/   🟡 Live quote ingestion, data pipeline
-│   ├── tradew-ai/     🟡 Research agents, Claude integration
-│   ├── sentinel/      🟢 Safety-net agents, behavioral analysis, ontology
-│   ├── notification/  🟡 Alert fanout (email/Slack/push)
-│   ├── auth/          🟡 JWT/refresh tokens (extracted from api on demand)
-│   └── analytics/     🟡 Portfolio/PnL analytics, eventual ClickHouse aggregation
+│   ├── api/           🟢 NestJS — single public ingress, auth, OMS, aggregation (14 modules)
+│   ├── market-data/   🟢 NestJS ingestor + standalone live Dhan feed bridge (port 4600)
+│   ├── sentinel/      🟢 Safety-net service — backtest engine, brain, orchestrator, ontology (44 TS files)
+│   ├── trading-engine/🟡 Python/Flask — order execution, webhook intake (README only; OMS lives in services/api/sim)
+│   ├── tradew-ai/     🟡 Research backend service (README only; foundation in packages/ai-core)
+│   ├── notification/  🟡 Alert fanout (in-app notifications live in services/api)
+│   ├── auth/          🟡 JWT/refresh tokens (auth currently lives in services/api)
+│   └── analytics/     ⚪ Portfolio/PnL analytics, eventual ClickHouse aggregation
 │
 ├── packages/
-│   ├── database/      🟢 Prisma schema, migrations (centralized)
+│   ├── database/      🟢 Prisma schema (36 models), migrations (centralized)
+│   ├── ai-core/       🟢 AI foundation — providers, memory, RAG, agents, news classifier
+│   ├── market-data/   🟢 Shared instrument/quote helpers
 │   ├── types/         🟡 Shared TypeScript interfaces/DTOs
 │   ├── ui/            🟡 Design-system components (from Emergent mockups)
 │   ├── sdk/           🟡 Typed OpenAPI client (Phase 3)
@@ -124,9 +134,10 @@ TradeW/
 │   └── product/               PRD, vision, business overview
 │
 ├── infra/
-│   ├── docker/        🟢 docker-compose for local dev
-│   ├── k8s/           ⚪ Kubernetes manifests (staging/prod)
-│   └── terraform/     ⚪ IaC for AWS (VPC, RDS, EKS, ElastiCache)
+│   ├── docker/        🟢 docker-compose (local dev) + docker-compose.prod.yml + Caddy (prod)
+│   ├── oci/           ⚪ Oracle Cloud (Ampere A1 arm64) deployment notes
+│   ├── k8s/           ⚪ Kubernetes manifests (notes only)
+│   └── terraform/     ⚪ IaC (notes only)
 │
 ├── knowledge/         🟢 Obsidian vault — engineering decisions, patterns, research summaries
 │
@@ -145,16 +156,17 @@ TradeW/
 
 | Folder | Purpose | Current Status |
 |--------|---------|-----------------|
-| **apps/web** | Next.js frontend hosting all four platform workspaces (Core, Research, Sentinel, Learning) as a unified shell. Users move between them like switching tabs. | 🟢 Framework in place; workspaces still being built |
-| **services/api** | NestJS aggregator — the single public API gateway. Handles auth, rate limiting, order validation, and calls internal services. | 🟢 Running, core routes mapped |
-| **services/trading-engine** | Python/Flask paper-trading OMS. Receives TradingView webhooks (HMAC-verified), executes orders, fills trades, tracks positions. | 🟢 Framework present; Python code not yet populated |
-| **services/market-data** | Quote ingestion pipeline from Dhan APIs or simulated feed. | 🟡 Planned; currently serves simulated data via `services/api` |
-| **services/tradew-ai** | LLM-powered Research agents (Company Analysis, News Analysis, Technical Analysis, Strategy Builder, etc.). | 🟡 Skeleton exists; agent definitions in `agents/tradew-ai/` |
-| **services/sentinel** | LLM-powered Safety-net agents (Market & Technical, Emotion, Trap & Safety, Compliance & Audit). Full orchestrator. | 🟢 Skeleton exists; agent definitions and ontology in place |
-| **packages/database** | Centralized Prisma schema (27 tables) and migration history. Single source of truth for schema. | 🟢 10 migrations applied, 100% synced |
+| **apps/web** | Next.js frontend hosting the unified shell (18 routes: dashboard, markets, trade, portfolio, sentinel, research, learning, crypto, forex, news, discipline, notifications, knowledge, settings, profile, auth) plus the in-app AI assistant that drives the app. | 🟢 Live; most workspaces built, Research/Learning still filling in |
+| **services/api** | NestJS aggregator — the single public API gateway. Handles auth, OMS, entitlements, market data, broker OAuth, discipline, news, notifications, and calls internal services. | 🟢 Running, 14 modules mapped |
+| **services/market-data** | NestJS quote ingestor **plus** a standalone live Dhan feed bridge (port 4600) serving real quotes, charts and option chains to the app. | 🟢 Live feed bridge in use; NestJS ingestor writes Postgres `Quote` |
+| **services/sentinel** | Safety-net service — EMA-cross backtest engine on real Dhan candles, persistent knowledge brain, orchestrator, state machine, compliance, ontology. Internal-only (service token). | 🟢 Running as its own service (port 4010) |
+| **services/trading-engine** | Python/Flask engine for webhook-driven strategy execution. | 🟡 README only; the paper-trading OMS is implemented in `services/api/src/sim` |
+| **services/tradew-ai** | LLM-powered Research *backend* agents (Company Analysis, News, Technical, Strategy Builder). | 🟡 README only; the AI foundation is in `packages/ai-core` and the in-app assistant in `apps/web` |
+| **packages/database** | Centralized Prisma schema (36 models) and migration history. Single source of truth for schema. | 🟢 17 migrations applied, 100% synced |
+| **packages/ai-core** | AI foundation: provider abstraction (Anthropic, OpenAI-compatible, Voyage, research), memory, RAG, prompts, tools, news classifier. | 🟢 Built; consumed by services |
 | **packages/types** | Shared TypeScript DTOs/interfaces — source of truth for all API contracts. | 🟡 Framework exists; incomplete |
 | **packages/ui** | Design-system React components extracted from Emergent mockups. Binding for all apps. | 🟡 Design spec in `docs/design-reference/DESIGN-SYSTEM.md`; components still being extracted |
-| **knowledge/** | Obsidian vault for durable engineering knowledge (decisions, patterns, discoveries). Not live production data. | 🟢 22 notes; actively updated |
+| **knowledge/** | Obsidian vault for durable engineering knowledge (decisions, patterns, discoveries). Not live production data. | 🟢 Actively updated |
 
 ---
 
@@ -171,10 +183,14 @@ TradeW/
 
 ### Backend
 
-- **API Gateway:** NestJS 10 (ExpressJS-compatible)
-- **Trading Engine:** Python 3.9+ (Flask)
-- **Authentication:** JWT (HS256) + Refresh tokens
-- **LLM Integration:** Anthropic Claude API (via `services/tradew-ai` and `services/sentinel`)
+- **API Gateway:** NestJS 10 (ExpressJS-compatible) — single public ingress
+- **Paper-Trading OMS:** NestJS (`services/api/src/sim`) — order/matching/position/portfolio services
+- **Sentinel Service:** NestJS (`services/sentinel`) — internal-only, service-token authenticated
+- **Live Feed Bridge:** Node standalone server (`services/market-data`) — real Dhan quotes/charts/option chain
+- **Trading Engine:** Python 3.9+ (Flask) — planned, webhook-driven strategy execution
+- **Authentication:** JWT (HS256, 15m access) + rotating refresh tokens; email one-time-code foundation (SMTP)
+- **Outbound Email:** Nodemailer / generic SMTP (dev falls back to logging + `devCode`)
+- **LLM Integration:** Anthropic Claude API via `packages/ai-core` (provider-abstracted; OpenAI-compatible & Voyage embeddings also supported)
 
 ### Database & ORM
 
@@ -193,11 +209,12 @@ TradeW/
 
 ### Infrastructure
 
-- **Local Dev:** Docker Compose (PostgreSQL, pgAdmin, trading-engine, api, web)
-- **Deployment:** Kubernetes (EKS, ap-south-1)
-- **IaC:** Terraform (VPC, RDS Aurora, ElastiCache Redis, S3)
-- **CI/CD:** GitHub Actions (path-based triggers per service)
-- **Monitoring:** Prometheus + Grafana (Phase 2+)
+- **Local Dev:** Docker Compose (PostgreSQL, pgAdmin) + npm workspaces for services
+- **Deployment:** ✅ Oracle Cloud (OCI Ampere A1, arm64) via `docker-compose.prod.yml` behind Caddy (TLS, same-origin `/api` + `/feed` proxy)
+- **Container Registry:** ✅ GitHub Container Registry (ghcr.io) — arm64 images built in CI
+- **CI/CD:** ✅ GitHub Actions (`.github/workflows/deploy.yml`) — build arm64 images on `main`, push to ghcr.io, deploy over SSH (pull → migrate → up)
+- **IaC:** 📅 Terraform / Kubernetes manifests (notes only)
+- **Monitoring:** 📅 Prometheus + Grafana
 
 ### Dev Tools
 
@@ -206,7 +223,7 @@ TradeW/
 - **Package Manager:** npm workspaces
 - **Task Runner:** npm scripts
 - **Linting:** ESLint (Next.js config)
-- **Testing:** Jest (configured but not yet built out)
+- **Testing:** Jest — 112 test cases across 7 suites, security-focused (broker authz, OAuth state, log redaction, feed-URL validation) plus discipline/market-calendar logic
 
 ---
 
@@ -215,34 +232,55 @@ TradeW/
 ### ✅ Implemented
 
 - **Authentication & Authorization**
-  - JWT-based sign-up/login/refresh
-  - User preferences (persistent settings)
+  - JWT-based sign-up/login/refresh with bcrypt password hashing
+  - Rotating refresh tokens (stored hashed; revoked-on-use)
+  - Email one-time-code foundation (`EmailOtp` model, `OtpService`, SMTP mailer) — enumeration-safe, brute-force-throttled
+  - User profile + preferences (persistent settings)
   - Audit logging (all events tracked with IP, user agent, metadata)
-  - Refresh token rotation
 
 - **Core Platform**
-  - Live market data (quote feeds, indices, bid/ask spreads, volume)
-  - Instrument catalog (NSE/BSE equities, indices, options, futures)
-  - Paper-trading OMS with full order lifecycle (PENDING → OPEN → FILLED/CANCELLED/EXPIRED)
-  - Position tracking with daily session snapshots
-  - Portfolio dashboard (cash balance, positions, P&L, margin utilization)
-  - Order types: MARKET, LIMIT, SL, SL_M
-  - Order validity: DAY, IOC
-  - Product types: MIS (intraday), CNC (delivery), NRML (F&O carry-forward)
+  - Live Dhan market data — real quotes (indices, bid/ask, volume), TradingView chart history, live option chains, derivative lot sizes
+  - Standalone live-feed bridge serving the same real prices to dashboard, charts and option chain
+  - Instrument catalog (NSE/BSE equities, indices, options, futures) with real broker identifiers
+  - Paper-trading OMS with full order lifecycle (PENDING → OPEN → FILLED/PARTIALLY_FILLED/CANCELLED/EXPIRED)
+  - Real per-strike option premium paper trading; short-option margin corrected
+  - Matching engine, position tracking, portfolio (cash balance, positions, P&L, margin utilization) wired to the real paper account
+  - Order types: MARKET, LIMIT, SL, SL_M · Validity: DAY, IOC · Products: MIS / CNC / NRML
+  - IST-aware session times and lot sizes
 
-- **AI Foundation**
-  - Memory system (MemoryRecord + MemoryRelation) with semantic search
-  - pgvector embeddings for similarity matching
-  - Knowledge graph (GraphNode + GraphEdge) for entity relationships
-  - Namespace-based memory isolation (per-user + global)
+- **Crypto & Forex Boards**
+  - Crypto market board with `CryptoWallet` / `CryptoOrder` / `CryptoPosition` schema and public price feed
+  - Forex board (SOON badge for gated features) and a US-stocks route
 
-- **Sentinel (Safety Nets)**
-  - Concept ontology (ConceptNode + ConceptEdge, manually curated, runtime-learnable)
-  - Concept observations with audit trail (confirmed/refuted/inconclusive)
-  - Behavioral pattern detection framework
-  - Trading journal with AI annotations
-  - Compliance & Audit agent structure (SEBI-labeling placeholders)
+- **In-App AI Assistant (TradeW AI, app-control layer)**
+  - Natural-language router that takes control of the app — navigation, "open NIFTY 24300 call of 21st July", panel toggles, layout presets, theme switch, command palette
+  - Hard-boundary guard: refuses to place/cancel orders, give trade calls/targets, or relay Sentinel's premium reasoning
+  - Domain fence: markets + this app only
+
+- **Sentinel (Safety Nets) — running as its own service**
+  - EMA-cross backtest engine on real Dhan candles
+  - Live quotes read from the Dhan feed (no simulator) in `getQuote`
+  - Persistent knowledge brain, orchestrator, state machine, confidence, compliance, timeline, vocabulary modules
+  - Concept ontology (ConceptNode + ConceptEdge, manually curated, runtime-learnable) with observations audit trail (confirmed/refuted/inconclusive)
   - Trap detection concept catalog (built-in patterns: bull_trap, fake_breakout, etc.)
+  - Internal-only: gated by a shared service token, never publicly exposed
+
+- **Discipline & Guardrails**
+  - `DisciplineSession` / `DisciplineOverride` with per-session trade & loss limits and cooldowns
+  - Market-calendar awareness (holiday/weekend logic, unit-tested)
+
+- **Market News & Notifications**
+  - Real financial newswires (Economic Times, Moneycontrol RSS) on a public Market News route, de-duplicated, cached, newest-first
+  - Persistent notifications with a typed `NotificationCategory` enum
+
+- **Broker Integration (Dhan OAuth "consent" flow)**
+  - Per-user broker credential ownership; CSRF/replay-protected OAuth state; single feed-default row for the shared bridge
+  - See [Security](#security) for the full model
+
+- **AI Foundation (`packages/ai-core`)**
+  - Provider abstraction (Anthropic, OpenAI-compatible, Voyage embeddings, research provider) + provider manager/factory
+  - Memory system (MemoryRecord + MemoryRelation) with semantic search over pgvector embeddings
+  - Knowledge graph (GraphNode + GraphEdge), RAG, prompts, tools, and a 13-category news-event classifier
 
 - **Subscriptions & Entitlements**
   - Plan-based capability grants (free, pro, premium, enterprise)
@@ -251,75 +289,66 @@ TradeW/
   - Trial periods, grace periods, cancellation tracking
 
 - **Database**
-  - 27 tables across 7 domains (users, orders, trades, positions, AI memory, ontology, sentinel observations)
-  - Full referential integrity with foreign keys
-  - Indexes on all hot paths
+  - 36 models across the trading, market-data, AI, ontology, subscription, discipline, broker and news domains
+  - Full referential integrity with foreign keys; indexes on all hot paths
+  - Partial unique index enforcing a single broker feed-default row
   - Soft-delete pattern for instruments (deactivate, never remove)
 
-### ⚠️ Partially Implemented
+- **Security & Testing**
+  - Hardened security layer (headers, CORS restrictions, log redaction, secure cookies, admin guard) — see [Security](#security)
+  - 112 automated tests, security-focused
 
-- **Paper Trading Engine**
-  - Order acceptance logic works
-  - Fill simulation partially complete
-  - Margin calculation framework exists (not fully validated)
-  - Python bridge not yet populated (Flask skeleton only)
+### 🚧 Partially Implemented
 
-- **Market Data**
-  - Quote tables defined
-  - Simulated data ingestion works
-  - Real Dhan API integration designed but not deployed
-  - Option chain structure designed but not populated
+- **Sentinel premium reasoning**
+  - Service runs with backtest engine, brain, orchestrator and ontology in place
+  - Full agent orchestration (Emotion, Trap & Safety, Compliance synthesis into user-facing output) still being wired end to end
+  - Trading journal with AI annotations: schema + endpoints exist; annotation pipeline partial
 
-- **Sentinel Runtime**
-  - Skeleton service exists (`services/sentinel/`)
-  - Agent definitions in place (`agents/sentinel/`)
-  - Brain service scaffolding for search, strategy, observations
-  - **Not yet deployed to production**
+- **TradeW AI research pillar**
+  - The in-app *app-control* assistant is live (see Implemented)
+  - The *research* backend (`services/tradew-ai`) is a README only; the reasoning agents (chart read, support/resistance, option-chain interpretation) are parked for Phase 2
+  - `packages/ai-core` provides the foundation (providers, memory, RAG) they will build on
 
-- **TradeW AI Runtime**
-  - Skeleton service exists (`services/tradew-ai/`)
-  - Agent definitions framework in place (`agents/tradew-ai/`)
-  - **Agent roster not yet populated**
-  - **No runtime orchestration yet**
+- **Email one-time codes**
+  - `EmailOtp` model, `OtpService` and SMTP mailer are built and unit-testable
+  - Not yet surfaced as public `/auth` OTP endpoints (foundation only)
 
-### ❌ Not Yet Implemented
+- **News intelligence**
+  - Real headlines are served; a 13-category LLM classifier exists in `packages/ai-core` and a `NewsEvent` model exists
+  - Classification is intentionally NOT wired to user-facing output pending compliance review
 
-- **Trading Engine Python Code**
-  - `extreme_algo_bot_v2.py` (webhook intake, order execution)
-  - `order_poller.py` (fill reconciliation)
-  - `pnl_tracker.py` (trade lifecycle)
-  - Strategy webhook integration (currently skeleton)
+- **Notifications**
+  - Persisted with categories and exposed via API
+  - Multi-channel fanout (email/Slack/push) not built
 
-- **Kubernetes Deployment**
-  - Manifests outlined but not written
-  - Service-to-service mTLS auth not configured
-  - Resource limits not defined
-  - Health checks not implemented
+### 📅 Not Yet Implemented
 
-- **Terraform IaC**
-  - AWS infrastructure templates not yet written
-  - VPC, RDS, EKS, ElastiCache provisioning not automated
-  - DNS, SSL/TLS setup not defined
+- **Standalone Python Trading Engine**
+  - `services/trading-engine` is a README; webhook intake, order poller and PnL tracker not populated
+  - (The paper-trading OMS itself IS implemented, in `services/api/src/sim`)
+
+- **Kubernetes / Terraform IaC**
+  - Production runs on Oracle Cloud via Docker Compose + Caddy today
+  - `infra/k8s` and `infra/terraform` are notes only; manifests and cloud provisioning not automated
+  - Service-to-service mTLS not configured (shared service tokens in use)
 
 - **n8n Workflow Automation**
-  - Service skeleton planned
-  - Workflow definitions not yet created
-  - Webhook triggers not configured
+  - Service skeleton planned; workflow definitions and webhook triggers not created
 
 - **Public SDK/API**
-  - OpenAPI spec generation not yet enabled
-  - SDK code generation not configured
-  - Phase 3 feature
+  - OpenAPI spec generation and SDK codegen not configured (Phase 3)
 
 - **Admin Dashboard**
-  - `apps/admin` folder exists
-  - No implementation yet
+  - `apps/admin` folder exists; no implementation yet
+  - Operator actions currently exposed as `ADMIN_API_TOKEN`-guarded routes in `services/api`
   - Roadmap: KYC review, audit log viewer, DLQ retry, user mgmt
 
 - **Mobile App**
-  - `apps/mobile` folder exists
-  - No implementation yet
-  - Roadmap v0.9
+  - `apps/mobile` folder exists; no implementation yet (roadmap v0.9)
+
+- **Learning Hub**
+  - Route scaffolded; curated vault + continuous learning pipeline not built
 
 ---
 
@@ -390,10 +419,20 @@ Expected output:
   - Local:        http://localhost:3000
 ```
 
-### 6. Access the Application
+### 6. (Optional) Start Sentinel + Live Feed Bridge
+
+```bash
+npm run dev:sentinel        # Sentinel safety-net service (port 4010)
+npm run live:server -w @tradew/market-data-service   # live Dhan feed bridge (port 4600)
+```
+
+The web dev server proxies `/api/*` to the API and the allowlisted `/feed/*` routes to the bridge (see `apps/web/next.config.mjs`), so the whole stack is reachable on one origin. All four services are also defined in `.claude/launch.json` with pinned ports (api 4000, web 3000, sentinel 4010, bridge 4600).
+
+### 7. Access the Application
 
 - **Web App:** http://localhost:3000
 - **API Health:** http://localhost:4000/health
+- **Sentinel Health:** http://localhost:4010/health
 - **pgAdmin:** http://localhost:5050
 
 ---
@@ -411,30 +450,56 @@ DATABASE_URL=postgresql://tradew:tradew@localhost:5433/tradew
 # Auth
 JWT_SECRET=dev-secret-change-me-in-prod
 PORT=4000
+ACCESS_TOKEN_TTL=15m         # optional; default 15m
+REFRESH_TOKEN_DAYS=30        # optional; default 30
 
-# Frontend
+# Frontend (comma-separated allowlist in prod)
 FRONTEND_URL=http://localhost:3000
 
-# Market Data
+# Market Data — standalone live Dhan feed bridge
 DHAN_LIVE_URL=http://localhost:4600
 
-# Sentinel Service
+# Broker OAuth (Dhan "consent" flow) — required to link a broker account
+DHAN_APP_ID=
+DHAN_APP_SECRET=
+DHAN_CLIENT_ID=
+DHAN_AUTH_URL=https://auth.dhan.co          # optional override
+BROKER_OAUTH_REQUIRE_STATE=false            # set true once the broker echoes `state`
+DHAN_ACCESS_TOKEN=                          # optional fallback for the feed bridge
+
+# Sentinel Service (internal-only; never exposed publicly)
 SENTINEL_SERVICE_URL=http://localhost:4010
 SENTINEL_SERVICE_TOKEN=dev-sentinel-token-change-me-in-prod
 
-# Entitlements
-ADMIN_API_TOKEN=sk-ant-api03-...  # Optional; leave empty to disable admin API
+# Operator / admin API (guards /entitlements/admin/* and /broker/dhan/admin/*)
+ADMIN_API_TOKEN=            # leave empty to disable the admin surface (fails closed)
 
-# Knowledge Workspace
-KNOWLEDGE_WORKSPACE_ENABLED=true
-KNOWLEDGE_ROOT=  # Defaults to ../../knowledge relative to service
+# Outbound email (OTP). Leave blank in dev — the mailer logs the message and
+# OTP endpoints return the code as `devCode` so flows stay testable.
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+MAIL_FROM=TradeW <no-reply@tradew.local>
+
+# Knowledge Workspace (internal developer tool; reads TradeW/knowledge/)
+KNOWLEDGE_WORKSPACE_ENABLED=  # true=on, false=off, unset=on outside production
+KNOWLEDGE_ROOT=               # defaults to ../../knowledge relative to service
 ```
 
 #### Web App (`apps/web/.env.local`)
 
 ```bash
-# API Gateway
+# API Gateway. In production this is built as /api (same-origin proxy).
 NEXT_PUBLIC_API_URL=http://localhost:4000
+
+# Optional direct targets (used for CSP connect-src and the dev proxy)
+NEXT_PUBLIC_DHAN_LIVE_URL=http://localhost:4600
+NEXT_PUBLIC_SENTINEL_URL=http://localhost:4010
+
+# Dev proxy targets (apps/web/next.config.mjs)
+API_PROXY_TARGET=http://127.0.0.1:4000
+FEED_PROXY_TARGET=http://127.0.0.1:4600
 ```
 
 #### Database (`packages/database/.env`)
@@ -496,6 +561,7 @@ docker build -f apps/web/Dockerfile -t tradew/web:latest .
 | `npm run dev:api` | Start NestJS API in watch mode (port 4000) |
 | `npm run dev:web` | Start Next.js frontend in dev mode (port 3000) |
 | `npm run dev:sentinel` | Start Sentinel service in watch mode (port 4010) |
+| `npm run live:server -w @tradew/market-data-service` | Start the standalone live Dhan feed bridge (port 4600) |
 | `npm run db:generate` | Generate Prisma Client after schema changes |
 | `npm run db:migrate` | Run pending database migrations |
 | `npm run ontology:validate` | Validate Sentinel concept ontology YAML |
@@ -508,8 +574,8 @@ docker build -f apps/web/Dockerfile -t tradew/web:latest .
 ### Current State
 
 - **Engine:** PostgreSQL 16 with pgvector extension
-- **Tables:** 27 across 7 domains
-- **Migrations:** 10 applied (all successful as of 2026-07-23)
+- **Models:** 36 (with 12 enums)
+- **Migrations:** 17 applied (all successful as of 2026-07-29)
 - **Synced:** 100% with Prisma schema
 - **Readiness:** ✅ Production-ready for core platform
 
@@ -574,17 +640,21 @@ docker build -f apps/web/Dockerfile -t tradew/web:latest .
 
 ### Table Domains
 
-| Domain | Tables | Purpose |
+| Domain | Models | Purpose |
 |--------|--------|---------|
-| **User & Auth** | User, RefreshToken, UserPreference | Sign-up/login, token management, user settings |
+| **User & Auth** | User, RefreshToken, UserPreference, AuditEvent, EmailOtp | Sign-up/login, token rotation, user settings, audit trail, email OTP |
 | **Trading** | Order, Trade, Position, PaperWallet | Paper-trading OMS, order lifecycle, portfolio |
-| **Market Data** | Instrument, Quote | Symbol catalog, live quotes |
+| **Crypto** | CryptoWallet, CryptoOrder, CryptoPosition | Crypto paper-trading board |
+| **Market Data** | Instrument, Quote, Candle | Symbol catalog, live quotes, OHLC candles |
+| **Discipline** | DisciplineSession, DisciplineOverride | Per-session trade/loss limits and cooldowns |
+| **Broker** | BrokerCredential, BrokerOAuthState | Per-user broker credentials, OAuth state (CSRF/replay) |
 | **AI Memory** | MemoryRecord, MemoryRelation | Semantic memory, embeddings |
 | **Knowledge Graph** | GraphNode, GraphEdge | Entity relationships |
 | **Sentinel Ontology** | ConceptNode, ConceptEdge, ConceptObservation, ConceptPromotion | Concept definitions, learned patterns, promotion queue |
 | **Sentinel Runtime** | SentinelObservation, JournalEntry | Observations (audit trail), trading journal |
 | **Subscriptions** | Plan, PlanGrant, Subscription, UsageCounter, EntitlementOverride | Capabilities, quota tracking, overrides |
-| **News** | NewsEvent | Financial news classification |
+| **Notifications** | Notification | In-app notifications (typed categories) |
+| **News** | NewsEvent | Financial news classification (schema present; not user-facing yet) |
 
 ---
 
@@ -614,7 +684,7 @@ TradeW AI and Sentinel are **deliberately separate** — different runtimes, dif
 
 **UI:** Dockable copilot (everywhere) + dedicated Research workspace
 
-**Status:** 🟡 Skeleton exists; agent roster not yet populated
+**Status:** 🚧 The in-app **app-control assistant is live** (`apps/web/src/lib/assistant/*`) — it navigates, opens exact contracts, toggles panels and applies layouts, with a hard guard against orders/trade-calls. The **research reasoning agents** (chart read, S/R, option-chain interpretation) are parked for Phase 2; the `services/tradew-ai` backend is a README, and the AI foundation they will use lives in `packages/ai-core`.
 
 #### Sentinel (Safety Nets)
 
@@ -642,7 +712,7 @@ TradeW AI and Sentinel are **deliberately separate** — different runtimes, dif
 
 **UI:** Safety Nets workspace (integrated into sidebar)
 
-**Status:** 🟢 Skeleton + ontology complete; agent orchestration partially implemented
+**Status:** 🚧 Running as its own service (port 4010, internal-only): EMA-cross backtest engine on real Dhan candles, live quotes read from the Dhan feed, persistent knowledge brain, orchestrator, state machine, confidence, compliance, timeline and ontology modules are in place. Full multi-agent synthesis into user-facing output is still being wired end to end. Routes exposed via `services/api` (`/sentinel/*`): `observe`, `explain`, `brain/search`, `brain/strategy`, `observations`, `timeline`, `strategies`, `market-close/review`, `session-summary`, `journal`.
 
 ### Memory Architecture
 
@@ -721,8 +791,10 @@ Frontend → services/api → services/tradew-ai OR services/sentinel
 
 ### Testing
 
-- **Unit Tests:** Jest (not yet implemented; framework in place)
-- **Integration Tests:** E2E tests planned
+- **Unit Tests:** ✅ Jest — 112 test cases across 7 suites in `services/api/src`, run with `npm test -w @tradew/api`
+  - Security-focused: `broker/broker-authz.spec.ts`, `broker/oauth-state.spec.ts`, `broker/dhan-auth.service.spec.ts`, `common/security-log.spec.ts` (redaction), `news/feed-url.spec.ts`
+  - Domain logic: `discipline/discipline-limits.spec.ts`, `discipline/market-calendar.spec.ts`
+- **Integration / E2E Tests:** 📅 Planned (OMS end-to-end, agent system)
 - **Database Tests:** Prisma client testing with real Postgres
 
 ### Commits & PRs
@@ -740,74 +812,110 @@ Frontend → services/api → services/tradew-ai OR services/sentinel
 - Database changes verified against schema integrity
 - AI code reviewed for safety/disclaimer compliance
 
+### HTTP API (selected routes)
+
+All public traffic goes through `services/api` (single ingress). Authenticated routes require a bearer `accessToken`; operator routes require the `X-Admin-Token` header.
+
+| Group | Prefix | Auth | Notes |
+|-------|--------|------|-------|
+| Auth | `/auth` | mixed | `signup`, `login`, `refresh`, `logout`, `me` (GET/PATCH), `preferences` |
+| Paper OMS | `/sim` | AuthGuard | order placement/cancel, positions, portfolio, blotter |
+| Instruments | `/instruments` | AuthGuard | symbol catalog, lot sizes |
+| Market Data | `/market-data` | AuthGuard | quotes, candles, option chain |
+| Crypto / Forex / US | `/crypto`, `/forex`, `/us-stocks` | mixed | market boards (public price feeds; user-scoped trading gated) |
+| News | `/news` | **public** | real newswire headlines (server-cached) |
+| Discipline | `/discipline` | AuthGuard | session limits, overrides |
+| Notifications | `/notifications` | AuthGuard | in-app notifications |
+| Entitlements | `/entitlements` | AuthGuard + `/admin/*` AdminTokenGuard | plans, quotas, overrides |
+| Broker (Dhan) | `/broker/dhan` | AuthGuard + public `/callback` + `/admin/*` AdminTokenGuard | OAuth consent flow — see [Security](#security) |
+| Sentinel | `/sentinel` | AuthGuard | proxied to the internal Sentinel service |
+| Knowledge | `/knowledge` | dev tool | Obsidian vault reader (internal) |
+| Health | `/health` | public | liveness |
+
 ---
 
 ## Project Status
 
-### What's Working (Verified 2026-07-23)
+**Overall: ~80% complete.** The core platform, live market data, paper OMS, broker OAuth, in-app AI assistant, Sentinel service, discipline, news, notifications and the security layer are all working. The remaining ~20% is the standalone Python trading engine, the TradeW-AI research backend, cloud IaC automation, and the admin/mobile apps.
 
-✅ Database schema (27 tables, 100% synced)
-✅ API server (NestJS, all core routes)
-✅ Frontend framework (Next.js, workspace scaffolding)
-✅ Authentication (JWT, refresh tokens, audit logging)
-✅ Paper-trading OMS (order lifecycle, positions, P&L simulation)
+### What's Working (Verified 2026-07-29)
+
+✅ Database schema (36 models, 17 migrations, 100% synced)
+✅ API server (NestJS, 14 modules)
+✅ Frontend (Next.js, 18 routes) + in-app AI app-control assistant
+✅ Authentication (JWT + rotating refresh tokens, bcrypt, audit logging; email-OTP foundation)
+✅ Live Dhan market data (real quotes, TradingView chart history, live option chain) via the feed bridge
+✅ Paper-trading OMS (full lifecycle, matching, positions, portfolio, real per-strike option premiums)
+✅ Crypto & forex market boards
+✅ Broker OAuth (Dhan consent flow, per-user credentials, CSRF/replay protection)
+✅ Sentinel service (backtest engine on real candles, brain, orchestrator, ontology)
+✅ Discipline session limits + market-calendar awareness
+✅ Real market news + persistent notifications
 ✅ Subscriptions & Entitlements (plan-based capability grants)
-✅ AI Memory system (MemoryRecord + search)
-✅ Sentinel Ontology (ConceptNode + learned patterns)
-✅ Docker Compose (local dev working)
-✅ pgAdmin integration (database inspection)
+✅ AI foundation (`packages/ai-core`: providers, memory, RAG, news classifier)
+✅ Security hardening + 112 automated tests
+✅ CI/CD (GitHub Actions → ghcr.io → Oracle Cloud) & Docker Compose (local + prod)
 
 ### What's Incomplete
 
-⚠️ Trading engine Python code (skeleton only, needs population)
-⚠️ Sentinel agent orchestration (framework exists, not fully implemented)
-⚠️ TradeW AI agent roster (placeholders, not populated)
-⚠️ Market data real feed (Dhan integration designed, not deployed)
-⚠️ Kubernetes deployment (manifests not written)
-⚠️ Terraform IaC (cloud infrastructure)
-⚠️ n8n workflow automation (service planned, not deployed)
-⚠️ Admin dashboard (folder exists, no code)
-⚠️ Mobile app (folder exists, no code)
+🚧 Sentinel multi-agent synthesis into user-facing output (service runs; end-to-end wiring partial)
+🚧 TradeW AI research backend (`services/tradew-ai`) — reasoning agents parked for Phase 2
+🚧 Email-OTP public endpoints (foundation built, not surfaced)
+📅 Standalone Python trading engine (README only)
+📅 Kubernetes / Terraform IaC (prod runs on Docker Compose + Caddy today)
+📅 n8n workflow automation (service planned, not deployed)
+📅 Admin dashboard (folder exists; operator actions via admin-token routes)
+📅 Mobile app (folder exists, no code)
+📅 Learning Hub (route scaffolded, pipeline not built)
 
 ### Known Issues & Technical Debt
 
 | Issue | Severity | Notes |
 |-------|----------|-------|
-| Trading engine not populated | HIGH | Python code from `extreme_algo_package` needs migration |
-| No automated tests | MEDIUM | pytest dependency declared but no tests written |
-| Sentinel agent orchestration incomplete | MEDIUM | Skeleton exists; full invocation logic needed |
-| Market data uses simulation only | MEDIUM | Real Dhan feed designed; not yet deployed |
-| No service-to-service mTLS | MEDIUM | Shared secrets only (service tokens); upgrade for prod |
-| Admin app not started | LOW | Roadmap v0.5+ feature |
+| Broker access token plaintext at rest | MEDIUM | Encryption needs a key-management decision; tracked in `schema.prisma` |
+| Sentinel agent synthesis incomplete | MEDIUM | Service + backtest run; full user-facing orchestration being wired |
+| Standalone Python trading engine not populated | LOW | OMS is implemented in `services/api/src/sim`; the Python engine is a separate future path |
+| No service-to-service mTLS | MEDIUM | Shared service tokens only; upgrade for multi-node prod |
+| CSP uses `unsafe-inline` for scripts | LOW | Nonce migration deferred (see Security roadmap) |
+| Admin app not started | LOW | Roadmap v0.5+; admin-token routes cover operator actions for now |
 | Mobile app not started | LOW | Roadmap v0.9+ feature |
-| Dead Letter Queue worker missing | MEDIUM | Table exists; retry worker not built |
+| Dead Letter Queue worker missing | LOW | Retry worker not built |
 
 ---
 
 ## Roadmap
 
-### Immediate (Next 2 Weeks)
+### ✅ Recently Completed
 
-- [ ] Populate Python trading engine code
-- [ ] Deploy real Dhan market data feed
-- [ ] Complete Sentinel agent orchestration
-- [ ] Add automated tests (Core Platform OMS)
+- [x] Real Dhan market data feed (quotes, chart history, live option chain)
+- [x] Real TradingView chart history + trade-from-chart
+- [x] Paper-trading OMS with real per-strike option premiums and corrected margins
+- [x] Broker OAuth (Dhan consent flow) with per-user credentials
+- [x] In-app AI assistant that drives the application
+- [x] Sentinel service: EMA-cross backtest engine on real candles + knowledge brain
+- [x] Crypto & forex market boards
+- [x] Discipline session limits + market-calendar awareness
+- [x] Real market news route + persistent notifications
+- [x] Security hardening pass + 112 automated tests
+- [x] GitHub Actions CI/CD → ghcr.io → Oracle Cloud (Docker Compose + Caddy)
+- [x] AI foundation package (`packages/ai-core`)
 
-### Q3 2026 (Sprint Focus)
+### 🚧 In Progress / Next
 
-- [ ] Complete TradeW AI agent roster
-- [ ] Launch Research workspace
-- [ ] Implement n8n workflow automation
-- [ ] Add Kubernetes deployment manifests
-- [ ] Setup GitHub Actions CI/CD pipeline
+- [ ] Complete Sentinel multi-agent synthesis into user-facing output
+- [ ] Surface email-OTP public auth endpoints
+- [ ] TradeW AI research backend (Company/News/Technical/Option/Strategy agents)
+- [ ] Launch the Research and Learning Hub workspaces
+- [ ] Encrypt broker access token at rest (key-management decision)
 
-### Q4 2026 (Scaling Phase)
+### 📅 Later (Scaling Phase)
 
-- [ ] Write Terraform IaC (AWS provisioning)
-- [ ] Deploy to staging Kubernetes cluster
-- [ ] Build admin dashboard
-- [ ] Implement real Sentinel brain (full orchestration)
-- [ ] Add automated tests for API + agent system
+- [ ] Populate the standalone Python trading engine (webhook-driven strategies)
+- [ ] Kubernetes manifests + Terraform IaC (currently Docker Compose on OCI)
+- [ ] n8n workflow automation (alerts, reports, backtesting templates)
+- [ ] Admin dashboard (KYC, audit viewer, DLQ retry, user mgmt)
+- [ ] Service-to-service mTLS
+- [ ] CSP nonce migration + Prometheus/Grafana monitoring
 
 ### 2027 (Beyond MVP)
 
@@ -815,8 +923,6 @@ Frontend → services/api → services/tradew-ai OR services/sentinel
 - [ ] Public SDK (OpenAPI + generated clients)
 - [ ] ClickHouse analytics backend
 - [ ] Redis Streams event bus
-- [ ] TradingView integration workspace
-- [ ] n8n workflow templates (alerts, reports, backtesting)
 
 ---
 
@@ -933,8 +1039,10 @@ NEXT_PUBLIC_API_URL=http://localhost:4000
 |--------|-------|----------|
 | JWT_SECRET | Sign/verify access tokens | Every 6 months or on compromise |
 | SENTINEL_SERVICE_TOKEN | Service-to-service auth | Every 6 months or on compromise |
-| DATABASE_URL | Postgres connection | On credential rotation (RDS) |
-| ADMIN_API_TOKEN | Admin endpoint protection | Every quarter |
+| DATABASE_URL | Postgres connection | On credential rotation |
+| ADMIN_API_TOKEN | Admin/operator endpoint protection | Every quarter |
+| DHAN_APP_ID / DHAN_APP_SECRET | Broker OAuth consent (app-key auth) | On broker rotation or compromise |
+| SMTP_PASS | Outbound email (OTP) | On mail-provider rotation |
 
 ### Authentication Flow
 
@@ -948,9 +1056,9 @@ NEXT_PUBLIC_API_URL=http://localhost:4000
                      ↓
 ┌──────────────────────────────────────────────────────────────┐
 │ services/api (NestJS)                                        │
-│ - Validates credentials                                      │
-│ - Issues accessToken (5m) + refreshToken (30d)               │
-│ - Stores refreshToken hash in database                       │
+│ - Validates credentials (bcrypt)                             │
+│ - Issues accessToken (15m) + refreshToken (30d)              │
+│ - Stores refreshToken hash (SHA-256) in database             │
 └────────────────────┬─────────────────────────────────────────┘
                      │ Returns both tokens
                      ↓
@@ -965,8 +1073,8 @@ NEXT_PUBLIC_API_URL=http://localhost:4000
 ### Data Protection
 
 - **Passwords:** Hashed with bcryptjs (10 rounds)
-- **API Communication:** HTTPS required in production
-- **Order Data:** Encrypted at rest (Postgres transparent encryption)
+- **Refresh tokens / OAuth state / OTP codes:** Stored as SHA-256 digests, never in plaintext
+- **API Communication:** HTTPS enforced in production (HSTS, `upgrade-insecure-requests`)
 - **User Data:** Not sold, never shared with 3rd parties
 - **Compliance:** SEBI-labeled via Sentinel audit trail
 
@@ -981,6 +1089,37 @@ WHERE "userId" = '...'
 ORDER BY "createdAt" DESC;
 ```
 
+In addition, a dedicated structured security log (`services/api/src/common/security-log.ts`) emits single-line, greppable `[security]` events for auth failures, admin probing, broker OAuth rejections and rejected feed links.
+
+### Application Security (implemented)
+
+The broker OAuth flow and news pipeline received a dedicated hardening pass (July 2026). Each item below is backed by code and, where noted, automated tests.
+
+- ✅ **Per-user broker credential ownership** — `BrokerCredential` is keyed `(provider, userId)`; every method scopes its query to the acting user. No route reads or writes a credential by provider alone (the one shared-feed exception reads only the explicitly designated `isFeedDefault` row).
+- ✅ **OAuth state validation** — the `GET /broker/dhan/callback` endpoint (which cannot carry a bearer token) is only honoured when it matches a live state row an *authenticated* user started; the credential is attributed to that row's user, never to anything in the callback request.
+- ✅ **Single-use OAuth state** — state consumption is a conditional `UPDATE` that runs *before* the token exchange, so a replayed callback loses the race and exchanges nothing (`consumedAt`).
+- ✅ **Replay & CSRF protection** — 256-bit CSPRNG state, SHA-256-hashed at rest, 10-minute TTL, constant-time digest comparison; an `HttpOnly`/`Secure`/`SameSite=Lax` state cookie is a second binding factor; conflicting cookie/query state is refused.
+- ✅ **Authorization enforcement / user-scoped access** — authenticated routes derive the subject from the JWT (`req.user.sub`), never from a path/query parameter; where a caller *can* name a user, a mismatch is refused and logged (`denyCrossUserAccess`).
+- ✅ **Feed default ownership model** — promoting a credential to the shared live-feed default is an `AdminTokenGuard` operator action, enforced unique by a partial index, so a user cannot elect their own (or anyone else's) token into the platform-wide feed.
+- ✅ **RSS URL validation** — every news `<link>` passes an allowlist validator (`news/feed-url.ts`): only `http`/`https`, control-character and length checks, parsed-serialization returned — blocking `javascript:`/`data:`/`blob:`/`file:` click-to-execute XSS in the origin that holds the bearer token.
+- ✅ **Feed proxy allowlist** — the web proxy forwards an explicit list of read-only public market-data routes to the bridge instead of a `/feed/:path*` wildcard, so nothing added to the (unauthenticated) bridge becomes public by default (`apps/web/feed-proxy-routes.mjs`).
+- ✅ **Security headers** — CSP, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`, COOP/CORP, `Cache-Control: no-store`, and production-only HSTS — set on both the API (strict `default-src 'none'` for JSON) and the web app.
+- ✅ **CORS restrictions** — strict origin allowlist in production; localhost-only relaxation in development; credentials enabled with an explicit `allowedHeaders` list.
+- ✅ **Log redaction** — the security logger drops secret-shaped fields by key *and* truncates long opaque strings by shape, so a token cannot reach the log even if a caller passes it (unit-tested).
+- ✅ **Admin guard** — operator endpoints gated by `AdminTokenGuard`: fails closed when `ADMIN_API_TOKEN` is unset, constant-time comparison, denials logged.
+- ✅ **Secure cookie handling** — a single `serializeSecureCookie` helper sets `HttpOnly`/`Secure`/`SameSite`/`Path`/`Max-Age` by default and rejects delimiter-injection rather than escaping it.
+- ✅ **Email-OTP hardening** — enumeration-safe responses, hashed codes, per-code attempt cap, resend cooldown, and supersession of prior live codes.
+- ✅ **Security-focused automated tests** — `broker-authz`, `oauth-state`, `dhan-auth.service`, `security-log` (redaction) and `feed-url` suites.
+
+### Remaining Security Roadmap (intentional technical debt)
+
+These are known, deliberately-deferred items — each documented in code where it lives:
+
+- 📅 **Access token encryption at rest** — `BrokerCredential.accessToken` is still plaintext; encrypting it needs a key-management decision, not just a code edit (tracked in `schema.prisma`).
+- 📅 **CSP nonce migration** — `script-src` still uses `'unsafe-inline'` because Next's App Router injects inline bootstrap/streaming scripts; moving to middleware-generated nonces is a larger change than a hardening pass should make silently.
+- 📅 **Live database verification of the partial index** — the `WHERE isFeedDefault = true` unique index is expressed in raw SQL in the migration (Prisma cannot model it); it should be verified against the live database.
+- 📅 **Browser CSP validation** — the enforced policy should be validated end-to-end in a real browser session to confirm no legitimate resource is blocked.
+
 ---
 
 ## Documentation
@@ -992,13 +1131,17 @@ ORDER BY "createdAt" DESC;
 | **[`ARCHITECTURE.md`](ARCHITECTURE.md)** | Technical service boundaries, communication patterns, deployment architecture | 🟢 Current & binding |
 | **[`docs/product-architecture/TRADEW-OS.md`](docs/product-architecture/TRADEW-OS.md)** | Platform constitution; product philosophy, non-negotiable rules | 🟢 Current |
 | **[`docs/product-architecture/SENTINEL.md`](docs/product-architecture/SENTINEL.md)** | Sentinel Safety Nets system, agent roster, trap detection design | 🟢 Current |
-| **[`docs/product-architecture/TRADEW-AI.md`](docs/product-architecture/TRADEW-AI.md)** | Research pillar blueprint, agent roster, workflows | 🟡 Framework only |
+| **[`docs/product-architecture/TRADEW-ASSISTANT.md`](docs/product-architecture/TRADEW-ASSISTANT.md)** | In-app AI assistant (app-control) design and boundaries | 🟢 Implemented |
+| **[`docs/product-architecture/SECURITY-AUTHORIZATION.md`](docs/product-architecture/SECURITY-AUTHORIZATION.md)** | Authorization model, broker OAuth threat model | 🟢 Current |
+| **[`docs/product-architecture/TRADEW-AI.md`](docs/product-architecture/TRADEW-AI.md)** | Research pillar blueprint, agent roster, workflows | 🚧 Foundation only (`packages/ai-core`) |
 | **[`docs/product-architecture/LEARNING-HUB.md`](docs/product-architecture/LEARNING-HUB.md)** | 4th pillar (curated research, continuous learning pipeline) | 🟡 Framework only |
 | **[`docs/product-architecture/SENTINEL-KNOWLEDGE-GRAPH.md`](docs/product-architecture/SENTINEL-KNOWLEDGE-GRAPH.md)** | Concept ontology design and runtime learning | 🟢 Implemented |
 | **[`docs/design-reference/DESIGN-SYSTEM.md`](docs/design-reference/DESIGN-SYSTEM.md)** | UI components, colors, typography, workspace shell | 🟡 Spec written; components extracting |
-| **[`docs/product-architecture/DHAN-MARKET-DATA-INTEGRATION.md`](docs/product-architecture/DHAN-MARKET-DATA-INTEGRATION.md)** | Real market data feed architecture | 🟡 Designed; not deployed |
+| **[`docs/product-architecture/DHAN-MARKET-DATA-INTEGRATION.md`](docs/product-architecture/DHAN-MARKET-DATA-INTEGRATION.md)** | Real market data feed architecture | 🟢 Implemented (live feed bridge) |
 | **[`docs/product-architecture/N8N-WORKFLOWS.md`](docs/product-architecture/N8N-WORKFLOWS.md)** | Workflow automation architecture and use cases | 🟡 Planned |
-| **[`CONSOLIDATION-PLAN.md`](CONSOLIDATION-PLAN.md)** | Audit of existing code, what to keep/archive, tech debt | 🟢 Reference (historical) |
+| **[`TRADEW_DEVELOPER_REFERENCE.md`](TRADEW_DEVELOPER_REFERENCE.md)** | Definitive developer reference | 🟢 Reference |
+| **[`REPOSITORY_INVENTORY.md`](REPOSITORY_INVENTORY.md)** | A–Z repository inventory audit | 🟢 Reference |
+| **[`SENTINEL_MASTER_PLAN.md`](SENTINEL_MASTER_PLAN.md)** | Sentinel build plan and progress | 🟢 Reference |
 | **[`knowledge/_INDEX.md`](knowledge/_INDEX.md)** | Engineering knowledge vault, decisions, discoveries | 🟢 Active |
 | **[`.claude/CLAUDE.md`](.claude/CLAUDE.md)** | Workspace rules for all Claude Code sessions | 🟢 Active |
 
@@ -1018,8 +1161,9 @@ ORDER BY "createdAt" DESC;
 
 **For Deployment/DevOps:**
 1. Read [`ARCHITECTURE.md`](ARCHITECTURE.md) §7 (Deployment)
-2. Review [`infra/docker/`](infra/docker/) (local dev setup)
-3. Review [`infra/k8s/`](infra/k8s/) and [`infra/terraform/`](infra/terraform/) (staging/prod)
+2. Review [`infra/docker/docker-compose.yml`](infra/docker/docker-compose.yml) (local dev) and [`docker-compose.prod.yml`](infra/docker/docker-compose.prod.yml) + [`Caddyfile`](infra/docker/Caddyfile) (production)
+3. Review [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) (CI/CD → ghcr.io → Oracle Cloud over SSH)
+4. `infra/k8s/` and `infra/terraform/` are notes only (future scaling)
 
 ---
 
@@ -1067,5 +1211,5 @@ If you reference TradeW in academic work or public discussions, please cite:
 
 ---
 
-**Last Updated:** 2026-07-23
-**Status:** 🟢 Active Development (v0.1.0)
+**Last Updated:** 2026-07-29
+**Status:** 🟢 Active Development (v0.1.0 · ~80% complete)
