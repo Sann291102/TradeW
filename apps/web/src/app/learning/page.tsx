@@ -56,7 +56,7 @@ export default function LearningPage() {
             {lessons.map((lesson) => (
               <Link
                 key={lesson.id}
-                href={`/learning/${lesson.id}`}
+                href={`/learning/strategy/${lesson.id}`}
                 className="rounded-lg border border-border bg-card p-3 shadow-card transition-colors duration-micro hover:border-teal"
               >
                 <div className="flex items-center gap-1.5">

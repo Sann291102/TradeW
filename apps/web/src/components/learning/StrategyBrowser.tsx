@@ -60,7 +60,7 @@ export function StrategyBrowser({ strategies }: { strategies: Strategy[] }) {
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <Link href={`/learning/${strategy.id}`} className="text-sm font-semibold text-text hover:text-teal hover:underline">
+                      <Link href={`/learning/strategy/${strategy.id}`} className="text-sm font-semibold text-text hover:text-teal hover:underline">
                         {strategy.name}
                       </Link>
                       <Badge tone={TIER_TONE[strategy.tier]} className="px-1.5 py-0 text-[9px]">
@@ -81,7 +81,7 @@ export function StrategyBrowser({ strategies }: { strategies: Strategy[] }) {
                   </div>
                   <div className="flex shrink-0 gap-2">
                     <Link
-                      href={`/learning/${strategy.id}`}
+                      href={`/learning/strategy/${strategy.id}`}
                       className={buttonClasses({ variant: 'ghost', size: 'sm' })}
                       aria-label={`Read the ${strategy.name} lesson`}
                     >
