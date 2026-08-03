@@ -508,7 +508,9 @@ export function resolveIntent(
   if (/\b(draw|chart|plot|annotate|visuali[sz]e|workspace)\b/i.test(text)) return 'visual-workspace';
   if (/\b(why|explain|reason|because|justify)\b/i.test(text)) return 'explain';
   if (/\b(revenge|tilt|fomo|discipline|over[- ]?trad|emotion|psycholog)/i.test(text)) return 'behaviour-review';
-  if (/\b(risk|exposure|margin|position siz|drawdown)\b/i.test(text)) return 'risk-review';
+  // `risk\w*` rather than `\brisk\b`: "how risky is this" is the most natural
+  // phrasing of a risk question and a word-bounded `risk` misses it entirely.
+  if (/\b(risk\w*|exposure|margin|position siz\w*|drawdown)\b/i.test(text)) return 'risk-review';
   if (ctx.strike !== null || ctx.right !== null || /\b(option|chain|oi|pcr|iv|premium|strike|expiry)\b/i.test(text)) {
     return 'option-context';
   }

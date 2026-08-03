@@ -4,6 +4,8 @@
   "private": true,
   "description": "Sentinel AI — observation-only trading intelligence desk. Internal service, called exclusively by services/api. Never places, blocks, or delays orders.",
   "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
     "build": "nest build",
     "start": "nest start",
     "start:dev": "nest start --watch",

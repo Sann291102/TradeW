@@ -200,18 +200,17 @@ export class SynthesisService {
         ? ` This reading is contested: ${crossCheck.conflicts[0].detail} ${crossCheck.conflicts[0].resolution}`
         : '';
 
-    const draft =
+    const body =
       `${status} on ${understood.market.symbol} (${understood.timeframe}) at ${(confidence * 100).toFixed(0)}% confidence, ` +
       `corroborated by ${contributors.length} independent agents: ${contributors.map((c) => label(c.agent)).join(', ')}. ` +
       `${evidenceLines.join('. ')}.` +
       (sourceNames.length > 0 ? ` Grounded in ${sourceNames.join(', ')}.` : '') +
-      conflictNote +
-      ' This is an observation of current market state, not advice.';
+      conflictNote;
 
-    // Enforcement runs on the deterministic draft too. The composition above
-    // is written to be observational, but the same rule set must apply to
-    // every path out of the system, not only the generated ones.
-    const { clean, violations } = enforceVocabulary(draft);
+    // Enforcement runs on the deterministic body too. The composition above is
+    // written to be observational, but the same rule set must apply to every
+    // path out of the system, not only the generated ones.
+    const { clean, violations } = enforceVocabulary(body);
     if (violations.length > 0) {
       this.logger.warn(
         `deterministic composition contained ${violations.length} directive phrase(s) (${violations.join(', ')}) — rewritten`,
@@ -220,7 +219,12 @@ export class SynthesisService {
 
     return {
       status,
-      content: clean,
+      // The closing sentence is appended AFTER enforcement, never through it.
+      // The enforcer rewrites the noun "advice" into "observation" — which is
+      // correct for model prose and destroys this reviewed constant, turning
+      // "not advice" into "not observation". A fixed, already-compliant string
+      // has nothing to gain from being rewritten and everything to lose.
+      content: `${clean} ${OBSERVATION_CLOSER}`,
       confidence: Number(confidence.toFixed(4)),
       pattern: patternFor(contributors, stance),
       citations,
@@ -229,6 +233,14 @@ export class SynthesisService {
     };
   }
 }
+
+/**
+ * The fixed closing sentence on every surfaced observation.
+ *
+ * Kept out of the enforcer's path deliberately — see `compose()`. It is a
+ * reviewed constant, not generated text.
+ */
+export const OBSERVATION_CLOSER = 'This is an observation of current market state, not advice.';
 
 // ---------------------------------------------------------------------------
 // Pure helpers — exported for direct testing.

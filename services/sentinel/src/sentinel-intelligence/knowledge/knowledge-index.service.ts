@@ -300,6 +300,13 @@ export function tokenize(text: string): string[] {
         if (part.length >= 3 && !STOPWORDS.has(part)) out.push(part);
       }
     }
+    // A percentage is emitted both with and without its sign, so a query for
+    // "61.8" matches a passage writing "61.8%" and vice versa. Fibonacci
+    // ratios and RSI thresholds are written both ways across the corpus.
+    if (cleaned.endsWith('%')) {
+      const bare = cleaned.slice(0, -1);
+      if (bare.length >= 2) out.push(bare);
+    }
   }
   return out;
 }
