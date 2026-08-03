@@ -98,6 +98,15 @@ import { RegimeIntelligenceService } from './reasoning/regime-intelligence.servi
 import { SimilarityService } from './reasoning/similarity.service';
 import { StrategyKnowledgeService } from './reasoning/strategy-knowledge.service';
 import { StrategyAdvisorService } from './reasoning/strategy-advisor.service';
+// ---- SentinelIntelligence (new master reasoning engine) -----------------
+// Strictly additive. It composes the same deterministic engines read-only and
+// does NOT modify, wrap or replace SentinelOrchestratorService — /observe and
+// its contract are untouched. Registered flat, like Learning and Reasoning
+// above, so the whole process keeps one PrismaService and one market-data
+// provider; the standalone SentinelIntelligenceModule exists for isolated
+// tests and is deliberately not imported here.
+import { SentinelIntelligenceController } from './sentinel-intelligence/sentinel-intelligence.controller';
+import { SENTINEL_INTELLIGENCE_PROVIDERS } from './sentinel-intelligence/sentinel-intelligence.module';
 
 const SENTINEL_BRAIN_SYSTEM_PROMPT =
   'You are the TradeW Sentinel Neural Brain — persistent market intelligence and trading-psychology memory. ' +
@@ -105,7 +114,13 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
   'Never give Buy, Sell, Entry, Exit, or Target advice — observations and education only.';
 
 @Module({
-  controllers: [AppController, LearningController, ReasoningController, LearningPlatformController],
+  controllers: [
+    AppController,
+    LearningController,
+    ReasoningController,
+    LearningPlatformController,
+    SentinelIntelligenceController,
+  ],
   providers: [
     PrismaService,
     ServiceTokenGuard,
@@ -241,6 +256,13 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
     ResearchTriggerService,
     OutcomeLearningService,
     StrategyIntelligenceService,
+
+    // ---- SentinelIntelligence ----
+    // The full provider set lives in sentinel-intelligence.module.ts so the
+    // list has one owner; spreading it here keeps the shared infrastructure
+    // above (PrismaService, MARKET_DATA, the intelligence engines) as the
+    // single instances that module's services resolve against.
+    ...SENTINEL_INTELLIGENCE_PROVIDERS,
   ],
 })
 export class AppModule {}
