@@ -63,6 +63,10 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/learning', label: 'Learning', icon: LearningIcon, group: 'primary' },
   { href: '/knowledge', label: 'Knowledge', icon: KnowledgeIcon, group: 'primary' },
   { href: '/sentinel', label: 'Sentinel', icon: SentinelIcon, premium: true, group: 'primary' },
+  // SentinelIntelligence's visual workspace. A sibling of /sentinel, not a
+  // replacement: that route stays the orchestrator's Market Context workspace.
+  // Same premium gate — this is a second surface on the same capability.
+  { href: '/strategy-workspace', label: 'Strategy Workspace', icon: SentinelIcon, premium: true, group: 'primary' },
   { href: '/settings', label: 'Settings', icon: SettingsIcon, group: 'secondary' },
   { href: '/profile', label: 'Profile', icon: ProfileIcon, group: 'secondary' },
   { href: '/notifications', label: 'Notifications', icon: BellIcon, group: 'secondary' },
