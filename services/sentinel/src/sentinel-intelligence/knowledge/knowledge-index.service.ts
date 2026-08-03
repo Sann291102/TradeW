@@ -167,6 +167,19 @@ export class KnowledgeIndexService {
   }
 
   /**
+   * Whether this document contributed any chunk to the index.
+   *
+   * Used by the incremental ingest to decide if a document can be skipped.
+   * Probing for `<sourceId>:0` instead would be wrong: chunk 0 is dropped
+   * whenever a document opens with front matter shorter than `minChunkChars`,
+   * so such a document would look un-indexed on every run and be re-parsed
+   * forever.
+   */
+  hasDocument(sourceId: string): boolean {
+    return this.documentIds.has(sourceId);
+  }
+
+  /**
    * BM25 search, authority-weighted by corpus tier.
    *
    * `preferKinds` lets an agent bias toward the corpus it should be reasoning

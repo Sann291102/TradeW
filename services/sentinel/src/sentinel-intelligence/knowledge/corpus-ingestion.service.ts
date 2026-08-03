@@ -93,9 +93,13 @@ export class CorpusIngestionService {
     let unchanged = 0;
 
     for (const document of scan.documents) {
-      const known = this.indexedChecksums.get(document.checksum);
-      // Checksum is the document id, so "already indexed" is a single lookup.
-      if (!force && known && this.hasChunksFor(document.checksum)) {
+      // Checksum is the document id, so "already processed" is a single lookup.
+      //
+      // Keyed on having been PROCESSED, not on having produced chunks. A file
+      // that legitimately yields zero chunks — an image-only PDF, a stub README
+      // shorter than minChunkChars — is fully handled, and gating on chunk
+      // presence would re-parse it on every single run, forever.
+      if (!force && this.indexedChecksums.has(document.checksum)) {
         unchanged++;
         continue;
       }
@@ -150,11 +154,6 @@ export class CorpusIngestionService {
         `(${report.parsed} parsed, ${report.unchanged} unchanged, ${report.failed.length} failed) in ${report.durationMs}ms`,
     );
     return report;
-  }
-
-  private hasChunksFor(sourceId: string): boolean {
-    // Cheap existence probe — the index keys chunks by `<sourceId>:<n>`.
-    return this.index.getChunk(`${sourceId}:0`) !== null;
   }
 
   private async ingestDocument(document: CorpusDocument): Promise<IndexedChunk[]> {

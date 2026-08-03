@@ -174,8 +174,17 @@ export class RequestParserService {
       if (text.toLowerCase().includes(phrase)) out.add(id);
     }
     // Concepts in the strategy-bearing domains that the request names directly.
+    //
+    // Anything already resolved as an INDICATOR is excluded. "with VWAP and
+    // fibonacci" names two tools to plot, not two strategies to validate, and
+    // letting VWAP through as a strategy made the Strategy agent hunt for a
+    // detection that was never requested — then report its absence as a
+    // finding.
+    const indicators = new Set(resolveIndicators(request, text));
     for (const concept of this.graph.detect(text)) {
-      if (STRATEGY_DOMAINS.has(concept.domain)) out.add(concept.id);
+      if (!STRATEGY_DOMAINS.has(concept.domain)) continue;
+      if (indicators.has(concept.id)) continue;
+      out.add(concept.id);
     }
     return [...out];
   }

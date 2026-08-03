@@ -21,7 +21,8 @@
     "reasoning:test": "ts-node -T --project tsconfig.scripts.json scripts/test-reasoning.ts",
     "advisor:test": "ts-node -T --project tsconfig.scripts.json scripts/test-strategy-advisor.ts",
     "verify:runtime": "ts-node -T --project tsconfig.scripts.json scripts/verify-runtime.ts",
-    "learning-platform:test": "ts-node -T --project tsconfig.scripts.json scripts/test-learning-platform.ts"
+    "learning-platform:test": "ts-node -T --project tsconfig.scripts.json scripts/test-learning-platform.ts",
+    "si:test": "ts-node -T --project tsconfig.scripts.json scripts/test-sentinel-intelligence.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
