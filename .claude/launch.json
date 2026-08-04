@@ -28,6 +28,13 @@
       "runtimeArgs": ["run", "live:server", "-w", "@tradew/market-data-service"],
       "port": 4600,
       "autoPort": false
+    },
+    {
+      "name": "admin",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "-w", "@tradew/admin"],
+      "port": 3001,
+      "autoPort": true
     }
   ]
 }
