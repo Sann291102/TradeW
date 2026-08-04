@@ -316,12 +316,30 @@ export interface CorroborationEntry {
 }
 
 /**
+ * How much live-market history stands behind the pattern an observation is
+ * about, drawn from Continuous Learning's outcome-tagged occurrences.
+ *
+ * Structurally compatible with the Brain's `BaseRateResult`, so
+ * `StrategyIntelligenceService.baseRateFor()` can be passed straight into the
+ * gate without this module taking a dependency on the Brain's types.
+ */
+export interface LivePerformanceCheck {
+  /** The pattern the observation is about. */
+  pattern: string;
+  /** Outcome-tagged live occurrences of that pattern in Sentinel's memory. */
+  sample: number;
+  /** Whether the sample clears the Brain's base-rate floor. */
+  reliable: boolean;
+}
+
+/**
  * The synthesized result.
  *
  * `surfaced` is the whole point: SentinelIntelligence is silent unless the
- * confidence gate AND the corroboration gate both clear. When `surfaced` is
- * false, `observation` is null and the caller has nothing to show — that is a
- * designed outcome, not an error, and `silenceReason` says which gate held.
+ * confidence gate, the corroboration gate AND the live-performance gate all
+ * clear. When `surfaced` is false, `observation` is null and the caller has
+ * nothing to show — that is a designed outcome, not an error, and
+ * `silenceReason` says which gate held.
  */
 export interface SynthesisResult {
   surfaced: boolean;
@@ -341,6 +359,12 @@ export interface SynthesisResult {
   corroboration: CorroborationEntry[];
   conflicts: Conflict[];
   validationFailures: ValidationFailure[];
+  /**
+   * Live-market track record for the pattern this run is about, or null when
+   * no lookup was performed. Recorded on every run, surfaced or not, so the
+   * audit trail shows what the gate was judged against.
+   */
+  livePerformance: LivePerformanceCheck | null;
 }
 
 export interface SurfacedObservation {

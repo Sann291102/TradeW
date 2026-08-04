@@ -9,6 +9,7 @@ import { RiskIntelligenceService } from '../intelligence/risk-intelligence.servi
 import { StrategyEngineService } from '../intelligence/strategy-engine.service';
 import { TrapIntelligenceService } from '../intelligence/trap-intelligence.service';
 import { CandleMarketDataProvider } from '../market-data/candle-market-data.provider';
+import { StrategyIntelligenceService } from '../brain/strategy-intelligence.service';
 import { PrismaService } from '../prisma.service';
 import { AgentRegistryService } from './agents/agent-registry.service';
 import { ComplianceIntelligenceAgent } from './agents/compliance-intelligence.agent';
@@ -30,6 +31,7 @@ import { SentinelIntelligenceService } from './sentinel-intelligence.service';
 import { SI_CONFIG, loadSentinelIntelligenceConfig } from './si.config';
 import { CrossCheckService } from './synthesis/cross-check.service';
 import { SynthesisService } from './synthesis/synthesis.service';
+import { MarketWatchService } from './watch/market-watch.service';
 import { RequestParserService } from './understanding/request-parser.service';
 import { TaskDecomposerService } from './understanding/task-decomposer.service';
 import { AnnotationEngineService } from './visual/annotation-engine.service';
@@ -99,6 +101,9 @@ export const SENTINEL_INTELLIGENCE_PROVIDERS: Provider[] = [
   CrossCheckService,
   SynthesisService,
 
+  // ---- continuous market watch ----
+  MarketWatchService,
+
   // ---- visual strategy workspace ----
   TradingViewRuleService,
   AnnotationEngineService,
@@ -126,6 +131,11 @@ export const SENTINEL_INTELLIGENCE_PROVIDERS: Provider[] = [
     ServiceTokenGuard,
     DocumentParserService,
     { provide: MARKET_DATA, useClass: CandleMarketDataProvider },
+    // The live-performance gate reads the Brain's outcome-tagged occurrences.
+    // Declared here for the standalone case only — `AppModule` already
+    // registers this service flat for the orchestrator, so production keeps a
+    // single instance over the single Prisma pool.
+    StrategyIntelligenceService,
     MarketIntelligenceService,
     StrategyEngineService,
     TrapIntelligenceService,

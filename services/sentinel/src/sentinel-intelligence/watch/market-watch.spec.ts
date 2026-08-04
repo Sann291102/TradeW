@@ -1,0 +1,274 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MarketWatchService, validatedSignals } from './market-watch.service';
+import { loadSentinelIntelligenceConfig } from '../si.config';
+import type { MarketIntelligenceService } from '../../intelligence/market-intelligence.service';
+import type { StrategyDetection, StrategyEngineService } from '../../intelligence/strategy-engine.service';
+import type { PatternRecognitionService } from '../../brain/pattern-recognition.service';
+
+/**
+ * The watch loop is the only part of SentinelIntelligence that spends money
+ * without anyone asking it to — it polls a metered API on a timer. These tests
+ * pin the three things that keep that safe (it does not run outside trading
+ * hours, it does not overlap itself, it does not exceed its symbol cap) and
+ * the one thing that keeps its output trustworthy (it does not inflate the
+ * base-rate sample the live-performance gate reads).
+ *
+ * `sweep()` is driven directly. Nothing here waits on a timer.
+ */
+
+const config = loadSentinelIntelligenceConfig({});
+
+/** A Tuesday, 11:00 IST — inside the session. */
+const TRADING = new Date('2026-08-04T05:30:00.000Z');
+/** The Saturday of the same week, 11:00 IST. */
+const SATURDAY = new Date('2026-08-08T05:30:00.000Z');
+/** Tuesday 20:00 IST — after the close. */
+const AFTER_CLOSE = new Date('2026-08-04T14:30:00.000Z');
+
+function detection(strategyId: string, validated = true): StrategyDetection {
+  return {
+    strategyId,
+    strategyName: strategyId.replace(/-/g, ' '),
+    confidence: 80,
+    bias: 'bullish',
+    validated,
+    rulesMatched: ['price above ema20'],
+    rulesUnmet: [],
+    invalidationsTriggered: [],
+    source: 'builtin',
+  } as unknown as StrategyDetection;
+}
+
+function harness(
+  opts: {
+    detections?: StrategyDetection[];
+    snapshotError?: Error;
+    patterns?: PatternRecognitionService | null;
+    config?: ReturnType<typeof loadSentinelIntelligenceConfig>;
+  } = {},
+) {
+  const record = vi.fn().mockResolvedValue(undefined);
+  const snapshot = opts.snapshotError
+    ? vi.fn().mockRejectedValue(opts.snapshotError)
+    : vi.fn().mockResolvedValue({ lastPrice: 24_300 });
+  const scan = vi.fn().mockReturnValue(opts.detections ?? [detection('ema-cross')]);
+
+  const patterns =
+    opts.patterns === null ? null : ({ recordOccurrence: record } as unknown as PatternRecognitionService);
+
+  const service = new MarketWatchService(
+    opts.config ?? config,
+    { snapshot } as unknown as MarketIntelligenceService,
+    { scan } as unknown as StrategyEngineService,
+    patterns,
+  );
+
+  return { service, record, snapshot, scan };
+}
+
+describe('the continuous market watch', () => {
+  let h: ReturnType<typeof harness>;
+  beforeEach(() => {
+    h = harness();
+  });
+
+  it('does nothing until a symbol is registered', async () => {
+    const result = await h.service.sweep(TRADING);
+
+    expect(result.skipped).toBe('no-symbols');
+    expect(h.snapshot).not.toHaveBeenCalled();
+  });
+
+  it('watches a registered symbol and records its validated detections', async () => {
+    h.service.register('NIFTY', TRADING);
+    const result = await h.service.sweep(TRADING);
+
+    expect(result.skipped).toBeNull();
+    expect(h.snapshot).toHaveBeenCalledWith('NIFTY');
+    expect(result.recorded).toBe(1);
+    expect(h.record).toHaveBeenCalledOnce();
+  });
+
+  it('records the pattern under the same name the orchestrator uses', async () => {
+    h.service.register('NIFTY', TRADING);
+    await h.service.sweep(TRADING);
+
+    // `StrategyIntelligenceService.baseRateFor` matches on this exact string —
+    // if the two writers disagreed, the gate would read half the evidence.
+    expect(h.record.mock.calls[0][1].name).toBe('ema_cross');
+    expect(h.record.mock.calls[0][1].triggered).toBe(true);
+  });
+
+  it('never records an unvalidated detection', async () => {
+    const unvalidated = harness({ detections: [detection('ema-cross', false)] });
+    unvalidated.service.register('NIFTY', TRADING);
+    const result = await unvalidated.service.sweep(TRADING);
+
+    expect(result.detections).toBe(1);
+    expect(result.recorded).toBe(0);
+    expect(unvalidated.record).not.toHaveBeenCalled();
+  });
+});
+
+describe('watch cost controls', () => {
+  it('does not sweep outside trading hours', async () => {
+    const h = harness();
+    h.service.register('NIFTY', AFTER_CLOSE);
+    const result = await h.service.sweep(AFTER_CLOSE);
+
+    expect(result.skipped).toBe('market-closed');
+    expect(h.snapshot).not.toHaveBeenCalled();
+  });
+
+  it('does not sweep at the weekend, which the shared market clock alone would allow', async () => {
+    // `isMarketOpen(SATURDAY)` is true — `market-clock.spec.ts` pins that gap
+    // deliberately. The watcher must not inherit it and poll all weekend.
+    const h = harness();
+    h.service.register('NIFTY', SATURDAY);
+    const result = await h.service.sweep(SATURDAY);
+
+    expect(result.skipped).toBe('market-closed');
+    expect(h.snapshot).not.toHaveBeenCalled();
+  });
+
+  it('holds the watch list to its cap, dropping the least recently asked for', async () => {
+    const capped = loadSentinelIntelligenceConfig({ SI_WATCH_MAX_SYMBOLS: '2' });
+    const h = harness({ config: capped });
+
+    h.service.register('NIFTY', new Date(TRADING.getTime()));
+    h.service.register('BANKNIFTY', new Date(TRADING.getTime() + 1000));
+    h.service.register('FINNIFTY', new Date(TRADING.getTime() + 2000));
+
+    expect(h.service.status(TRADING).watching).toEqual(['BANKNIFTY', 'FINNIFTY']);
+  });
+
+  it('stops watching a symbol once its watch lapses', async () => {
+    const h = harness();
+    h.service.register('NIFTY', TRADING);
+
+    const later = new Date(TRADING.getTime() + config.watchTtlMs + 1000);
+    const result = await h.service.sweep(later);
+
+    expect(h.service.status(later).watching).toEqual([]);
+    // Reported as an empty watch list, not as a closed market — the sweep
+    // must not misattribute why it did nothing.
+    expect(result.skipped).toBe('no-symbols');
+  });
+
+  it('never lets a slow sweep stack a second one on top of itself', async () => {
+    let release: (v: unknown) => void = () => {};
+    const gate = new Promise((r) => (release = r));
+    const h = harness();
+    h.snapshot.mockImplementation(async () => {
+      await gate;
+      return { lastPrice: 1 };
+    });
+    h.service.register('NIFTY', TRADING);
+
+    const first = h.service.sweep(TRADING);
+    const second = await h.service.sweep(TRADING);
+    expect(second.skipped).toBe('in-progress');
+
+    release(null);
+    await first;
+    expect(h.snapshot).toHaveBeenCalledOnce();
+  });
+
+  it('carries on with the remaining symbols when one symbol has no data', async () => {
+    const h = harness({ snapshotError: new Error('bridge unavailable') });
+    h.service.register('NIFTY', TRADING);
+    h.service.register('BANKNIFTY', TRADING);
+
+    const result = await h.service.sweep(TRADING);
+
+    expect(h.snapshot).toHaveBeenCalledTimes(2);
+    expect(result.recorded).toBe(0);
+  });
+});
+
+describe('base-rate integrity', () => {
+  it('does not re-record the same setup on every tick', async () => {
+    // The load-bearing one. A setup stays valid across consecutive ticks; if
+    // each tick counted, one setup that persisted an hour would look like
+    // dozens of independent occurrences and make an unproven pattern read as
+    // proven to the live-performance gate.
+    const h = harness();
+    h.service.register('NIFTY', TRADING);
+
+    await h.service.sweep(TRADING);
+    await h.service.sweep(new Date(TRADING.getTime() + 60_000));
+    await h.service.sweep(new Date(TRADING.getTime() + 120_000));
+
+    expect(h.record).toHaveBeenCalledOnce();
+  });
+
+  it('records again once the cooldown has passed', async () => {
+    const h = harness();
+    h.service.register('NIFTY', TRADING);
+
+    await h.service.sweep(TRADING);
+    const afterCooldown = new Date(TRADING.getTime() + config.watchRecordCooldownMs + 1000);
+    h.service.register('NIFTY', afterCooldown);
+    await h.service.sweep(afterCooldown);
+
+    expect(h.record).toHaveBeenCalledTimes(2);
+  });
+
+  it('cools down per symbol, not globally', async () => {
+    const h = harness();
+    h.service.register('NIFTY', TRADING);
+    h.service.register('BANKNIFTY', TRADING);
+
+    const result = await h.service.sweep(TRADING);
+
+    expect(result.recorded).toBe(2);
+  });
+
+  it('reports honestly when it has no way to record', async () => {
+    const h = harness({ patterns: null });
+    h.service.register('NIFTY', TRADING);
+    const result = await h.service.sweep(TRADING);
+
+    expect(h.service.status(TRADING).recording).toBe(false);
+    expect(result.detections).toBe(1);
+    expect(result.recorded).toBe(0);
+  });
+});
+
+describe('watch configuration', () => {
+  it('refuses to poll faster than the bridge candle cache', () => {
+    // Below 60s every extra poll returns the identical cached body.
+    expect(loadSentinelIntelligenceConfig({ SI_WATCH_INTERVAL_MS: '1000' }).watchIntervalMs).toBe(60_000);
+  });
+
+  it('is on by default and opt-out', () => {
+    expect(loadSentinelIntelligenceConfig({}).watchEnabled).toBe(true);
+    expect(loadSentinelIntelligenceConfig({ SI_WATCH_ENABLED: 'false' }).watchEnabled).toBe(false);
+    expect(loadSentinelIntelligenceConfig({ SI_WATCH_ENABLED: 'nonsense' }).watchEnabled).toBe(true);
+  });
+
+  it('registers nothing while disabled', () => {
+    const off = loadSentinelIntelligenceConfig({ SI_WATCH_ENABLED: 'false' });
+    const h = harness({ config: off });
+    h.service.register('NIFTY', TRADING);
+
+    expect(h.service.status(TRADING).watching).toEqual([]);
+  });
+});
+
+describe('validatedSignals', () => {
+  it('keeps only validated detections and normalises the strategy id', () => {
+    const signals = validatedSignals([
+      detection('opening-range-break'),
+      detection('vwap-reversion', false),
+    ]);
+
+    expect(signals).toHaveLength(1);
+    expect(signals[0].name).toBe('opening_range_break');
+    expect(signals[0].agent).toBe('strategy');
+  });
+
+  it('scales confidence into the 0..1 signal weight space', () => {
+    expect(validatedSignals([detection('ema-cross')])[0].weight).toBeCloseTo(0.4);
+  });
+});

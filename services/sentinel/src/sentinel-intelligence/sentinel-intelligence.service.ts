@@ -13,11 +13,19 @@ import { CorpusIngestionService } from './knowledge/corpus-ingestion.service';
 import { KnowledgeIndexService } from './knowledge/knowledge-index.service';
 import { ReasoningGraphService } from './knowledge/reasoning-graph.service';
 import { SI_CONFIG, SentinelIntelligenceConfig } from './si.config';
+import { StrategyIntelligenceService } from '../brain/strategy-intelligence.service';
 import { CrossCheckService } from './synthesis/cross-check.service';
-import { SynthesisService } from './synthesis/synthesis.service';
+import { SynthesisService, resolvePattern } from './synthesis/synthesis.service';
 import { RequestParserService } from './understanding/request-parser.service';
 import { TaskDecomposerService } from './understanding/task-decomposer.service';
-import type { AgentVerdict, ReasonRequest, ReasoningRun, Subtask } from './types';
+import { MarketWatchService } from './watch/market-watch.service';
+import type {
+  AgentVerdict,
+  LivePerformanceCheck,
+  ReasonRequest,
+  ReasoningRun,
+  Subtask,
+} from './types';
 
 /**
  * SentinelIntelligence — the master reasoning and orchestration engine.
@@ -31,12 +39,14 @@ import type { AgentVerdict, ReasonRequest, ReasoningRun, Subtask } from './types
  *   SentinelIntelligence  → one request at a time, understood and decomposed,
  *                           answered by ten named agents whose every claim
  *                           carries a citation, cross-checked for conflicts,
- *                           and surfaced only on corroborated ≥70% confidence.
+ *                           and surfaced only on corroborated ≥70% confidence
+ *                           in a pattern with a live-market track record.
  *
  * The pipeline, in order:
  *
  *   understand → decompose → compute shared market state (once) → run agents
- *   → validate → cross-check and resolve conflicts → synthesize → gate
+ *   → validate → cross-check and resolve conflicts → look up the pattern's live
+ *   performance → synthesize → gate
  *
  * Market state is computed ONCE and shared. Ten agents each fetching their own
  * candles would multiply the data load by ten and, worse, could have agents
@@ -63,6 +73,8 @@ export class SentinelIntelligenceService {
     private readonly emotion: EmotionIntelligenceService,
     private readonly news: NewsIntelligenceService,
     private readonly risk: RiskIntelligenceService,
+    private readonly strategyIntelligence: StrategyIntelligenceService,
+    private readonly watch: MarketWatchService,
   ) {}
 
   /**
@@ -87,13 +99,27 @@ export class SentinelIntelligenceService {
     const understood = this.parser.parse(request, startedAt);
     const plan = this.decomposer.decompose(understood, request);
 
+    // Asking about a symbol is what puts it under continuous watch. The
+    // workspace endpoint routes through here too, so the watch list ends up
+    // being exactly the charts traders have open on their board — and lapses
+    // on its own once they close it.
+    this.watch.register(understood.market.symbol, startedAt);
+
     const shared = await this.computeSharedState(understood.market.symbol, request, startedAt);
     const verdicts = await this.runAgents(plan.subtasks, understood, shared, request, startedAt);
 
     const crossCheckResult = this.crossCheck.check(verdicts, plan.subtasks);
+
+    // The pattern has to be named before synthesis, because the gate needs its
+    // live track record and the Brain lookup is async while the gate is not.
+    const livePerformance = await this.livePerformanceFor(
+      resolvePattern(verdicts, crossCheckResult),
+    );
+
     const synthesisResult = this.synthesis.synthesize(understood, verdicts, crossCheckResult, {
       confidenceThreshold: request.confidenceThreshold,
       requiredCorroboration: request.requiredCorroboration,
+      livePerformance,
     });
 
     const finishedAt = new Date();
@@ -116,6 +142,30 @@ export class SentinelIntelligenceService {
       synthesis: synthesisResult,
       corpus: this.corpus.corpusState(),
     };
+  }
+
+  /**
+   * How many times this pattern has actually resolved in a live market.
+   *
+   * Reads the Brain's outcome-tagged occurrences — the same store the
+   * orchestrator writes to on every triggered signal — so the two engines are
+   * judged against one shared record of what has really happened, not two
+   * separate tallies that could disagree.
+   *
+   * A lookup failure degrades to "no live record", which holds a directional
+   * read back. Failing closed is the correct direction: a database outage must
+   * not be the reason an unvalidated setup reaches a trader.
+   */
+  private async livePerformanceFor(pattern: string): Promise<LivePerformanceCheck> {
+    try {
+      const baseRate = await this.strategyIntelligence.baseRateFor(pattern);
+      return { pattern, sample: baseRate.sample, reliable: baseRate.reliable };
+    } catch (err) {
+      this.logger.warn(
+        `live-performance lookup failed for ${pattern} (treating as unproven): ${(err as Error).message}`,
+      );
+      return { pattern, sample: 0, reliable: false };
+    }
   }
 
   /** Shared market state used by every agent in a run. */
@@ -239,7 +289,9 @@ export class SentinelIntelligenceService {
       gates: {
         confidenceThreshold: this.config.confidenceThreshold,
         requiredCorroboration: this.config.requiredCorroboration,
+        requireLivePerformance: this.config.requireLivePerformance,
       },
+      watch: this.watch.status(),
     };
   }
 

@@ -6,6 +6,7 @@ import {
   SI_DISCLAIMER,
   type AgentVerdict,
   type KnowledgeCitation,
+  type LivePerformanceCheck,
   type Stance,
   type SupportingConcept,
   type SurfacedObservation,
@@ -17,16 +18,25 @@ import {
  * The gate.
  *
  * SentinelIntelligence is silent by default. An observation is surfaced only
- * when BOTH conditions hold:
+ * when ALL of these hold:
  *
- *  1. aggregate confidence ≥ the threshold (0.70 by default), and
+ *  1. aggregate confidence ≥ the threshold (0.70 by default),
  *  2. at least N non-abstaining agents (2 by default) independently landed on
- *     the leading stance.
+ *     the leading stance, and
+ *  3. for a directional read, the pattern it is about has a live-market track
+ *     record behind it.
  *
- * Neither substitutes for the other, and that is the whole point. One agent at
- * 95% is a single point of failure — an overfit threshold, a stale feed, a bug
- * — and no confidence number makes it corroborated. Two agents at 71% agreeing
+ * None substitutes for another, and that is the whole point. One agent at 95%
+ * is a single point of failure — an overfit threshold, a stale feed, a bug —
+ * and no confidence number makes it corroborated. Two agents at 71% agreeing
  * from different evidence is a genuinely stronger claim than one at 95%.
+ *
+ * Condition 3 closes a different hole: the agents reason from trading books,
+ * and ten agents can agree at high confidence about a setup the book describes
+ * beautifully and that has never once resolved in this live market. Confidence
+ * measures agreement among readers of the corpus, not whether the corpus is
+ * right about this instrument. Only outcome-tagged live occurrences measure
+ * that, so a directional read waits for them.
  *
  * When the gate does not clear, the correct output is nothing at all:
  * `observation` is null, `silenceReason` names the gate that held, and the
@@ -43,13 +53,25 @@ export class SynthesisService {
     understood: UnderstoodRequest,
     verdicts: AgentVerdict[],
     crossCheck: CrossCheckResult,
-    overrides: { confidenceThreshold?: number; requiredCorroboration?: number } = {},
+    overrides: {
+      confidenceThreshold?: number;
+      requiredCorroboration?: number;
+      /**
+       * Live-market track record for the pattern this run is about, resolved
+       * by the caller. Passed in rather than looked up here so this service
+       * stays a pure, synchronous function over verdicts — the gate must be
+       * verifiable with no container, no database and no network.
+       */
+      livePerformance?: LivePerformanceCheck | null;
+    } = {},
   ): SynthesisResult {
     const threshold = clamp01(overrides.confidenceThreshold ?? this.config.confidenceThreshold);
     const requiredCorroboration = Math.max(
       1,
       overrides.requiredCorroboration ?? this.config.requiredCorroboration,
     );
+
+    const livePerformance = overrides.livePerformance ?? null;
 
     const confidence = this.aggregate(crossCheck);
     const { leadingStance, corroboratingAgents } = crossCheck;
@@ -63,6 +85,7 @@ export class SynthesisService {
       corroboration: crossCheck.corroboration,
       conflicts: crossCheck.conflicts,
       validationFailures: crossCheck.validationFailures,
+      livePerformance,
     };
 
     // ---- gate 1: corroboration -----------------------------------------
@@ -108,9 +131,36 @@ export class SynthesisService {
       };
     }
 
-    const observation = this.compose(understood, verdicts, crossCheck, confidence);
+    // ---- gate 4: live-market performance behind a directional read ------
+    // Scoped to bullish/bearish deliberately. A directional read is an
+    // implicit "this setup is working" claim and must be earned against live
+    // outcomes. A risk-elevated reading makes no such claim — it reports a
+    // hazard the agents can see right now — and Sentinel's mandate is
+    // behavioural safety, so withholding a corroborated warning until a
+    // pattern has accumulated a track record would make the product less safe
+    // in exactly the situation it exists for.
+    const pattern = resolvePattern(verdicts, crossCheck);
+    if (
+      this.config.requireLivePerformance &&
+      (leadingStance === 'bullish' || leadingStance === 'bearish') &&
+      !livePerformance?.reliable
+    ) {
+      const sample = livePerformance?.sample ?? 0;
+      return {
+        ...base,
+        surfaced: false,
+        observation: null,
+        silenceReason:
+          `The ${pattern.replace(/_/g, ' ')} pattern has ${sample} outcome-tagged occurrence${sample === 1 ? '' : 's'} ` +
+          'in live-market memory — too few for its confidence to be reported. ' +
+          'Corroborated reasoning is recorded; observation is withheld until the pattern has resolved live enough times. ' +
+          'Monitoring continues.',
+      };
+    }
 
-    // ---- gate 4: compliance backstop ------------------------------------
+    const observation = this.compose(understood, verdicts, crossCheck, confidence, pattern);
+
+    // ---- gate 5: compliance backstop ------------------------------------
     // If directive vocabulary survives enforcement, the composition is refused
     // outright rather than published with a warning. A gap in the rewrite table
     // must fail closed.
@@ -172,12 +222,10 @@ export class SynthesisService {
     verdicts: AgentVerdict[],
     crossCheck: CrossCheckResult,
     confidence: number,
+    pattern: string,
   ): SurfacedObservation {
     const stance = crossCheck.leadingStance;
-    const agreeingAgents = new Set(
-      crossCheck.corroboration.filter((c) => c.stance === stance).map((c) => c.agent),
-    );
-    const contributors = verdicts.filter((v) => agreeingAgents.has(v.agent) && !v.abstained);
+    const contributors = contributorsOf(verdicts, crossCheck);
 
     const status = statusFor(stance, understood.market.symbol);
 
@@ -226,7 +274,9 @@ export class SynthesisService {
       // has nothing to gain from being rewritten and everything to lose.
       content: `${clean} ${OBSERVATION_CLOSER}`,
       confidence: Number(confidence.toFixed(4)),
-      pattern: patternFor(contributors, stance),
+      // Resolved by the caller so the live-performance gate and this
+      // observation are provably talking about the same pattern.
+      pattern,
       citations,
       supportingConcepts: concepts,
       disclaimer: SI_DISCLAIMER,
@@ -267,6 +317,31 @@ export function statusFor(stance: Stance, symbol: string): string {
     default:
       return `Observing ${symbol}`;
   }
+}
+
+/**
+ * The non-abstaining verdicts that agreed with the leading stance.
+ *
+ * Shared by the gate and the composition so both reason over exactly the same
+ * set — a gate that judged a different set of contributors than the paragraph
+ * it lets through would be checking the wrong thing.
+ */
+export function contributorsOf(verdicts: AgentVerdict[], crossCheck: CrossCheckResult): AgentVerdict[] {
+  const agreeing = new Set(
+    crossCheck.corroboration.filter((c) => c.stance === crossCheck.leadingStance).map((c) => c.agent),
+  );
+  return verdicts.filter((v) => agreeing.has(v.agent) && !v.abstained);
+}
+
+/**
+ * The pattern a run is about, resolved from its cross-check result.
+ *
+ * The caller resolves this BEFORE synthesis so it can look the pattern's live
+ * track record up, and passes both in. Exported so the pipeline and the tests
+ * name the pattern the same way the gate does.
+ */
+export function resolvePattern(verdicts: AgentVerdict[], crossCheck: CrossCheckResult): string {
+  return patternFor(contributorsOf(verdicts, crossCheck), crossCheck.leadingStance);
 }
 
 /** Name the pattern this observation is about, for the audit trail and UI. */

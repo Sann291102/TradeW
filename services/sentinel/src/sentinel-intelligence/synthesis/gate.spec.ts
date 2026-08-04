@@ -7,6 +7,7 @@ import type {
   AgentId,
   AgentVerdict,
   KnowledgeCitation,
+  LivePerformanceCheck,
   Stance,
   Subtask,
   UnderstoodRequest,
@@ -98,11 +99,22 @@ const understood: UnderstoodRequest = {
   parseConfidence: 0.5,
 };
 
-function run(verdicts: AgentVerdict[], subtasks: Subtask[]) {
+/**
+ * A pattern with enough live-market history to clear the live-performance
+ * gate. Supplied by default so each test exercises the one gate it is about;
+ * the live-performance tests below pass their own.
+ */
+const PROVEN: LivePerformanceCheck = { pattern: 'proven_pattern', sample: 12, reliable: true };
+
+function run(
+  verdicts: AgentVerdict[],
+  subtasks: Subtask[],
+  livePerformance: LivePerformanceCheck | null = PROVEN,
+) {
   const crossCheck = new CrossCheckService(graphStub);
   const synthesis = new SynthesisService(config);
   const checked = crossCheck.check(verdicts, subtasks);
-  return { checked, result: synthesis.synthesize(understood, verdicts, checked) };
+  return { checked, result: synthesis.synthesize(understood, verdicts, checked, { livePerformance }) };
 }
 
 describe('the surfacing gate', () => {
@@ -170,7 +182,10 @@ describe('the surfacing gate', () => {
     const crossCheck = new CrossCheckService(graphStub);
     const synthesis = new SynthesisService(config);
     const checked = crossCheck.check(verdicts, [subtask('market-intelligence'), subtask('strategy-intelligence')]);
-    const result = synthesis.synthesize(understood, verdicts, checked, { confidenceThreshold: 0.5 });
+    const result = synthesis.synthesize(understood, verdicts, checked, {
+      confidenceThreshold: 0.5,
+      livePerformance: PROVEN,
+    });
 
     expect(result.threshold).toBe(0.5);
     expect(result.surfaced).toBe(true);
@@ -198,6 +213,117 @@ describe('the surfacing gate', () => {
     expect(result.observation).not.toBeNull();
     expect(result.observation!.content).not.toMatch(/\b(buy|sell|short|stop[- ]?loss|target)\b/i);
     expect(result.observation!.content).toMatch(/not advice/i);
+  });
+});
+
+/**
+ * The live-performance gate. Confidence measures agreement among agents
+ * reading the book corpus; it says nothing about whether that corpus is right
+ * about this instrument. Only live outcomes say that, so a directional read
+ * waits for them — and a safety warning does not.
+ */
+describe('the live-performance gate', () => {
+  const directional = () => [
+    verdict('market-intelligence', 'bullish', 0.92),
+    verdict('strategy-intelligence', 'bullish', 0.9),
+  ];
+  const directionalSubtasks = () => [subtask('market-intelligence'), subtask('strategy-intelligence')];
+
+  it('stays silent on a corroborated, high-confidence read with no live track record', () => {
+    const { result } = run(directional(), directionalSubtasks(), {
+      pattern: 'untested_pattern',
+      sample: 0,
+      reliable: false,
+    });
+
+    expect(result.confidence).toBeGreaterThanOrEqual(0.7);
+    expect(result.corroboratingAgents).toBe(2);
+    expect(result.surfaced).toBe(false);
+    expect(result.observation).toBeNull();
+    expect(result.silenceReason).toMatch(/0 outcome-tagged occurrences/);
+  });
+
+  it('stays silent when live occurrences exist but are too few to be reliable', () => {
+    const { result } = run(directional(), directionalSubtasks(), {
+      pattern: 'thin_pattern',
+      sample: 3,
+      reliable: false,
+    });
+
+    expect(result.surfaced).toBe(false);
+    expect(result.silenceReason).toMatch(/3 outcome-tagged occurrences/);
+  });
+
+  it('stays silent when the live-performance lookup produced nothing at all', () => {
+    const { result } = run(directional(), directionalSubtasks(), null);
+
+    expect(result.surfaced).toBe(false);
+    expect(result.silenceReason).toMatch(/live-market memory/);
+  });
+
+  it('surfaces once the pattern has a reliable live track record', () => {
+    const { result } = run(directional(), directionalSubtasks(), {
+      pattern: 'proven_pattern',
+      sample: 20,
+      reliable: true,
+    });
+
+    expect(result.surfaced).toBe(true);
+    expect(result.observation).not.toBeNull();
+  });
+
+  it('never withholds a corroborated risk warning for lack of a track record', () => {
+    const { result } = run(
+      [verdict('trap-intelligence', 'risk-elevated', 0.85), verdict('risk-intelligence', 'risk-elevated', 0.82)],
+      [subtask('trap-intelligence'), subtask('risk-intelligence')],
+      { pattern: 'unseen_trap', sample: 0, reliable: false },
+    );
+
+    expect(result.surfaced).toBe(true);
+    expect(result.observation?.status).toBe('Risk awareness');
+  });
+
+  it('names the binding gate — corroboration still reported before live performance', () => {
+    const { result } = run(
+      [verdict('market-intelligence', 'bullish', 0.99)],
+      [subtask('market-intelligence')],
+      { pattern: 'untested_pattern', sample: 0, reliable: false },
+    );
+
+    expect(result.silenceReason).toMatch(/corroborating agents are required/);
+  });
+
+  it('records the live-performance check on every run, surfaced or not', () => {
+    const proven = run(directional(), directionalSubtasks(), PROVEN);
+    const unproven = run(directional(), directionalSubtasks(), {
+      pattern: 'untested_pattern',
+      sample: 1,
+      reliable: false,
+    });
+
+    expect(proven.result.livePerformance).toEqual(PROVEN);
+    expect(unproven.result.livePerformance?.sample).toBe(1);
+    expect(unproven.result.livePerformance?.reliable).toBe(false);
+  });
+
+  it('can be disabled for a cold database without touching the other gates', () => {
+    const crossCheck = new CrossCheckService(graphStub);
+    const synthesis = new SynthesisService(
+      loadSentinelIntelligenceConfig({ SI_REQUIRE_LIVE_PERFORMANCE: 'false' }),
+    );
+    const verdicts = directional();
+    const checked = crossCheck.check(verdicts, directionalSubtasks());
+    const result = synthesis.synthesize(understood, verdicts, checked, {
+      livePerformance: { pattern: 'untested_pattern', sample: 0, reliable: false },
+    });
+
+    expect(result.surfaced).toBe(true);
+  });
+
+  it('stays on when the env toggle is absent or malformed', () => {
+    expect(loadSentinelIntelligenceConfig({}).requireLivePerformance).toBe(true);
+    expect(loadSentinelIntelligenceConfig({ SI_REQUIRE_LIVE_PERFORMANCE: 'no' }).requireLivePerformance).toBe(true);
+    expect(loadSentinelIntelligenceConfig({ SI_REQUIRE_LIVE_PERFORMANCE: '' }).requireLivePerformance).toBe(true);
   });
 });
 

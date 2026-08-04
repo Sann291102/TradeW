@@ -27,6 +27,8 @@ export default defineConfig({
       'src/sentinel-intelligence/understanding/request-parser.spec.ts',
       // Retrieval and the citation guarantee.
       'src/sentinel-intelligence/knowledge/knowledge-index.spec.ts',
+      // The continuous watch loop: cost controls and base-rate integrity.
+      'src/sentinel-intelligence/watch/market-watch.spec.ts',
       // Chart geometry — the maths behind every drawn annotation.
       'src/sentinel-intelligence/visual/geometry.spec.ts',
       // Learned TradingView specs: validation, matching, and drawing replay.

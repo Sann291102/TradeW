@@ -36,12 +36,28 @@ export interface SentinelIntelligenceConfig {
   confidenceThreshold: number;
   /** Minimum non-abstaining agents that must agree before surfacing. */
   requiredCorroboration: number;
+  /**
+   * Require live-market performance behind a directional read before its
+   * confidence counts. On by default; `SI_REQUIRE_LIVE_PERFORMANCE=false`
+   * disables it for a cold database or an isolated test.
+   */
+  requireLivePerformance: boolean;
   /** Max citations attached to any single verdict. */
   maxCitationsPerVerdict: number;
   /** Retrieval fan-out per knowledge query. */
   retrievalLimit: number;
   /** Auto-index the corpus at boot. Off by default — indexing is I/O heavy. */
   indexOnBoot: boolean;
+  /** Run the continuous market watch. `SI_WATCH_ENABLED=false` disables it. */
+  watchEnabled: boolean;
+  /** Milliseconds between watch sweeps. */
+  watchIntervalMs: number;
+  /** Hard cap on symbols under watch at once. */
+  watchMaxSymbols: number;
+  /** How long a symbol stays watched after the last request that touched it. */
+  watchTtlMs: number;
+  /** Minimum gap before the same symbol+pattern may be recorded again. */
+  watchRecordCooldownMs: number;
 }
 
 export interface CorpusRoot {
@@ -67,6 +83,43 @@ export const DEFAULT_CONFIDENCE_THRESHOLD = 0.7;
  * still a single point of failure and stays silent.
  */
 export const DEFAULT_REQUIRED_CORROBORATION = 2;
+
+/**
+ * A directional read makes an implicit claim that a book-learned setup is
+ * working. Confidence alone cannot support that claim — the setup has to have
+ * been observed resolving in a live market enough times to mean anything, and
+ * the Brain's own base-rate floor (`StrategyIntelligenceService.MIN_SAMPLE`)
+ * already fixes where "enough" starts. Risk-elevated readings are deliberately
+ * exempt; see the gate in `synthesis.service.ts`.
+ */
+export const DEFAULT_REQUIRE_LIVE_PERFORMANCE = true;
+
+/**
+ * Watch cadence, floored at the bridge's own candle cache TTL (60 s).
+ *
+ * Sweeping faster than that cache buys nothing — `/candles` would return the
+ * identical cached body — while still costing a round trip per symbol. Slower
+ * is a legitimate cost/latency trade; faster is only waste.
+ */
+const DEFAULT_WATCH_INTERVAL_MS = 60_000;
+
+/**
+ * Symbol cap. Each watched symbol costs two `/candles` calls per sweep against
+ * Dhan's 5 req/s Data-API ceiling, so twelve is a full sweep well inside the
+ * limit even when every cache entry is cold.
+ */
+const DEFAULT_WATCH_MAX_SYMBOLS = 12;
+
+/** A board nobody has touched for half an hour stops being watched. */
+const DEFAULT_WATCH_TTL_MS = 30 * 60_000;
+
+/**
+ * Re-record cooldown per symbol+pattern, matched to
+ * `OutcomeLearningService.MIN_AGE_MS` (15 min) so a pattern is only counted
+ * again once the previous occurrence is old enough to have been outcome-tagged.
+ * See the rationale on `MarketWatchService.claimCooldown`.
+ */
+const DEFAULT_WATCH_RECORD_COOLDOWN_MS = 15 * 60_000;
 
 const DEFAULT_CHUNK_CHARS = 2400;
 const DEFAULT_CHUNK_OVERLAP = 240;
@@ -127,9 +180,23 @@ export function loadSentinelIntelligenceConfig(
     maxFileBytes: positiveInt(env.SI_MAX_FILE_BYTES, DEFAULT_MAX_FILE_BYTES),
     confidenceThreshold: unitInterval(env.SI_CONFIDENCE_THRESHOLD, DEFAULT_CONFIDENCE_THRESHOLD),
     requiredCorroboration: Math.max(1, positiveInt(env.SI_REQUIRED_CORROBORATION, DEFAULT_REQUIRED_CORROBORATION)),
+    // Opt-out rather than opt-in: an unset or malformed value must leave the
+    // gate ON, so a config typo cannot quietly restore ungrounded surfacing.
+    requireLivePerformance: env.SI_REQUIRE_LIVE_PERFORMANCE === 'false' ? false : DEFAULT_REQUIRE_LIVE_PERFORMANCE,
     maxCitationsPerVerdict: Math.max(1, positiveInt(env.SI_MAX_CITATIONS, 6)),
     retrievalLimit: Math.max(1, positiveInt(env.SI_RETRIEVAL_LIMIT, 8)),
     indexOnBoot: env.SI_INDEX_ON_BOOT === 'true',
+    // On by default, but self-limiting: the loop is a no-op with no registered
+    // symbols and outside trading hours, so an idle or dev instance that
+    // nobody has opened a board on never touches the metered API.
+    watchEnabled: env.SI_WATCH_ENABLED === 'false' ? false : true,
+    watchIntervalMs: Math.max(
+      DEFAULT_WATCH_INTERVAL_MS,
+      positiveInt(env.SI_WATCH_INTERVAL_MS, DEFAULT_WATCH_INTERVAL_MS),
+    ),
+    watchMaxSymbols: Math.max(1, positiveInt(env.SI_WATCH_MAX_SYMBOLS, DEFAULT_WATCH_MAX_SYMBOLS)),
+    watchTtlMs: Math.max(60_000, positiveInt(env.SI_WATCH_TTL_MS, DEFAULT_WATCH_TTL_MS)),
+    watchRecordCooldownMs: positiveInt(env.SI_WATCH_RECORD_COOLDOWN_MS, DEFAULT_WATCH_RECORD_COOLDOWN_MS),
   };
 }
 

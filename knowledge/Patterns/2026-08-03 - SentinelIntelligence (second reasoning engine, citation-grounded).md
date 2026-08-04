@@ -1,7 +1,15 @@
 # SentinelIntelligence — second reasoning engine, citation-grounded
 
 **Read before touching `services/sentinel/src/sentinel-intelligence/`, and before
-assuming Sentinel has one orchestrator.** It now has two engines. Related:
+assuming Sentinel has one orchestrator.** It now has two engines.
+
+> **Superseded in one respect (2026-08-04):** the two-condition gate described
+> below is now three. A *directional* read must additionally name a pattern with
+> a live-market track record. See
+> [[2026-08-04 - SentinelIntelligence live-performance gate (books must be proven live)]].
+> Everything else here still stands.
+
+Related:
 [[2026-07-26 - Sentinel Master Plan integration (12 modules into the existing service)]]
 (the orchestrator this sits beside), [[2026-07-26 - TradeW AI assistant control layer (Comet-style app control)]]
 (where the parsing rules came from), [[Decisions/2026-07-21 - Sentinel Concept Knowledge Graph (living ontology)]]
