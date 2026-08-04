@@ -49,12 +49,29 @@ const REWRITES: { pattern: RegExp; replacement: string }[] = [
   { pattern: /\bbuying opportunity\b/gi, replacement: 'bullish structure' },
   { pattern: /\bselling opportunity\b/gi, replacement: 'bearish structure' },
   // Bare imperatives, last so the phrase rules above get first refusal.
-  { pattern: /\b(?:buy|sell|short)\b/gi, replacement: 'observe' },
+  //
+  // "short" is excluded when it is the adjective rather than the verb.
+  // `\bshort\b` matches inside "short-term" — the hyphen is a word boundary —
+  // so "the short-term trend reference" was being rewritten into "the
+  // observe-term trend reference", which is visibly broken English reaching a
+  // trader. The lookahead covers the compound adjectives that actually occur
+  // in market prose; "short the index" still rewrites, which is the case the
+  // rule exists for.
+  { pattern: /\b(?:buy|sell)\b/gi, replacement: 'observe' },
+  { pattern: /\bshort\b(?!([- ](?:term|dated|lived|side|squeeze|interest|covering)))/gi, replacement: 'observe' },
   { pattern: /\bexit\b/gi, replacement: 'close of the move' },
 ];
 
-/** Terms whose presence in output is a hard compliance failure. */
-const FORBIDDEN_PROBE = /\b(buy|sell|short|exit|target|stop[- ]?loss|recommend\w*)\b/i;
+/**
+ * Terms whose presence in output is a hard compliance failure.
+ *
+ * Carries the same "short" exclusion as the rewrite table above, and must: a
+ * legitimate "short-term" surviving enforcement would otherwise be reported as
+ * a residual breach, and SentinelIntelligence's synthesis gate fails CLOSED on
+ * that probe — so the mismatch would silently withhold correct observations.
+ */
+const FORBIDDEN_PROBE =
+  /\b(buy|sell|exit|target|stop[- ]?loss|recommend\w*|short\b(?!([- ](?:term|dated|lived|side|squeeze|interest|covering))))\b/i;
 
 export interface VocabularyCheck {
   clean: string;

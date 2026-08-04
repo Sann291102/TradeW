@@ -19,6 +19,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: [
+      // The compliance enforcer: rewrite directives, leave analysis alone.
+      'src/vocabulary/vocabulary.spec.ts',
       // The surfacing gate: what must be said, and what must stay silent.
       'src/sentinel-intelligence/synthesis/gate.spec.ts',
       // Request understanding, including four production parsing regressions.
