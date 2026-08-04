@@ -7,7 +7,6 @@ import {
   PortfolioIcon,
   ResearchIcon,
   SentinelIcon,
-  KnowledgeIcon,
   SparkleIcon,
   SunIcon,
   MoonIcon,
@@ -173,7 +172,9 @@ export const SEARCH_PROVIDERS: SearchProvider[] = [
   stubProvider('portfolio', 'Portfolio', PortfolioIcon, ['portfolio', 'holdings', 'position']),
   stubProvider('research', 'Research', ResearchIcon, ['research', 'fundamentals', 'company']),
   stubProvider('sentinel', 'Sentinel', SentinelIcon, ['sentinel', 'observation', 'risk']),
-  stubProvider('knowledge', 'Knowledge', KnowledgeIcon, ['knowledge', 'graph', 'concept']),
+  // 'knowledge' removed 2026-08-03 — the route moved to /admin/knowledge and
+  // the public command palette must not advertise a surface its user cannot
+  // reach. Searching "knowledge" now falls through to the other providers.
   stubProvider('tradew-ai', 'TradeW AI', SparkleIcon, ['ai', 'assistant', 'chat', 'ask']),
 ];
 

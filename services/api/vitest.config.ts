@@ -4,11 +4,15 @@ import { defineConfig } from 'vitest/config';
  * Scoped deliberately narrow: the discipline module's pure logic, and the
  * security decisions added by the 2026-07-29 hardening pass.
  *
- * It is NOT an attempt to backfill coverage across `services/api` — the rest of
- * the codebase (order fill math, margin, entitlements) remains untested and that
- * is tracked separately. The `include` below is an allowlist rather than a glob
- * over `src/**` so adding a suite is a deliberate act, and so this config can
- * never start failing CI on code it was never scoped to cover.
+ * It is NOT an attempt to backfill coverage across `services/api`. The 2026-08
+ * audit pass added the three highest-risk gaps it named — order fill math,
+ * entitlement decisions, and bearer-token parsing — but margin computation
+ * (`computeMargin`), the matching engine's polling loop, and the whole of
+ * `crypto/`, `instruments/`, `knowledge/`, `market-data/`, `notification/` and
+ * `sentinel/` remain uncovered and are tracked separately. The `include` below
+ * is an allowlist rather than a glob over `src/**` so adding a suite is a
+ * deliberate act, and so this config can never start failing CI on code it was
+ * never scoped to cover.
  *
  * Everything under test is pure or dependency-injected: no database, no Nest
  * application context, no network. `vitest run` needs nothing running. The guard
@@ -33,6 +37,12 @@ export default defineConfig({
       // Learning Platform: entitlement/admin access decisions, and progress math.
       'src/learning/learning-access.spec.ts',
       'src/learning/learning-progress.spec.ts',
+      // Position averaging and realized P&L — the paper-money arithmetic.
+      'src/sim/order-fill.spec.ts',
+      // Who is allowed to use a paid capability, and until when.
+      'src/entitlements/entitlements.spec.ts',
+      // Bearer-token parsing: the gate in front of every authenticated route.
+      'src/auth/auth.guard.spec.ts',
     ],
     environment: 'node',
     // The suite is deterministic and clock-injected; a slow test means a real

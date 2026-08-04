@@ -5,7 +5,6 @@ import {
   MarketsIcon,
   PortfolioIcon,
   LearningIcon,
-  KnowledgeIcon,
   SentinelIcon,
   SettingsIcon,
   ProfileIcon,
@@ -36,10 +35,15 @@ export interface NavItem {
  * here. Order and grouping are the navigation contract; the icon rail renders
  * exactly this list.
  *
- * Items map to real routes: some already exist (trade, sentinel, knowledge,
- * profile), some are new in M2 (dashboard, markets, portfolio, learning,
- * settings). Sentinel is `premium` — always visible, gated at use (the brief's
- * "users always see Sentinel").
+ * Items map to real routes: some already exist (trade, sentinel, profile),
+ * some are new in M2 (dashboard, markets, portfolio, learning, settings).
+ * Sentinel is `premium` — always visible, gated at use (the brief's "users
+ * always see Sentinel").
+ *
+ * This config governs the PUBLIC workspace only. The admin portal at /admin is
+ * deliberately absent from it and from every other public surface: it has its
+ * own shell, its own nav, and is reachable only by typing the URL while holding
+ * a session that passes the server-side admin check.
  */
 export const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: HomeIcon, group: 'primary' },
@@ -61,7 +65,12 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/portfolio', label: 'Portfolio', icon: PortfolioIcon, group: 'primary' },
   { href: '/research', label: 'Research', icon: ResearchIcon, group: 'primary' },
   { href: '/learning', label: 'Learning', icon: LearningIcon, group: 'primary' },
-  { href: '/knowledge', label: 'Knowledge', icon: KnowledgeIcon, group: 'primary' },
+  // Knowledge was removed from this list on 2026-08-03 and now lives at
+  // /admin/knowledge. It was never a trader-facing surface: the graph it
+  // renders is the engineering vault (Decisions, Gotchas, Research notes) that
+  // the agents write to, and exposing it on the public workspace put internal
+  // architecture in front of every signed-in user. See apps/web/src/app/admin.
+  //
   // SentinelIntelligence (citation-grounded multi-agent reasoning + the
   // 3-panel visual strategy workspace) is embedded inside this page, not a
   // separate route — see SentinelIntelligencePanel in app/sentinel/page.tsx.
@@ -91,7 +100,14 @@ export function isBareRoute(pathname: string): boolean {
  * Left this mechanism in place, empty, in case a real standalone-shell need
  * comes up again.
  */
-export const STANDALONE_ROUTES: string[] = [];
+export const STANDALONE_ROUTES: string[] = [
+  // The admin portal. It renders its own shell (AdminFrame) and must NOT get
+  // the trader chrome: no Sidebar linking back into the workspace, no Ticker,
+  // no FloatingAI, no discipline panel. Mixing the two would make the operator
+  // surface look like a page of the product, which is precisely the confusion
+  // to avoid when one of them can read every user's activity.
+  '/admin',
+];
 
 export function isStandaloneRoute(pathname: string): boolean {
   return STANDALONE_ROUTES.some((r) => pathname === r || pathname.startsWith(r + '/'));

@@ -85,6 +85,32 @@ services:
       retries: 5
     networks: [tradew]
 
+  # Added 2026-08-04 — previously built (real NestJS service, port 4020) but
+  # absent from this file entirely. SINGLETON: never set replicas > 1 — the
+  # Dhan feed connection set is a per-account resource (see src/main.ts).
+  # Off (INGESTION_ENABLED can disable the feed) doesn't mean unneeded: this
+  # is the sole writer of Quote and of Instrument's broker-metadata columns.
+  market-data:
+    image: ${IMAGE_MARKET_DATA:-tradew-market-data:local}
+    build:
+      context: ../..
+      dockerfile: services/market-data/Dockerfile
+    <<: *restart
+    env_file: [../../.env.prod]
+    environment:
+      NODE_ENV: production
+      PORT: '4020'
+      HOST: 0.0.0.0
+    expose: ['4020']
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4020/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [tradew]
+
   # One-shot: applies Prisma migrations, then exits. Reuses the api image.
   migrate:
     image: ${IMAGE_API:-tradew-api:local}

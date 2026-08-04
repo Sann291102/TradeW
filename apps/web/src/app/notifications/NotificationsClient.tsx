@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Card, EmptyState, Badge, Button, Spinner } from '@tradew/ui';
+import { Card, EmptyState, Badge, Button, Skeleton } from '@tradew/ui';
 import { BellIcon } from '@/components/shell/icons';
 import { NOTIFICATION_CATEGORY_TONE } from '@/lib/store/workspaceStore';
 import { fetchNotifications, markNotificationRead, markAllNotificationsRead, type NotificationItem } from '@/lib/notifications';
@@ -58,9 +58,11 @@ export function NotificationsClient() {
   if (loading) {
     return (
       <div className="mx-auto max-w-[720px] space-y-4 p-4">
-        <Card title="Notifications" actions={<Spinner size="sm" />}>
-          <div className="flex justify-center py-8">
-            <Spinner size="lg" />
+        <Card title="Notifications">
+          <div className="space-y-3 py-4">
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
           </div>
         </Card>
       </div>

@@ -1,0 +1,83 @@
+name: CI
+
+# Tests and typechecks on every push and pull request.
+#
+# Until this file existed, nothing in CI ran the test suites: `deploy.yml` was
+# the only workflow, it triggers only on `main`, and it goes straight from
+# checkout to `docker build`. Every suite in the repo was therefore advisory —
+# green locally, gating nothing.
+#
+# Deliberately separate from deploy.yml rather than bolted onto it: this must
+# run on feature branches and pull requests, which is exactly where deploy.yml
+# must not.
+#
+# `prisma generate` is required before the API suite because
+# `entitlements.spec.ts` imports the `SubscriptionStatus` enum from
+# `@prisma/client`, and no package declares a postinstall hook that would
+# generate the client for us.
+
+on:
+  push:
+    branches-ignore: []
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate --schema packages/database/prisma/schema.prisma
+      # Runs every workspace that defines a `test` script: apps/web,
+      # services/api, services/sentinel, packages/market-data.
+      - run: npm test
+
+  typecheck:
+    name: Typecheck (api, sentinel, market-data)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate --schema packages/database/prisma/schema.prisma
+      - run: npx tsc --noEmit -p services/api/tsconfig.json
+      - run: npx tsc --noEmit -p services/sentinel/tsconfig.json
+      # Added 2026-08-04: services/market-data was real, built code with no
+      # CI coverage at all (no test script either — see the implementation
+      # report's tech-debt section; typecheck is what's addable today).
+      - run: npx tsc --noEmit -p services/market-data/tsconfig.json
+
+  typecheck-web:
+    name: Typecheck (web)
+    runs-on: ubuntu-latest
+    # Split into its own job on purpose — kept separate even now that apps/web
+    # typechecks cleanly again, so a future regression here stays visible
+    # instead of masking the two suites above.
+    #
+    # History: as of 2026-08-03, `NotificationsClient.tsx` imported `Spinner`
+    # from `@tradew/ui`, which exports no such component (`tsc` emitted
+    # TS2305, `next build` failed, and `/notifications` rendered a blank page
+    # at runtime). Fixed 2026-08-04 during the monorepo consolidation pass —
+    # the import now uses `Skeleton` (packages/ui/src/components/Skeleton.tsx),
+    # the design system's intended replacement, not a new component.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate --schema packages/database/prisma/schema.prisma
+      - run: npx tsc --noEmit -p apps/web/tsconfig.json

@@ -1,4 +1,13 @@
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { resolve } from 'node:path';
+
+// Root .env is the single source of truth for the monorepo (consolidated
+// 2026-08-04 — see .env.example at the repo root). Resolved explicitly by
+// path rather than relying on `dotenv/config`'s cwd-relative default, since
+// this service is started from different working directories depending on
+// how it's run (npm workspace scripts, ts-node directly, compiled dist/).
+loadEnv({ path: resolve(__dirname, '../../../.env') });
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
@@ -72,10 +81,12 @@ async function bootstrap() {
     // The broker callback and the admin routes are the only consumers of these
     // beyond the defaults; listed explicitly so a preflight for them is not
     // rejected in production.
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Token'],
+    // X-Request-Id lets the web app correlate a browser-side action with the
+    // server row the admin portal shows for it.
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Token', 'X-Request-Id'],
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  const port = Number(process.env.PORT || 4000);
+  const port = Number(process.env.API_PORT || process.env.PORT || 4000);
   await app.listen(port);
   console.log(`TradeW backend listening on ${port}`);
 }

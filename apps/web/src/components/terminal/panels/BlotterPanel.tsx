@@ -8,6 +8,8 @@ import {
   type PositionDto,
   type TradeDto,
   cancelOrder,
+  exitAll,
+  exitPosition,
   fetchOrders,
   fetchPositions,
   fetchTrades,
@@ -51,6 +53,18 @@ export function BlotterPanel({ className, actions, collapsed }: DockPanelContent
   // localStorage does not exist during SSR; reading it in render would make
   // server and client HTML disagree. Same pattern as the order ticket.
   useEffect(() => setSignedIn(isSignedIn()), []);
+
+  async function reloadAll() {
+    try {
+      const [p, o, t] = await Promise.all([fetchPositions(), fetchOrders(), fetchTrades()]);
+      setPositions(p);
+      setOrders(o);
+      setTrades(t);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not reach the trading backend');
+    }
+  }
 
   useEffect(() => {
     if (!signedIn || collapsed) return;
@@ -117,8 +131,16 @@ export function BlotterPanel({ className, actions, collapsed }: DockPanelContent
         </p>
       ) : (
         <>
-          {tab === 'Positions' && <Positions rows={positions} />}
-          {tab === 'Orders' && <Orders rows={orders} onCancel={(id) => void cancelOrder(id)} />}
+          {tab === 'Positions' && <Positions rows={positions} onReload={reloadAll} />}
+          {tab === 'Orders' && (
+            <Orders
+              rows={orders}
+              onCancel={async (id) => {
+                await cancelOrder(id);
+                void reloadAll();
+              }}
+            />
+          )}
           {tab === 'Trades' && <Trades rows={trades} />}
         </>
       )}
@@ -138,39 +160,100 @@ function Loading() {
   );
 }
 
-function Positions({ rows }: { rows: PositionDto[] | null }) {
+function Positions({ rows, onReload }: { rows: PositionDto[] | null; onReload: () => Promise<void> }) {
+  const [exitingId, setExitingId] = useState<string | null>(null);
+  const [exitingAll, setExitingAll] = useState(false);
+  const [exitError, setExitError] = useState<string | null>(null);
+
   if (rows === null) return <Loading />;
   if (rows.length === 0) return <EmptyState title="No open positions" description="Fills appear here immediately." />;
+
+  async function handleExit(p: PositionDto) {
+    setExitingId(p.instrumentId);
+    setExitError(null);
+    try {
+      await exitPosition(p.instrumentId, p.productType);
+      await onReload();
+    } catch (err) {
+      setExitError(err instanceof Error ? err.message : 'Could not exit position');
+    } finally {
+      setExitingId(null);
+    }
+  }
+
+  async function handleExitAll() {
+    setExitingAll(true);
+    setExitError(null);
+    try {
+      await exitAll();
+      await onReload();
+    } catch (err) {
+      setExitError(err instanceof Error ? err.message : 'Could not exit all positions');
+    } finally {
+      setExitingAll(false);
+    }
+  }
+
   return (
-    <ul className="space-y-1">
-      {rows.map((p) => {
-        const up = p.unrealizedPnl >= 0;
-        return (
-          <li key={p.id} className="flex items-center justify-between gap-3 rounded border border-border2 bg-bg px-2 py-1.5">
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span className="truncate text-[11px] font-bold text-text">{p.displayName}</span>
-                <Badge tone={p.quantity > 0 ? 'positive' : 'negative'} className="px-1 py-0 text-[8px]">
-                  {p.quantity > 0 ? 'LONG' : 'SHORT'}
-                </Badge>
-                {p.priceStatus === 'stale' && (
-                  <Badge tone="warning" className="px-1 py-0 text-[8px]">
-                    STALE
+    <div className="space-y-1.5">
+      {exitError && (
+        <p role="alert" className="rounded bg-rose-500/10 border border-rose-500/20 px-2 py-1 text-[10px] text-rose-400">
+          {exitError}
+        </p>
+      )}
+      <div className="flex items-center justify-between rounded bg-bg/80 border border-border2 px-2 py-1 text-[10px]">
+        <span className="font-semibold text-muted">Open Positions ({rows.length})</span>
+        <button
+          type="button"
+          onClick={handleExitAll}
+          disabled={exitingAll}
+          className="rounded bg-down/15 border border-down/30 px-2 py-0.5 font-bold text-down hover:bg-down/25 transition-colors focus-visible:outline-none disabled:opacity-50"
+        >
+          {exitingAll ? 'Exiting All…' : '⚡ Exit All'}
+        </button>
+      </div>
+
+      <ul className="space-y-1">
+        {rows.map((p) => {
+          const up = p.unrealizedPnl >= 0;
+          const isExiting = exitingId === p.instrumentId;
+          return (
+            <li key={p.id} className="flex items-center justify-between gap-2 rounded border border-border2 bg-bg px-2 py-1.5">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-[11px] font-bold text-text">{p.displayName}</span>
+                  <Badge tone={p.quantity > 0 ? 'positive' : 'negative'} className="px-1 py-0 text-[8px]">
+                    {p.quantity > 0 ? 'LONG' : 'SHORT'}
                   </Badge>
-                )}
+                  {p.priceStatus === 'stale' && (
+                    <Badge tone="warning" className="px-1 py-0 text-[8px]">
+                      STALE
+                    </Badge>
+                  )}
+                </div>
+                <div className="font-mono text-[10px] tabular-nums text-faint">
+                  {Math.abs(p.quantity)} @ {fmt(p.avgPrice)} → {fmt(p.currentPrice)}
+                </div>
               </div>
-              <div className="font-mono text-[10px] tabular-nums text-faint">
-                {Math.abs(p.quantity)} @ {fmt(p.avgPrice)} → {fmt(p.currentPrice)}
+              <div className="flex items-center gap-2 shrink-0">
+                <div className={cn('font-mono text-[11px] font-bold tabular-nums', up ? 'text-up' : 'text-down')}>
+                  {sign(p.unrealizedPnl)}
+                  {inr(Math.abs(p.unrealizedPnl), 2)}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleExit(p)}
+                  disabled={isExiting || exitingAll}
+                  className="rounded bg-down/15 border border-down/30 px-2 py-0.5 text-[10px] font-bold text-down hover:bg-down/25 transition-colors focus-visible:outline-none disabled:opacity-50"
+                >
+                  {isExiting ? 'Exiting…' : 'Exit'}
+                </button>
               </div>
-            </div>
-            <div className={cn('shrink-0 font-mono text-[11px] font-bold tabular-nums', up ? 'text-up' : 'text-down')}>
-              {sign(p.unrealizedPnl)}
-              {inr(Math.abs(p.unrealizedPnl), 2)}
-            </div>
-          </li>
-        );
-      })}
-    </ul>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

@@ -1,4 +1,6 @@
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { resolve } from 'node:path';
+loadEnv({ path: resolve(__dirname, '../../../.env') }); // root .env — see .env.example
 import * as http from 'node:http';
 import WebSocket = require('ws');
 import {
@@ -471,7 +473,7 @@ function startFeed(allInstruments: InstrumentMeta[], kindOf: (meta: InstrumentMe
     accessToken,
     clientId,
     url: process.env.DHAN_FEED_URL,
-    webSocketFactory: (url: string): WebSocketLike => new WebSocket(url) as unknown as WebSocketLike,
+    webSocketFactory: (url: string): WebSocketLike => new (WebSocket as any)(url) as unknown as WebSocketLike,
   });
 
   feed.onStatus((event) => {

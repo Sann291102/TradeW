@@ -151,7 +151,7 @@ export class PrismaMemoryStore implements MemoryStore {
     const total = await this.prisma.memoryRecord.count();
     const grouped = await this.prisma.memoryRecord.groupBy({ by: ['namespace'], _count: { _all: true } });
     const byNamespace: Record<string, number> = {};
-    for (const g of grouped) byNamespace[g.namespace] = g._count._all;
+    for (const g of grouped) byNamespace[String(g.namespace)] = g._count._all;
     return { total, byNamespace };
   }
 

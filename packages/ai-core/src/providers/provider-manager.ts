@@ -1,3 +1,4 @@
+import { instrumentLlmProvider } from '../telemetry/instrument';
 import { EmbeddingProvider, LlmProvider, ResearchProvider } from './interfaces';
 
 /**
@@ -34,10 +35,23 @@ export class ProviderManager {
   private embedders = new Map<string, EmbeddingProvider>();
   private researchers = new Map<string, ResearchProvider>();
 
-  constructor(private selection: ProviderSelection) {}
+  constructor(
+    private selection: ProviderSelection,
+    /**
+     * Telemetry wrapping on LLM registration. On by default, and this is the
+     * single chokepoint that makes the admin portal's AI view trustworthy: a
+     * provider that is reachable through the manager is, by construction,
+     * instrumented. Wrapping at each call site instead would mean the portal
+     * silently under-reports whenever someone adds a provider and forgets.
+     *
+     * Turn it off in tests that assert provider identity (`getLlm() === stub`),
+     * where the wrapper's separate object would be the only thing failing.
+     */
+    private readonly instrument: boolean = true,
+  ) {}
 
   registerLlm(provider: LlmProvider): void {
-    this.llms.set(provider.name, provider);
+    this.llms.set(provider.name, this.instrument ? instrumentLlmProvider(provider) : provider);
   }
 
   registerEmbedding(provider: EmbeddingProvider): void {

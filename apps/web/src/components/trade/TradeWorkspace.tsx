@@ -7,7 +7,6 @@ import { useWorkspaceStore } from '@/lib/store/workspaceStore';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { useOptionQuote } from '@/lib/hooks/useOptionQuote';
 import { buildOptionSymbol } from '@/lib/oms';
-import { resolveExpiry, mockIvPct, ATM_STRIKE, STRIKE_STEP } from '@/lib/mock/optionChain';
 import { resolveExpiry, mockIvPct, strikeStepFor, ATM_STRIKE, STRIKE_STEP } from '@/lib/mock/optionChain';
 import { resolveLegs } from '@/lib/learning/payoff';
 import { legMarker } from '@/lib/learning/describe';

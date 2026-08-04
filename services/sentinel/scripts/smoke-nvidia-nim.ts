@@ -3,7 +3,7 @@
  *
  *   npm run nim:smoke            (from services/sentinel)
  *
- * Reads services/sentinel/.env, assembles the provider manager exactly the way
+ * Reads the root .env, assembles the provider manager exactly the way
  * Sentinel does at boot, and exercises the three capabilities NIM can serve on
  * the free tier: an LLM completion per tier, a retrieval embedding, and the
  * news-event classifier from the NVIDIA distillation blueprint
@@ -12,7 +12,9 @@
  * No database, no NestJS boot — this only answers "is the key wired correctly
  * and which provider actually serves each call?".
  */
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { resolve } from 'node:path';
+loadEnv({ path: resolve(__dirname, '../../../.env') }); // root .env — see .env.example
 import {
   createProviderManager,
   loadProvidersConfigFromEnv,

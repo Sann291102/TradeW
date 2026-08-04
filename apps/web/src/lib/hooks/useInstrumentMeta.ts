@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-const DHAN_LIVE_URL = process.env.NEXT_PUBLIC_DHAN_LIVE_URL || 'http://localhost:4600';
+const DHAN_LIVE_URL = process.env.NEXT_PUBLIC_DHAN_LIVE_URL || '/feed';
 
 export interface InstrumentMeta {
   symbol: string;

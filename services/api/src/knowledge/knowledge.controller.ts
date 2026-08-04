@@ -1,23 +1,36 @@
 import { Controller, Get, MessageEvent, Query, Sse, UseGuards } from '@nestjs/common';
 import { Observable, interval, map, merge } from 'rxjs';
 import { fromEvent } from 'rxjs';
+import { AdminGuard } from '../admin/admin.guard';
 import { KnowledgeWorkspaceGuard } from './knowledge.guard';
 import { ActivityEvent, KnowledgeService } from './knowledge.service';
 
 /**
- * Read-only REST + SSE surface over the knowledge vault.
+ * Read-only REST + SSE surface over the knowledge vault (engineering docs —
+ * architecture decisions, gotchas, agent research notes — not user data).
  *
- * Gated solely by KnowledgeWorkspaceGuard — an internal developer tool that
- * serves engineering docs (no user data) and is off by default in production
- * (KNOWLEDGE_WORKSPACE_ENABLED). It deliberately does NOT require a per-user
- * JWT: the whole point is a frictionless in-app view of the vault without a
- * login/database round-trip, and the browser EventSource used by the live
- * stream can't attach an Authorization header anyway. If this surface is ever
- * enabled in production, put it behind the ingress/network auth there — do not
- * rely on this controller for user authentication.
+ * Moved under `/admin/knowledge` on 2026-08-04, alongside the frontend's move
+ * of this page from the public `/knowledge` route to `/admin/knowledge`
+ * (2026-08-03). Until this change, the route stayed at `/knowledge` gated
+ * only by `KnowledgeWorkspaceGuard` — a feature *toggle*, not authentication
+ * — so once `KNOWLEDGE_WORKSPACE_ENABLED=true` (the non-production default),
+ * the vault was reachable by an unauthenticated request. That contradicted
+ * the frontend's own `lib/admin/knowledge.ts` comment, which believed this
+ * route already required a bearer token; it never did.
+ *
+ * Two guards now compose deliberately:
+ *  1. `KnowledgeWorkspaceGuard` — the existing kill switch. Still governs
+ *     whether the surface exists at all (404s when disabled), independent of
+ *     who's asking.
+ *  2. `AdminGuard` — the same double factor (`isAdmin` JWT + operator token)
+ *     every other `/admin/*` route requires. See `admin/admin.guard.ts`.
+ *
+ * The live change stream (`GET /admin/knowledge/stream`) is one of the two
+ * SSE routes `AdminGuard` allows query-param credentials for, since
+ * `EventSource` cannot set an Authorization header.
  */
-@UseGuards(KnowledgeWorkspaceGuard)
-@Controller('knowledge')
+@UseGuards(KnowledgeWorkspaceGuard, AdminGuard)
+@Controller('admin/knowledge')
 export class KnowledgeController {
   constructor(private readonly knowledge: KnowledgeService) {}
 

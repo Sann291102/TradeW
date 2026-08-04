@@ -4,7 +4,10 @@ import {
   ProviderManager,
   ProviderNotAvailableError,
   createProviderManager,
+  emitAgentActivity,
   loadProvidersConfigFromEnv,
+  runAgentRun,
+  trackAgent,
 } from '@tradew/ai-core';
 import { HistoricalSimilarityResult, HistoricalSimilarityService } from '../brain/historical-similarity.service';
 import { MarketContextService } from '../brain/market-context.service';
@@ -112,7 +115,38 @@ export class SentinelOrchestratorService {
     this.providers = createProviderManager(loadProvidersConfigFromEnv());
   }
 
+  /**
+   * Telemetry wrapper around the real workflow.
+   *
+   * Split from `runObservation` so the instrumentation is one readable block
+   * instead of a `runAgentRun(` that opens at the top of a 200-line method and
+   * closes off-screen. `runAgentRun` opens an AgentRun row, establishes the
+   * ambient correlation context every nested agent and LLM call inherits, and
+   * closes the run on BOTH the return and the throw path — a Sentinel run that
+   * fails is the row an operator most wants and the one a naive
+   * emit-at-the-end would never write.
+   *
+   * `surfaced` is reported from the response rather than assumed: Sentinel
+   * choosing to stay silent is the designed outcome, not a failure, and the
+   * portal has to be able to tell the two apart to judge whether the
+   * confidence gate is tuned right.
+   */
   async observe(request: ObserveRequest): Promise<ObserveResponse> {
+    let response!: ObserveResponse;
+    await runAgentRun(
+      { system: 'sentinel', trigger: 'observe', symbol: request.symbol ?? 'NIFTY', userId: request.userId },
+      async () => {
+        response = await this.runObservation(request);
+        return {
+          surfaced: response.synthesis !== null,
+          confidence: response.confidence?.score,
+        };
+      },
+    );
+    return response;
+  }
+
+  private async runObservation(request: ObserveRequest): Promise<ObserveResponse> {
     const at = new Date();
     const symbol = request.symbol ?? 'NIFTY';
     const trades = request.recentTrades ?? [];
@@ -126,12 +160,34 @@ export class SentinelOrchestratorService {
     void this.outcomeLearning.evaluatePending(5).catch(() => undefined);
 
     // ---- Modules 1, 2, 4 and the behavioural agents ---------------------
-    const snapshot = await this.market.snapshot(symbol);
+    //
+    // Each agent's computation is wrapped in `trackAgent`, which emits its
+    // thinking → sending transitions to the telemetry bus. That is what the
+    // admin portal's orbit renders: real work, in the order it actually
+    // happened, rather than a decorative loop. The wrappers are pure
+    // observation — they do not change ordering, error handling, or results.
+    const snapshot = await trackAgent(
+      'market-technical',
+      () => this.market.snapshot(symbol),
+      { detail: `snapshot ${symbol}` },
+    );
     const signals: Signal[] = [
-      ...this.market.signals(snapshot),
-      ...this.emotion.signals(trades),
-      ...this.traps.signals(snapshot, trades),
-      ...(await this.news.signals(symbol)),
+      ...(await trackAgent(
+        'market-technical',
+        async () => this.market.signals(snapshot),
+        { detail: 'scanning structure — EMA / RSI / VWAP / CPR' },
+      )),
+      ...(await trackAgent(
+        'emotion',
+        async () => this.emotion.signals(trades),
+        { detail: `reading ${trades.length} recent trades` },
+      )),
+      ...(await trackAgent(
+        'trap-safety',
+        async () => this.traps.signals(snapshot, trades),
+        { detail: 'checking sweeps, false breakouts, expiry traps' },
+      )),
+      ...(await trackAgent('news', () => this.news.signals(symbol), { detail: `newswire scan — ${symbol}` })),
     ];
     const detections = this.strategies.scan(snapshot, at);
     signals.push(...strategySignals(detections));
@@ -188,20 +244,32 @@ export class SentinelOrchestratorService {
       this.logger.warn(`pattern recognition persistence failed (non-fatal): ${err}`);
     }
 
+    // The compliance agent produces no user-facing text, so without an explicit
+    // transition it would be the one agent that never appears in the orbit —
+    // indistinguishable, to an operator, from an agent that is broken.
+    emitAgentActivity('compliance-audit', 'thinking', { detail: `labelling ${observations.length} observations` });
+
     // ---- what, if anything, is worth saying -----------------------------
-    const synthesis = await this.decide({
-      symbol,
-      status,
-      snapshot,
-      signals,
-      triggered,
-      detections,
-      confidence,
-      stateEval,
-      historical,
-      sessionKey,
-      at,
-    });
+    const synthesis = await trackAgent(
+      'orchestrator',
+      () =>
+        this.decide({
+          symbol,
+          status,
+          snapshot,
+          signals,
+          triggered,
+          detections,
+          confidence,
+          stateEval,
+          historical,
+          sessionKey,
+          at,
+        }),
+      { detail: `synthesising from ${triggered.length} corroborating signals` },
+    );
+
+    emitAgentActivity('compliance-audit', 'sending', { peer: 'orchestrator', detail: 'labels attached' });
 
     if (synthesis) {
       observations.push({

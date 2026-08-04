@@ -14,7 +14,7 @@ This extends [`../CONSOLIDATION-PLAN.md`](../CONSOLIDATION-PLAN.md) (the audit +
 2. **Don't build a distributed system before the load demands one.** The company's own architecture doc targets Kubernetes + Kafka at 1M concurrent sessions — that's the v2.0+ destination, not the v0.3 starting point. Sections below mark what to build now vs. what to defer, and why.
 3. **No AI-initiated trades.** Neither `services/tradew-ai` nor `services/sentinel` can call `services/trading-engine` directly or place an order. Both analyze, summarize, and (for Sentinel) reflect — never instruct. A human action (or an explicit, separately-authorized API call under the user's own session) is required to convert any AI output into a real order — mirroring the product's own "platform, not advice" positioning in the PRD.
 4. **One schema owner per table, even across languages.** `services/api` (Node/Prisma) and `services/trading-engine` (Python) will eventually share one Postgres instance, but never one ORM. Table ownership is explicit (§5).
-5. **Every service ships its own `.env.example`.** This directly fixes the "three disconnected credential surfaces" debt item from the consolidation plan.
+5. ~~Every service ships its own `.env.example`.~~ **Reversed 2026-08-04.** The monorepo consolidation pass moved every service onto one root `.env` / `.env.example`, at explicit product direction — the "three disconnected credential surfaces" debt item this principle fixed had, in practice, drifted into real inconsistencies of its own (services/sentinel and packages/database silently pointing at the wrong Postgres port; a stray, unreferenced NEXT_PUBLIC_API_URL copy in a partial earlier consolidation). Per-service `.env`/`.env.example` files now just point at the root file rather than duplicating it; the two exceptions (`apps/web/.env.local`, `packages/database/.env`) exist only because Next.js and the Prisma CLI can't read an external env path, and both mirror the root file rather than diverging from it. See `.env.example` at the repo root and its header comment.
 
 ---
 
@@ -144,7 +144,7 @@ What lives in this repo instead:
 
 **Environment strategy:**
 
-- No shared "god" `.env` — each service/app in `apps/` and `services/` owns its own `.env.example`. `packages/shared`'s config loader validates required vars at process boot (fail fast, not at first use).
+- One root `.env` / `.env.example` for local dev, consolidated 2026-08-04 (reversing the earlier per-service-`.env.example` principle — see §1.5). `packages/shared` remains unbuilt (still a placeholder, per its own README); env validation at boot is currently ad hoc per service rather than centralized through a shared config loader, which is a reasonable next step now that there's one file to validate.
 - Tiers: **local** (docker-compose, `.env` files, `mock_dhanhq.py` as the paper broker) → **staging** (Kubernetes namespace, secrets from a secrets manager, Dhan sandbox or paper mode) → **production** (Kubernetes, AWS Secrets Manager/Vault, real broker credentials, tightly scoped access).
 
 **Deployment architecture (`infra/`):**

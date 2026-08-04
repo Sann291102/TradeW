@@ -47,3 +47,6 @@ export * from './tools/impl';
 export * from './agents/interfaces';
 export * from './agents/impl';
 export * from './news/news-event-classifier';
+export * from './telemetry/interfaces';
+export * from './telemetry/bus';
+export * from './telemetry/instrument';

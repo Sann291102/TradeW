@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { createChart, type IChartApi, type ISeriesApi, type Time, type UTCTimestamp, ColorType, CrosshairMode, TickMarkType } from 'lightweight-charts';
 import {
   createChart,
   LineStyle,
@@ -9,6 +8,7 @@ import {
   type IPriceLine,
   type ISeriesApi,
   type Time,
+  type UTCTimestamp,
   ColorType,
   CrosshairMode,
   TickMarkType,
@@ -105,7 +105,7 @@ function makeIstCrosshairFormatter(intervalMinutes?: number) {
  * so light/dark/high-contrast all render correctly with no chart-specific
  * theme branching here.
  */
-export function TradeChart({ candles, height = 320, className, intervalMinutes, liveLast, fitKey, ...aria }: TradeChartProps) {
+export function TradeChart({ candles, height = 320, className, intervalMinutes, liveLast, fitKey, priceLines, ...aria }: TradeChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -115,10 +115,6 @@ export function TradeChart({ candles, height = 320, className, intervalMinutes, 
   liveLastRef.current = liveLast;
   /** Which series the current view was last auto-fitted for (see `fitKey`). */
   const lastFitKeyRef = useRef<string | null>(null);
-export function TradeChart({ candles, height = 320, className, intervalMinutes, priceLines, ...aria }: TradeChartProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const priceLineRefs = useRef<IPriceLine[]>([]);
 
   useEffect(() => {

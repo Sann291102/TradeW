@@ -16,11 +16,17 @@ import { SentinelIntelligenceModule } from './sentinel-intelligence/sentinel-int
 import { LearningModule } from './learning/learning.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
 import { NotificationModule } from './notification/notification.module';
+import { TelemetryModule } from './telemetry/telemetry.module';
+import { AdminModule } from './admin/admin.module';
 import { HealthController } from './health.controller';
 
 @Module({
   imports: [
     PrismaModule,
+    // Before every feature module: it registers the global interceptor that
+    // records requests, and installs the ai-core telemetry sink at init. Later
+    // in the list and the first requests of a boot would go unrecorded.
+    TelemetryModule,
     JwtModule.register({ global: true, secret: process.env.JWT_SECRET || 'dev-secret-change-me', signOptions: { expiresIn: '7d' } }),
     AuthModule,
     EntitlementsModule,
@@ -37,6 +43,7 @@ import { HealthController } from './health.controller';
     LearningModule,
     KnowledgeModule,
     NotificationModule,
+    AdminModule,
   ],
   controllers: [HealthController],
 })

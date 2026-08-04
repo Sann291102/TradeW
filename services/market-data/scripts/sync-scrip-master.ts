@@ -11,7 +11,9 @@
  * day, downloading ~10 MiB on every restart would be wasteful, and an operator
  * should be able to preview changes with --dry before they land.
  */
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { resolve } from 'node:path';
+loadEnv({ path: resolve(__dirname, '../../../.env') }); // root .env — see .env.example
 import { readFileSync } from 'fs';
 import { PrismaClient } from '@prisma/client';
 import { ExchangeSegment, isExchangeSegment } from '@tradew/market-data';
