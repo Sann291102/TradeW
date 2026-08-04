@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens (@tradew/ui/styles.css) are imported in layout.tsx before
+ * this file, so the CSS custom properties below already exist — same
+ * convention as apps/web. */
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: theme('fontFamily.sans');
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
