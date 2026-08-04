@@ -40,7 +40,7 @@ jobs:
       - run: npm test
 
   typecheck:
-    name: Typecheck (api, sentinel)
+    name: Typecheck (api, sentinel, market-data)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +53,10 @@ jobs:
         run: npx prisma generate --schema packages/database/prisma/schema.prisma
       - run: npx tsc --noEmit -p services/api/tsconfig.json
       - run: npx tsc --noEmit -p services/sentinel/tsconfig.json
+      # Added 2026-08-04: services/market-data was real, built code with no
+      # CI coverage at all (no test script either — see the implementation
+      # report's tech-debt section; typecheck is what's addable today).
+      - run: npx tsc --noEmit -p services/market-data/tsconfig.json
 
   typecheck-web:
     name: Typecheck (web)
