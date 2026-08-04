@@ -51,6 +51,14 @@ jobs:
       - run: npm ci
       - name: Generate Prisma client
         run: npx prisma generate --schema packages/database/prisma/schema.prisma
+      # api, sentinel, and market-data all import @tradew/market-data and/or
+      # @tradew/ai-core by their published `types: dist/index.d.ts` path, not
+      # their source — so tsc can't resolve either package until its dist/
+      # exists. Neither workspace has a postinstall/prepare hook that builds
+      # it, so without this step every downstream tsc run fails with
+      # "Cannot find module '@tradew/market-data'" (or '@tradew/ai-core').
+      - run: npm run build -w @tradew/market-data
+      - run: npm run build -w @tradew/ai-core
       - run: npx tsc --noEmit -p services/api/tsconfig.json
       - run: npx tsc --noEmit -p services/sentinel/tsconfig.json
       # Added 2026-08-04: services/market-data was real, built code with no

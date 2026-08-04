@@ -67,6 +67,27 @@ discarded and the real `apps/admin/` app was restored from `ai-reasoning` —
 the `apps-admin-stub-superseded/` directory itself has been removed from the
 tree (not left archived, since it held only the placeholder README, no code).
 
+**Added 2026-08-04 (later same day) — Learning course-platform restored as the Learning Hub homepage, catalog page relocated:**
+`apps-web-learning-catalog-homepage-superseded-2026-08-04/page.tsx.txt` — the
+catalog-based `apps/web/src/app/learning/page.tsx` from the entry directly
+below this one, displaced from the bare `/learning` route by the user's
+explicit request to bring the original course-platform Learning Hub back as
+the homepage. Not deleted or orphaned: its exact content is still live at
+`/learning/strategies` (`apps/web/src/app/learning/strategies/page.tsx`),
+linked from the restored homepage's "Browse strategies →" card. The restored
+`LearningClient`/`CoursePathClient`/`LessonClient` components live in
+`apps/web/src/components/learning/`, reading from a new
+`apps/web/src/lib/learning-platform/{api,types}.ts` (the `types.ts` here
+was reconstructed from `services/api/src/learning/learning.controller.ts` and
+`learning.service.ts`, since the original was never archived, only `api.ts`
+was) — kept in its own namespace rather than overwriting
+`apps/web/src/lib/learning/types.ts` so the still-live catalog page below
+keeps working unmodified. The two designs no longer conflict on Next.js's
+one-dynamic-segment-per-depth rule either: the catalog page's detail route
+moved to the static `/learning/strategy/[id]` path (commit `e3591a5`, after
+this entry below was written), which coexists fine alongside the restored
+`/learning/[courseId]/[conceptId]`.
+
 **Added 2026-08-04 (same merge) — Learning course-platform superseded by the catalog-based Learning Hub:**
 `apps-web-learning-course-platform-superseded/` — an older Learning Hub
 design (`app/learning/[courseId]/`, `app/learning/[courseId]/[conceptId]/`,
