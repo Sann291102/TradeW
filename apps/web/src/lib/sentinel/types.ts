@@ -138,7 +138,22 @@ export type ConfidenceExplanation = {
   deductions: string[];
   timingRationale: string;
   learningReferences: string[];
+  /** SentinelIntelligence's book/document corpus — verbatim, citable quotes backing the active setup */
+  bookCitations: KnowledgeCitation[];
   factorScores: Record<string, number>;
+};
+
+export type KnowledgeCitation = {
+  chunkId: string;
+  sourceId: string;
+  sourceTitle: string;
+  sourcePath: string;
+  sourceKind: string;
+  locator: string;
+  charStart: number;
+  charEnd: number;
+  quote: string;
+  relevance: number;
 };
 
 // ------------------------------------------------------ Phase 3 strategy focus
