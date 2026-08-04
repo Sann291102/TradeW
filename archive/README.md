@@ -23,4 +23,49 @@ Superseded code, retained for provenance — never deleted, per the original pro
 
 **Added 2026-07-21 (same day) — Knowledge page simplified to graph-only:** `web-knowledge-file-tree.tsx.txt`, `web-knowledge-markdown-view.tsx.txt`, `web-knowledge-activity-panel.tsx.txt` — the `/knowledge` dev-tool page's file-tree/markdown-viewer/search/activity-feed layout, superseded per direct product feedback: the page should show only the vault's note-link graph (`KnowledgeGraph.tsx`, unchanged), full-page, not a file browser. `apps/web/src/app/knowledge/page.tsx` is now a thin page rendering just the graph plus a minimal header (no Terminal/Sentinel nav links). `lib/knowledge.ts`'s `tree()`/`recent()`/`file()`/`search()` client functions are now unused (only `graph()` and `subscribeToChanges()` are still called) — left in place, not removed, since the file-browser view could be reinstated as a separate route later if needed.
 
+**Added 2026-08-04 — monorepo consolidation audit (repository-wide cleanup pass):**
+- `apps-admin-stub-superseded/README.md` — the top-level `apps/admin` app
+  directory. It was never built beyond its own README, and that README
+  described a different feature (a DLQ retry worker + KYC review console)
+  than what the platform actually shipped. The real Admin Portal was built
+  inside `apps/web/src/app/admin/*` (a section of the existing Next.js app,
+  not a separate deployable), first appearing 2026-08-03. Kept as a directory
+  rather than a flat `.txt` since it's a whole (tiny) app scaffold, not a
+  single superseded component. `apps/admin/` itself is left in the tree as an
+  empty directory — this environment's filesystem could rename files but not
+  remove the now-empty directory; safe to `rmdir apps/admin apps/terminal`
+  by hand.
+- `apps-terminal-legacy-prototype/{index.html,README.md}` — the top-level
+  `apps/terminal` app: a static, single-file HTML prototype whose own README
+  already said it was superseded by the terminal experience built inside
+  `apps/web/src/components/terminal/`. Archived rather than left in place
+  since nothing in the workspace scripts, CI, or Docker config referenced it.
+- `root-docs/TRADEW_DEVELOPER_REFERENCE.md` — a 99KB repository reference
+  document that near-duplicates `REPOSITORY_INVENTORY.md` (154KB, newer,
+  actively cross-referenced elsewhere). Kept for provenance; the inventory is
+  the one to treat as current.
+- `root-docs/PROJECT_TEST_AUDIT.md`, `root-docs/SENTINEL_BRAIN_PROGRESS.md` —
+  point-in-time audit/progress snapshots superseded by the living
+  `docs/APPLICATION-STATUS.md`.
+- `root-docs/implementation_plan.md` — not a TradeW planning doc at all: a
+  stray artifact left behind by an external IDE session (Gemini Antigravity),
+  with output file paths pointing at a different machine entirely. Archived
+  rather than deleted per this file's own rule, but it never described this
+  repository's plan.
+- `root-docs/docs.zip` — a 523KB snapshot of the live `docs/` directory from
+  2026-07-27. Diffed against current `docs/`: no unique content, missing only
+  files added after that date. Stale duplicate.
+- **Not archived, left in place on purpose:** `services/analytics`,
+  `services/auth`, `services/notification`, `services/tradew-ai`,
+  `services/trading-engine`, `packages/shared`, `packages/sdk` — each is a
+  documented, intentional placeholder for future work (own README says so
+  explicitly), not an accidental duplicate or abandoned attempt, so this pass
+  left them where they are rather than archiving them.
+- **Not archived — left in the working tree, deliberately untracked:**
+  `services/api/.env.bak`. It's a backup of a file containing live secrets
+  (Dhan tokens, JWT secret) and is covered by `.gitignore`'s `*.env.bak` rule
+  specifically because such backups must never enter git history. Moving it
+  into this tracked directory would commit those secrets permanently, which
+  outweighs the tidiness gain. Recommend deleting it by hand outside of git.
+
 **Added 2026-07-26 — TradeW AI dock became a working command surface:** `web-floating-ai-visual-scaffold.tsx.txt` — the original `apps/web/src/components/shell/FloatingAI.tsx`, a visual-only dock whose own comment read "Milestone 2 delivers the VISUAL surface only… No AI/routing logic yet (that's a later milestone) — this is the slot": a static greeting bubble, an "Interface preview — responses arrive in a later milestone" notice, four decorative quick chips with no `onClick`, and an uncontrolled input whose Send button did nothing. Superseded by Phase 1 of the assistant control layer, which makes the dock resolve what the user types and actually drive the application (routes, option-contract deep links, panel visibility, layout presets, theme) with a visible trace of what it did. All of the scaffold's layout, classnames and framer-motion animation were carried over unchanged — only the inert body was replaced with a live transcript and a working input. Resolution logic lives in `apps/web/src/lib/assistant/` (pure, no LLM call); execution in `lib/assistant/useAssistant.ts`. See [[../knowledge/Patterns/2026-07-26 - TradeW AI assistant control layer (Comet-style app control)]].

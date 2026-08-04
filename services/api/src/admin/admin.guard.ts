@@ -53,13 +53,16 @@ export class AdminGuard implements CanActivate {
     // Factor 2 first: it is a constant-time string compare with no database
     // round-trip, so an unauthorised prober never reaches the user lookup.
     //
-    // The query-param fallback exists for exactly one route, `GET /admin/stream`:
-    // `EventSource` cannot set request headers, so an SSE subscriber has no way
-    // to present credentials otherwise. It is narrowed to that path rather than
-    // allowed everywhere, because credentials in a URL end up in access logs,
-    // proxy logs and browser history — acceptable for one read-only stream,
-    // not as a general authentication mode.
-    const streamRoute = typeof req.url === 'string' && req.url.startsWith('/admin/stream');
+    // The query-param fallback exists for SSE routes under /admin (currently
+    // `GET /admin/stream` and `GET /admin/knowledge/stream`): `EventSource`
+    // cannot set request headers, so an SSE subscriber has no way to present
+    // credentials otherwise. It is narrowed to an explicit allowlist of paths
+    // rather than allowed everywhere, because credentials in a URL end up in
+    // access logs, proxy logs and browser history — acceptable for a small,
+    // read-only set of streams, not as a general authentication mode.
+    const ADMIN_SSE_ROUTES = new Set(['/admin/stream', '/admin/knowledge/stream']);
+    const requestPath = typeof req.url === 'string' ? req.url.split('?')[0] : '';
+    const streamRoute = ADMIN_SSE_ROUTES.has(requestPath);
     const presented = req.headers?.['x-admin-token'] ?? (streamRoute ? req.query?.admin_token : undefined);
     if (typeof presented !== 'string' || !constantTimeEquals(presented, expected)) {
       deny('admin.portal.token_denied', { presented: typeof presented === 'string' });

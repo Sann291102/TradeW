@@ -57,17 +57,16 @@ jobs:
   typecheck-web:
     name: Typecheck (web)
     runs-on: ubuntu-latest
-    # Split into its own job on purpose. apps/web does NOT typecheck cleanly as
-    # of 2026-08-03: `NotificationsClient.tsx` imports `Spinner` from
-    # `@tradew/ui`, which exports no such component, so `tsc` emits TS2305 and
-    # `next build` fails (next.config.mjs sets no `typescript.ignoreBuildErrors`).
-    # The /notifications route renders a blank page at runtime as a result.
+    # Split into its own job on purpose — kept separate even now that apps/web
+    # typechecks cleanly again, so a future regression here stays visible
+    # instead of masking the two suites above.
     #
-    # Keeping this as a separate job means the failure stays visible instead of
-    # masking the two suites above, and turns green the moment the import is
-    # fixed — the design system uses `Skeleton` instead of a spinner by design
-    # (see packages/ui/src/components/Skeleton.tsx), so that is the intended
-    # replacement, not a new component.
+    # History: as of 2026-08-03, `NotificationsClient.tsx` imported `Spinner`
+    # from `@tradew/ui`, which exports no such component (`tsc` emitted
+    # TS2305, `next build` failed, and `/notifications` rendered a blank page
+    # at runtime). Fixed 2026-08-04 during the monorepo consolidation pass —
+    # the import now uses `Skeleton` (packages/ui/src/components/Skeleton.tsx),
+    # the design system's intended replacement, not a new component.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
