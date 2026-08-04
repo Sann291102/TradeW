@@ -1,4 +1,10 @@
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { resolve } from 'node:path';
+
+// Root .env is the single source of truth for the monorepo (consolidated
+// 2026-08-04 — see .env.example at the repo root).
+loadEnv({ path: resolve(__dirname, '../../../.env') });
+
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
@@ -11,7 +17,7 @@ async function bootstrap() {
     origin: (process.env.CORS_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000').split(','),
     allowedHeaders: ['content-type', 'x-service-token'],
   });
-  const port = Number(process.env.PORT || 4010);
+  const port = Number(process.env.SENTINEL_PORT || process.env.PORT || 4010);
   // internal service: bind to localhost by default; container/K8s deployments
   // override with HOST=0.0.0.0 behind the private network boundary
   await app.listen(port, process.env.HOST || '127.0.0.1');

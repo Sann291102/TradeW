@@ -1,4 +1,6 @@
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { resolve } from 'node:path';
+loadEnv({ path: resolve(__dirname, '../../../.env') }); // root .env — see .env.example
 import * as http from 'node:http';
 import WebSocket = require('ws');
 import {

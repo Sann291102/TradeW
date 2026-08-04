@@ -16,7 +16,9 @@
  * simulator), so pointing it at real bars is a one-line provider swap, not a
  * rewrite.
  */
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { resolve } from 'node:path';
+loadEnv({ path: resolve(__dirname, '../../../.env') }); // root .env — see .env.example
 import { PrismaClient } from '@prisma/client';
 import { SimulatedMarketDataProvider } from '@tradew/market-data';
 import type { Candle, CandleInterval } from '@tradew/types';

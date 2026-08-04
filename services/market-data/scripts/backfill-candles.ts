@@ -1,4 +1,6 @@
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { resolve } from 'node:path';
+loadEnv({ path: resolve(__dirname, '../../../.env') }); // root .env — see .env.example
 import { PrismaClient } from '@prisma/client';
 import type { CandleInterval } from '@tradew/types';
 

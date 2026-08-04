@@ -1,4 +1,10 @@
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { resolve } from 'node:path';
+
+// Root .env is the single source of truth for the monorepo (consolidated
+// 2026-08-04 — see .env.example at the repo root).
+loadEnv({ path: resolve(__dirname, '../../../.env') });
+
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
@@ -13,7 +19,7 @@ import { AppModule } from './app.module';
  */
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  const port = Number(process.env.PORT || 4020);
+  const port = Number(process.env.MARKET_DATA_PORT || process.env.PORT || 4020);
   // Internal service: localhost by default; container deployments override with
   // HOST=0.0.0.0 behind the private network boundary.
   await app.listen(port, process.env.HOST || '127.0.0.1');

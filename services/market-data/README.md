@@ -89,7 +89,7 @@ previewed with `--dry`.
 ## Running
 
 ```bash
-cp .env.example .env      # set DATABASE_URL
+cp .env.example .env       # from the repo root — set DATABASE_URL and friends there (2026-08-04 consolidation)
 npm run scrip:sync -w @tradew/market-data-service
 npm run start:dev -w @tradew/market-data-service
 curl http://127.0.0.1:4020/health
