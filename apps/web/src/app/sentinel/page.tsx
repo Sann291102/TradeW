@@ -11,12 +11,12 @@ import { OptionChainPanel } from '@/components/sentinel/OptionChainPanel';
 import { StrategySelector } from '@/components/sentinel/StrategySelector';
 import { SideInFocusCard, WaitingForConfirmation } from '@/components/sentinel/SideInFocusCard';
 import { DayClassificationCard } from '@/components/sentinel/DayClassificationCard';
+import { SentinelLiveCharts } from '@/components/sentinel/SentinelLiveCharts';
 import { MarketContextPanel } from '@/components/sentinel/MarketContextPanel';
 import { LiveSafetyFeed } from '@/components/sentinel/LiveSafetyFeed';
 import { ContextualTraining } from '@/components/sentinel/ContextualTraining';
 import { SentinelTimeline } from '@/components/sentinel/SentinelTimeline';
 import { SentinelLocked } from '@/components/sentinel/SentinelLocked';
-import { SentinelIntelligencePanel } from '@/components/sentinel/SentinelIntelligencePanel';
 
 /**
  * Sentinel — Market Context Intelligence workspace.
@@ -32,17 +32,16 @@ import { SentinelIntelligencePanel } from '@/components/sentinel/SentinelIntelli
  * Same backend, same auth, same entitlement gating (SUBSCRIPTIONS.md §4) —
  * only the presentation changed.
  *
- * `SentinelIntelligencePanel` (embedded below, between the day
- * classification and the market context cards) is the second reasoning
- * engine's surface: citation-grounded multi-agent verdicts plus the
- * three-panel visual strategy workspace (chart, option context, AI
- * annotations), for whichever symbol the market-head selector above is
- * pointed at. It previously lived at its own `/strategy-workspace` route;
- * folded in here so a trader never has to leave Sentinel to see it, and
- * because it reasons about the same symbol the rest of this page already
- * shows — a separate page could silently drift out of sync with what the
- * trader is looking at.
+ * `SentinelIntelligencePanel` — the second reasoning engine's surface
+ * (citation-grounded multi-agent verdicts plus the three-panel visual
+ * strategy workspace: chart, option context, AI annotations) that used to be
+ * embedded here between the day classification and market context cards —
+ * was removed 2026-08-05 per explicit product direction: this workspace
+ * should show only the single-conclusion Sentinel read, not a second,
+ * separate reasoning surface alongside it. Archived, not deleted, to
+ * archive/apps-web-sentinel-intelligence-2026-08-05/ (see archive/README.md).
  *
+
  * Shares the standard Sidebar/TopBar shell like every other workspace (a
  * first pass rendered this with no chrome at all — reverted 2026-07-21,
  * see nav-config.tsx: it left no way to navigate back out).
@@ -56,6 +55,12 @@ export default function SentinelPage() {
   // the option-chain selection is passed to the panel as observation context.
   const [strategyMode, setStrategyMode] = useState<StrategyMode>('auto');
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | undefined>(undefined);
+  // Strikes the trader picked from the Option Chain toolbar control — feeds
+  // the CALL/PUT panels in SentinelLiveCharts below. Null until a pick is
+  // made (or the panel is never opened), in which case those charts default
+  // to the ATM strike themselves.
+  const [ceStrike, setCeStrike] = useState<number | null>(null);
+  const [peStrike, setPeStrike] = useState<number | null>(null);
   const { data, unavailable, loading } = useSentinel(symbol, { strategyMode, selectedStrategyId });
   const status = useSessionStore((s) => s.status);
   const hasCapability = useSessionStore((s) => s.hasCapability);
@@ -153,13 +158,13 @@ export default function SentinelPage() {
             </p>
           </div>
           <div className="flex items-end gap-2">
-            <OptionChainPanel symbol={symbol} />
+            <OptionChainPanel symbol={symbol} onSelectionChange={({ ce, pe }) => { setCeStrike(ce); setPeStrike(pe); }} />
             <MarketSelector value={symbol} onChange={setSymbol} />
           </div>
         </div>
 
         <DayClassificationCard day={day} lastUpdated={lastUpdated} explanation={data?.explanation} />
-        <SentinelIntelligencePanel symbol={symbol} />
+        <SentinelLiveCharts symbol={symbol} marketName={market.name} ceStrike={ceStrike} peStrike={peStrike} />
         <MarketContextPanel tags={tags} dimensions={dimensions} />
         <StrategySelector
           mode={strategyMode}

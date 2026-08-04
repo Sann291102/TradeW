@@ -72,10 +72,9 @@ export const NAV_ITEMS: NavItem[] = [
   // architecture in front of every signed-in user. See apps/web/src/app/admin.
   //
   // SentinelIntelligence (citation-grounded multi-agent reasoning + the
-  // 3-panel visual strategy workspace) is embedded inside this page, not a
-  // separate route — see SentinelIntelligencePanel in app/sentinel/page.tsx.
-  // A standalone /strategy-workspace route existed briefly and was folded
-  // back in: a trader should not have to leave Sentinel to see it.
+  // 3-panel visual strategy workspace) was previously embedded inside this
+  // page (SentinelIntelligencePanel) — removed 2026-08-05, archived to
+  // archive/apps-web-sentinel-intelligence-2026-08-05/ (see archive/README.md).
   { href: '/sentinel', label: 'Sentinel', icon: SentinelIcon, premium: true, group: 'primary' },
   { href: '/settings', label: 'Settings', icon: SettingsIcon, group: 'secondary' },
   { href: '/profile', label: 'Profile', icon: ProfileIcon, group: 'secondary' },

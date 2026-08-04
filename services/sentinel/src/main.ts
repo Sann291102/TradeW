@@ -2,8 +2,11 @@ import { config as loadEnv } from 'dotenv';
 import { resolve } from 'node:path';
 
 // Root .env is the single source of truth for the monorepo (consolidated
-// 2026-08-04 — see .env.example at the repo root).
-loadEnv({ path: resolve(__dirname, '../../../.env') });
+// 2026-08-04 — see .env.example at the repo root). `override: true` because
+// dotenv otherwise leaves any already-set process.env value alone (even an
+// empty one) — this dev host pre-sets SERVICE_TOKEN to '' before this process
+// starts, which silently defeated ServiceTokenGuard until this was added.
+loadEnv({ path: resolve(__dirname, '../../../.env'), override: true });
 
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';

@@ -116,4 +116,19 @@ confirmed via a repo-wide grep before archiving.
   into this tracked directory would commit those secrets permanently, which
   outweighs the tidiness gain. Recommend deleting it by hand outside of git.
 
+**Added 2026-08-05 — SentinelIntelligence panel removed from /sentinel:**
+`apps-web-sentinel-intelligence-2026-08-05/` — `SentinelIntelligencePanel.tsx`
+(the citation-grounded multi-agent reasoning + 3-panel visual strategy
+workspace embedded in `/sentinel` between the day classification and market
+context cards) plus its exclusive dependents `AnnotatedChart.tsx`,
+`OptionContextPanel.tsx`, `StrategyVisualization.tsx` (all
+`components/strategy-workspace/`) and `freshness.ts`, `freshness.test.ts`,
+`types.ts`, `useStrategyWorkspace.ts` (all `lib/strategy-workspace/`) —
+confirmed via repo-wide grep that nothing else imported any of these.
+Removed per explicit user direction: `/sentinel` should show only the
+single-conclusion Sentinel read, not this second, separate reasoning surface
+alongside it. `apps/web/src/components/strategy-workspace/` and
+`apps/web/src/lib/strategy-workspace/` are now empty directories in the
+working tree.
+
 **Added 2026-07-26 — TradeW AI dock became a working command surface:** `web-floating-ai-visual-scaffold.tsx.txt` — the original `apps/web/src/components/shell/FloatingAI.tsx`, a visual-only dock whose own comment read "Milestone 2 delivers the VISUAL surface only… No AI/routing logic yet (that's a later milestone) — this is the slot": a static greeting bubble, an "Interface preview — responses arrive in a later milestone" notice, four decorative quick chips with no `onClick`, and an uncontrolled input whose Send button did nothing. Superseded by Phase 1 of the assistant control layer, which makes the dock resolve what the user types and actually drive the application (routes, option-contract deep links, panel visibility, layout presets, theme) with a visible trace of what it did. All of the scaffold's layout, classnames and framer-motion animation were carried over unchanged — only the inert body was replaced with a live transcript and a working input. Resolution logic lives in `apps/web/src/lib/assistant/` (pure, no LLM call); execution in `lib/assistant/useAssistant.ts`. See [[../knowledge/Patterns/2026-07-26 - TradeW AI assistant control layer (Comet-style app control)]].
