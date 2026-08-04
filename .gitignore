@@ -32,9 +32,11 @@ __pycache__/
 # Tailscale funnel cert/key (never commit the private key)
 tradew-demo.*.ts.net.crt
 tradew-demo.*.ts.net.key
-
 # SentinelIntelligence generated corpus cache — rebuilt from the repo by
 # `npm run si:test` / POST /intelligence/reindex, so it is disposable by
 # design. The learned-rules file beside it IS user data, but it is per-install
 # state rather than source, so it stays untracked too.
 services/sentinel/data/
+
+.claude/Settings.local.json
+

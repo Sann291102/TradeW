@@ -471,7 +471,7 @@ function startFeed(allInstruments: InstrumentMeta[], kindOf: (meta: InstrumentMe
     accessToken,
     clientId,
     url: process.env.DHAN_FEED_URL,
-    webSocketFactory: (url: string): WebSocketLike => new WebSocket(url) as unknown as WebSocketLike,
+    webSocketFactory: (url: string): WebSocketLike => new (WebSocket as any)(url) as unknown as WebSocketLike,
   });
 
   feed.onStatus((event) => {

@@ -5,7 +5,7 @@ import { fetchDhanQuotes, type DhanLiveQuote, type DhanLiveSnapshot } from '../d
 
 export type DhanFeedStatus = 'loading' | 'live' | 'closed' | 'unreachable';
 
-const DHAN_LIVE_URL = process.env.NEXT_PUBLIC_DHAN_LIVE_URL || 'http://localhost:4600';
+const DHAN_LIVE_URL = process.env.NEXT_PUBLIC_DHAN_LIVE_URL || '/feed';
 const POLL_MS = 5000;
 /**
  * How long a transient interruption is tolerated before the pill is allowed to

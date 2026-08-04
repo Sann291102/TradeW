@@ -22,6 +22,7 @@
     "@nestjs/jwt": "^10.2.0",
     "@nestjs/platform-express": "^10.4.15",
     "@prisma/client": "^5.22.0",
+    "@tradew/ai-core": "*",
     "@tradew/market-data": "*",
     "bcryptjs": "^2.4.3",
     "class-transformer": "^0.5.1",

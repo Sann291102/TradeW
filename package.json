@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
     "build:api": "npm run build -w @tradew/api",
     "build:web": "npm run build -w @tradew/web",
     "dev:api": "npm run start:dev -w @tradew/api",

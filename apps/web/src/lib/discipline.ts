@@ -149,9 +149,9 @@ export async function placeOrderWithDiscipline(req: PlaceOrderWithOverride): Pro
   });
 
   if (res.status === 409) {
-    const body = (await res.json().catch(() => null)) as { message?: DisciplineBreachPayload } | null;
-    // Nest wraps a thrown ConflictException(object) as { message: <object> }.
-    const payload = body?.message;
+    const body = (await res.json().catch(() => null)) as ({ message?: DisciplineBreachPayload } & Partial<DisciplineBreachPayload>) | null;
+    // Nest can return ConflictException(object) directly at top-level or wrapped in body.message
+    const payload = (body?.message?.error === 'discipline_limit' ? body.message : body?.error === 'discipline_limit' ? body : null) as DisciplineBreachPayload | null;
     if (payload?.error === 'discipline_limit') throw new DisciplineBreachError(payload);
     // A 409 that isn't a limit breach (e.g. a replayed override) is a real
     // failure — surface it rather than swallowing it into the prompt.

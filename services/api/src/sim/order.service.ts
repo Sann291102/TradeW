@@ -122,8 +122,12 @@ function computeMargin(
 
 /** Applies one fill to a position's (quantity, avgPrice), correctly handling
  *  add / partial-close / full-close / close-and-flip, and returns the
- *  realized P&L this specific fill locked in (0 unless it closes something). */
-function applyFill(
+ *  realized P&L this specific fill locked in (0 unless it closes something).
+ *
+ *  Exported for `order-fill.spec.ts` only — it stays pure and dependency-free
+ *  precisely so the money arithmetic can be asserted without a database or a
+ *  Nest context. Nothing outside this module should call it at runtime. */
+export function applyFill(
   existingQty: number,
   existingAvgPrice: number,
   side: OrderSide,

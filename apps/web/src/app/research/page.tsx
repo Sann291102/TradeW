@@ -34,7 +34,7 @@ export default function ResearchPage() {
         <EmptyState
           icon={<ResearchIcon className="h-7 w-7" />}
           title="Research workspace — coming soon"
-          description="Deep, structured per-symbol analysis (fundamentals, financials, shareholding, corporate actions, technicals, risk factors) powered by TradeW AI's Company/News/Technical Analysis agents. Observations only — never investment advice."
+          description="Deep, structured per-symbol analysis (fundamentals, financials, shareholding, corporate actions, technicals, risk factors) powered by TradeW AI&apos;s Company/News/Technical Analysis agents. Observations only — never investment advice."
         />
       </Card>
     </div>

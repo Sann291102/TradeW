@@ -72,7 +72,9 @@ async function bootstrap() {
     // The broker callback and the admin routes are the only consumers of these
     // beyond the defaults; listed explicitly so a preflight for them is not
     // rejected in production.
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Token'],
+    // X-Request-Id lets the web app correlate a browser-side action with the
+    // server row the admin portal shows for it.
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Token', 'X-Request-Id'],
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   const port = Number(process.env.PORT || 4000);

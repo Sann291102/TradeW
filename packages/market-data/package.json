@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "verify": "ts-node -T scripts/verify-parser.ts"
+    "verify": "ts-node -T scripts/verify-parser.ts",
+    "test": "npm run verify"
   },
   "dependencies": {
     "@tradew/types": "*"
