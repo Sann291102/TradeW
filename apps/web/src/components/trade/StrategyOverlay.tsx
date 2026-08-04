@@ -187,7 +187,7 @@ export function StrategyOverlay({
       </table>
 
       <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border pt-2">
-        <Link href={`/learning/${strategy.id}`} className="text-[11px] font-semibold text-teal hover:underline">
+        <Link href={`/learning/strategy/${strategy.id}`} className="text-[11px] font-semibold text-teal hover:underline">
           Read the full lesson →
         </Link>
         <span className="text-[10px] text-faint">including how this structure typically fails</span>
