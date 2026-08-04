@@ -1,12 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnnotatedChart } from '@/components/strategy-workspace/AnnotatedChart';
 import { OptionContextPanel } from '@/components/strategy-workspace/OptionContextPanel';
 import { StrategyVisualization } from '@/components/strategy-workspace/StrategyVisualization';
+import { freshnessLabel } from '@/lib/strategy-workspace/freshness';
 import { useStrategyWorkspace } from '@/lib/strategy-workspace/useStrategyWorkspace';
 
 const TIMEFRAMES = ['5m', '15m', '1h', '1d'] as const;
+
+/**
+ * How often the panel re-runs the full reasoning pipeline while visible.
+ *
+ * Not per-tick — see the note on `WorkspaceQuery.autoRefreshMs`. The
+ * underlying REST candle series this reads already reflects the live Dhan
+ * feed within seconds; this cadence keeps the chart and verdicts visibly
+ * live without re-running ten agents on every tick.
+ */
+const AUTO_REFRESH_MS = 45_000;
 
 /**
  * SentinelIntelligence's reasoning + 3-panel visualization, embedded in the
@@ -30,18 +41,38 @@ export function SentinelIntelligencePanel({ symbol }: { symbol: string }) {
   const [focusedId, setFocusedId] = useState<string | null>(null);
 
   const parsedStrike = Number(strikeInput);
-  const { data, unavailable, loading, refresh } = useStrategyWorkspace({
+  const { data, unavailable, loading, refresh, lastFetchedAt } = useStrategyWorkspace({
     symbol,
     timeframe,
     strike: Number.isFinite(parsedStrike) && parsedStrike > 0 ? parsedStrike : undefined,
     query: submittedQuery,
+    autoRefreshMs: AUTO_REFRESH_MS,
   });
+
+  // Re-rendered every few seconds purely to advance the "Xs ago" label —
+  // `lastFetchedAt` itself only changes once per actual refresh.
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => forceTick((n) => n + 1), 5_000);
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <section className="space-y-3 rounded-lg border border-border bg-surface p-4">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-[13px] font-semibold text-text">SentinelIntelligence — reasoning &amp; strategy visualization</h2>
+          <h2 className="flex items-center gap-1.5 text-[13px] font-semibold text-text">
+            SentinelIntelligence — reasoning &amp; strategy visualization
+            {data && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-normal text-faint" title="Auto-refreshes every 45s while this tab is visible">
+                <span
+                  aria-hidden
+                  className={`inline-block h-1.5 w-1.5 rounded-full ${loading ? 'animate-pulse bg-amber-400' : 'bg-green-500'}`}
+                />
+                {loading ? 'refreshing…' : `updated ${freshnessLabel(lastFetchedAt)}`}
+              </span>
+            )}
+          </h2>
           <p className="text-[11px] text-muted">
             10 specialist agents, citation-grounded, surfaced only at ≥70% confidence with corroboration
             {data && !loading && (

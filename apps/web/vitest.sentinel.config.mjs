@@ -20,7 +20,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['src/lib/sentinel/**/*.test.ts'],
+    include: ['src/lib/sentinel/**/*.test.ts', 'src/lib/strategy-workspace/**/*.test.ts'],
     environment: 'node',
     testTimeout: 5_000,
   },
