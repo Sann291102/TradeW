@@ -256,6 +256,111 @@ describe('watch configuration', () => {
   });
 });
 
+/**
+ * Continuous reasoning. The trigger policy is the whole design: reason when
+ * the picture *changes*, not on every tick, and never let the cost bound
+ * silently swallow a symbol.
+ */
+describe('reasoning on what the watch finds', () => {
+  function withReasoner(opts: Parameters<typeof harness>[0] = {}) {
+    const h = harness(opts);
+    const reason = vi.fn().mockResolvedValue({ runId: 'run-1' });
+    h.service.setReasoner(reason);
+    return { ...h, reason };
+  }
+
+  it('reasons when a new setup is found', async () => {
+    const h = withReasoner();
+    h.service.register('NIFTY', TRADING);
+    const result = await h.service.sweep(TRADING);
+
+    expect(h.reason).toHaveBeenCalledOnce();
+    expect(result.reasoned).toBe(1);
+  });
+
+  it('reasons over the snapshot the sweep already pulled, not a fresh one', async () => {
+    // The snapshot is the only metered part of a run. Reusing it is what makes
+    // background reasoning free at the data layer — and stops the detection
+    // and the reasoning about it reading different ticks.
+    const h = withReasoner();
+    h.service.register('NIFTY', TRADING);
+    await h.service.sweep(TRADING);
+
+    expect(h.snapshot).toHaveBeenCalledOnce();
+    expect(h.reason.mock.calls[0][1]).toEqual({ lastPrice: 24_300 });
+  });
+
+  it('does not re-reason an unchanged picture on every tick', async () => {
+    const h = withReasoner();
+    h.service.register('NIFTY', TRADING);
+
+    await h.service.sweep(TRADING);
+    await h.service.sweep(new Date(TRADING.getTime() + 60_000));
+    await h.service.sweep(new Date(TRADING.getTime() + 120_000));
+
+    // Same setup still valid, nothing new recorded — nothing new to say.
+    expect(h.reason).toHaveBeenCalledOnce();
+  });
+
+  it('does not reason when nothing validated', async () => {
+    const h = withReasoner({ detections: [detection('ema-cross', false)] });
+    h.service.register('NIFTY', TRADING);
+    const result = await h.service.sweep(TRADING);
+
+    expect(h.reason).not.toHaveBeenCalled();
+    expect(result.reasoned).toBe(0);
+  });
+
+  it('bounds reasoning per sweep so a busy open cannot overrun the interval', async () => {
+    const capped = loadSentinelIntelligenceConfig({ SI_WATCH_MAX_REASONING_PER_SWEEP: '2' });
+    const h = withReasoner({ config: capped });
+    h.service.register('NIFTY', TRADING);
+    h.service.register('BANKNIFTY', TRADING);
+    h.service.register('FINNIFTY', TRADING);
+
+    const result = await h.service.sweep(TRADING);
+
+    expect(h.reason).toHaveBeenCalledTimes(2);
+    expect(result.reasoned).toBe(2);
+    // The third was recorded — only the reasoning about it was deferred.
+    expect(result.recorded).toBe(3);
+    expect(h.service.status(TRADING).reasoningDeferred).toBe(1);
+  });
+
+  it('still records occurrences when reasoning is switched off', async () => {
+    const off = loadSentinelIntelligenceConfig({ SI_WATCH_REASON_ENABLED: 'false' });
+    const h = withReasoner({ config: off });
+    h.service.register('NIFTY', TRADING);
+    const result = await h.service.sweep(TRADING);
+
+    expect(h.reason).not.toHaveBeenCalled();
+    expect(result.recorded).toBe(1);
+    expect(h.service.status(TRADING).reasoning).toBe(false);
+  });
+
+  it('reports honestly when no reasoner has been wired', async () => {
+    const h = harness();
+    h.service.register('NIFTY', TRADING);
+    const result = await h.service.sweep(TRADING);
+
+    expect(h.service.status(TRADING).reasoning).toBe(false);
+    expect(result.recorded).toBe(1);
+    expect(result.reasoned).toBe(0);
+  });
+
+  it('counts a declined run as not reasoned, and carries on', async () => {
+    // The reasoner returns null on a cold corpus rather than triggering a
+    // 194-document ingest from inside a timer.
+    const h = withReasoner();
+    h.reason.mockResolvedValue(null);
+    h.service.register('NIFTY', TRADING);
+    const result = await h.service.sweep(TRADING);
+
+    expect(result.reasoned).toBe(0);
+    expect(result.recorded).toBe(1);
+  });
+});
+
 describe('validatedSignals', () => {
   it('keeps only validated detections and normalises the strategy id', () => {
     const signals = validatedSignals([

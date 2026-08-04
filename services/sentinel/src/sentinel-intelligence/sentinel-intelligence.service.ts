@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { RiskAssessment, Signal, TradeSummary } from '../domain';
 import { EmotionIntelligenceService } from '../intelligence/emotion-intelligence.service';
 import { MarketIntelligenceService, type MarketSnapshot } from '../intelligence/market-intelligence.service';
@@ -36,11 +36,17 @@ import type {
  *
  *   Orchestrator          → one continuous session narrative, state machine,
  *                           timeline, LLM-polished prose, two surfacing gates.
- *   SentinelIntelligence  → one request at a time, understood and decomposed,
+ *   SentinelIntelligence  → one question at a time, understood and decomposed,
  *                           answered by ten named agents whose every claim
  *                           carries a citation, cross-checked for conflicts,
  *                           and surfaced only on corroborated ≥70% confidence
  *                           in a pattern with a live-market track record.
+ *
+ * A question no longer has to come from a trader. `MarketWatchService` asks one
+ * whenever it sees a new setup form on a watched chart, over the snapshot it
+ * already pulled — so noticing a setup and understanding it are no longer
+ * separated by whether anyone happened to be at the screen. Identical pipeline
+ * on both paths: same agents, same cross-check, same gate.
  *
  * The pipeline, in order:
  *
@@ -54,8 +60,11 @@ import type {
  * cross-checker cannot distinguish from a real one.
  */
 @Injectable()
-export class SentinelIntelligenceService {
+export class SentinelIntelligenceService implements OnModuleInit {
   private readonly logger = new Logger(SentinelIntelligenceService.name);
+
+  /** Newest background reasoning run per symbol. See `rememberRun`. */
+  private readonly latestRuns = new Map<string, ReasoningRun>();
 
   constructor(
     @Inject(SI_CONFIG) private readonly config: SentinelIntelligenceConfig,
@@ -86,9 +95,9 @@ export class SentinelIntelligenceService {
    * only wants the conclusion reads `synthesis.observation`; a caller
    * auditing the reasoning has everything it needs without a second call.
    */
-  async reason(request: ReasonRequest): Promise<ReasoningRun> {
+  async reason(request: ReasonRequest, opts: ReasonOptions = {}): Promise<ReasoningRun> {
     const runId = randomUUID();
-    const startedAt = new Date();
+    const startedAt = opts.at ?? new Date();
 
     // The corpus is the substrate for every citation. Building it lazily here
     // means the first request after a cold start pays for indexing rather than
@@ -103,9 +112,15 @@ export class SentinelIntelligenceService {
     // workspace endpoint routes through here too, so the watch list ends up
     // being exactly the charts traders have open on their board — and lapses
     // on its own once they close it.
-    this.watch.register(understood.market.symbol, startedAt);
+    //
+    // The background watcher passes `register: false`. If its own reasoning
+    // re-registered the symbol, the TTL would be refreshed by the very loop
+    // the TTL exists to stop, and a board would stay watched forever after the
+    // trader closed it.
+    if (opts.register !== false) this.watch.register(understood.market.symbol, startedAt);
 
-    const shared = await this.computeSharedState(understood.market.symbol, request, startedAt);
+    const shared =
+      opts.sharedState ?? (await this.computeSharedState(understood.market.symbol, request, startedAt));
     const verdicts = await this.runAgents(plan.subtasks, understood, shared, request, startedAt);
 
     const crossCheckResult = this.crossCheck.check(verdicts, plan.subtasks);
@@ -145,6 +160,85 @@ export class SentinelIntelligenceService {
   }
 
   /**
+   * Wire the continuous watch to this engine.
+   *
+   * A callback rather than an injected dependency, because the watch is
+   * already a dependency of *this* service (for `register`) and injecting this
+   * service back into the watch would be a DI cycle needing `forwardRef` — a
+   * construct that fails at runtime, not compile time, whenever the graph is
+   * later rearranged.
+   */
+  onModuleInit(): void {
+    this.watch.setReasoner((symbol, snapshot, at) => this.reasonInBackground(symbol, snapshot, at));
+  }
+
+  /**
+   * Reason about a symbol the watch just saw a new setup on, with no request
+   * behind it.
+   *
+   * Runs the identical pipeline the request path runs — same agents, same
+   * cross-check, same gate — over the snapshot the sweep already fetched. The
+   * point of Phase 2 was that nobody was watching; the point of this is that
+   * noticing a setup and understanding it should not be separated by whether a
+   * trader happened to be at the screen.
+   *
+   * Returns null rather than reasoning when the corpus is not yet indexed.
+   * `reason()` would otherwise trigger a 194-document ingest from inside a
+   * timer callback, stalling the sweep behind heavy disk I/O. A real request
+   * warms the corpus; the background path never pays that cost.
+   */
+  private async reasonInBackground(
+    symbol: string,
+    snapshot: MarketSnapshot | null,
+    at: Date,
+  ): Promise<ReasoningRun | null> {
+    if (this.index.size === 0 || this.graph.size === 0) {
+      this.logger.debug(`background reasoning skipped for ${symbol} — corpus not indexed yet`);
+      return null;
+    }
+
+    // No trader behind this run, so no user id to attribute it to — the
+    // constant names the watch itself rather than borrowing whichever trader
+    // happened to put the symbol on the list. `recentTrades` and `account` are
+    // absent by construction, so the emotion and risk agents see no personal
+    // position data on this path; background reasoning is about the market,
+    // never about somebody's book.
+    const request: ReasonRequest = { query: `Observe ${symbol}`, symbol, userId: WATCH_USER_ID };
+    try {
+      const shared = await this.composeSharedState(symbol, snapshot, request, at);
+      const run = await this.reason(request, { sharedState: shared, register: false, at });
+      this.rememberRun(symbol, run);
+      return run;
+    } catch (err) {
+      // A background run failing must never take the sweep — or the other
+      // watched symbols — down with it.
+      this.logger.warn(`background reasoning failed for ${symbol}: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Keep the newest background run per symbol.
+   *
+   * Bounded by the watch's own symbol cap, and holding one run rather than a
+   * history: this is "what does the engine currently make of this symbol",
+   * not an audit log. Persisting every background run is a schema decision,
+   * not a cache decision, and is deliberately not made here.
+   */
+  private rememberRun(symbol: string, run: ReasoningRun): void {
+    this.latestRuns.set(symbol.toUpperCase(), run);
+    for (const key of this.latestRuns.keys()) {
+      if (this.latestRuns.size <= this.config.watchMaxSymbols) break;
+      this.latestRuns.delete(key);
+    }
+  }
+
+  /** The most recent background run for a symbol, if the watch has produced one. */
+  latestRun(symbol: string): ReasoningRun | null {
+    return this.latestRuns.get(symbol.toUpperCase()) ?? null;
+  }
+
+  /**
    * How many times this pattern has actually resolved in a live market.
    *
    * Reads the Brain's outcome-tagged occurrences — the same store the
@@ -174,8 +268,6 @@ export class SentinelIntelligenceService {
     request: ReasonRequest,
     at: Date,
   ): Promise<SharedMarketState> {
-    const trades = (request.recentTrades ?? []) as unknown as TradeSummary[];
-
     let snapshot: MarketSnapshot | null = null;
     try {
       snapshot = await this.market.snapshot(symbol);
@@ -187,6 +279,25 @@ export class SentinelIntelligenceService {
       this.logger.warn(`market data unavailable for ${symbol} (agents will abstain): ${(err as Error).message}`);
     }
 
+    return this.composeSharedState(symbol, snapshot, request, at);
+  }
+
+  /**
+   * Everything in a shared state except the snapshot fetch.
+   *
+   * Split out so the continuous watch can reason over the snapshot it has
+   * *already* pulled. The snapshot is the only part that costs metered HTTP —
+   * two Dhan `/candles` calls — so reusing it makes background reasoning
+   * effectively free at the data layer, and stops the watcher and the reasoner
+   * disagreeing because they read different ticks a second apart.
+   */
+  async composeSharedState(
+    symbol: string,
+    snapshot: MarketSnapshot | null,
+    request: ReasonRequest,
+    at: Date,
+  ): Promise<SharedMarketState> {
+    const trades = (request.recentTrades ?? []) as unknown as TradeSummary[];
     const signals: Signal[] = [];
     let detections: StrategyDetection[] = [];
     let riskAssessment: RiskAssessment | null = null;
@@ -299,6 +410,25 @@ export class SentinelIntelligenceService {
   reindex(force = false) {
     return this.corpus.ingest({ force });
   }
+}
+
+/** Attribution for runs the watch initiates, which have no trader behind them. */
+export const WATCH_USER_ID = 'sentinel-watch';
+
+export interface ReasonOptions {
+  /**
+   * Shared state the caller has already computed. Supplying it skips the
+   * snapshot fetch — the only metered part of a run.
+   */
+  sharedState?: SharedMarketState;
+  /**
+   * Whether this run puts the symbol under continuous watch. Defaults to true;
+   * the watch's own background runs pass false so they cannot refresh the TTL
+   * that is supposed to retire them.
+   */
+  register?: boolean;
+  /** Run timestamp, so a background run is stamped with its sweep time. */
+  at?: Date;
 }
 
 export interface SharedMarketState {

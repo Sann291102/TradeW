@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import type { Signal } from '../../domain';
-import { MarketIntelligenceService } from '../../intelligence/market-intelligence.service';
+import { MarketIntelligenceService, type MarketSnapshot } from '../../intelligence/market-intelligence.service';
 import { StrategyEngineService, type StrategyDetection } from '../../intelligence/strategy-engine.service';
 import { PatternRecognitionService } from '../../brain/pattern-recognition.service';
 import { isMarketOpen } from '../../market-clock';
@@ -56,6 +56,9 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
   private lastSweepAt: Date | null = null;
   private sweeps = 0;
   private recorded = 0;
+  private reasonedRuns = 0;
+  private reasoningSkipped = 0;
+  private reasoner: WatchReasoner | null = null;
 
   constructor(
     @Inject(SI_CONFIG) private readonly config: SentinelIntelligenceConfig,
@@ -136,19 +139,24 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
     // A sweep that overruns its interval must not have a second one stacked on
     // top of it: that is how a slow bridge turns into unbounded concurrency
     // against a rate-limited API.
-    if (this.sweeping || this.stopping) return { skipped: 'in-progress', symbols: 0, detections: 0, recorded: 0 };
+    if (this.sweeping || this.stopping) return { skipped: 'in-progress', symbols: 0, detections: 0, recorded: 0, reasoned: 0 };
 
     // Expire first, so a sweep is never judged against symbols that have
     // already lapsed, and the skip reason below is the true one.
     this.expire(at);
-    if (this.watched.size === 0) return { skipped: 'no-symbols', symbols: 0, detections: 0, recorded: 0 };
-    if (!this.isTradingTime(at)) return { skipped: 'market-closed', symbols: 0, detections: 0, recorded: 0 };
+    if (this.watched.size === 0) return { skipped: 'no-symbols', symbols: 0, detections: 0, recorded: 0, reasoned: 0 };
+    if (!this.isTradingTime(at)) return { skipped: 'market-closed', symbols: 0, detections: 0, recorded: 0, reasoned: 0 };
 
     this.sweeping = true;
     const symbols = [...this.watched.keys()];
 
     let detections = 0;
     let recorded = 0;
+    let reasoned = 0;
+    // Bounds how much reasoning one sweep may do, so a morning where every
+    // watched symbol fires at once cannot push the sweep past its own
+    // interval. What is dropped is logged, never silently skipped.
+    const budget = { reasoningLeft: this.config.watchMaxReasoningPerSweep };
     try {
       // Sequential on purpose. Each symbol costs two `/candles` calls against
       // Dhan's 5 req/s ceiling, and a `Promise.all` over a dozen symbols would
@@ -156,9 +164,10 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
       // this sweep.
       for (const symbol of symbols) {
         if (this.stopping) break;
-        const result = await this.watchOne(symbol, at);
+        const result = await this.watchOne(symbol, at, budget);
         detections += result.detections;
         recorded += result.recorded;
+        if (result.reasoned) reasoned++;
       }
     } finally {
       this.sweeping = false;
@@ -168,36 +177,78 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (recorded > 0) {
-      this.logger.log(`sweep recorded ${recorded} occurrence(s) across ${symbols.length} symbol(s)`);
+      this.logger.log(
+        `sweep recorded ${recorded} occurrence(s) across ${symbols.length} symbol(s), reasoned about ${reasoned}`,
+      );
     }
-    return { skipped: null, symbols: symbols.length, detections, recorded };
+    return { skipped: null, symbols: symbols.length, detections, recorded, reasoned };
+  }
+
+  /**
+   * Register the engine that reasons about what the watch finds.
+   *
+   * A setter rather than constructor injection: the reasoning service already
+   * depends on this one, so injecting it back would be a DI cycle. See
+   * `SentinelIntelligenceService.onModuleInit`.
+   */
+  setReasoner(reasoner: WatchReasoner): void {
+    this.reasoner = reasoner;
   }
 
   /** Snapshot one symbol, scan it, record what validated. */
-  private async watchOne(symbol: string, at: Date): Promise<{ detections: number; recorded: number }> {
+  private async watchOne(
+    symbol: string,
+    at: Date,
+    budget: { reasoningLeft: number },
+  ): Promise<{ detections: number; recorded: number; reasoned: boolean }> {
     let detections: StrategyDetection[];
+    let snapshot: Awaited<ReturnType<MarketIntelligenceService['snapshot']>>;
     let lastPrice: number;
 
     try {
-      const snapshot = await this.market.snapshot(symbol);
+      snapshot = await this.market.snapshot(symbol);
       detections = this.strategies.scan(snapshot, at);
       lastPrice = snapshot.lastPrice;
     } catch (err) {
       // A data outage on one symbol must not abort the sweep — the other
       // watched symbols may be fine, and the next tick retries anyway.
       this.logger.warn(`watch skipped ${symbol}: ${(err as Error).message}`);
-      return { detections: 0, recorded: 0 };
+      return { detections: 0, recorded: 0, reasoned: false };
     }
-
-    if (!this.patterns) return { detections: detections.length, recorded: 0 };
 
     let recorded = 0;
-    for (const signal of validatedSignals(detections)) {
-      if (!this.claimCooldown(symbol, signal.name, at)) continue;
-      await this.patterns.recordOccurrence(symbol, signal, lastPrice);
-      recorded++;
+    if (this.patterns) {
+      for (const signal of validatedSignals(detections)) {
+        if (!this.claimCooldown(symbol, signal.name, at)) continue;
+        await this.patterns.recordOccurrence(symbol, signal, lastPrice);
+        recorded++;
+      }
     }
-    return { detections: detections.length, recorded };
+
+    // Reason only on a setup that is *new* — one that just cleared its
+    // cooldown. A validated setup stays valid for many consecutive sweeps, and
+    // re-reasoning an unchanged picture every minute would burn CPU to
+    // reproduce the same verdicts.
+    //
+    // Note what is deliberately NOT checked here: whether the pattern has live
+    // performance. Pre-filtering on that would be free cost savings for
+    // directional reads and a silent hole for risk warnings, which are exempt
+    // from that gate precisely because they matter without a track record.
+    const shouldReason =
+      this.config.watchReasonEnabled && recorded > 0 && this.reasoner !== null && budget.reasoningLeft > 0;
+
+    if (!shouldReason) {
+      if (this.config.watchReasonEnabled && recorded > 0 && budget.reasoningLeft <= 0) {
+        this.reasoningSkipped++;
+        this.logger.log(`reasoning budget spent this sweep — ${symbol} not reasoned about (will retry next sweep)`);
+      }
+      return { detections: detections.length, recorded, reasoned: false };
+    }
+
+    budget.reasoningLeft--;
+    const run = await this.reasoner!(symbol, snapshot, at);
+    if (run) this.reasonedRuns++;
+    return { detections: detections.length, recorded, reasoned: run !== null };
   }
 
   /**
@@ -291,6 +342,11 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
       intervalMs: this.config.watchIntervalMs,
       sweeps: this.sweeps,
       occurrencesRecorded: this.recorded,
+      /** False means setups are detected and recorded, but never reasoned about. */
+      reasoning: this.config.watchReasonEnabled && this.reasoner !== null,
+      reasoningRuns: this.reasonedRuns,
+      /** Sweeps that found a new setup but had no reasoning budget left. */
+      reasoningDeferred: this.reasoningSkipped,
       lastSweepAt: this.lastSweepAt?.toISOString() ?? null,
     };
   }
@@ -304,7 +360,23 @@ export interface WatchSweepResult {
   symbols: number;
   detections: number;
   recorded: number;
+  /** Symbols this sweep ran the full reasoning pipeline on. */
+  reasoned: number;
 }
+
+/**
+ * What the watch calls when it finds a new setup.
+ *
+ * Takes the snapshot the sweep already pulled, so the reasoning run costs no
+ * additional metered HTTP and cannot disagree with the detection that
+ * triggered it by reading a different tick. Returns null when the run was
+ * declined — a cold corpus, or a failure that must not stop the sweep.
+ */
+export type WatchReasoner = (
+  symbol: string,
+  snapshot: MarketSnapshot | null,
+  at: Date,
+) => Promise<unknown | null>;
 
 /**
  * Validated detections as recordable signals.

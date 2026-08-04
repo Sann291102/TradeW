@@ -58,6 +58,10 @@ export interface SentinelIntelligenceConfig {
   watchTtlMs: number;
   /** Minimum gap before the same symbol+pattern may be recorded again. */
   watchRecordCooldownMs: number;
+  /** Run the full reasoning pipeline when the watch finds a new setup. */
+  watchReasonEnabled: boolean;
+  /** Most symbols one sweep may reason about, so a sweep cannot overrun. */
+  watchMaxReasoningPerSweep: number;
 }
 
 export interface CorpusRoot {
@@ -120,6 +124,17 @@ const DEFAULT_WATCH_TTL_MS = 30 * 60_000;
  * See the rationale on `MarketWatchService.claimCooldown`.
  */
 const DEFAULT_WATCH_RECORD_COOLDOWN_MS = 15 * 60_000;
+
+/**
+ * Reasoning runs per sweep.
+ *
+ * The pipeline is fully deterministic — no LLM on any path — so a run costs
+ * CPU and an in-memory BM25 retrieval, and reusing the sweep's snapshot means
+ * it costs no metered HTTP at all. Three is therefore a latency bound, not a
+ * spend bound: it keeps a sweep where every symbol fires at once from
+ * overrunning its own interval. Deferred symbols are logged and retried.
+ */
+const DEFAULT_WATCH_MAX_REASONING_PER_SWEEP = 3;
 
 const DEFAULT_CHUNK_CHARS = 2400;
 const DEFAULT_CHUNK_OVERLAP = 240;
@@ -197,6 +212,11 @@ export function loadSentinelIntelligenceConfig(
     watchMaxSymbols: Math.max(1, positiveInt(env.SI_WATCH_MAX_SYMBOLS, DEFAULT_WATCH_MAX_SYMBOLS)),
     watchTtlMs: Math.max(60_000, positiveInt(env.SI_WATCH_TTL_MS, DEFAULT_WATCH_TTL_MS)),
     watchRecordCooldownMs: positiveInt(env.SI_WATCH_RECORD_COOLDOWN_MS, DEFAULT_WATCH_RECORD_COOLDOWN_MS),
+    watchReasonEnabled: env.SI_WATCH_REASON_ENABLED === 'false' ? false : true,
+    watchMaxReasoningPerSweep: Math.max(
+      1,
+      positiveInt(env.SI_WATCH_MAX_REASONING_PER_SWEEP, DEFAULT_WATCH_MAX_REASONING_PER_SWEEP),
+    ),
   };
 }
 
