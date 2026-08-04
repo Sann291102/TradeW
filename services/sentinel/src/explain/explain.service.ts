@@ -31,8 +31,9 @@ import {
 } from '@tradew/ai-core';
 import { HistoricalSimilarityResult } from '../brain/historical-similarity.service';
 import { RETRIEVER } from '../brain/tokens';
-import { ConfidenceBreakdown, ConfidenceExplainResult, RiskAssessment, Signal } from '../domain';
+import { ConfidenceBreakdown, ConfidenceExplainResult, KnowledgeCitation, RiskAssessment, Signal } from '../domain';
 import { MarketSnapshot } from '../intelligence/market-intelligence.service';
+import { KnowledgeIndexService } from '../sentinel-intelligence/knowledge/knowledge-index.service';
 import { StrategyDetection } from '../intelligence/strategy-engine.service';
 import { istTimeLabel } from '../market-clock';
 import { enforceVocabulary } from '../vocabulary/vocabulary';
@@ -70,7 +71,10 @@ export class ExplainService {
   private readonly logger = new Logger(ExplainService.name);
   private providers: ProviderManager;
 
-  constructor(@Inject(RETRIEVER) private readonly retriever: Retriever) {
+  constructor(
+    @Inject(RETRIEVER) private readonly retriever: Retriever,
+    private readonly knowledgeIndex: KnowledgeIndexService,
+  ) {
     this.providers = createProviderManager(loadProvidersConfigFromEnv());
   }
 
@@ -127,7 +131,24 @@ export class ExplainService {
       timingRationale,
       factorScores: Object.fromEntries(confidence.factors.map((f) => [f.label, f.score])),
       learningReferences: await this.learningReferences(detections, snapshot),
+      bookCitations: this.bookCitations(detections, snapshot),
     };
+  }
+
+  /**
+   * Grounds the active setup in SentinelIntelligence's book/document corpus.
+   *
+   * The Orchestrator and SentinelIntelligence remain two separate engines
+   * (see `knowledge/Patterns/2026-08-03 - SentinelIntelligence...md`) — this
+   * is a read-only query against the shared `KnowledgeIndexService`, not a
+   * dependency on SentinelIntelligence's reasoning pipeline. Synchronous and
+   * in-memory, so unlike `learningReferences` it needs no try/catch: an empty
+   * corpus just returns no citations.
+   */
+  private bookCitations(detections: StrategyDetection[], snapshot: MarketSnapshot): KnowledgeCitation[] {
+    const topic = detections[0]?.strategyName ?? snapshot.marketProfile?.type;
+    if (!topic || this.knowledgeIndex.size === 0) return [];
+    return this.knowledgeIndex.cite(topic, { limit: 3, preferKinds: ['book'] });
   }
 
   /**
@@ -165,6 +186,7 @@ export class ExplainService {
       section('Risk factors', why.riskNotes),
       section('Confidence deductions', why.deductions),
       section('From the Learning Hub', why.learningReferences),
+      section('Book references', why.bookCitations.map((c) => `${c.sourceTitle} (${c.locator}): "${c.quote}"`)),
       section('Timing rationale', [why.timingRationale]),
       section(
         'Factor breakdown',

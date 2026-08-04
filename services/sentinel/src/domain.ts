@@ -330,8 +330,24 @@ export interface ConfidenceExplainResult {
   timingRationale: string;
   /** Module 5 — educational principles from the Learning Hub that apply here */
   learningReferences: string[];
+  /** SentinelIntelligence's book/document corpus — verbatim, citable quotes backing the active setup */
+  bookCitations: KnowledgeCitation[];
   /** factor label → score, for the breakdown table */
   factorScores: Record<string, number>;
+}
+
+/** Mirrors `KnowledgeCitation` from sentinel-intelligence/types — duplicated here so `domain.ts` has no dependency on that module. */
+export interface KnowledgeCitation {
+  chunkId: string;
+  sourceId: string;
+  sourceTitle: string;
+  sourcePath: string;
+  sourceKind: string;
+  locator: string;
+  charStart: number;
+  charEnd: number;
+  quote: string;
+  relevance: number;
 }
 
 // ------------------------------------------------------------- observe I/O
