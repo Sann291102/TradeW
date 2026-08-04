@@ -10,7 +10,11 @@
     "start:prod": "node dist/main.js",
     "scrip:sync": "ts-node -T --project tsconfig.scripts.json scripts/sync-scrip-master.ts",
     "live:server": "ts-node -T --project tsconfig.scripts.json scripts/live-feed-server.ts",
-    "backfill:candles": "ts-node -T --project tsconfig.scripts.json scripts/backfill-candles.ts"
+    "backfill:candles": "ts-node -T --project tsconfig.scripts.json scripts/backfill-candles.ts",
+    "dhan:status": "ts-node -T --project tsconfig.scripts.json scripts/dhan-token.ts status",
+    "dhan:consent": "ts-node -T --project tsconfig.scripts.json scripts/dhan-token.ts consent",
+    "dhan:token": "ts-node -T --project tsconfig.scripts.json scripts/dhan-token.ts exchange",
+    "dhan:set": "ts-node -T --project tsconfig.scripts.json scripts/dhan-token.ts set"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",

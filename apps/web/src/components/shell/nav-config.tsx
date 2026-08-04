@@ -62,6 +62,11 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/research', label: 'Research', icon: ResearchIcon, group: 'primary' },
   { href: '/learning', label: 'Learning', icon: LearningIcon, group: 'primary' },
   { href: '/knowledge', label: 'Knowledge', icon: KnowledgeIcon, group: 'primary' },
+  // SentinelIntelligence (citation-grounded multi-agent reasoning + the
+  // 3-panel visual strategy workspace) is embedded inside this page, not a
+  // separate route — see SentinelIntelligencePanel in app/sentinel/page.tsx.
+  // A standalone /strategy-workspace route existed briefly and was folded
+  // back in: a trader should not have to leave Sentinel to see it.
   { href: '/sentinel', label: 'Sentinel', icon: SentinelIcon, premium: true, group: 'primary' },
   { href: '/settings', label: 'Settings', icon: SettingsIcon, group: 'secondary' },
   { href: '/profile', label: 'Profile', icon: ProfileIcon, group: 'secondary' },

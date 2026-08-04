@@ -16,6 +16,7 @@ import { LiveSafetyFeed } from '@/components/sentinel/LiveSafetyFeed';
 import { ContextualTraining } from '@/components/sentinel/ContextualTraining';
 import { SentinelTimeline } from '@/components/sentinel/SentinelTimeline';
 import { SentinelLocked } from '@/components/sentinel/SentinelLocked';
+import { SentinelIntelligencePanel } from '@/components/sentinel/SentinelIntelligencePanel';
 
 /**
  * Sentinel — Market Context Intelligence workspace.
@@ -30,6 +31,17 @@ import { SentinelLocked } from '@/components/sentinel/SentinelLocked';
  * only the conclusion, never the internal agent architecture producing it.
  * Same backend, same auth, same entitlement gating (SUBSCRIPTIONS.md §4) —
  * only the presentation changed.
+ *
+ * `SentinelIntelligencePanel` (embedded below, between the day
+ * classification and the market context cards) is the second reasoning
+ * engine's surface: citation-grounded multi-agent verdicts plus the
+ * three-panel visual strategy workspace (chart, option context, AI
+ * annotations), for whichever symbol the market-head selector above is
+ * pointed at. It previously lived at its own `/strategy-workspace` route;
+ * folded in here so a trader never has to leave Sentinel to see it, and
+ * because it reasons about the same symbol the rest of this page already
+ * shows — a separate page could silently drift out of sync with what the
+ * trader is looking at.
  *
  * Shares the standard Sidebar/TopBar shell like every other workspace (a
  * first pass rendered this with no chrome at all — reverted 2026-07-21,
@@ -147,6 +159,7 @@ export default function SentinelPage() {
         </div>
 
         <DayClassificationCard day={day} lastUpdated={lastUpdated} explanation={data?.explanation} />
+        <SentinelIntelligencePanel symbol={symbol} />
         <MarketContextPanel tags={tags} dimensions={dimensions} />
         <StrategySelector
           mode={strategyMode}
