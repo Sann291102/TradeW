@@ -179,6 +179,43 @@ async function main() {
     return;
   }
 
+  if (command === 'set') {
+    // The direct path, and in practice the common one: Dhan's dashboard issues
+    // a 24-hour access token on demand. That needs no consent id and no public
+    // redirect URL, so it works when the tunnel that would receive the
+    // redirect is not running — which is exactly when you most need it.
+    const token = (argument ?? '').trim();
+    if (!token) {
+      console.error('Usage: npm run dhan:set -- "<access-token>"');
+      process.exit(1);
+    }
+    if (token.split('.').length !== 3) {
+      console.error('That does not look like a Dhan access token (expected a three-part JWT).');
+      process.exit(1);
+    }
+
+    const summary = describeToken(token);
+    if (summary.startsWith('EXPIRED')) {
+      console.error(`Refusing to install an already-expired token — ${summary}`);
+      process.exit(1);
+    }
+
+    console.log(`installing token — ${summary}\n`);
+    let wrote = 0;
+    for (const rel of ENV_CANDIDATES) {
+      const written = writeToken(rel, token);
+      if (written) wrote++;
+      console.log(`  ${written ? 'updated' : 'skipped'}  ${rel}`);
+    }
+    if (wrote === 0) {
+      console.error('\nNo env file was updated — none of the candidate paths exist.');
+      process.exit(1);
+    }
+    console.log('\nRestart the live feed so it picks the token up:');
+    console.log('  npm run live:server -w @tradew/market-data-service');
+    return;
+  }
+
   if (command === 'exchange') {
     if (!argument) {
       console.error('Usage: npm run dhan:token -- "<tokenId-or-redirect-url>"');
