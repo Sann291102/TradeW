@@ -75,12 +75,22 @@ export interface ObserveRequest {
   confidenceThreshold?: number;
   /**
    * Phase 3 — strategy focus. 'auto' (default) lets Sentinel pick the
-   * best-corroborated setup as reasoning context; 'manual' pins a specific
-   * educational strategy from the registry and validates it against live
-   * conditions. Neither mode ever forces a setup or emits a directive.
+   * best-corroborated setup as reasoning context; 'manual' pins one or more
+   * specific educational strategies from the registry and validates each
+   * against live conditions independently. Neither mode ever forces a setup
+   * or emits a directive.
    */
   strategyMode?: 'auto' | 'manual';
-  /** registry strategy id when strategyMode === 'manual' */
+  /**
+   * Phase 2 (multi-strategy) — registry strategy ids to track simultaneously
+   * when strategyMode === 'manual'. Preferred over `selectedStrategyId`.
+   */
+  selectedStrategyIds?: string[];
+  /**
+   * @deprecated singular predecessor of `selectedStrategyIds`. Still read —
+   * treated as `[selectedStrategyId]` — when `selectedStrategyIds` is absent,
+   * so existing single-strategy callers are unaffected.
+   */
   selectedStrategyId?: string;
 }
 
@@ -362,6 +372,14 @@ export interface SentinelObservationOut {
   confidence: number;
 }
 
+/** Mirrors `SupportingConcept` from sentinel-intelligence/types — duplicated here so `domain.ts` has no dependency on that module. */
+export interface CrossValidationConcept {
+  conceptId: string;
+  name: string;
+  relevance: string;
+  weight: number;
+}
+
 export interface ObserveResponse {
   /** the single synthesized, user-facing message (orchestrator only) — null when nothing warrants surfacing */
   synthesis: {
@@ -372,6 +390,26 @@ export interface ObserveResponse {
     /** non-directive status headline, e.g. 'Bullish side in focus' */
     status: string;
     state: MarketStateValue;
+  } | null;
+  /**
+   * SentinelIntelligence's cached background verdict for this symbol, when one
+   * exists — a second, independently-gated engine's corroboration, never a
+   * second conclusion. Null when no recent background run exists for this
+   * symbol (its watch coverage is deliberately sparse) or the run hasn't
+   * cleared its own gates. Purely additive: `synthesis` above remains the only
+   * user-facing answer.
+   */
+  crossValidation?: {
+    /** Whether SentinelIntelligence's own three gates (confidence, corroboration, live-performance) cleared for this run. */
+    surfaced: boolean;
+    /** Whether its leading stance/pattern agrees with this response's own leading detection. */
+    agreesWithConclusion: boolean;
+    citations: KnowledgeCitation[];
+    supportingConcepts: CrossValidationConcept[];
+    /** Number of independent agents that agreed with the leading stance. */
+    corroboratingAgents: number;
+    /** Which of SentinelIntelligence's gates held, when `surfaced` is false. */
+    silenceReason: string | null;
   } | null;
   /** individual agent observations (Observation Feed / Agent Activity Timeline) */
   observations: SentinelObservationOut[];
@@ -393,8 +431,18 @@ export interface ObserveResponse {
   timeline: TimelineEntry[];
   /** §5 — the "Why?" inspector payload for the current reading */
   explanation: ConfidenceExplainResult;
-  /** Phase 3 — auto/manual strategy focus read for this observation */
+  /**
+   * Phase 3 — auto/manual strategy focus read for this observation. In
+   * manual mode with multiple strategies pinned, this mirrors the first
+   * entry of `strategyAdvices` — kept for existing single-strategy callers.
+   */
   strategyAdvice?: StrategyAdvice;
+  /**
+   * Phase 2 (multi-strategy) — one advice entry per pinned strategy in
+   * manual mode, or a single-entry array in auto mode. Always present
+   * alongside `strategyAdvice`.
+   */
+  strategyAdvices?: StrategyAdvice[];
   /** Phase 3 — favoured side, surfaced only above the confidence threshold (null otherwise) */
   sideInFocus?: SideInFocus | null;
 }

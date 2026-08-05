@@ -18,11 +18,14 @@ import { ComplianceService } from '../compliance/compliance.service';
 import { ConfidenceEngine } from '../confidence/confidence.engine';
 import {
   ConfidenceBreakdown,
+  CrossValidationConcept,
+  KnowledgeCitation,
   ObserveRequest,
   ObserveResponse,
   SENTINEL_DISCLAIMER,
   SentinelObservationOut,
   Signal,
+  StrategyAdvice,
   StrategyMatch,
 } from '../domain';
 import { ExplainService } from '../explain/explain.service';
@@ -37,6 +40,8 @@ import { MarketTimelineEngine, RecordInput } from '../timeline/timeline.engine';
 import { enforceVocabulary, statusHeadline } from '../vocabulary/vocabulary';
 import { StrategyAdvisorService } from '../reasoning/strategy-advisor.service';
 import { RegimeIntelligenceService } from '../reasoning/regime-intelligence.service';
+import { SentinelIntelligenceService } from '../sentinel-intelligence/sentinel-intelligence.service';
+import type { ReasoningRun } from '../sentinel-intelligence/types';
 
 /**
  * Sentinel Orchestrator — the only component that produces user-facing copy.
@@ -66,6 +71,16 @@ import { RegimeIntelligenceService } from '../reasoning/regime-intelligence.serv
  * functional in dev without keys and can never be blocked by a provider
  * outage. Every generated string passes through the Module 10 vocabulary
  * enforcer before it reaches a trader.
+ *
+ * `decide()` additionally reads `SentinelIntelligenceService.latestRun()` —
+ * the cached verdict from the second, citation-grounded reasoning engine's
+ * background watch, when one exists for this symbol. This is corroboration,
+ * not a third gate: a null or non-agreeing cache entry never blocks or
+ * changes this method's own two gates above, it only adds citations and a
+ * `crossValidation` note to an answer this method was already going to give.
+ * SentinelIntelligence's own pipeline is never invoked synchronously here —
+ * only its already-computed, already-gated cache is read, so this adds zero
+ * latency and zero LLM/data cost to `/observe`.
  */
 @Injectable()
 export class SentinelOrchestratorService {
@@ -111,6 +126,7 @@ export class SentinelOrchestratorService {
     private readonly outcomeLearning: OutcomeLearningService,
     private readonly strategyAdvisor: StrategyAdvisorService,
     private readonly regimeIntel: RegimeIntelligenceService,
+    private readonly sentinelIntelligence: SentinelIntelligenceService,
   ) {
     this.providers = createProviderManager(loadProvidersConfigFromEnv());
   }
@@ -250,7 +266,7 @@ export class SentinelOrchestratorService {
     emitAgentActivity('compliance-audit', 'thinking', { detail: `labelling ${observations.length} observations` });
 
     // ---- what, if anything, is worth saying -----------------------------
-    const synthesis = await trackAgent(
+    const { synthesis, crossValidation } = await trackAgent(
       'orchestrator',
       () =>
         this.decide({
@@ -306,15 +322,33 @@ export class SentinelOrchestratorService {
     // in focus surfaces only above the confidence threshold.
     const currentState = stateEval.snapshot.current;
     const regime = this.regimeIntel.classify(snapshot.marketProfile);
-    const strategyAdvice = this.strategyAdvisor.advise({
-      mode: request.strategyMode ?? 'auto',
-      requestedStrategyId: request.selectedStrategyId ?? null,
-      detections,
-      confidence,
-      snapshot,
-      regime,
-      state: currentState,
-    });
+    const mode = request.strategyMode ?? 'auto';
+    const requestedIds = resolveRequestedStrategyIds(request);
+    const strategyAdvices: StrategyAdvice[] =
+      mode === 'manual' && requestedIds.length > 0
+        ? requestedIds.map((id) =>
+            this.strategyAdvisor.advise({
+              mode: 'manual',
+              requestedStrategyId: id,
+              detections,
+              confidence,
+              snapshot,
+              regime,
+              state: currentState,
+            }),
+          )
+        : [
+            this.strategyAdvisor.advise({
+              mode: 'auto',
+              requestedStrategyId: null,
+              detections,
+              confidence,
+              snapshot,
+              regime,
+              state: currentState,
+            }),
+          ];
+    const strategyAdvice = strategyAdvices[0];
     const sideInFocus = this.strategyAdvisor.sideInFocus({
       symbol,
       detections,
@@ -325,6 +359,7 @@ export class SentinelOrchestratorService {
 
     return {
       synthesis,
+      crossValidation,
       observations,
       signals,
       marketContext,
@@ -336,6 +371,7 @@ export class SentinelOrchestratorService {
       timeline: this.timeline.entries(sessionKey),
       explanation,
       strategyAdvice,
+      strategyAdvices,
       sideInFocus,
     };
   }
@@ -357,14 +393,29 @@ export class SentinelOrchestratorService {
     historical: HistoricalSimilarityResult | null;
     sessionKey: string;
     at: Date;
-  }): Promise<ObserveResponse['synthesis']> {
+  }): Promise<{ synthesis: ObserveResponse['synthesis']; crossValidation: ObserveResponse['crossValidation'] }> {
     const state = ctx.stateEval.snapshot.current;
     const guidanceStates = ['SIDE_IN_FOCUS', 'OPPORTUNITY_ACTIVE', 'MOVE_DEVELOPING', 'MOMENTUM_WEAKENING', 'MOVE_COMPLETE'];
+
+    // Read-only, zero-latency: SentinelIntelligence's own background watch
+    // already computed and gated this, or hasn't reasoned about this symbol
+    // recently — either way nothing is invoked here, only a cache read.
+    const backgroundRun = this.sentinelIntelligence.latestRun(ctx.symbol);
+    const leadingBias = ctx.detections[0]?.bias ?? ctx.snapshot.trendAnalysis?.direction ?? 'neutral';
+    const leadingPatternId = ctx.detections[0]?.strategyId ?? null;
+    const crossValidation = buildCrossValidation(backgroundRun, leadingBias, leadingPatternId);
 
     // --- confidence-gated market guidance (Master Plan principle 3) ------
     if (ctx.confidence.meetsThreshold && guidanceStates.includes(state)) {
       const leading = ctx.detections[0];
-      const content = await this.composeGuidance(ctx.symbol, ctx.status, ctx.confidence, leading, ctx.historical);
+      const content = await this.composeGuidance(
+        ctx.symbol,
+        ctx.status,
+        ctx.confidence,
+        leading,
+        ctx.historical,
+        crossValidation?.agreesWithConclusion ? crossValidation.citations : [],
+      );
       this.timeline.record(ctx.sessionKey, {
         event: `${ctx.status} — ${ctx.confidence.score}% confidence across ${ctx.confidence.factors.length} factors`,
         level: 'guidance',
@@ -374,12 +425,15 @@ export class SentinelOrchestratorService {
         dedupeKey: `guidance:${state}:${ctx.status}`,
       });
       return {
-        content,
-        pattern: leading?.strategyId ?? state.toLowerCase(),
-        confidence: ctx.confidence.score / 100,
-        disclaimer: SENTINEL_DISCLAIMER,
-        status: ctx.status,
-        state,
+        synthesis: {
+          content,
+          pattern: leading?.strategyId ?? state.toLowerCase(),
+          confidence: ctx.confidence.score / 100,
+          disclaimer: SENTINEL_DISCLAIMER,
+          status: ctx.status,
+          state,
+        },
+        crossValidation,
       };
     }
 
@@ -402,16 +456,19 @@ export class SentinelOrchestratorService {
         dedupeKey: `risk:${dominant.name}`,
       });
       return {
-        content,
-        pattern: dominant.name,
-        confidence: Math.min(0.95, compositeWeight / 2 + 0.3),
-        disclaimer: SENTINEL_DISCLAIMER,
-        status: ctx.status,
-        state,
+        synthesis: {
+          content,
+          pattern: dominant.name,
+          confidence: Math.min(0.95, compositeWeight / 2 + 0.3),
+          disclaimer: SENTINEL_DISCLAIMER,
+          status: ctx.status,
+          state,
+        },
+        crossValidation,
       };
     }
 
-    return null;
+    return { synthesis: null, crossValidation };
   }
 
   /** Module 8 — the session narrative entries this observation produced. */
@@ -501,6 +558,7 @@ export class SentinelOrchestratorService {
     confidence: ConfidenceBreakdown,
     leading: StrategyDetection | undefined,
     historical: HistoricalSimilarityResult | null,
+    crossValidationCitations: KnowledgeCitation[] = [],
   ): Promise<string> {
     const topFactors = [...confidence.factors]
       .sort((a, b) => b.score * b.weight - a.score * a.weight)
@@ -512,6 +570,11 @@ export class SentinelOrchestratorService {
       ...(historical && historical.occurrences > 0 && !historical.sampleTooSmall
         ? [this.historicalSimilarity.describe(historical)]
         : []),
+      // Cross-validated by SentinelIntelligence's independently-gated,
+      // citation-grounded background read — only ever added when it agrees.
+      ...crossValidationCitations
+        .slice(0, 2)
+        .map((c) => `${c.sourceTitle} (${c.locator}): "${c.quote}"`),
     ];
     const deductions = confidence.deductions.map((d) => `${d.reason} (−${d.points.toFixed(1)}%)`);
 
@@ -626,8 +689,64 @@ function toStrategyMatch(d: StrategyDetection): StrategyMatch {
   };
 }
 
+/**
+ * `selectedStrategyIds` is preferred; `selectedStrategyId` is read only as a
+ * fallback for callers that haven't migrated to the multi-strategy field.
+ */
+function resolveRequestedStrategyIds(request: ObserveRequest): string[] {
+  if (request.selectedStrategyIds && request.selectedStrategyIds.length > 0) {
+    return request.selectedStrategyIds;
+  }
+  return request.selectedStrategyId ? [request.selectedStrategyId] : [];
+}
+
 function dominantSignal(signals: Signal[]): Signal | null {
   const triggered = signals.filter((s) => s.triggered);
   if (triggered.length === 0) return null;
   return [...triggered].sort((a, b) => b.weight - a.weight)[0];
+}
+
+/**
+ * Translates SentinelIntelligence's cached `ReasoningRun` (if any exists for
+ * this symbol) into the response's `crossValidation` field. Never throws and
+ * never returns anything that could change what `decide()` was already going
+ * to answer — agreement is judged, not enforced.
+ */
+export function buildCrossValidation(
+  run: ReasoningRun | null,
+  leadingBias: string,
+  leadingPatternId: string | null,
+): ObserveResponse['crossValidation'] {
+  if (!run) return null;
+  const { synthesis } = run;
+  const agreesWithConclusion =
+    synthesis.surfaced &&
+    (synthesis.leadingStance === leadingBias ||
+      (leadingPatternId !== null && synthesis.observation?.pattern === leadingPatternId));
+  const citations: KnowledgeCitation[] = (synthesis.observation?.citations ?? []).map((c) => ({
+    chunkId: c.chunkId,
+    sourceId: c.sourceId,
+    sourceTitle: c.sourceTitle,
+    sourcePath: c.sourcePath,
+    sourceKind: c.sourceKind,
+    locator: c.locator,
+    charStart: c.charStart,
+    charEnd: c.charEnd,
+    quote: c.quote,
+    relevance: c.relevance,
+  }));
+  const supportingConcepts: CrossValidationConcept[] = (synthesis.observation?.supportingConcepts ?? []).map((c) => ({
+    conceptId: c.conceptId,
+    name: c.name,
+    relevance: c.relevance,
+    weight: c.weight,
+  }));
+  return {
+    surfaced: synthesis.surfaced,
+    agreesWithConclusion,
+    citations,
+    supportingConcepts,
+    corroboratingAgents: synthesis.corroboratingAgents,
+    silenceReason: synthesis.silenceReason,
+  };
 }

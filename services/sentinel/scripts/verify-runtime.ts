@@ -183,6 +183,35 @@ async function main(): Promise<void> {
   const registryExposedOnly = registry.list({ exposedOnly: true }).every((s) => s.exposed);
   record('Security: registry exposed-only list contains only exposed strategies', registryExposedOnly);
 
+  // 10. Observe — MANUAL, multiple strategies pinned simultaneously (Phase 2).
+  const multi = await orchestrator.observe({
+    userId: 'verify-user',
+    symbol: 'NIFTY',
+    strategyMode: 'manual',
+    selectedStrategyIds: ['trend-pullback', 'vwap-reversal'],
+    confidenceThreshold: 72,
+  });
+  record(
+    'Observe(multi-strategy): strategyAdvices has one entry per pinned id',
+    Array.isArray(multi.strategyAdvices) && multi.strategyAdvices.length === 2,
+    `count=${multi.strategyAdvices?.length}`,
+  );
+  record(
+    'Observe(multi-strategy): each entry addresses the strategy it was pinned for',
+    multi.strategyAdvices?.[0]?.requestedStrategyId === 'trend-pullback' &&
+      multi.strategyAdvices?.[1]?.requestedStrategyId === 'vwap-reversal',
+    JSON.stringify(multi.strategyAdvices?.map((a) => a.requestedStrategyId)),
+  );
+  record(
+    'Observe(multi-strategy): strategyAdvice mirrors the first pinned entry (backward compat)',
+    multi.strategyAdvice?.requestedStrategyId === multi.strategyAdvices?.[0]?.requestedStrategyId,
+  );
+  record(
+    'Observe(multi-strategy): legacy selectedStrategyId still works as a single-item fallback',
+    manualValid.strategyAdvices?.length === 1 && manualValid.strategyAdvices?.[0]?.requestedStrategyId === 'trend-pullback',
+    JSON.stringify(manualValid.strategyAdvices),
+  );
+
   await moduleRef.close();
 
   // -------- report --------

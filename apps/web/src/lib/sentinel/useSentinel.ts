@@ -14,8 +14,8 @@ export const SENTINEL_CONFIDENCE_THRESHOLD = 72;
 
 export interface SentinelFocus {
   strategyMode?: StrategyMode;
-  /** registry strategy id when strategyMode === 'manual' */
-  selectedStrategyId?: string;
+  /** registry strategy ids to track simultaneously when strategyMode === 'manual' (Phase 2, multi-strategy) */
+  selectedStrategyIds?: string[];
 }
 
 /**
@@ -57,7 +57,10 @@ export function useSentinel(symbol: string = 'NIFTY', focus: SentinelFocus = {})
   const [loading, setLoading] = useState(true);
 
   const strategyMode = focus.strategyMode ?? 'auto';
-  const selectedStrategyId = focus.selectedStrategyId;
+  const selectedStrategyIds = focus.selectedStrategyIds ?? [];
+  // Stable key so the effect below doesn't re-fire on every render from a new
+  // array identity — only when the actual pinned set changes.
+  const selectedStrategyIdsKey = selectedStrategyIds.join(',');
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -67,7 +70,7 @@ export function useSentinel(symbol: string = 'NIFTY', focus: SentinelFocus = {})
         body: JSON.stringify({
           symbol,
           strategyMode,
-          selectedStrategyId: strategyMode === 'manual' ? selectedStrategyId : undefined,
+          selectedStrategyIds: strategyMode === 'manual' && selectedStrategyIds.length > 0 ? selectedStrategyIds : undefined,
           confidenceThreshold: SENTINEL_CONFIDENCE_THRESHOLD,
         }),
       })) as ObserveResponse;
@@ -89,7 +92,7 @@ export function useSentinel(symbol: string = 'NIFTY', focus: SentinelFocus = {})
     } finally {
       setLoading(false);
     }
-  }, [symbol, strategyMode, selectedStrategyId]);
+  }, [symbol, strategyMode, selectedStrategyIdsKey]);
 
   useEffect(() => {
     void refresh();

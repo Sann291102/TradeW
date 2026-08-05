@@ -35,9 +35,13 @@ export class SentinelController {
       // already live in Postgres and are read there instead.
       clientTrades?: unknown[];
       clientPositions?: unknown[];
-      // Phase 3 strategy focus — auto (default) or a manually selected
-      // educational strategy, plus an optional confidence-threshold override.
+      // Phase 3 strategy focus — auto (default) or one or more manually
+      // selected educational strategies, plus an optional confidence-
+      // threshold override.
       strategyMode?: 'auto' | 'manual';
+      /** Phase 2 (multi-strategy) — preferred over `selectedStrategyId`. */
+      selectedStrategyIds?: string[];
+      /** @deprecated singular predecessor of `selectedStrategyIds`. */
       selectedStrategyId?: string;
       confidenceThreshold?: number;
     },
@@ -49,6 +53,7 @@ export class SentinelController {
       { clientTrades: body?.clientTrades, clientPositions: body?.clientPositions },
       {
         strategyMode: body?.strategyMode,
+        selectedStrategyIds: body?.selectedStrategyIds,
         selectedStrategyId: body?.selectedStrategyId,
         confidenceThreshold: body?.confidenceThreshold,
       },

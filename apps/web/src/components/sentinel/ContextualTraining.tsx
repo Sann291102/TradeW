@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { buttonClasses } from '@tradew/ui';
+import { TrainingRadarArt } from './SentinelArt';
 
 /**
  * "Training" — surfaces the lesson that matches today's dominant safety
@@ -12,13 +13,19 @@ import { buttonClasses } from '@tradew/ui';
  */
 export function ContextualTraining({ title, blurb }: { title: string; blurb: string }) {
   return (
-    <section className="rounded-2xl border border-border bg-card p-5 sm:p-6">
-      <h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-faint">Training</h2>
-      <p className="mb-1 text-sm font-bold text-text">{title}</p>
-      <p className="mb-4 text-[12.5px] text-muted">{blurb}</p>
-      <Link href="/learning" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
-        Unlocked for today&rsquo;s market →
-      </Link>
+    <section className="relative overflow-hidden rounded-2xl border border-border bg-card p-5 shadow-elev2 sm:p-6">
+      <div className="grid grid-cols-1 items-center gap-4 sm:grid-cols-[minmax(0,1fr)_150px]">
+        <div className="min-w-0">
+          <h2 className="text-[11px] font-bold uppercase tracking-wideTrack text-faint">Training</h2>
+          <p className="mt-2 text-[14px] font-bold leading-snug text-text">{title}</p>
+          <p className="mt-1.5 text-[12px] leading-relaxed text-muted">{blurb}</p>
+          <Link href="/learning" className={buttonClasses({ variant: 'outline', size: 'sm', className: 'mt-4' })}>
+            Unlocked for today&rsquo;s market →
+          </Link>
+        </div>
+
+        <TrainingRadarArt className="hidden h-[110px] w-full justify-self-end sm:block" />
+      </div>
     </section>
   );
 }

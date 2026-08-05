@@ -1,10 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import type { Candle, CandleInterval } from '@tradew/types';
 import { cn } from '@tradew/ui';
 import { TradeChart } from '@/components/charts/TradeChart';
-import { ExitFullScreenIcon, FullScreenIcon } from './sentinel-icons';
 import { useCandles } from '@/lib/hooks/useCandles';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { useOptionCandles } from '@/lib/hooks/useOptionCandles';
@@ -61,26 +59,6 @@ export function SentinelLiveCharts({
   ceStrike: number | null;
   peStrike: number | null;
 }) {
-  // Presentation-only expansion: the same three panels, the same hooks, drawn
-  // against the whole viewport. No extra data is fetched in this mode.
-  const [fullScreen, setFullScreen] = useState(false);
-
-  useEffect(() => {
-    if (!fullScreen) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setFullScreen(false);
-    document.addEventListener('keydown', onKey);
-    // the page behind must not scroll while the overlay is up
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [fullScreen]);
-
-  const indexHeight = fullScreen ? 620 : 340;
-  const optionHeight = fullScreen ? 300 : 158;
-
   const { candles: indexCandles, status: indexStatus, reason: indexReason } = useCandles(symbol, INDEX_INTERVAL, INDEX_DAYS);
   const { quotes: liveIndices } = useDhanLiveFeed();
   const liveIndex = liveIndices?.find((q) => q.symbol === symbol) ?? null;
@@ -114,31 +92,12 @@ export function SentinelLiveCharts({
   const expiryLabel = expiryTag(chain.expiry);
 
   return (
-    <section
-      className={cn(
-        'border border-border bg-card p-4 shadow-elev3 sm:p-5',
-        fullScreen
-          ? 'fixed inset-0 z-50 flex flex-col overflow-auto rounded-none'
-          : 'rounded-2xl',
-      )}
-    >
-      <div className="mb-3.5 flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-        <div className="min-w-0">
-          <p className="text-[11px] font-bold uppercase tracking-wideTrack text-faint">Live Charts</p>
-          <p className="mt-1 text-[11.5px] text-muted">
-            {marketName} · {expiryLabel ? `${expiryLabel} expiry` : 'nearest expiry'} — what Sentinel is watching, observation only
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setFullScreen((v) => !v)}
-          aria-pressed={fullScreen}
-          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border2 bg-bg px-3 py-1.5 text-[11.5px] font-semibold text-muted transition-colors duration-micro hover:bg-hover hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-        >
-          {fullScreen ? <ExitFullScreenIcon className="h-4 w-4" /> : <FullScreenIcon className="h-4 w-4" />}
-          {fullScreen ? 'Exit Full Screen' : 'Full Screen'}
-        </button>
+    <section className="rounded-2xl border border-border bg-card p-4 shadow-elev3 sm:p-5">
+      <div className="mb-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-faint">Live Charts</p>
+        <p className="mt-0.5 text-[11.5px] text-muted">
+          {marketName} · {expiryLabel ? `${expiryLabel} expiry` : 'nearest expiry'} — what Sentinel is watching, observation only
+        </p>
       </div>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:grid-rows-2">
@@ -154,7 +113,7 @@ export function SentinelLiveCharts({
             ohlc={liveIndex && liveIndex.open != null && liveIndex.high != null && liveIndex.low != null
               ? { open: liveIndex.open, high: liveIndex.high, low: liveIndex.low, close: liveIndex.ltp }
               : null}
-            height={indexHeight}
+            height={340}
             fitKey={`${symbol}|idx|5m`}
             intervalMinutes={5}
             unavailableTitle={indexReason === 'api-unreachable' ? 'Market data API not connected' : 'No history available'}
@@ -177,7 +136,7 @@ export function SentinelLiveCharts({
             changePct={ceQuote?.changePct ?? null}
             ohlc={lastCandleOhlc(ceCandles)}
             tone="up"
-            height={optionHeight}
+            height={158}
             fitKey={`${symbol}|ce|${effectiveCe}|1m`}
             intervalMinutes={1}
             unavailableTitle={effectiveCe == null ? 'No call strike selected' : 'No traded history for this contract'}
@@ -200,7 +159,7 @@ export function SentinelLiveCharts({
             changePct={peQuote?.changePct ?? null}
             ohlc={lastCandleOhlc(peCandles)}
             tone="down"
-            height={optionHeight}
+            height={158}
             fitKey={`${symbol}|pe|${effectivePe}|1m`}
             intervalMinutes={1}
             unavailableTitle={effectivePe == null ? 'No put strike selected' : 'No traded history for this contract'}
@@ -256,8 +215,8 @@ function ChartTile({
   const accentClass = tone === 'up' ? 'text-up' : tone === 'down' ? 'text-down' : 'text-text';
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border bg-bg">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border px-3 py-2.5">
+    <div className="flex h-full flex-col rounded-lg border border-border bg-surface">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border px-3 py-2">
         <div className="flex min-w-0 items-baseline gap-2">
           <span className={cn('truncate text-[12px] font-bold', accentClass)}>{title}</span>
           <span className="shrink-0 text-[10.5px] text-faint">

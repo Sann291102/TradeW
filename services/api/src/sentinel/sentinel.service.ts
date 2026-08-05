@@ -29,7 +29,12 @@ export class SentinelApiService {
     symbol?: string,
     context?: string,
     clientSupplied?: { clientTrades?: unknown[]; clientPositions?: unknown[] },
-    focus?: { strategyMode?: 'auto' | 'manual'; selectedStrategyId?: string; confidenceThreshold?: number },
+    focus?: {
+      strategyMode?: 'auto' | 'manual';
+      selectedStrategyIds?: string[];
+      selectedStrategyId?: string;
+      confidenceThreshold?: number;
+    },
   ) {
     // Demo/paper-account bridge (see SentinelController.observe): a client
     // that supplies its own recent trades/positions (apps/terminal's paper
@@ -89,6 +94,7 @@ export class SentinelApiService {
       // Phase 3 strategy focus — only forwarded when supplied so the default
       // (auto mode, service-default threshold) is untouched for existing callers.
       strategyMode: focus?.strategyMode,
+      selectedStrategyIds: focus?.selectedStrategyIds,
       selectedStrategyId: focus?.selectedStrategyId,
       confidenceThreshold: focus?.confidenceThreshold,
     };

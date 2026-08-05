@@ -33,6 +33,9 @@ export default defineConfig({
       'src/sentinel-intelligence/visual/geometry.spec.ts',
       // Learned TradingView specs: validation, matching, and drawing replay.
       'src/sentinel-intelligence/visual/drawing-spec.spec.ts',
+      // The reasoning-engine merge point: does the orchestrator correctly
+      // judge agreement with SentinelIntelligence's cached background verdict.
+      'src/orchestrator/cross-validation.spec.ts',
     ],
     environment: 'node',
     // Deterministic and clock-injected throughout: a slow test is a real hang,

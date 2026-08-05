@@ -65,24 +65,25 @@ export function StrategySelector({
   const isAuto = mode === 'auto' || selectedStrategyIds.length === 0;
 
   return (
-    <section className="rounded-2xl border border-border bg-card p-5 shadow-elev2 sm:p-6">
-      <h2 className="text-[11px] font-bold uppercase tracking-wideTrack text-faint">Strategy</h2>
-      <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted">
-        Auto lets Sentinel choose; pin one or more strategies to track them simultaneously, each validated against
-        the live market.
-      </p>
+    <section className="rounded-2xl border border-border bg-card p-5 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-faint">Strategy</h2>
+          <p className="mt-0.5 text-[11.5px] text-muted">
+            Auto lets Sentinel choose; pin one or more strategies to track them simultaneously, each validated
+            against the live market.
+          </p>
+        </div>
+      </div>
 
-      <div className="mt-3.5 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap gap-2">
         <button
           type="button"
           onClick={selectAuto}
           aria-pressed={isAuto}
           className={cn(
-            'rounded-full border px-3.5 py-1.5 text-[12px] font-semibold transition-colors duration-micro',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
-            isAuto
-              ? 'border-teal bg-teal-bg text-teal'
-              : 'border-border2 bg-bg text-muted hover:bg-hover hover:text-text',
+            'rounded-full border px-3 py-1.5 text-[12px] font-semibold transition-colors',
+            isAuto ? 'border-teal bg-teal-bg text-teal' : 'border-border bg-bg text-muted hover:text-text',
           )}
         >
           Auto (Default)
@@ -93,11 +94,8 @@ export function StrategySelector({
             <label
               key={s.id}
               className={cn(
-                'flex cursor-pointer items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[12px] font-semibold transition-colors duration-micro',
-                'focus-within:ring-2 focus-within:ring-focus',
-                checked
-                  ? 'border-teal bg-teal-bg text-teal'
-                  : 'border-border2 bg-bg text-muted hover:bg-hover hover:text-text',
+                'flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-semibold transition-colors',
+                checked ? 'border-teal bg-teal-bg text-teal' : 'border-border bg-bg text-muted hover:text-text',
               )}
             >
               <input
@@ -142,7 +140,7 @@ function StrategyStatus({
 }) {
   if (!advice) {
     return (
-      <div className={cn('rounded-xl border border-border bg-bg px-4 py-3.5 text-[12.5px] text-muted', !bare && 'mt-4')}>
+      <div className={cn('rounded-lg bg-bg px-3.5 py-3 text-[12.5px] text-muted', !bare && 'mt-4')}>
         {mode === 'auto' ? 'Auto Mode — Sentinel is reading the market.' : 'Manual Mode — validating your selection.'}
       </div>
     );
@@ -151,7 +149,7 @@ function StrategyStatus({
   const waiting = advice.status.toLowerCase().includes('waiting') || advice.status.toLowerCase().includes('sufficient confirmation');
 
   return (
-    <div className={cn('rounded-xl border border-border bg-bg px-4 py-3.5', !bare && 'mt-4')}>
+    <div className={cn('rounded-lg bg-bg px-3.5 py-3', !bare && 'mt-4')}>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12.5px]">
         <Field label="Mode" value={mode === 'auto' ? 'Auto Mode' : 'Manual Mode'} />
         {advice.activeStrategyName && (

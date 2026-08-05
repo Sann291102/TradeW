@@ -232,7 +232,10 @@ export type ObserveResponse = {
   marketState?: MarketStateSnapshot;
   timeline?: TimelineEntry[];
   explanation?: ConfidenceExplanation;
+  /** Mirrors the first entry of `strategyAdvices` — kept for single-strategy callers. */
   strategyAdvice?: StrategyAdvice;
+  /** Phase 2 (multi-strategy) — one entry per pinned strategy in manual mode, or a single auto-mode entry. */
+  strategyAdvices?: StrategyAdvice[];
   sideInFocus?: SideInFocus | null;
 };
 export type SessionSummaryData = { tradesToday: number; flaggedEvents: number; realizedPnl: number };

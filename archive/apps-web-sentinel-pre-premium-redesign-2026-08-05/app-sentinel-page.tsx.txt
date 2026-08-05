@@ -17,7 +17,6 @@ import { LiveSafetyFeed } from '@/components/sentinel/LiveSafetyFeed';
 import { ContextualTraining } from '@/components/sentinel/ContextualTraining';
 import { SentinelTimeline } from '@/components/sentinel/SentinelTimeline';
 import { SentinelLocked } from '@/components/sentinel/SentinelLocked';
-import { SentinelHeader } from '@/components/sentinel/SentinelHeader';
 
 /**
  * Sentinel — Market Context Intelligence workspace.
@@ -103,26 +102,24 @@ export default function SentinelPage() {
             };
 
     return (
-      <div className="min-h-full bg-bg">
-        <main className="mx-auto max-w-[1600px] space-y-5 px-4 py-5 sm:px-6 sm:py-6">
-          <SentinelHeader
-            premium={hasCapability('sentinel')}
-            status={
-              <>
-                Reading <span className="font-semibold text-muted">{market.name}</span> · {fault.title.toLowerCase()}
-              </>
-            }
-            controls={
-              <>
-                <OptionChainPanel symbol={symbol} />
-                <MarketSelector value={symbol} onChange={setSymbol} />
-              </>
-            }
-          />
+      <div className="min-h-screen">
+        <main className="mx-auto max-w-[1440px] space-y-5 p-4 sm:p-6">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h1 className="text-lg font-bold text-text">Sentinel</h1>
+              <p className="text-[12.5px] text-muted">
+                Reading <span className="font-semibold text-text">{market.name}</span> · {fault.title.toLowerCase()}
+              </p>
+            </div>
+            <div className="flex items-end gap-2">
+              <OptionChainPanel symbol={symbol} />
+              <MarketSelector value={symbol} onChange={setSymbol} />
+            </div>
+          </div>
 
-          <div className="rounded-2xl border border-border bg-card p-10 text-center shadow-elev2">
-            <p className="text-[14px] font-bold text-text">{fault.title}</p>
-            <p className="mx-auto mt-2 max-w-xl text-[12.5px] leading-relaxed text-muted">{fault.detail}</p>
+          <div className="rounded-lg border border-border bg-surface p-6 text-center">
+            <p className="text-[13px] font-semibold text-text">{fault.title}</p>
+            <p className="mx-auto mt-1.5 max-w-xl text-[12px] leading-relaxed text-muted">{fault.detail}</p>
           </div>
 
           <p className="pb-6 text-center text-[11px] text-faint">
@@ -151,48 +148,35 @@ export default function SentinelPage() {
   const sourceLabel = 'live market data';
 
   return (
-    <div className="min-h-full bg-bg">
-      <main className="mx-auto max-w-[1600px] space-y-5 px-4 py-5 sm:px-6 sm:py-6">
-        <SentinelHeader
-          premium={hasCapability('sentinel')}
-          status={
-            <>
-              Reading <span className="font-semibold text-muted">{market.name}</span> · {sourceLabel}
+    <div className="min-h-screen">
+      <main className="mx-auto max-w-[1440px] space-y-5 p-4 sm:p-6">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-lg font-bold text-text">Sentinel</h1>
+            <p className="text-[12.5px] text-muted">
+              Reading <span className="font-semibold text-text">{market.name}</span> · {sourceLabel}
               {loading && ' · refreshing…'}
-            </>
-          }
-          controls={
-            <>
-              <OptionChainPanel symbol={symbol} onSelectionChange={({ ce, pe }) => { setCeStrike(ce); setPeStrike(pe); }} />
-              <MarketSelector value={symbol} onChange={setSymbol} />
-            </>
-          }
-        />
-
-        {/* Two-column institutional layout: the market read (what the tape is
-            doing) on the left, Sentinel's own commentary on it in the right
-            rail. Collapses to one column below xl — the charts need real
-            width before the split is worth having. */}
-        <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
-          <div className="min-w-0 space-y-5">
-            <DayClassificationCard day={day} lastUpdated={lastUpdated} explanation={data?.explanation} />
-            <SentinelLiveCharts symbol={symbol} marketName={market.name} ceStrike={ceStrike} peStrike={peStrike} />
-            <MarketContextPanel tags={tags} dimensions={dimensions} />
+            </p>
           </div>
-
-          <div className="min-w-0 space-y-5">
-            <StrategySelector
-              mode={strategyMode}
-              selectedStrategyIds={selectedStrategyIds}
-              advices={data?.strategyAdvices}
-              onChange={onStrategyChange}
-            />
-            {data?.sideInFocus ? <SideInFocusCard focus={data.sideInFocus} /> : <WaitingForConfirmation />}
-            <LiveSafetyFeed cards={pushworthyCards(safetyCards)} />
-            <ContextualTraining title={lesson.title} blurb={lesson.blurb} />
-            <SentinelTimeline cards={safetyCards} entries={data?.timeline} />
+          <div className="flex items-end gap-2">
+            <OptionChainPanel symbol={symbol} onSelectionChange={({ ce, pe }) => { setCeStrike(ce); setPeStrike(pe); }} />
+            <MarketSelector value={symbol} onChange={setSymbol} />
           </div>
         </div>
+
+        <DayClassificationCard day={day} lastUpdated={lastUpdated} explanation={data?.explanation} />
+        <SentinelLiveCharts symbol={symbol} marketName={market.name} ceStrike={ceStrike} peStrike={peStrike} />
+        <MarketContextPanel tags={tags} dimensions={dimensions} />
+        <StrategySelector
+          mode={strategyMode}
+          selectedStrategyIds={selectedStrategyIds}
+          advices={data?.strategyAdvices}
+          onChange={onStrategyChange}
+        />
+        {data?.sideInFocus ? <SideInFocusCard focus={data.sideInFocus} /> : <WaitingForConfirmation />}
+        <LiveSafetyFeed cards={pushworthyCards(safetyCards)} />
+        <ContextualTraining title={lesson.title} blurb={lesson.blurb} />
+        <SentinelTimeline cards={safetyCards} entries={data?.timeline} />
 
         <p className="pb-6 text-center text-[11px] text-faint">
           Sentinel observes market context and behavior in parallel. It never executes trades and never gives buy,
