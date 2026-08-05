@@ -33,7 +33,12 @@ export interface CoursesResponse {
     overallPct: number;
     streak: number;
     lastActivityAt: string | null;
-    continueLearning: { courseId: string } | null;
+    /** The most recent activity's course + first incomplete lesson within it
+     *  (services/api's LearningProgressService.pickContinue) — `lessonId` was
+     *  missing from this type though the API always returns it; corrected
+     *  2026-08-05 so the frontend can link straight to the right lesson
+     *  instead of guessing. */
+    continueLearning: { lessonId: string; courseId: string } | null;
   };
 }
 
