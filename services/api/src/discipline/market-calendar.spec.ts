@@ -7,6 +7,7 @@ import {
   isWeekend,
   istDateKey,
   istWeekday,
+  nextTradingDay,
 } from './market-calendar';
 
 /**
@@ -82,6 +83,43 @@ describe('isTradingDay', () => {
   it('uses the IST day when deciding, at the zone boundary', () => {
     // 18:30Z on Sunday 2026-01-25 is Monday the 26th in IST — Republic Day.
     expect(isTradingDay(new Date('2026-01-25T18:30:00.000Z'))).toBe(false);
+  });
+});
+
+describe('nextTradingDay', () => {
+  it('rolls an ordinary Monday to Tuesday', () => {
+    // 2026-07-27 is a Monday.
+    expect(istDateKey(nextTradingDay(new Date('2026-07-27T06:00:00.000Z')))).toBe('2026-07-28');
+  });
+
+  it('is never the same day, even called at IST midnight', () => {
+    expect(istDateKey(nextTradingDay(new Date('2026-07-27T00:00:00.000Z')))).not.toBe('2026-07-27');
+  });
+
+  it('skips a weekend — Friday rolls to Monday', () => {
+    // 2026-07-31 is a Friday, 2026-08-01/02 are Sat/Sun.
+    expect(istDateKey(nextTradingDay(new Date('2026-07-31T06:00:00.000Z')))).toBe('2026-08-03');
+  });
+
+  it('skips a weekday holiday — the day before Republic Day rolls past it to Tuesday', () => {
+    // 2026-01-25 is a Sunday, 2026-01-26 (Monday) is Republic Day.
+    expect(istDateKey(nextTradingDay(new Date('2026-01-24T06:00:00.000Z')))).toBe('2026-01-27');
+  });
+
+  it('lands on 00:00 IST of the resulting day, not some other hour', () => {
+    const result = nextTradingDay(new Date('2026-07-27T06:00:00.000Z'));
+    expect(istDateKey(result)).toBe('2026-07-28');
+    // 00:00 IST == 18:30 UTC the previous calendar day.
+    expect(result.toISOString()).toBe('2026-07-27T18:30:00.000Z');
+  });
+
+  it('is stable across the IST day boundary the same way istDateKey is', () => {
+    // 18:29:59Z is still the 27th in IST; 18:30:00Z is already the 28th —
+    // so the two instants must roll to different next-trading-days.
+    const justBefore = nextTradingDay(new Date('2026-07-27T18:29:59.000Z'));
+    const justAfter = nextTradingDay(new Date('2026-07-27T18:30:00.000Z'));
+    expect(istDateKey(justBefore)).toBe('2026-07-28');
+    expect(istDateKey(justAfter)).toBe('2026-07-29');
   });
 });
 

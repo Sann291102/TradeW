@@ -39,6 +39,14 @@ export default defineConfig({
       'src/learning/learning-progress.spec.ts',
       // Position averaging and realized P&L — the paper-money arithmetic.
       'src/sim/order-fill.spec.ts',
+      // T+1 settlement's only arithmetic: merging a settled lot into a Holding.
+      'src/sim/settlement.spec.ts',
+      // Trade History's algebraic entry-price recovery, incl. the flip-fill edge case.
+      'src/sim/trade-history.spec.ts',
+      // Performance's percent-return arithmetic.
+      'src/sim/performance.spec.ts',
+      // Position Management "Convert product type" merge math.
+      'src/sim/position-convert.spec.ts',
       // Who is allowed to use a paid capability, and until when.
       'src/entitlements/entitlements.spec.ts',
       // Bearer-token parsing: the gate in front of every authenticated route.

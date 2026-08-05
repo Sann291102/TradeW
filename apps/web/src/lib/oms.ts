@@ -1,4 +1,4 @@
-import { api, getToken } from './api';
+import { API_URL, api, getToken } from './api';
 
 /**
  * Paper Trading OMS client — talks to services/api's `/sim/*` routes (the
@@ -104,6 +104,124 @@ export interface PortfolioSummary {
   positionValue: number;
   netWorth: number;
   openPositionsCount: number;
+  positionsUnrealizedPnl: number;
+  holdingsUnrealizedPnl: number;
+  holdingsValue: number;
+  investedAmount: number;
+  currentValue: number;
+  overallPnl: number;
+  availableMargin: number;
+}
+
+export interface HoldingDto {
+  id: string;
+  instrumentId: string;
+  symbol: string;
+  displayName: string;
+  quantity: number;
+  avgCost: number;
+  ltp: number;
+  currentValue: number;
+  investedValue: number;
+  overallPnl: number;
+  overallPnlPct: number;
+  dayChange: number;
+  dayChangePct: number;
+  priceStatus: 'live' | 'stale';
+}
+
+export interface TradeHistoryRow {
+  id: string;
+  instrumentId: string;
+  symbol: string;
+  displayName: string;
+  side: OrderSide;
+  productType: ProductType;
+  quantity: number;
+  entryPrice: number;
+  exitPrice: number;
+  netPnl: number;
+  charges: number;
+  executedAt: string;
+}
+
+export interface TradeHistoryFilters {
+  from?: string;
+  to?: string;
+  symbol?: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export type PortfolioValueRange = '1W' | '1M' | '3M' | '1Y' | 'ALL';
+export type MonthlyReturnsRange = '3M' | '6M' | '1Y';
+
+export interface PerformanceOverview {
+  portfolioValue: number;
+  prevClose: number;
+  changeAmount: number;
+  changePct: number;
+  todaysPnl: number;
+  overallPnl: number;
+  overallReturnPct: number;
+  investedAmount: number;
+  availableBalance: number;
+  unrealizedPnl: number;
+  marginUsed: number;
+  availableMargin: number;
+  totalTrades: number;
+  winCount: number;
+  lossCount: number;
+}
+
+export interface TodayPerformance {
+  todaysPnl: number;
+  todaysReturnPct: number;
+  todaysTrades: number;
+  todaysRealizedPnl: number;
+  todaysUnrealizedPnl: number;
+  todaysCharges: number;
+  topGainer: { symbol: string; pnl: number } | null;
+  topLoser: { symbol: string; pnl: number } | null;
+}
+
+export interface PortfolioValuePoint {
+  dateKey: string;
+  value: number;
+}
+export interface DailyPnlBar {
+  dateKey: string;
+  realizedPnl: number;
+  unrealizedPnl: number;
+  netPnl: number;
+}
+export interface MonthlyReturnBar {
+  month: string;
+  returnPct: number;
+  pnl: number;
+}
+export interface DiaryEntry {
+  dateKey: string;
+  openingValue: number;
+  closingValue: number;
+  dailyReturnPct: number;
+  realizedPnl: number;
+  unrealizedPnl: number;
+  fundsInOut: number;
+  tradesCount: number;
+  winCount: number;
+  lossCount: number;
+  charges: number;
+  bestPerformer: { symbol: string; pnl: number } | null;
+  worstPerformer: { symbol: string; pnl: number } | null;
+  source: 'snapshot' | 'derived';
+}
+
+export interface ConvertPreview {
+  currentMargin: number;
+  projectedMargin: number;
+  marginDelta: number;
 }
 
 export const PRODUCT_TYPE_LABELS: Record<ProductType, string> = {
@@ -149,6 +267,16 @@ export function cancelOrder(orderId: string): Promise<OrderDto> {
   return api(`/sim/orders/${orderId}`, { method: 'DELETE' });
 }
 
+export interface ModifyOrderRequest {
+  quantity?: number;
+  price?: number;
+  triggerPrice?: number;
+}
+
+export function modifyOrder(orderId: string, patch: ModifyOrderRequest): Promise<OrderDto> {
+  return api(`/sim/orders/${orderId}`, { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
 export function fetchTrades(): Promise<TradeDto[]> {
   return api('/sim/trades');
 }
@@ -167,4 +295,85 @@ export function exitPosition(instrumentId: string, productType: ProductType = 'M
 
 export function exitAll(): Promise<unknown[]> {
   return api('/sim/positions/exit-all', { method: 'POST' });
+}
+
+export function previewConvertPosition(instrumentId: string, from: ProductType, to: ProductType): Promise<ConvertPreview> {
+  return api(`/sim/positions/${instrumentId}/convert-preview?from=${from}&to=${to}`);
+}
+
+export function convertPosition(instrumentId: string, from: ProductType, to: ProductType): Promise<PositionDto> {
+  return api(`/sim/positions/${instrumentId}/convert`, { method: 'POST', body: JSON.stringify({ from, to }) });
+}
+
+// ------------------------------------------------------------------ holdings
+
+export function fetchHoldings(): Promise<HoldingDto[]> {
+  return api('/sim/holdings');
+}
+
+export function sellHolding(instrumentId: string, quantity: number): Promise<HoldingDto | null> {
+  return api(`/sim/holdings/${instrumentId}/sell`, { method: 'POST', body: JSON.stringify({ quantity }) });
+}
+
+// -------------------------------------------------------------- trade history
+
+function tradeHistoryQuery(filters: TradeHistoryFilters): string {
+  const params = new URLSearchParams();
+  if (filters.from) params.set('from', filters.from);
+  if (filters.to) params.set('to', filters.to);
+  if (filters.symbol) params.set('symbol', filters.symbol);
+  if (filters.search) params.set('search', filters.search);
+  if (filters.page) params.set('page', String(filters.page));
+  if (filters.pageSize) params.set('pageSize', String(filters.pageSize));
+  return params.toString();
+}
+
+export function fetchTradeHistory(filters: TradeHistoryFilters): Promise<{ rows: TradeHistoryRow[]; total: number }> {
+  return api(`/sim/trade-history?${tradeHistoryQuery(filters)}`);
+}
+
+/** CSV export needs a raw (non-JSON) fetch — `api()` always parses JSON —
+ *  then a client-side Blob download, since the browser has no other way to
+ *  save an authenticated fetch response as a file. */
+export async function downloadTradeHistoryCsv(filters: Omit<TradeHistoryFilters, 'page' | 'pageSize'>): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/sim/trade-history/export?${tradeHistoryQuery(filters)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error('Could not export trade history');
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'trade-history.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// --------------------------------------------------------------- performance
+
+export function fetchPerformanceOverview(): Promise<PerformanceOverview> {
+  return api('/sim/performance/overview');
+}
+
+export function fetchTodayPerformance(): Promise<TodayPerformance> {
+  return api('/sim/performance/today');
+}
+
+export function fetchPortfolioValueSeries(range: PortfolioValueRange): Promise<PortfolioValuePoint[]> {
+  return api(`/sim/performance/portfolio-value?range=${range}`);
+}
+
+export function fetchDailyPnl(range: PortfolioValueRange): Promise<DailyPnlBar[]> {
+  return api(`/sim/performance/daily-pnl?range=${range}`);
+}
+
+export function fetchMonthlyReturns(range: MonthlyReturnsRange): Promise<MonthlyReturnBar[]> {
+  return api(`/sim/performance/monthly-returns?range=${range}`);
+}
+
+export function fetchDiary(page: number, pageSize = 30): Promise<{ rows: DiaryEntry[]; total: number }> {
+  return api(`/sim/performance/diary?page=${page}&pageSize=${pageSize}`);
 }

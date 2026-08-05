@@ -123,3 +123,31 @@ export function isTradingDay(at: Date = new Date()): boolean {
 export function hasCalendarFor(at: Date = new Date()): boolean {
   return HOLIDAYS_BY_YEAR[istDateKey(at).slice(0, 4)] !== undefined;
 }
+
+/** The UTC instant of 00:00 IST on the given 'YYYY-MM-DD' (IST) day. IST has
+ *  no DST, so this offset is exact and constant year-round — `Date.UTC`'s
+ *  negative-argument normalization does the rest, no manual carry needed.
+ *  Exported: this is the one correct way to turn an IST date key back into a
+ *  real instant, and PerformanceService's day-boundary queries need exactly
+ *  that (see its `dayBoundsUtc`) — reused rather than re-derived. */
+export function istMidnightUtc(dateKey: string): Date {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, -5, -30, 0));
+}
+
+/**
+ * The next NSE trading day strictly after `at` — used for T+1-style
+ * settlement dates (see SettlementService). Always at least one full
+ * calendar day out, even when `at` itself is a trading day: settlement is
+ * never same-day. Walks forward in IST calendar days (via `istMidnightUtc`,
+ * not `Date#setDate`, which would step in the host's local zone and could
+ * misalign with the IST day boundary on a non-IST server — the same class of
+ * bug this module exists to prevent, see the module docstring).
+ */
+export function nextTradingDay(at: Date = new Date()): Date {
+  let cursor = istMidnightUtc(istDateKey(at));
+  do {
+    cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
+  } while (!isTradingDay(cursor));
+  return cursor;
+}

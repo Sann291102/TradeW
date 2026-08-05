@@ -132,3 +132,40 @@ alongside it. `apps/web/src/components/strategy-workspace/` and
 working tree.
 
 **Added 2026-07-26 — TradeW AI dock became a working command surface:** `web-floating-ai-visual-scaffold.tsx.txt` — the original `apps/web/src/components/shell/FloatingAI.tsx`, a visual-only dock whose own comment read "Milestone 2 delivers the VISUAL surface only… No AI/routing logic yet (that's a later milestone) — this is the slot": a static greeting bubble, an "Interface preview — responses arrive in a later milestone" notice, four decorative quick chips with no `onClick`, and an uncontrolled input whose Send button did nothing. Superseded by Phase 1 of the assistant control layer, which makes the dock resolve what the user types and actually drive the application (routes, option-contract deep links, panel visibility, layout presets, theme) with a visible trace of what it did. All of the scaffold's layout, classnames and framer-motion animation were carried over unchanged — only the inert body was replaced with a live transcript and a working input. Resolution logic lives in `apps/web/src/lib/assistant/` (pure, no LLM call); execution in `lib/assistant/useAssistant.ts`. See [[../knowledge/Patterns/2026-07-26 - TradeW AI assistant control layer (Comet-style app control)]].
+
+**Added 2026-08-05 — Learning homepage premium visual redesign:** `web-learning-homepage-pre-premium-redesign-2026-08-05.tsx.txt` — the original `apps/web/src/components/learning/LearningClient.tsx` (restored 2026-08-04, plain list/grid layout: "Continue learning" card, "Explore by topic" grid, a link-out to `/learning/strategies`). Superseded by a visual redesign matching a reference course-platform screenshot (donut progress ring, weekly streak strip, category tiles, featured-courses list, a "continue where you left off" carousel, quick-practice links) — presentation layer only, same `learningApi.courses()` data source and the same `services/api` `LearningController` underneath, nothing in `services/api`/`services/sentinel`/Prisma touched. The reference screenshot's XP points, certificate count, hours-learned, and upcoming-live-sessions widgets have no backing data anywhere in the backend (`CoursesResponse` has no such fields, confirmed via `services/api/src/learning/learning-progress.service.ts`) — rather than fabricate numbers, those spots render as explicit "coming soon" integration points. The weekly streak strip *is* fully real despite the backend only storing a `streak` day-count and a `lastActivityAt` date: those two fields mathematically determine which of the last 7 calendar days were active (count backward from `lastActivityAt`), so no new backend field was needed. See [[../knowledge/Patterns/2026-08-05 - Learning homepage premium redesign (honest data-gap handling)]].
+
+**Added 2026-08-05 — Sentinel workspace premium visual redesign:**
+`apps-web-sentinel-pre-premium-redesign-2026-08-05/` — verbatim copies of
+`app/sentinel/page.tsx` and every `components/sentinel/*` panel as they stood
+before the redesign (`DayClassificationCard`, `SentinelLiveCharts`,
+`MarketContextPanel`, `StrategySelector`, `SideInFocusCard`, `LiveSafetyFeed`,
+`SafetyCard`, `ContextualTraining`, `SentinelTimeline`, plus `MarketSelector`
+and `OptionChainPanel`, which were kept as-is but archived alongside so the
+whole pre-redesign surface can be read in one place). Superseded by a
+presentation-only redesign matching a premium desktop reference screenshot:
+a single-column stack of full-width cards became a two-column institutional
+layout (market read left, Sentinel's commentary in a right rail), with a new
+page header, hero artwork, iconified market-context tiles, a rail-and-dot
+session timeline, and a Live Charts full-screen mode.
+
+Nothing behind the presentation changed: same `useSentinel(symbol, focus)`
+call, same `/sentinel/observe` + `/sentinel/strategies/registry` contracts,
+same `deriveContext` derivations, same entitlement gate (`hasCapability
+('sentinel')` → `SentinelLocked`), same honest-fault states (no demo
+fallback), same Prisma models and services. The three genuinely new
+interactions all operate on data already in the client and fetch nothing:
+the Live Charts full-screen toggle, and the session timeline's level filter
+and CSV export (the export writes exactly the rows on screen, so a filtered
+export never claims to be the whole session).
+
+Two token misuses were corrected on the way, both pre-existing: `bg-surface`
+in `SentinelLiveCharts`' chart tile (no `surface` color exists in the Tailwind
+preset, so the tile had no background at all), and `border-up/40 bg-up/5`-style
+opacity modifiers in `SideInFocusCard` (the preset maps colors to `var(--token)`
+rather than rgb channels, so `/opacity` silently does nothing — the dedicated
+`*-bg` tint tokens are the supported route). The reference's violet "Premium"
+chip is rendered in brand teal instead: the design system has no violet token
+and DESIGN-SYSTEM.md §1 reserves color for meaning. That chip is a real
+entitlement readout, shown only when the session carries the `sentinel`
+capability — never an upsell button.

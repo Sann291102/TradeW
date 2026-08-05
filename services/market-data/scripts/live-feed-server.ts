@@ -566,6 +566,20 @@ function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** IST calendar date (YYYY-MM-DD) for `d`, in NSE's own timezone rather than
+ *  the server's/UTC's — matching every other date boundary in this file
+ *  (see SESSION_WINDOWS, isWithinSession). */
+function istYmd(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
+}
+
+/** IST midnight (00:00 IST, i.e. 18:30 UTC the previous day) of the date
+ *  `daysAgo` days before `d`'s IST calendar date. */
+function istMidnightDaysAgo(d: Date, daysAgo: number): Date {
+  const base = new Date(`${istYmd(d)}T00:00:00+05:30`);
+  return new Date(base.getTime() - daysAgo * 86_400_000);
+}
+
 /** Exchange session windows in IST minutes-from-midnight. NSE cash/index:
  *  09:15-15:30. MCX commodities run their own much longer evening session. */
 const SESSION_WINDOWS: Record<string, { openMin: number; closeMin: number }> = {
@@ -623,8 +637,11 @@ async function fetchDhanCandles(meta: InstrumentMeta, interval: string, from: Da
     securityId: meta.securityId,
     exchangeSegment: meta.exchangeSegment,
     instrument: instrumentTypeFor(meta),
-    fromDate: ymd(from),
-    toDate: ymd(to),
+    // IST calendar dates, matching the exchange's own trading day — `from`/`to`
+    // are IST-midnight-anchored (see istMidnightDaysAgo), so converting via
+    // the UTC-based `ymd()` here would shift the range back a calendar day.
+    fromDate: istYmd(from),
+    toDate: istYmd(to),
   };
   if (!isDaily) body.interval = INTRADAY_INTERVAL[interval] ?? '5';
 
@@ -1144,7 +1161,13 @@ async function main(): Promise<void> {
         return;
       }
       const to = new Date();
-      const from = new Date(to.getTime() - days * 86_400_000);
+      // `days=1` must mean "today's session", not "the last 24 rolling
+      // hours" — the latter's `from` lands mid-afternoon on the PREVIOUS
+      // calendar day whenever `to` isn't exactly midnight, and Dhan's
+      // fromDate/toDate are whole calendar dates, so that rolling window
+      // silently pulled in an extra full day of bars (a 1-day request
+      // rendering ~2 trading sessions). Anchored to IST midnight instead.
+      const from = istMidnightDaysAgo(to, days - 1);
       fetchDhanCandles(meta, interval, from, to)
         .then((candles) => {
           candleCache.set(cacheKey, { at: Date.now(), candles });
