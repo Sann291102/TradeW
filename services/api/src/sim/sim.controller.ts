@@ -6,6 +6,14 @@ import { OrderService } from './order.service';
 import { PositionService } from './position.service';
 import { PortfolioService } from './portfolio.service';
 
+class ConvertPositionDto {
+  @IsEnum(ProductType)
+  from!: ProductType;
+
+  @IsEnum(ProductType)
+  to!: ProductType;
+}
+
 class PlaceOrderDto {
   @IsString()
   symbol!: string;
@@ -146,6 +154,21 @@ export class SimController {
   @Post('positions/:instrumentId/exit')
   exitOne(@Req() req: any, @Param('instrumentId') instrumentId: string, @Query('productType') productType?: ProductType) {
     return this.orderService.exitPosition(req.user.sub, instrumentId, productType ?? 'MIS');
+  }
+
+  @Get('positions/:instrumentId/convert-preview')
+  previewConvert(
+    @Req() req: any,
+    @Param('instrumentId') instrumentId: string,
+    @Query('from') from: ProductType,
+    @Query('to') to: ProductType,
+  ) {
+    return this.positionService.previewConvert(req.user.sub, instrumentId, from, to);
+  }
+
+  @Post('positions/:instrumentId/convert')
+  convert(@Req() req: any, @Param('instrumentId') instrumentId: string, @Body() dto: ConvertPositionDto) {
+    return this.positionService.convert(req.user.sub, instrumentId, dto.from, dto.to);
   }
 
   @Get('portfolio')

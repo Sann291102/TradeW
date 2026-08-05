@@ -1,11 +1,18 @@
 import { Module } from '@nestjs/common';
 import { DisciplineModule } from '../discipline/discipline.module';
 import { SimController } from './sim.controller';
+import { HoldingsController } from './holdings.controller';
+import { TradeHistoryController } from './trade-history.controller';
+import { PerformanceController } from './performance.controller';
 import { MarketPriceService } from './market-price.service';
 import { OrderService } from './order.service';
 import { MatchingEngineService } from './matching-engine.service';
 import { PositionService } from './position.service';
 import { PortfolioService } from './portfolio.service';
+import { SettlementService } from './settlement.service';
+import { HoldingsService } from './holdings.service';
+import { TradeHistoryService } from './trade-history.service';
+import { PerformanceService } from './performance.service';
 
 /**
  * Paper Trading OMS. `MarketDataModule` is no longer imported here — the OMS
@@ -19,7 +26,17 @@ import { PortfolioService } from './portfolio.service';
  */
 @Module({
   imports: [DisciplineModule],
-  controllers: [SimController],
-  providers: [MarketPriceService, OrderService, MatchingEngineService, PositionService, PortfolioService],
+  controllers: [SimController, HoldingsController, TradeHistoryController, PerformanceController],
+  providers: [
+    MarketPriceService,
+    OrderService,
+    MatchingEngineService,
+    PositionService,
+    PortfolioService,
+    SettlementService,
+    HoldingsService,
+    TradeHistoryService,
+    PerformanceService,
+  ],
 })
 export class SimModule {}

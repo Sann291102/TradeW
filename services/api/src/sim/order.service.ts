@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { computeOrderIntent } from '../discipline/discipline-limits';
 import { DisciplineService } from '../discipline/discipline.service';
+import { nextTradingDay } from '../discipline/market-calendar';
 import { MarketPriceService } from './market-price.service';
 import { istDayKey, todayIstSessionEnd } from './ist-time.util';
 
@@ -37,7 +38,10 @@ export interface ModifyOrderInput {
 type Tx = Prisma.TransactionClient;
 
 const STARTING_BALANCE = 1_000_000; // ₹10L paper capital, matches PaperWallet's schema default
-const CHARGES_RATE = 0.0003; // 3bps of gross trade value — same convention as the original market-only engine
+// 3bps of gross trade value — same convention as the original market-only engine.
+// Exported so HoldingsService.sell can charge a holdings sale identically
+// instead of re-declaring the rate.
+export const CHARGES_RATE = 0.0003;
 
 /**
  * Approximate SPAN+exposure rate for a short option, as a fraction of the
@@ -82,7 +86,10 @@ const INTRADAY_EQUITY_MARGIN_RATE = 0.2;
  * "Insufficient margin", three times in a row, with no way out of the trade.
  * `placeOrder` gates on `computeOrderIntent` for exactly this reason.
  */
-function computeMargin(
+// Exported so PositionService.convert / previewConvert can recompute margin
+// for a proposed product-type conversion identically, instead of
+// re-implementing this formula in the frontend or a second time here.
+export function computeMargin(
   instrument: Instrument,
   side: OrderSide,
   productType: ProductType,
@@ -387,7 +394,17 @@ export class OrderService {
     );
 
     if (realizedPnlDelta !== 0) {
-      await tx.trade.update({ where: { id: trade.id }, data: { realizedPnl: Number(realizedPnlDelta.toFixed(2)) } });
+      // Mirrors applyFill's own closingQty (`Math.min(|existingQty|, fillQty)`)
+      // — recomputed here rather than widening applyFill's return, since this
+      // is the one caller that needs it and applyFill stays the single
+      // pure/tested source of the P&L math itself. Equal to fillQty except on
+      // a close-and-flip fill, where it's the closing leg only — see the
+      // Trade.closedQuantity schema comment.
+      const closedQuantity = Math.min(Math.abs(existing?.quantity ?? 0), fillQty);
+      await tx.trade.update({
+        where: { id: trade.id },
+        data: { realizedPnl: Number(realizedPnlDelta.toFixed(2)), closedQuantity },
+      });
     }
 
     const newRealizedTotal = Number(existing?.realizedPnl ?? 0) + realizedPnlDelta;
@@ -407,6 +424,27 @@ export class OrderService {
             Math.abs(newQuantity),
           );
 
+    // CNC settlement cohort (see SettlementService / the Position/Holding
+    // schema comments). Only ever set for CNC — MIS/NRML never carry a
+    // settlement date, so they structurally can never reach Holding. A BUY
+    // joins the existing pending cohort's date if one is still outstanding
+    // (position-level, not per-lot — a documented simplification, see
+    // schema.prisma); a fresh cohort (nothing pending) gets a new T+1 date.
+    // closeReason clears the moment quantity is nonzero again (a fill
+    // reopening a flattened/settled row) and is set to 'FLATTENED' — never
+    // 'SETTLED', that belongs to SettlementService alone — whenever a fill
+    // brings quantity to exactly zero.
+    const isCncBuy = order.productType === 'CNC' && order.side === 'BUY';
+    const existingSettlesAt = existing?.settlesAt ?? null;
+    const settlementFields =
+      newQuantity === 0
+        ? { settlesAt: null, closeReason: 'FLATTENED' as const }
+        : {
+            settlesAt:
+              isCncBuy && (!existingSettlesAt || existingSettlesAt <= new Date()) ? nextTradingDay() : existingSettlesAt,
+            closeReason: null,
+          };
+
     let position: Position;
     if (!existing) {
       position = await tx.position.create({
@@ -422,6 +460,7 @@ export class OrderService {
           sessionOpenAvgPrice: newAvgPrice,
           sessionOpenMarketPrice: fillPrice,
           sessionAnchorAt: new Date(),
+          ...settlementFields,
         },
       });
     } else {
@@ -432,6 +471,7 @@ export class OrderService {
           avgPrice: newAvgPrice,
           realizedPnl: newRealizedTotal,
           marginUsed: newMargin,
+          ...settlementFields,
           // First trade of a new IST day snapshots yesterday's carry-forward
           // baseline for PositionService's daily-P&L split; otherwise unchanged.
           ...(anchorStale

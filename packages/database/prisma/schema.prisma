@@ -69,6 +69,19 @@ enum OrderStatus {
   EXPIRED
 }
 
+// Why a Position's quantity went to 0: FLATTENED = a real square-off trade
+// (SELL/BUY closed it). SETTLED = a CNC position's T+1 settlement transferred
+// it into a Holding row instead — no trade occurred, nothing changed hands at
+// a price. CONVERTED = PositionService.convert moved this row's quantity into
+// a different productType row for the same instrument — also no trade, no
+// price. Positions/closed and any "closed positions" UI must not conflate
+// any of the three. Null while the position is still open.
+enum PositionCloseReason {
+  FLATTENED
+  SETTLED
+  CONVERTED
+}
+
 model User {
   id                   String                @id @default(uuid())
   email                String                @unique
@@ -109,6 +122,9 @@ model User {
   brokerOAuthStates    BrokerOAuthState[]
   apiCallLogs          ApiCallLog[]
   aiCallLogs           AiCallLog[]
+  holdings             Holding[]
+  holdingSettlements   HoldingSettlement[]
+  portfolioSnapshots   PortfolioSnapshot[]
 }
 
 model RefreshToken {
@@ -197,11 +213,13 @@ model Instrument {
 
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
-  quotes    Quote[]
-  candles   Candle[]
-  orders    Order[]
-  trades    Trade[]
-  positions Position[]
+  quotes             Quote[]
+  candles            Candle[]
+  orders             Order[]
+  trades             Trade[]
+  positions          Position[]
+  holdings           Holding[]
+  holdingSettlements HoldingSettlement[]
 
   @@unique([exchangeSegment, securityId])
   @@index([exchangeSegment])
@@ -323,6 +341,15 @@ model Trade {
   // realized P&L this specific trade locked in. Null for a trade that only
   // opens/adds to a position.
   realizedPnl  Decimal?   @db.Decimal(12, 2)
+  // The portion of `quantity` that was actually closing, when this trade
+  // realized P&L. Equal to `quantity` for an ordinary partial or exact close
+  // — but a close-and-flip fill (e.g. closing a 10-long with a 15-SELL)
+  // realizes P&L over only the closing 10, while `quantity` stays 15 (the
+  // whole fill, opening leg included). Without this column, TradeHistory's
+  // entry-price recovery (realizedPnl / quantity) is silently wrong for a
+  // flip — this is the one number that makes it exact instead. Null
+  // wherever realizedPnl is null, for the same reason.
+  closedQuantity Int?
   executedAt   DateTime   @default(now())
   order        Order      @relation(fields: [orderId], references: [id])
   user         User       @relation(fields: [userId], references: [id])
@@ -355,6 +382,19 @@ model Position {
   // Simulated margin currently blocked for this open position.
   marginUsed Decimal @default(0) @db.Decimal(12, 2)
 
+  // ---- Settlement lifecycle (CNC only — see SettlementService) ----------
+  // Trading day this position's current unsettled CNC cohort clears T+1 and
+  // transfers into a Holding row. Null once nothing is pending (never set for
+  // MIS/NRML — only a CNC BUY fill populates it). Position-level, not
+  // per-lot: a same-day top-up of an already-unsettled CNC position joins the
+  // existing cohort's date rather than starting a second one — a documented
+  // simplification for a paper platform with no tax-lot reporting need.
+  settlesAt   DateTime?
+  // Why quantity is 0, once it is. FLATTENED = a real closing trade.
+  // SETTLED = this position's quantity was transferred to a Holding, not
+  // traded away. Null while still open.
+  closeReason PositionCloseReason?
+
   updatedAt  DateTime   @updatedAt
   createdAt  DateTime   @default(now())
   user       User       @relation(fields: [userId], references: [id])
@@ -362,6 +402,85 @@ model Position {
 
   @@unique([userId, instrumentId, productType])
   @@index([userId])
+}
+
+// Settled CNC equity — created once a Position's unsettled quantity clears
+// T+1 (SettlementService.settleUser). Never populated for MIS/NRML: those
+// product types aren't delivery ownership, so they can never become a
+// Holding. No productType column — a Holding is definitionally delivery.
+model Holding {
+  id              String   @id @default(uuid())
+  userId          String
+  instrumentId    String
+  quantity        Int
+  // Weighted-average acquisition cost of the settled shares. Widened on a
+  // later BUY-then-settle merge the same way Position.avgPrice is; narrowed
+  // (unchanged) on a sell — HoldingsService.sell realizes against this, never
+  // rewrites it.
+  avgCost         Decimal  @default(0) @db.Decimal(12, 2)
+  // Lifetime realized P&L from selling settled holdings — separate from
+  // Position.realizedPnl (a different life stage of the same underlying
+  // shares), both roll up into PaperWallet.realizedPnl, the one ledger.
+  realizedPnl     Decimal  @default(0) @db.Decimal(12, 2)
+  firstAcquiredAt DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User       @relation(fields: [userId], references: [id])
+  instrument      Instrument @relation(fields: [instrumentId], references: [id])
+
+  @@unique([userId, instrumentId])
+  @@index([userId])
+}
+
+// Audit trail for each Position -> Holding transfer, so the settlement
+// lifecycle is inspectable rather than only implicit in Position/Holding
+// state. Not a Trade: no fill occurred, nothing changed hands at a price.
+model HoldingSettlement {
+  id           String   @id @default(uuid())
+  userId       String
+  instrumentId String
+  // Plain reference, not an FK — this is an append-only audit log of a
+  // now-flattened Position row; nothing should ever need to join back to it,
+  // and a Position row surviving forever just to satisfy this FK would be
+  // its own kind of bug.
+  positionId   String
+  quantity     Int
+  costPrice    Decimal  @db.Decimal(12, 2)
+  settledAt    DateTime @default(now())
+  user         User       @relation(fields: [userId], references: [id])
+  instrument   Instrument @relation(fields: [instrumentId], references: [id])
+
+  @@index([userId, instrumentId])
+}
+
+// One row per user per IST trading day — the EOD read-model Performance
+// charts and the Performance Diary are built from. Captured once daily after
+// session close (PerformanceService's sweep); days before this feature
+// existed (or any gap) are backfilled on read from Trade history instead of
+// stored, so history isn't lost, only recomputed rather than cached.
+model PortfolioSnapshot {
+  id             String   @id @default(uuid())
+  userId         String
+  // IST calendar day this snapshot represents, 'YYYY-MM-DD' — see istDateKey.
+  dateKey        String
+  openingValue   Decimal  @db.Decimal(14, 2)
+  closingValue   Decimal  @db.Decimal(14, 2)
+  cashBalance    Decimal  @db.Decimal(14, 2)
+  holdingsValue  Decimal  @db.Decimal(14, 2)
+  positionsValue Decimal  @db.Decimal(14, 2)
+  marginUsed     Decimal  @db.Decimal(14, 2)
+  // That day's realized P&L (not lifetime) and the unrealized P&L open at
+  // session close.
+  realizedPnl    Decimal  @db.Decimal(14, 2)
+  unrealizedPnl  Decimal  @db.Decimal(14, 2)
+  charges        Decimal  @db.Decimal(14, 2)
+  tradesCount    Int      @default(0)
+  winCount       Int      @default(0)
+  lossCount      Int      @default(0)
+  createdAt      DateTime @default(now())
+  user           User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, dateKey])
+  @@index([userId, dateKey])
 }
 
 // One paper-trading cash account per user. Created lazily on a user's first
