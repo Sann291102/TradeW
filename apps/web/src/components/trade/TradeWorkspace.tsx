@@ -156,49 +156,64 @@ export function TradeWorkspace({ strategies = [] }: { strategies?: Strategy[] })
 
   return (
     <div className="mx-auto max-w-[1440px] space-y-4 p-4">
-      <ChartPanel
-        symbol={symbol}
-        contract={contract}
-        initialExpiryLabel={expiry?.label}
-        priceLines={strategyPriceLines}
-        trailingControls={<><LayoutMenu /><ClosedPanelsMenu /></>}
-      />
-
-      {strategy && (
-        strategySpot && strategyYears !== undefined ? (
-          <StrategyOverlay
-            strategy={strategy}
-            symbol={symbol ?? 'NIFTY'}
-            spot={strategySpot}
-            strikeStep={strikeStep}
-            yearsToExpiry={strategyYears}
-            expiryLabel={expiry?.label ?? '—'}
+      {/* Two-column instrument layout (reference-matched): chart + market
+          detail on the left, order ticket + order book on the right. Single
+          column below the `lg` breakpoint — same responsive approach already
+          used for the Sentinel/News pair further down this page. */}
+      <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-[1fr_360px]">
+        <div className="min-w-0 space-y-4">
+          <ChartPanel
+            symbol={symbol}
+            contract={contract}
+            initialExpiryLabel={expiry?.label}
+            priceLines={strategyPriceLines}
+            trailingControls={<><LayoutMenu /><ClosedPanelsMenu /></>}
           />
-        ) : (
-          <Panel title={strategy.name} elevation={1}>
-            <p className="text-[11.5px] text-faint">
-              Waiting for a live price on {symbol ?? 'this instrument'} — strikes are resolved around the at-the-money
-              level, so the payoff cannot be drawn until it is known.
-            </p>
-          </Panel>
-        )
-      )}
 
-      <OrdersPanel
-        key={`${symbol}-${contract?.strike ?? ''}-${contract?.optionType ?? ''}-${orderAction ?? ''}`}
-        symbol={symbol}
-        defaultSide={orderAction ?? undefined}
-        currentPrice={livePrice}
-        isOptionContract={!!contract}
-        orderSymbol={orderSymbol}
-        contractLabel={
-          contract
-            ? `${symbol ?? 'NIFTY'} ${contract.strike} ${contract.optionType} · ${contract.expiryLabel}`
-            : symbol
-        }
-      />
+          {strategy && (
+            strategySpot && strategyYears !== undefined ? (
+              <StrategyOverlay
+                strategy={strategy}
+                symbol={symbol ?? 'NIFTY'}
+                spot={strategySpot}
+                strikeStep={strikeStep}
+                yearsToExpiry={strategyYears}
+                expiryLabel={expiry?.label ?? '—'}
+              />
+            ) : (
+              <Panel title={strategy.name} elevation={1}>
+                <p className="text-[11.5px] text-faint">
+                  Waiting for a live price on {symbol ?? 'this instrument'} — strikes are resolved around the
+                  at-the-money level, so the payoff cannot be drawn until it is known.
+                </p>
+              </Panel>
+            )
+          )}
+        </div>
 
-      {isVisible('blotter') && <BlotterPanel />}
+        <div className="flex min-w-0 flex-col gap-4">
+          <OrdersPanel
+            key={`${symbol}-${contract?.strike ?? ''}-${contract?.optionType ?? ''}-${orderAction ?? ''}`}
+            symbol={symbol}
+            defaultSide={orderAction ?? undefined}
+            currentPrice={livePrice}
+            isOptionContract={!!contract}
+            orderSymbol={orderSymbol}
+            contractLabel={
+              contract
+                ? `${symbol ?? 'NIFTY'} ${contract.strike} ${contract.optionType} · ${contract.expiryLabel}`
+                : symbol
+            }
+          />
+
+          {/* Positions/Orders/Trades — stacked under the order ticket instead
+              of a full-width strip below the whole layout, and stretched
+              (min-h-0 so its own scroll area, not the page, absorbs overflow)
+              to fill the rest of this column, so the right column's total
+              height matches the chart panel's on the left. */}
+          {isVisible('blotter') && <BlotterPanel className="min-h-0 flex-1" />}
+        </div>
+      </div>
 
       {(isVisible('sentinel') || isVisible('news')) && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

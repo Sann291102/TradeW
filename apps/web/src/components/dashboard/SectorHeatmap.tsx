@@ -1,23 +1,42 @@
+'use client';
+
+import { useMemo } from 'react';
 import Link from 'next/link';
 import { Card, Surface, cn } from '@tradew/ui';
-import { SECTORS } from '@/lib/mock/market';
+import { SECTORS, SECTOR_STOCKS, type SectorTile } from '@/lib/mock/market';
+import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { pct } from '@/lib/format';
 
 /**
- * SectorHeatmap — the "Sector Heatmap" tiles from the canonical home. Tile
- * intensity encodes magnitude, hue encodes direction (green up / red down) —
- * market-direction color only. Independent widget (Step 5).
+ * SectorHeatmap — tile intensity encodes magnitude, hue encodes direction
+ * (green up / red down), market-direction color only.
  *
- * Each tile links to `/markets?sector=<key>` (Stocks tab, filtered to that
- * sector's constituents — see `SECTOR_STOCKS` in lib/mock/market.ts) and
- * uses the same `Surface interactive` hover-lift as the index cards
- * (`IndexOverview.tsx`), so hovering a sector behaves like hovering an index.
+ * Previously always the static `SECTORS` mock. There's no per-sector
+ * aggregate endpoint, but every `SECTOR_STOCKS` constituent symbol IS covered
+ * by the live Dhan feed (same universe `MarketMovers` ranks) — so each tile's
+ * `changePct` is now the real average across its live constituents when the
+ * feed is reachable, falling back to the mock tiles otherwise.
  */
 export function SectorHeatmap() {
+  const { stocks, status } = useDhanLiveFeed();
+  const live = (status === 'live' || status === 'closed') && !!stocks && stocks.length > 0;
+
+  const tiles: SectorTile[] = useMemo(() => {
+    if (!live) return SECTORS;
+    const bySymbol = new Map(stocks!.map((q) => [q.symbol, q.changePct]));
+    return SECTORS.map((s) => {
+      const constituents = SECTOR_STOCKS[s.key] ?? [];
+      const matched = constituents.map((c) => bySymbol.get(c.symbol)).filter((v): v is number => v != null);
+      if (matched.length === 0) return s;
+      const avg = matched.reduce((sum, v) => sum + v, 0) / matched.length;
+      return { ...s, changePct: Number(avg.toFixed(2)) };
+    });
+  }, [live, stocks]);
+
   return (
-    <Card title="Sector Heatmap">
-      <div className="grid grid-cols-3 gap-1.5">
-        {SECTORS.map((s) => {
+    <Card title="Sector Heatmap" className="flex h-full flex-col">
+      <div className="grid grid-cols-3 content-start gap-1.5">
+        {tiles.map((s) => {
           const up = s.changePct >= 0;
           const intensity = Math.min(1, Math.abs(s.changePct) / 1.2);
           const bg = up

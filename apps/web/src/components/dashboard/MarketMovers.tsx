@@ -2,14 +2,14 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Card, Badge, cn } from '@tradew/ui';
+import { Card, cn } from '@tradew/ui';
 import { TOP_GAINERS, TOP_LOSERS, type MoverRow } from '@/lib/mock/market';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { fmt, pct } from '@/lib/format';
 
 const TABS = [
-  { key: 'g', label: '▲ Gainers' },
-  { key: 'l', label: '▼ Losers' },
+  { key: 'g', label: 'Top Gainers' },
+  { key: 'l', label: 'Top Losers' },
 ] as const;
 
 /**
@@ -39,18 +39,7 @@ export function MarketMovers() {
       : TOP_LOSERS;
 
   return (
-    <Card
-      title="Market Movers"
-      actions={
-        live ? (
-          <Badge tone={status === 'live' ? 'positive' : 'neutral'} className="px-1.5 py-0 text-[9px]">
-            {status === 'live' ? 'LIVE' : 'CLOSED'}
-          </Badge>
-        ) : (
-          <Badge tone="neutral" className="px-1.5 py-0 text-[9px]">PREVIEW</Badge>
-        )
-      }
-    >
+    <Card title="Market Movers">
       <div role="tablist" aria-label="Movers filter" className="mb-3 flex gap-1">
         {TABS.map((t) => (
           <button

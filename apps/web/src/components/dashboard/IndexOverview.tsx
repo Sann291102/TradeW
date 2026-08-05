@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Sparkline, Badge, Surface, AnimatedNumber, cn } from '@tradew/ui';
+import { Sparkline, Surface, AnimatedNumber, cn } from '@tradew/ui';
 import { INDEX_QUOTES } from '@/lib/mock/market';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { fmt, pct, sign } from '@/lib/format';
@@ -25,27 +25,13 @@ export function IndexOverview() {
 
   return (
     <section aria-label="Index overview" className="space-y-2">
-      <div className="flex items-center gap-2">
-        {status === 'live' && (
-          <Badge tone="positive" className="px-1.5 py-0 text-[9px]">LIVE</Badge>
-        )}
-        {status === 'closed' && (
-          <Badge tone="neutral" className="px-1.5 py-0 text-[9px]">MARKET CLOSED</Badge>
-        )}
-        {status === 'loading' && (
-          <Badge tone="neutral" className="px-1.5 py-0 text-[9px]">LOADING</Badge>
-        )}
-        {status === 'unreachable' && (
-          <Badge tone="neutral" className="px-1.5 py-0 text-[9px]">PREVIEW</Badge>
-        )}
-      </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {rows.map((q) => {
           const up = q.change >= 0;
           return (
             <Link key={q.symbol} href={`/trade?symbol=${q.symbol}`} onClick={() => logChartClick(q.symbol, 'dashboard_index_card')}>
-              <Surface elevation={2} interactive className="p-3">
-                <div className="text-[11px] font-semibold text-muted">{q.name}</div>
+              <Surface elevation={2} interactive className="px-3.5 py-3">
+                <div className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">{q.name}</div>
                 <AnimatedNumber
                   value={q.ltp}
                   format={fmt}
@@ -56,7 +42,7 @@ export function IndexOverview() {
                   {fmt(Math.abs(q.change))} ({pct(q.changePct)})
                 </div>
                 <div className="mt-2">
-                  <Sparkline data={q.spark} width={140} height={28} className="w-full" aria-label={`${q.name} trend`} />
+                  <Sparkline data={q.spark} tone={up ? 'up' : 'down'} width={140} height={28} className="w-full" aria-label={`${q.name} trend`} />
                 </div>
               </Surface>
             </Link>

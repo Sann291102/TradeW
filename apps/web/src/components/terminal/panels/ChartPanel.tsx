@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Panel, IconButton, cn } from '@tradew/ui';
 import type { CandleInterval } from '@tradew/types';
 import { INDEX_QUOTES, TOP_GAINERS, TOP_LOSERS, COMMODITIES } from '@/lib/mock/market';
-import { fmt, pct } from '@/lib/format';
+import { fmt } from '@/lib/format';
 import { useCandles } from '@/lib/hooks/useCandles';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { useHasOptionChain } from '@/lib/hooks/useHasOptionChain';
@@ -16,6 +16,7 @@ import { MarketsTab } from './chart-tabs/MarketsTab';
 import { TechnicalsTab } from './chart-tabs/TechnicalsTab';
 import { OptionChainTab } from './chart-tabs/OptionChainTab';
 import { DepthTab } from './chart-tabs/DepthTab';
+import { InstrumentHeader } from '@/components/trade/InstrumentHeader';
 import { SparkleIcon, CloseIcon } from '../../shell/icons';
 import { ChartExpandButton } from '@/components/charts/ChartExpandButton';
 import type { DockPanelContentProps } from './types';
@@ -248,9 +249,6 @@ export default function ChartPanel({
     ltp: liveMatch?.ltp ?? null,
     changePct: liveMatch?.changePct ?? null,
   };
-  const up = (q.changePct ?? 0) >= 0;
-  /** No live quote — bridge down, or the feed doesn't cover this symbol. */
-  const quoteUnavailable = q.ltp == null;
   const { interval, days } = TF_CONFIG[tf];
   const { candles, status: candlesStatus, reason: candlesReason } = useCandles(q.symbol, interval, days);
   const { candles: dailyCandles } = useCandles(q.symbol, '1d', 300);
@@ -309,6 +307,13 @@ export default function ChartPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [optionable]);
 
+  // The rich hero header (name/price/OHLC row, reference-matched) replaces
+  // Panel's compact title bar for the underlying view — that compact bar is
+  // shared chrome used by every other panel in the app, too small for this
+  // page's hero treatment. The option-contract view is untouched: it keeps
+  // the original compact title/actions exactly as before, since the
+  // reference this redesign matches is the underlying instrument screen, not
+  // a contract view.
   return (
     <Panel
       className={className}
@@ -317,24 +322,73 @@ export default function ChartPanel({
       bodyClassName="flex flex-col"
       elevation={1}
       title={
-        <span className="flex items-center gap-2">
-          <span className="text-[13px] font-bold normal-case text-text">
-            {q.symbol}
-            {contract && ` ${contract.strike} ${contract.optionType}`}
+        contract ? (
+          <span className="flex items-center gap-2">
+            <span className="text-[13px] font-bold normal-case text-text">
+              {q.symbol} {contract.strike} {contract.optionType}
+            </span>
+            <span className="font-mono text-[12px] tabular-nums text-text">{contractLtp != null ? fmt(contractLtp) : '—'}</span>
+            <span className="text-[10.5px] text-faint">{contract.expiryLabel} expiry</span>
           </span>
-          <span className="font-mono text-[12px] tabular-nums text-text">
-            {contract ? (contractLtp != null ? fmt(contractLtp) : '—') : q.ltp != null ? fmt(q.ltp) : '—'}
-          </span>
-          {!contract && q.changePct != null && (
-            <span className={cn('font-mono text-[11px] tabular-nums', up ? 'text-up' : 'text-down')}>{pct(q.changePct)}</span>
-          )}
-          {!contract && quoteUnavailable && <span className="text-[10.5px] text-faint">live feed not connected</span>}
-          {contract && <span className="text-[10.5px] text-faint">{contract.expiryLabel} expiry</span>}
-        </span>
+        ) : undefined
       }
       actions={
-        <>
-          {view === 'charts' && (
+        contract ? (
+          <>
+            {view === 'charts' && (
+              <div role="tablist" aria-label="Timeframe" className="flex items-center gap-0.5">
+                {TIMEFRAMES.map((t) => (
+                  <button
+                    key={t}
+                    role="tab"
+                    aria-selected={tf === t}
+                    onClick={() => setTf(t)}
+                    className={cn(
+                      'rounded px-1.5 py-0.5 text-[11px] font-semibold transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+                      tf === t ? 'bg-teal-bg text-teal' : 'text-muted hover:text-text',
+                    )}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            )}
+            <IconButton aria-label="Analyze this chart with TradeW AI" className="h-7 w-7 text-teal">
+              <SparkleIcon className="h-4 w-4" />
+            </IconButton>
+            {actions}
+          </>
+        ) : undefined
+      }
+    >
+      {!contract && (
+        <InstrumentHeader
+          symbol={q.symbol}
+          name={q.name}
+          ltp={q.ltp}
+          changePct={q.changePct}
+          dailyCandles={dailyCandles ?? []}
+          feedStatus={liveStatus}
+        />
+      )}
+
+      <div role="tablist" aria-label="Instrument view" className={cn('mb-2 flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border pb-2', !contract && 'pt-3')}>
+        {views.map((v) => (
+          <button
+            key={v}
+            role="tab"
+            aria-selected={view === v}
+            onClick={() => setView(v)}
+            className={cn(
+              'shrink-0 rounded px-2.5 py-1 text-xs font-semibold transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+              view === v ? 'bg-teal-bg text-teal' : 'text-muted hover:bg-hover hover:text-text',
+            )}
+          >
+            {VIEW_LABEL[v]}
+          </button>
+        ))}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {!contract && view === 'charts' && (
             <div role="tablist" aria-label="Timeframe" className="flex items-center gap-0.5">
               {TIMEFRAMES.map((t) => (
                 <button
@@ -352,33 +406,13 @@ export default function ChartPanel({
               ))}
             </div>
           )}
-          {/* The full-screen toggle moved out of this header row and onto the
-              chart's own bottom-right corner (ChartExpandButton), where every
-              charting package puts it. Here it was a small icon among several
-              and went unnoticed. */}
-          <IconButton aria-label="Analyze this chart with TradeW AI" className="h-7 w-7 text-teal">
-            <SparkleIcon className="h-4 w-4" />
-          </IconButton>
-          {actions}
-        </>
-      }
-    >
-      <div role="tablist" aria-label="Instrument view" className="mb-2 flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border pb-2">
-        {views.map((v) => (
-          <button
-            key={v}
-            role="tab"
-            aria-selected={view === v}
-            onClick={() => setView(v)}
-            className={cn(
-              'shrink-0 rounded px-2.5 py-1 text-xs font-semibold transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
-              view === v ? 'bg-teal-bg text-teal' : 'text-muted hover:bg-hover hover:text-text',
-            )}
-          >
-            {VIEW_LABEL[v]}
-          </button>
-        ))}
-        {trailingControls && <div className="ml-auto flex shrink-0 items-center gap-1.5">{trailingControls}</div>}
+          {!contract && (
+            <IconButton aria-label="Analyze this chart with TradeW AI" className="h-7 w-7 text-teal">
+              <SparkleIcon className="h-4 w-4" />
+            </IconButton>
+          )}
+          {trailingControls}
+        </div>
       </div>
 
       {view === 'markets' && <MarketsTab dailyCandles={dailyCandles ?? []} />}

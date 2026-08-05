@@ -1,10 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { Card, Sparkline, Badge, cn } from '@tradew/ui';
+import { Card, Sparkline, cn } from '@tradew/ui';
 import { WATCHLIST } from '@/lib/mock/market';
+
+/** Reference shows 5 rows; the full WATCHLIST const carries 2 more (kept for
+ *  other consumers, e.g. the terminal panel) — sliced here to match density
+ *  and to keep this card's height in line with its Market Alerts/News
+ *  neighbors below it (see MarketWorkspace.tsx's balanced two-column row). */
+const DASHBOARD_ROWS = 5;
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { fmt, pct } from '@/lib/format';
+import { PlusIcon } from '@/components/shell/icons';
 
 /**
  * WatchlistWidget — the sidebar watchlist from the canonical terminal, as a
@@ -26,24 +33,26 @@ export function WatchlistWidget() {
       title="Watchlist"
       subtitle="· My Watchlist"
       actions={
-        live ? (
-          <Badge tone={status === 'live' ? 'positive' : 'neutral'} className="px-1.5 py-0 text-[9px]">
-            {status === 'live' ? 'LIVE' : 'CLOSED'}
-          </Badge>
-        ) : (
-          <Badge tone="neutral" className="px-1.5 py-0 text-[9px]">PREVIEW</Badge>
-        )
+        <button
+          type="button"
+          disabled
+          title="Custom watchlists aren't wired to a backend yet — this list is fixed for now."
+          aria-disabled="true"
+          className="cursor-not-allowed text-xs font-semibold text-faint"
+        >
+          Manage
+        </button>
       }
     >
       <ul className="divide-y divide-border">
-        {WATCHLIST.map((w) => {
+        {WATCHLIST.slice(0, DASHBOARD_ROWS).map((w) => {
           const liveMatch = liveBySymbol?.get(w.symbol);
           const ltp = liveMatch?.ltp ?? w.ltp;
           const changePct = liveMatch?.changePct ?? w.changePct;
           const up = changePct >= 0;
           return (
             <li key={w.symbol}>
-              <Link href="/markets" className="flex items-center gap-3 rounded py-2 transition-colors duration-micro hover:bg-hover">
+              <Link href="/markets" className="flex items-center gap-3 rounded py-1.5 transition-colors duration-micro hover:bg-hover">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold text-text">{w.symbol}</div>
                   <div className="truncate text-[11px] text-faint">{w.name}</div>
@@ -60,6 +69,16 @@ export function WatchlistWidget() {
           );
         })}
       </ul>
+      <button
+        type="button"
+        disabled
+        title="Adding symbols needs a watchlist-CRUD endpoint that doesn't exist yet — integration point, not wired."
+        aria-disabled="true"
+        className="mt-2 flex w-full cursor-not-allowed items-center justify-center gap-1.5 rounded-lg border border-dashed border-border2 py-2 text-xs font-semibold text-faint"
+      >
+        <PlusIcon className="h-3.5 w-3.5" />
+        Add Symbol
+      </button>
     </Card>
   );
 }

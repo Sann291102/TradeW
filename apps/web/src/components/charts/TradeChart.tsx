@@ -52,6 +52,12 @@ export interface TradeChartProps {
    *  they set it. Without this, a trader's zoom was silently thrown away every
    *  time the series object was rebuilt. */
   fitKey?: string;
+  /** 'candlestick' (default, every existing caller) or 'area' — a filled
+   *  line series plotting each bar's close, colored by direction (matching
+   *  the reference dashboard's "Line" chart view). Changing this recreates
+   *  the chart's series, so it's meant for a deliberate view toggle
+   *  (MarketOverview's Line/Candles switch), not a per-render value. */
+  seriesType?: 'candlestick' | 'area';
 }
 
 function readToken(name: string): string {
@@ -105,10 +111,20 @@ function makeIstCrosshairFormatter(intervalMinutes?: number) {
  * so light/dark/high-contrast all render correctly with no chart-specific
  * theme branching here.
  */
-export function TradeChart({ candles, height = 320, className, intervalMinutes, liveLast, fitKey, priceLines, ...aria }: TradeChartProps) {
+export function TradeChart({
+  candles,
+  height = 320,
+  className,
+  intervalMinutes,
+  liveLast,
+  fitKey,
+  priceLines,
+  seriesType = 'candlestick',
+  ...aria
+}: TradeChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Candlestick'> | ISeriesApi<'Area'> | null>(null);
   // Latest live price, read inside the setData effect without making it a
   // dependency — otherwise every tick would re-run setData (and refit).
   const liveLastRef = useRef<number | undefined>(liveLast);
@@ -116,6 +132,10 @@ export function TradeChart({ candles, height = 320, className, intervalMinutes, 
   /** Which series the current view was last auto-fitted for (see `fitKey`). */
   const lastFitKeyRef = useRef<string | null>(null);
   const priceLineRefs = useRef<IPriceLine[]>([]);
+  /** Direction of the area series' current data (last close vs first close) —
+   *  read by `applyTheme` on a theme change, when no data update is in
+   *  flight. Only meaningful for `seriesType: 'area'`. */
+  const lastDirectionRef = useRef<'up' | 'down'>('up');
 
   useEffect(() => {
     const el = containerRef.current;
@@ -136,13 +156,23 @@ export function TradeChart({ candles, height = 320, className, intervalMinutes, 
         rightPriceScale: { borderColor: readToken('--border2') },
         timeScale: { borderColor: readToken('--border2') },
       });
-      seriesRef.current?.applyOptions({
-        upColor: readToken('--green'),
-        downColor: readToken('--red'),
-        borderVisible: false,
-        wickUpColor: readToken('--green'),
-        wickDownColor: readToken('--red'),
-      });
+      if (seriesType === 'candlestick') {
+        (seriesRef.current as ISeriesApi<'Candlestick'> | null)?.applyOptions({
+          upColor: readToken('--green'),
+          downColor: readToken('--red'),
+          borderVisible: false,
+          wickUpColor: readToken('--green'),
+          wickDownColor: readToken('--red'),
+        });
+      } else {
+        const up = lastDirectionRef.current !== 'down';
+        (seriesRef.current as ISeriesApi<'Area'> | null)?.applyOptions({
+          lineColor: readToken(up ? '--green' : '--red'),
+          topColor: readToken(up ? '--green-bg' : '--red-bg'),
+          bottomColor: 'transparent',
+          lineWidth: 2,
+        });
+      }
     };
 
     const chart = createChart(el, {
@@ -153,7 +183,10 @@ export function TradeChart({ candles, height = 320, className, intervalMinutes, 
       localization: { timeFormatter: makeIstCrosshairFormatter(intervalMinutes) },
     });
     chartRef.current = chart;
-    seriesRef.current = chart.addCandlestickSeries();
+    seriesRef.current =
+      seriesType === 'candlestick'
+        ? chart.addCandlestickSeries()
+        : chart.addAreaSeries({ lineWidth: 2, priceLineVisible: true });
     applyTheme();
 
     const resizeObserver = new ResizeObserver((entries) => {
@@ -172,9 +205,12 @@ export function TradeChart({ candles, height = 320, className, intervalMinutes, 
       chartRef.current = null;
       seriesRef.current = null;
     };
-    // height intentionally excluded — resized via ResizeObserver, not re-init
+    // height intentionally excluded — resized via ResizeObserver, not re-init.
+    // seriesType IS a dependency — switching it tears down and recreates the
+    // chart with the other series kind (a deliberate, infrequent view toggle,
+    // not something that needs an in-place series swap).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [seriesType]);
 
   // The chart itself is created once on mount, so switching timeframe has to
   // re-apply the crosshair formatter — otherwise a 15m chart would keep
@@ -229,24 +265,44 @@ export function TradeChart({ candles, height = 320, className, intervalMinutes, 
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
-    const data = candles.map((c) => ({
-      time: Math.floor(c.timestamp.getTime() / 1000) as UTCTimestamp,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
-    // Fold the current live price into the forming bar so the newly-loaded
-    // series already reflects the feed, before the per-tick effect below
-    // takes over.
-    const live = liveLastRef.current;
-    if (live != null && data.length > 0) {
-      const last = data[data.length - 1];
-      last.close = live;
-      last.high = Math.max(last.high, live);
-      last.low = Math.min(last.low, live);
+
+    if (seriesType === 'candlestick') {
+      const data = candles.map((c) => ({
+        time: Math.floor(c.timestamp.getTime() / 1000) as UTCTimestamp,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      }));
+      // Fold the current live price into the forming bar so the newly-loaded
+      // series already reflects the feed, before the per-tick effect below
+      // takes over.
+      const live = liveLastRef.current;
+      if (live != null && data.length > 0) {
+        const last = data[data.length - 1];
+        last.close = live;
+        last.high = Math.max(last.high, live);
+        last.low = Math.min(last.low, live);
+      }
+      (series as ISeriesApi<'Candlestick'>).setData(data);
+    } else {
+      const data = candles.map((c) => ({
+        time: Math.floor(c.timestamp.getTime() / 1000) as UTCTimestamp,
+        value: c.close,
+      }));
+      const live = liveLastRef.current;
+      if (live != null && data.length > 0) data[data.length - 1].value = live;
+
+      const up = data.length < 2 || data[data.length - 1].value >= data[0].value;
+      lastDirectionRef.current = up ? 'up' : 'down';
+      (series as ISeriesApi<'Area'>).applyOptions({
+        lineColor: readToken(up ? '--green' : '--red'),
+        topColor: readToken(up ? '--green-bg' : '--red-bg'),
+        bottomColor: 'transparent',
+      });
+      (series as ISeriesApi<'Area'>).setData(data);
     }
-    series.setData(data);
+
     // Fit ONLY for a genuinely new series (symbol / contract / timeframe).
     // Re-fitting on any other data change is what used to wipe the user's zoom.
     const key = fitKey ?? '';
@@ -257,7 +313,7 @@ export function TradeChart({ candles, height = 320, className, intervalMinutes, 
     // fitKey is read intentionally without being a dependency — it gates the
     // fit, it must not by itself trigger a data reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candles]);
+  }, [candles, seriesType]);
 
   // Live tick — patch just the last (forming) candle in place. series.update()
   // mutates the final bar without touching the visible range, so the chart
@@ -266,14 +322,19 @@ export function TradeChart({ candles, height = 320, className, intervalMinutes, 
     const series = seriesRef.current;
     if (!series || liveLast == null || candles.length === 0) return;
     const last = candles[candles.length - 1];
-    series.update({
-      time: Math.floor(last.timestamp.getTime() / 1000) as UTCTimestamp,
-      open: last.open,
-      high: Math.max(last.high, liveLast),
-      low: Math.min(last.low, liveLast),
-      close: liveLast,
-    });
-  }, [liveLast, candles]);
+    const time = Math.floor(last.timestamp.getTime() / 1000) as UTCTimestamp;
+    if (seriesType === 'candlestick') {
+      (series as ISeriesApi<'Candlestick'>).update({
+        time,
+        open: last.open,
+        high: Math.max(last.high, liveLast),
+        low: Math.min(last.low, liveLast),
+        close: liveLast,
+      });
+    } else {
+      (series as ISeriesApi<'Area'>).update({ time, value: liveLast });
+    }
+  }, [liveLast, candles, seriesType]);
 
   return <div ref={containerRef} className={cn('w-full', className)} style={{ height }} {...aria} />;
 }
