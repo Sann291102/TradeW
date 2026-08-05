@@ -10,6 +10,7 @@ import {
 import { MarketSnapshot } from '../intelligence/market-intelligence.service';
 import { StrategyDetection } from '../intelligence/strategy-engine.service';
 import { MarketStateValue } from '../domain';
+import type { PublicationDecision } from '../orchestrator/publication-gate';
 import { Regime } from './types';
 
 /**
@@ -235,8 +236,26 @@ export class StrategyAdvisorService {
 
   // -------------------------------------------------------- side in focus
   /**
-   * The favoured side, surfaced ONLY above the confidence threshold and in a
-   * guidance state. Below threshold it returns null so nothing weak is shown.
+   * The favoured side, surfaced ONLY when the publication gate cleared.
+   *
+   * ## Why this takes a `PublicationDecision` rather than checking confidence
+   *
+   * This method used to gate on `confidence.meetsThreshold && guidanceState`
+   * alone. That was a second, weaker gate running beside the four-condition
+   * one in `publication-gate.ts`, and it meant Side in Focus could surface a
+   * directional read on confidence alone — with a mandatory strategy rule
+   * still unmet, with conflicting evidence present, and with zero independent
+   * corroboration. The binding product rule names Side in Focus explicitly, so
+   * that was a defect, not a design choice.
+   *
+   * There is now exactly one authority on what surfaces. The decision is
+   * passed in rather than recomputed here for the same reason the live-
+   * performance check is passed into `SynthesisService.synthesize` — two
+   * evaluations of the same rule eventually disagree, and the one that
+   * disagreed silently would be the one a trader saw.
+   *
+   * Required, not optional: an optional gate is a gate a future call site can
+   * forget, and this is precisely the mistake being corrected.
    */
   sideInFocus(input: {
     symbol: string;
@@ -244,9 +263,10 @@ export class StrategyAdvisorService {
     confidence: ConfidenceBreakdown;
     snapshot: MarketSnapshot;
     state: MarketStateValue;
+    /** The four-condition gate's verdict. Null is treated as "did not clear". */
+    publication: PublicationDecision | null;
   }): SideInFocus | null {
-    const inGuidanceState = StrategyAdvisorService.GUIDANCE_STATES.includes(input.state);
-    if (!input.confidence.meetsThreshold || !inGuidanceState) return null;
+    if (!input.publication?.publish) return null;
 
     const bias = this.resolveBias(input.detections, input.snapshot);
     if (bias === 'neutral') return null;

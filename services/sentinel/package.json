@@ -10,7 +10,6 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main.js",
-    "test": "vitest run",
     "ontology:validate": "ts-node -T --project tsconfig.scripts.json scripts/validate-ontology.ts",
     "ontology:seed": "ts-node -T --project tsconfig.scripts.json scripts/seed-ontology.ts",
     "ontology:smoke": "ts-node -T --project tsconfig.scripts.json scripts/smoke-concept-graph.ts",

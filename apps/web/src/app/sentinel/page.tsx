@@ -9,6 +9,7 @@ import type { StrategyMode } from '@/lib/sentinel/types';
 import { MarketSelector } from '@/components/sentinel/MarketSelector';
 import { OptionChainPanel } from '@/components/sentinel/OptionChainPanel';
 import { StrategySelector } from '@/components/sentinel/StrategySelector';
+import { MarketReasoningPanel } from '@/components/sentinel/MarketReasoningPanel';
 import { SideInFocusCard, WaitingForConfirmation } from '@/components/sentinel/SideInFocusCard';
 import { DayClassificationCard } from '@/components/sentinel/DayClassificationCard';
 import { SentinelLiveCharts } from '@/components/sentinel/SentinelLiveCharts';
@@ -187,7 +188,16 @@ export default function SentinelPage() {
               advices={data?.strategyAdvices}
               onChange={onStrategyChange}
             />
-            {data?.sideInFocus ? <SideInFocusCard focus={data.sideInFocus} /> : <WaitingForConfirmation />}
+            {data?.sideInFocus ? (
+              <SideInFocusCard focus={data.sideInFocus} />
+            ) : (
+              <WaitingForConfirmation publication={data?.publication} />
+            )}
+            <MarketReasoningPanel
+              behaviour={data?.marketBehaviour}
+              lifecycles={data?.strategyLifecycles}
+              crossValidation={data?.institutionalCrossValidation}
+            />
             <LiveSafetyFeed cards={pushworthyCards(safetyCards)} />
             <ContextualTraining title={lesson.title} blurb={lesson.blurb} />
             <SentinelTimeline cards={safetyCards} entries={data?.timeline} />

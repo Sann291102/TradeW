@@ -48,7 +48,7 @@ function test(name: string, body: () => void): void {
   }
 }
 
-function assert(cond: unknown, message: string): asserts cond {
+function assert(cond: unknown, message = 'assertion failed'): asserts cond {
   if (!cond) throw new Error(message);
 }
 

@@ -74,7 +74,14 @@ export class RegimeIntelligenceService {
   }
 }
 
-function regimeFromProfile(profile: MarketProfile): Regime | null {
+/**
+ * Exported so `MarketBehaviourService` can classify a regime without
+ * instantiating this service and dragging in `KnowledgeRetrievalService`.
+ * Deliberately the SAME function rather than a second implementation — this
+ * file's whole premise is that there is one classifier, not two that can
+ * disagree.
+ */
+export function regimeFromProfile(profile: MarketProfile): Regime | null {
   switch (profile.type) {
     case 'Bullish Trend Day':
     case 'Bearish Trend Day':

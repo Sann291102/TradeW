@@ -11,6 +11,7 @@
 import { StrategyRegistryService } from '../src/learning/strategy-registry.service';
 import { StrategyAdvisorService } from '../src/reasoning/strategy-advisor.service';
 import { ConfidenceBreakdown, MarketStateValue } from '../src/domain';
+import type { PublicationDecision } from '../src/orchestrator/publication-gate';
 import { MarketSnapshot } from '../src/intelligence/market-intelligence.service';
 import { StrategyDetection, StrategyEngineService } from '../src/intelligence/strategy-engine.service';
 
@@ -38,7 +39,7 @@ function section(name: string): void {
   console.log(`\n== ${name} ==`);
 }
 
-function assert(cond: unknown, message: string): asserts cond {
+function assert(cond: unknown, message = 'assertion failed'): asserts cond {
   if (!cond) throw new Error(message);
 }
 function assertEq<T>(actual: T, expected: T, message?: string): void {
@@ -56,6 +57,25 @@ function makeConfidence(score: number, threshold = 72): ConfidenceBreakdown {
     factors: [],
     deductions: [],
     computedAt: new Date('2026-07-30T04:00:00Z').toISOString(),
+  };
+}
+
+/**
+ * A publication decision for the advisor harness.
+ *
+ * `sideInFocus` no longer evaluates confidence or session state itself — the
+ * four-condition publication gate is the single authority, and this stands in
+ * for its verdict. See `StrategyAdvisorService.sideInFocus`.
+ */
+function makePublication(publish: boolean, threshold = 72): PublicationDecision {
+  return {
+    publish,
+    threshold,
+    confidence: publish ? 84 : 65,
+    conditions: [],
+    corroboratingSources: publish ? ['session structure', 'historical outcomes'] : [],
+    conflicts: [],
+    waitAndWatchReason: publish ? null : 'Gate did not clear. Sentinel remains in Wait and Watch.',
   };
 }
 
@@ -292,6 +312,7 @@ section('Advisor — Side in Focus');
       confidence: makeConfidence(84),
       snapshot: makeSnapshot({ lastPrice: 24337 }),
       state: GUIDANCE_STATE,
+      publication: makePublication(true),
     });
     assert(sif !== null, 'expected a side in focus');
     assertEq(sif!.side, 'CE');
@@ -308,8 +329,9 @@ section('Advisor — Side in Focus');
       symbol: 'BANKNIFTY',
       detections: [makeDetection({ bias: 'bearish', strategyName: 'Fake Breakout' })],
       confidence: makeConfidence(80),
-      snapshot: makeSnapshot({ lastPrice: 51240, trendAnalysis: { direction: 'bearish', momentumScore: 0.6, sessionChangePct: -0.7 } }),
+      snapshot: makeSnapshot({ lastPrice: 51240, trendAnalysis: { direction: 'bearish', momentumScore: 0.6, sessionChangePct: -0.7, volumeStrength: 1.1 } }),
       state: 'OPPORTUNITY_ACTIVE',
+      publication: makePublication(true),
     });
     assert(sif !== null, 'expected a side in focus');
     assertEq(sif!.side, 'PE');
@@ -317,24 +339,29 @@ section('Advisor — Side in Focus');
     assertEq(sif!.strike, 51200);
   });
 
-  test('CONFIDENCE FILTER: below threshold returns null (nothing weak shown)', () => {
+  // Renamed: this no longer tests a confidence check inside sideInFocus —
+  // confidence is one of four conditions the publication gate evaluates, and
+  // sideInFocus now honours that single verdict.
+  test('PUBLICATION GATE: a gate that did not clear returns null (nothing weak shown)', () => {
     const sif = advisor.sideInFocus({
       symbol: 'NIFTY',
       detections: [makeDetection({ bias: 'bullish' })],
       confidence: makeConfidence(65),
       snapshot: makeSnapshot(),
       state: GUIDANCE_STATE,
+      publication: makePublication(false),
     });
     assertEq(sif, null);
   });
 
-  test('non-guidance state returns null even above threshold', () => {
+  test('PUBLICATION GATE: a non-guidance state is caught by the gate, not by sideInFocus', () => {
     const sif = advisor.sideInFocus({
       symbol: 'NIFTY',
       detections: [makeDetection({ bias: 'bullish' })],
       confidence: makeConfidence(90),
       snapshot: makeSnapshot(),
       state: NON_GUIDANCE_STATE,
+      publication: makePublication(false),
     });
     assertEq(sif, null);
   });
@@ -344,8 +371,9 @@ section('Advisor — Side in Focus');
       symbol: 'NIFTY',
       detections: [makeDetection({ bias: 'neutral' })],
       confidence: makeConfidence(90),
-      snapshot: makeSnapshot({ trendAnalysis: { direction: 'neutral', momentumScore: 0.5, sessionChangePct: 0 } }),
+      snapshot: makeSnapshot({ trendAnalysis: { direction: 'neutral', momentumScore: 0.5, sessionChangePct: 0, volumeStrength: 1 } }),
       state: GUIDANCE_STATE,
+      publication: makePublication(true),
     });
     assertEq(sif, null);
   });
@@ -357,6 +385,7 @@ section('Advisor — Side in Focus');
       confidence: makeConfidence(84),
       snapshot: makeSnapshot(),
       state: GUIDANCE_STATE,
+      publication: makePublication(true),
     });
     assert(sif !== null);
     assert(sif!.rationale.some((r) => r.includes('Liquidity Sweep')), 'expected detection in rationale');

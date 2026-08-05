@@ -237,6 +237,109 @@ export type ObserveResponse = {
   /** Phase 2 (multi-strategy) — one entry per pinned strategy in manual mode, or a single auto-mode entry. */
   strategyAdvices?: StrategyAdvice[];
   sideInFocus?: SideInFocus | null;
+  /**
+   * The four-condition publication gate's record for this observation.
+   * Present whether or not anything was published — when `publish` is false,
+   * `waitAndWatchReason` names the binding constraint and `conditions` shows
+   * every check that ran, which is what makes Wait and Watch explainable
+   * rather than merely silent.
+   */
+  publication?: PublicationDecision;
+  /** Phase 2 — what the market is doing, as opposed to what its indicators read. */
+  marketBehaviour?: MarketBehaviourRead;
+  /** Phase 3 — where each strategy sits in its own lifecycle. */
+  strategyLifecycles?: StrategyLifecycle[];
+  /** Phase 5 — every element used in the reasoning, as chart drawings. */
+  chartAnnotations?: ChartAnnotation[];
+  /** Phase 6 — whether the independent evidence dimensions agree. */
+  institutionalCrossValidation?: InstitutionalCrossValidation;
+};
+
+/** Mirrors services/sentinel `MarketBehaviourRead`. */
+export type MarketBehaviourRead = {
+  regime: string | null;
+  structure: {
+    state: 'uptrend' | 'downtrend' | 'range' | 'undefined';
+    event: 'break-of-structure' | 'change-of-character' | null;
+    eventDirection: 'bullish' | 'bearish' | null;
+    lastSwingHigh: number | null;
+    lastSwingLow: number | null;
+  };
+  liquidity: {
+    pools: { price: number; side: 'above' | 'below'; touches: number; swept: boolean }[];
+    recentSweep: { side: 'above' | 'below'; price: number; reclaimed: boolean } | null;
+  };
+  behaviour: {
+    read: 'continuation' | 'reversal-risk' | 'indecision' | 'undefined';
+    direction: 'bullish' | 'bearish' | 'neutral';
+    strength: number;
+  };
+  narrative: string;
+  evidence: string[];
+};
+
+/** Mirrors services/sentinel `LifecycleStatus`. */
+export type StrategyLifecycle = {
+  strategyId: string;
+  strategyName: string;
+  state: string;
+  label: string;
+  bias: 'bullish' | 'bearish' | 'neutral';
+  reason: string;
+  evidence: string[];
+  changed: boolean;
+  enteredAt: string;
+  history: { state: string; at: string; reason: string }[];
+};
+
+/** Mirrors services/sentinel `ChartAnnotation`. */
+export type ChartAnnotation = {
+  id: string;
+  kind: string;
+  label: string;
+  points: { time: number; price: number }[];
+  band: { top: number; bottom: number } | null;
+  pane: string;
+  style: { color: string; width: number; dash: string; opacity: number };
+  explanation: string;
+  triggeredBy: { ruleId: string; ruleName: string; origin: string; conditionMet: string };
+  confidence: number;
+};
+
+/** Mirrors services/sentinel `InstitutionalCrossValidation`. */
+export type InstitutionalCrossValidation = {
+  dimensions: {
+    id: string;
+    label: string;
+    stance: 'bullish' | 'bearish' | 'neutral' | 'abstain';
+    strength: number;
+    evidence: string;
+  }[];
+  consensus: 'bullish' | 'bearish' | 'neutral' | null;
+  voting: number;
+  agreeing: number;
+  dissenting: string[];
+  abstaining: string[];
+  agreementScore: number;
+  summary: string;
+};
+
+/** Mirrors `PublicationDecision` in services/sentinel/src/orchestrator/publication-gate.ts. */
+export type PublicationCondition = {
+  id: string;
+  label: string;
+  passed: boolean;
+  detail: string;
+};
+
+export type PublicationDecision = {
+  publish: boolean;
+  threshold: number;
+  confidence: number;
+  conditions: PublicationCondition[];
+  corroboratingSources: string[];
+  conflicts: string[];
+  waitAndWatchReason: string | null;
 };
 export type SessionSummaryData = { tradesToday: number; flaggedEvents: number; realizedPnl: number };
 export type JournalEntry = { id: string; mood?: string | null; content: string; flaggedByAi: boolean; createdAt: string };

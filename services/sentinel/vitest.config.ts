@@ -36,6 +36,27 @@ export default defineConfig({
       // The reasoning-engine merge point: does the orchestrator correctly
       // judge agreement with SentinelIntelligence's cached background verdict.
       'src/orchestrator/cross-validation.spec.ts',
+      // The publication gate: the four conditions that decide whether anything
+      // reaches a trader at all. Confidence alone never publishes.
+      'src/orchestrator/publication-gate.spec.ts',
+      // Phase 2 — market structure, liquidity behaviour and the
+      // continuation/reversal read that Sentinel reasons about.
+      'src/intelligence/market-structure.spec.ts',
+      // Phase 3 — the per-strategy lifecycle machine and option-chain context.
+      'src/strategy/strategy-lifecycle.spec.ts',
+      // Phase 4 — the learned per-regime reliability arithmetic.
+      'src/improvement/adaptive-calibration.spec.ts',
+      // Phase 5 — reasoning rendered as chart annotations.
+      'src/sentinel-intelligence/visual/reasoning-annotations.spec.ts',
+      // Phase 6 — do the independent evidence dimensions agree, and which
+      // ones have no data at all.
+      'src/orchestrator/institutional-cross-validation.spec.ts',
+      // The market clock. This file existed for months but was never in this
+      // allowlist, so its assertions — including the pinned KNOWN-GAP ones
+      // recording that the clock is day-of-week and holiday blind — never
+      // executed. Added during the pre-live-validation pass: an untested clock
+      // is not something to take into a live session.
+      'src/market-clock.spec.ts',
     ],
     environment: 'node',
     // Deterministic and clock-injected throughout: a slow test is a real hang,

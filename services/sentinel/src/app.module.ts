@@ -40,8 +40,11 @@ import {
 import { ComplianceService } from './compliance/compliance.service';
 import { ConfidenceEngine } from './confidence/confidence.engine';
 import { ExplainService } from './explain/explain.service';
+import { AdaptiveCalibrationService } from './improvement/adaptive-calibration.service';
 import { ContinuousImprovementService } from './improvement/continuous-improvement.service';
 import { EmotionIntelligenceService } from './intelligence/emotion-intelligence.service';
+import { MarketBehaviourService } from './intelligence/market-behaviour.service';
+import { StrategyLifecycleService } from './strategy/strategy-lifecycle.service';
 import { MARKET_DATA, MarketIntelligenceService } from './intelligence/market-intelligence.service';
 import { NewsIntelligenceService } from './intelligence/news-intelligence.service';
 import { RiskIntelligenceService } from './intelligence/risk-intelligence.service';
@@ -161,14 +164,17 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
     // MarketDataProvider is injected by token — swapping simulation for
     // historical/NSE/BSE/Dhan later changes only this one binding (Q6).
     //
-    // Now bound to CandleMarketDataProvider: real persisted `Candle` history
-    // (backfilled from Dhan) for getCandles when rows exist, and the shared
-    // @tradew/market-data simulator for everything else and as the fallback.
-    // This is the seam finally carrying real data — Trap Detection and every
-    // candle-derived signal run on real market history for backfilled symbols,
-    // while an un-backfilled symbol or an absent Postgres degrades cleanly to
-    // simulation so Sentinel never loses the ability to observe (PrismaService
-    // fault-tolerance). The old standalone simulator file is preserved at
+    // Bound to CandleMarketDataProvider, which is REAL DATA ONLY. Resolution
+    // order is: the Dhan live-feed bridge (SENTINEL_LIVE_FEED_URL), then the
+    // persisted `Candle` table, then nothing — it raises
+    // MarketDataUnavailableError (HTTP 503) rather than substituting
+    // simulated bars.
+    //
+    // NOTE: this comment previously described a simulator fallback. That tier
+    // was REMOVED on 2026-07-26 because a complete, confident-looking
+    // observation built on invented candles is worse than no observation, and
+    // nothing in the response marked it as fabricated. The old standalone
+    // simulator file is preserved at
     // archive/sentinel-sim-market-data.provider.ts.txt per CLAUDE.md Rule 1.
     { provide: MARKET_DATA, useClass: CandleMarketDataProvider },
     // ---- Sentinel Intelligence Core (SENTINEL_MASTER_PLAN.md §4) ----
@@ -178,6 +184,8 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
     // served by the Brain providers below, and Module 10 (Vocabulary) is a
     // pure module applied by the orchestrator and explain service.
     MarketIntelligenceService,
+    MarketBehaviourService,
+    StrategyLifecycleService,
     EmotionIntelligenceService,
     TrapIntelligenceService,
     NewsIntelligenceService,
@@ -188,6 +196,7 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
     MarketTimelineEngine,
     MarketCloseAnalysisService,
     ContinuousImprovementService,
+    AdaptiveCalibrationService,
     ComplianceService,
     SentinelOrchestratorService,
     ExplainService,

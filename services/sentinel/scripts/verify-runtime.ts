@@ -64,6 +64,9 @@ function syntheticCandles(interval: CandleInterval, from: Date, to: Date): Candl
 }
 
 const marketDataStub: MarketDataProvider = {
+  // Required by the interface. Named explicitly so anything that logs the
+  // provider name makes it obvious this is the harness, never a real feed.
+  name: 'verify-runtime-stub',
   async getCandles(_symbol: string, interval: CandleInterval, from: Date, to: Date): Promise<Candle[]> {
     return syntheticCandles(interval, from, to);
   },
@@ -178,6 +181,95 @@ async function main(): Promise<void> {
     serializes = false;
   }
   record('Integration: full observe response is JSON-serializable (survives proxy + fetch)', serializes);
+
+  // 8b. Phases 1–6 integration — every new layer must actually reach the wire.
+  // These assert on the REAL orchestrator response, not on unit fixtures, so a
+  // service that resolves in DI but is never called still fails here.
+
+  // Phase 1 — the four-condition publication gate.
+  const pub = (auto as Record<string, any>).publication;
+  record('Phase 1: publication decision present on every observation', !!pub);
+  record(
+    'Phase 1: gate reports all four conditions plus the state check',
+    Array.isArray(pub?.conditions) && pub.conditions.length === 5,
+  );
+  record(
+    'Phase 1: Wait and Watch names its binding constraint',
+    pub?.publish === true || (typeof pub?.waitAndWatchReason === 'string' && pub.waitAndWatchReason.length > 0),
+  );
+  record(
+    'Phase 1: threshold is floored at the canonical 70 and never lowered by a request',
+    typeof pub?.threshold === 'number' && pub.threshold >= 70,
+  );
+
+  // Phase 2 — market behaviour understanding.
+  const behaviour = (auto as Record<string, any>).marketBehaviour;
+  record('Phase 2: market behaviour read present', !!behaviour);
+  record(
+    'Phase 2: structure, liquidity and behaviour all reported',
+    !!behaviour?.structure && !!behaviour?.liquidity && !!behaviour?.behaviour,
+  );
+  record('Phase 2: behaviour read carries a narrative', typeof behaviour?.narrative === 'string');
+
+  // Phase 3 — per-strategy lifecycle.
+  const lifecycles = (auto as Record<string, any>).strategyLifecycles;
+  record('Phase 3: per-strategy lifecycles present', Array.isArray(lifecycles));
+  record(
+    'Phase 3: every lifecycle explains the state it is in',
+    Array.isArray(lifecycles) && lifecycles.every((l: any) => typeof l.reason === 'string' && l.reason.length > 0),
+  );
+  record(
+    'Phase 3: no lifecycle reaches Side in Focus without the gate clearing',
+    !Array.isArray(lifecycles) ||
+      pub?.publish === true ||
+      lifecycles.every((l: any) => l.state !== 'SIDE_IN_FOCUS'),
+  );
+
+  // Phase 5 — reasoning rendered as chart annotations.
+  const annotations = (auto as Record<string, any>).chartAnnotations;
+  record('Phase 5: chart annotations present', Array.isArray(annotations));
+  record(
+    'Phase 5: every annotation explains itself and names what triggered it',
+    Array.isArray(annotations) &&
+      annotations.every((a: any) => a.explanation?.length > 0 && a.triggeredBy?.ruleId?.length > 0),
+  );
+
+  // Phase 6 — the institutional cross-validation matrix.
+  const icv = (auto as Record<string, any>).institutionalCrossValidation;
+  record('Phase 6: institutional cross-validation present', !!icv);
+  record(
+    'Phase 6: all five evidence dimensions are accounted for',
+    Array.isArray(icv?.dimensions) && icv.dimensions.length === 5,
+  );
+  record(
+    'Phase 6: dimensions with no data abstain rather than voting neutral',
+    Array.isArray(icv?.dimensions) &&
+      icv.dimensions.every((d: any) => (d.stance === 'abstain' ? d.strength === 0 : true)),
+  );
+  // NOTE: this harness stubs MARKET_DATA with a provider that DOES publish a
+  // chain, so option-chain votes here. Against the real
+  // CandleMarketDataProvider (getOptionChain returns []) it abstains. The
+  // invariant that must hold in both worlds is the one asserted: a dimension
+  // either voted with real evidence, or abstained with a stated reason —
+  // never a silent neutral standing in for missing data.
+  record(
+    'Phase 6: every dimension either votes with evidence or abstains with a reason',
+    Array.isArray(icv?.dimensions) &&
+      icv.dimensions.every((d: any) => typeof d.evidence === 'string' && d.evidence.length > 0),
+  );
+  record(
+    'Phase 6: consensus is computed only over dimensions that actually voted',
+    typeof icv?.voting === 'number' &&
+      icv.voting === icv.dimensions.filter((d: any) => d.stance !== 'abstain').length &&
+      icv.agreeing <= icv.voting,
+  );
+
+  // Compliance across every new surface at once.
+  const newSurfaces = JSON.stringify({ pub, behaviour, lifecycles, annotations, icv });
+  record(
+    'Compliance: no buy/sell/exit directive language in any Phase 1–6 output',
+    !/\bbuy\b|\bsell\b|\bexit\b|\bstop ?loss\b|\btake profit\b/i.test(newSurfaces),
+  );
 
   // 9. Registry endpoint exposes ONLY allowed strategies (exposed flag honoured).
   const registryExposedOnly = registry.list({ exposedOnly: true }).every((s) => s.exposed);

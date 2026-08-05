@@ -179,7 +179,11 @@ async function main(): Promise<void> {
     }
   } else {
     const provider = new SimulatedMarketDataProvider();
-    candles = await provider.getCandles(symbol, interval, from, to);
+    // Same cast the DB path above already applies: `interval` is a raw CLI
+    // string. Kept as a cast rather than promoted to validation because this
+    // is a developer backtest harness and throwing on a typo would be a
+    // behaviour change during the pre-live-validation freeze.
+    candles = await provider.getCandles(symbol, interval as CandleInterval, from, to);
     dataSource = provider.name;
   }
 

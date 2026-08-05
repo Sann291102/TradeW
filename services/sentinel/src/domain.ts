@@ -161,6 +161,28 @@ export interface SideInFocus {
   rationale: string[];
   tradeManagement: TradeManagementGuidance;
   disclaimer: string;
+  /**
+   * Phase 3 — the option-chain context this structural read concerns.
+   *
+   * Naming the contract a read is ABOUT is context; instructing a trader to
+   * transact in it is a directive. This object carries no entry, target, stop
+   * or size — there is no field for them, so the boundary is structural rather
+   * than conventional. `unavailable` is true whenever no chain is published,
+   * in which case every numeric field except `atmStrike` is null.
+   */
+  optionContext?: {
+    underlying: string;
+    atmStrike: number | null;
+    focusStrike: number | null;
+    side: 'CE' | 'PE';
+    pcr: number | null;
+    maxPain: number | null;
+    callOIWall: number | null;
+    putOIWall: number | null;
+    notes: string[];
+    unavailable: boolean;
+    unavailableReason: string | null;
+  };
 }
 
 // ---------------------------------------------------------------- Module 1
@@ -411,6 +433,131 @@ export interface ObserveResponse {
     /** Which of SentinelIntelligence's gates held, when `surfaced` is false. */
     silenceReason: string | null;
   } | null;
+  /**
+   * The four-condition publication gate's full record for this observation.
+   *
+   * Present whether or not anything was published: when `publish` is false,
+   * `waitAndWatchReason` names the binding constraint and `conditions` shows
+   * every check that ran. This is what makes Wait and Watch explainable
+   * rather than merely silent.
+   *
+   * Structurally mirrors `PublicationDecision` in
+   * `orchestrator/publication-gate.ts`, declared inline here for the same
+   * reason `CrossValidationConcept` is — `domain.ts` must not depend on a
+   * module that depends on it.
+   */
+  publication?: {
+    publish: boolean;
+    threshold: number;
+    confidence: number;
+    conditions: { id: string; label: string; passed: boolean; detail: string }[];
+    corroboratingSources: string[];
+    conflicts: string[];
+    waitAndWatchReason: string | null;
+  };
+  /**
+   * Phase 2 — what the market is *doing*, as opposed to what its indicators
+   * read. Structure (higher highs / lower lows, breaks of structure and
+   * changes of character), resting and swept liquidity, and a
+   * continuation-vs-reversal read, each carrying its own evidence.
+   *
+   * Descriptive only: `read: 'reversal-risk'` names present structural
+   * evidence, never a forecast — Master Plan principle 2 forbids predicting
+   * where price will be.
+   */
+  marketBehaviour?: {
+    regime: string | null;
+    structure: {
+      state: 'uptrend' | 'downtrend' | 'range' | 'undefined';
+      event: 'break-of-structure' | 'change-of-character' | null;
+      eventDirection: 'bullish' | 'bearish' | null;
+      lastSwingHigh: number | null;
+      lastSwingLow: number | null;
+    };
+    liquidity: {
+      pools: { price: number; side: 'above' | 'below'; touches: number; swept: boolean }[];
+      recentSweep: { side: 'above' | 'below'; price: number; reclaimed: boolean } | null;
+    };
+    behaviour: {
+      read: 'continuation' | 'reversal-risk' | 'indecision' | 'undefined';
+      direction: 'bullish' | 'bearish' | 'neutral';
+      strength: number;
+    };
+    narrative: string;
+    evidence: string[];
+  };
+  /**
+   * Phase 3 — where each strategy sits in its own lifecycle.
+   *
+   * Distinct from `marketState`, which describes the SESSION. With several
+   * strategies pinned at once they are rarely at the same stage, and one
+   * global label has to describe all of them — so it describes none.
+   */
+  strategyLifecycles?: {
+    strategyId: string;
+    strategyName: string;
+    state: string;
+    label: string;
+    bias: 'bullish' | 'bearish' | 'neutral';
+    reason: string;
+    evidence: string[];
+    changed: boolean;
+    enteredAt: string;
+    history: { state: string; at: string; reason: string }[];
+  }[];
+  /**
+   * Phase 5 — every element used in Sentinel's reasoning, as chart drawings:
+   * swing structure, liquidity pools and sweeps, support/resistance, the
+   * opening range, and each confirmed strategy's area and invalidation level.
+   *
+   * Shaped as `ChartAnnotation` from `sentinel-intelligence/types` so the
+   * TradingView Charting Library binding has one contract to render. Typed
+   * loosely here for the same reason `CrossValidationConcept` is duplicated —
+   * `domain.ts` must not depend on a module that depends on it.
+   *
+   * Every entry carries `explanation`, `triggeredBy` and `confidence` by
+   * construction: there is no code path that produces an unexplained drawing.
+   */
+  chartAnnotations?: {
+    id: string;
+    kind: string;
+    label: string;
+    points: { time: number; price: number }[];
+    band: { top: number; bottom: number } | null;
+    pane: string;
+    style: { color: string; width: number; dash: string; opacity: number };
+    explanation: string;
+    triggeredBy: { ruleId: string; ruleName: string; origin: string; conditionMet: string };
+    confidence: number;
+  }[];
+  /**
+   * Phase 6 — whether the independent evidence dimensions agree.
+   *
+   * Distinct from `crossValidation`, which asks whether the second reasoning
+   * ENGINE agrees. This asks whether technicals, structure, option
+   * positioning, historical outcomes and the news environment agree with each
+   * other — the question an institutional desk actually asks.
+   *
+   * A dimension with no data ABSTAINS rather than voting neutral, so
+   * `abstaining` shows how much of the picture is dark. Purely informational:
+   * `publication` remains the only authority on what surfaces.
+   */
+  institutionalCrossValidation?: {
+    dimensions: {
+      id: string;
+      label: string;
+      stance: 'bullish' | 'bearish' | 'neutral' | 'abstain';
+      strength: number;
+      evidence: string;
+    }[];
+    consensus: 'bullish' | 'bearish' | 'neutral' | null;
+    voting: number;
+    agreeing: number;
+    dissenting: string[];
+    abstaining: string[];
+    agreementScore: number;
+    summary: string;
+  };
   /** individual agent observations (Observation Feed / Agent Activity Timeline) */
   observations: SentinelObservationOut[];
   /** every computed signal, triggered or not (Agent Activity Timeline transparency) */

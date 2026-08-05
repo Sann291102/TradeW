@@ -41,6 +41,20 @@ export class PatternRecognitionService {
             priceAtDetection: lastPrice,
             detectedAt: new Date().toISOString(),
             outcome: null,
+            /**
+             * Phase 4 — the regime this occurrence happened in, so
+             * `AdaptiveCalibrationService` can measure a strategy separately
+             * per regime. Master Plan Module 12's own example is that ORB
+             * retests work in trending markets and poorly in ranges; without
+             * this field both are pooled and the strategy reads as mediocre
+             * everywhere instead of good somewhere.
+             *
+             * Null for writers that do not supply it (and for every
+             * occurrence recorded before this existed) — those are bucketed
+             * as 'unknown' rather than dropped, because they are still real
+             * outcomes.
+             */
+            regime: (signal.data as { regime?: string | null } | undefined)?.regime ?? null,
           },
         });
       }

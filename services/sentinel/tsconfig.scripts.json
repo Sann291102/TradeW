@@ -4,5 +4,12 @@
     "noEmit": true,
     "types": ["node"]
   },
+  // The base tsconfig excludes `scripts`, and `exclude` is INHERITED through
+  // `extends` — it silently overrode the `include` below, so this project
+  // typechecked zero script files despite listing them. The harnesses run
+  // under `ts-node -T` (transpile only), so nothing else caught their type
+  // errors either: a breaking change to a service signature surfaced as a
+  // runtime assertion failure, or not at all.
+  "exclude": ["node_modules", "dist"],
   "include": ["scripts/**/*.ts", "src/**/*.ts"]
 }

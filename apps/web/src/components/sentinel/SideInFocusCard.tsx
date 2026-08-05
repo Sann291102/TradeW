@@ -1,7 +1,7 @@
 'use client';
 
 import { cn } from '@tradew/ui';
-import type { SideInFocus } from '@/lib/sentinel/types';
+import type { PublicationDecision, SideInFocus } from '@/lib/sentinel/types';
 import { HourglassIcon } from './sentinel-icons';
 
 /**
@@ -86,19 +86,61 @@ export function SideInFocusCard({ focus }: { focus: SideInFocus }) {
 }
 
 /** Neutral placeholder shown when no side clears the confidence threshold. */
-export function WaitingForConfirmation() {
+/**
+ * Wait and Watch, with its reasoning.
+ *
+ * Silence is a designed output state, but silence without a reason teaches
+ * nothing. When the backend supplies the publication decision, this shows the
+ * binding constraint and every condition that was checked — so a trader can
+ * see *which* piece of evidence is missing rather than being told only that
+ * something is.
+ *
+ * Falls back to the generic copy when `publication` is absent, so an older
+ * backend or a failed secondary fetch degrades rather than breaks.
+ */
+export function WaitingForConfirmation({ publication }: { publication?: PublicationDecision }) {
+  const failed = publication?.conditions.filter((c) => !c.passed) ?? [];
+  const met = publication?.conditions.filter((c) => c.passed) ?? [];
+
   return (
-    <section className="flex items-start gap-3.5 rounded-2xl border border-border bg-card p-5 shadow-elev2 sm:p-6">
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-teal-bg text-teal">
-        <HourglassIcon className="h-5 w-5" />
-      </span>
-      <div className="min-w-0">
-        <h2 className="text-[13.5px] font-bold text-text">Waiting for stronger confirmation</h2>
-        <p className="mt-1 text-[12px] leading-relaxed text-muted">
-          No side has cleared the confidence threshold yet. Sentinel stays quiet on purpose — it surfaces a side only
-          when the evidence genuinely corroborates, never on a weak read.
-        </p>
+    <section className="rounded-2xl border border-border bg-card p-5 shadow-elev2 sm:p-6">
+      <div className="flex items-start gap-3.5">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-teal-bg text-teal">
+          <HourglassIcon className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-[13.5px] font-bold text-text">Wait and Watch</h2>
+          <p className="mt-1 text-[12px] leading-relaxed text-muted">
+            {publication?.waitAndWatchReason ??
+              'No side has cleared the publication gate yet. Sentinel stays quiet on purpose — it surfaces a side only when the evidence genuinely corroborates, never on a weak read.'}
+          </p>
+        </div>
       </div>
+
+      {publication && (
+        <dl className="mt-4 space-y-2 border-t border-border pt-4">
+          {[...failed, ...met].map((condition) => (
+            <div key={condition.id} className="flex items-start gap-2.5">
+              <span
+                aria-hidden
+                className={cn(
+                  'mt-[3px] flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
+                  condition.passed ? 'bg-up-bg text-up' : 'bg-down-bg text-down',
+                )}
+              >
+                {condition.passed ? '✓' : '·'}
+              </span>
+              <div className="min-w-0">
+                <dt className={cn('text-[12px] font-semibold', condition.passed ? 'text-text' : 'text-down')}>
+                  {condition.label}
+                  <span className="sr-only">{condition.passed ? ' — met' : ' — not met'}</span>
+                </dt>
+                <dd className="text-[11.5px] leading-relaxed text-muted">{condition.detail}</dd>
+              </div>
+            </div>
+          ))}
+        </dl>
+      )}
     </section>
   );
 }

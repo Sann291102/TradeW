@@ -36,8 +36,25 @@ export const CONFIDENCE_WEIGHTS = {
 
 export type ConfidenceFactorName = keyof typeof CONFIDENCE_WEIGHTS;
 
-/** The Master Plan's default gate. Overridable per request by the trader. */
-export const DEFAULT_CONFIDENCE_THRESHOLD = 85;
+/**
+ * The default confidence bar.
+ *
+ * Lowered from the Master Plan's original fixed 85% to the canonical 70%
+ * publication threshold. The 85 was doing filtering that structural checks
+ * should do: it suppressed genuinely corroborated setups for being 84%
+ * certain while still, in principle, admitting an 86% score assembled mostly
+ * from factors reporting "no data".
+ *
+ * Confidence is now one of four conditions rather than the whole gate — see
+ * `orchestrator/publication-gate.ts`, which additionally requires every
+ * mandatory strategy confirmation, an absence of conflicting evidence, and
+ * corroboration across independent reasoning modules. Quality comes from
+ * corroboration, not from an artificially high percentage.
+ *
+ * Overridable per request, but the publication gate floors any request at 70:
+ * a trader may demand more evidence, never less.
+ */
+export const DEFAULT_CONFIDENCE_THRESHOLD = 70;
 
 export interface ConfidenceInput {
   snapshot: MarketSnapshot;

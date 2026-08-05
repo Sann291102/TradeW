@@ -30,11 +30,22 @@ import {
 } from '../domain';
 import { ExplainService } from '../explain/explain.service';
 import { EmotionIntelligenceService } from '../intelligence/emotion-intelligence.service';
+import { MarketBehaviourService, type MarketBehaviourRead } from '../intelligence/market-behaviour.service';
 import { MarketIntelligenceService, MarketSnapshot } from '../intelligence/market-intelligence.service';
 import { NewsIntelligenceService } from '../intelligence/news-intelligence.service';
 import { RiskIntelligenceService } from '../intelligence/risk-intelligence.service';
 import { StrategyDetection, StrategyEngineService } from '../intelligence/strategy-engine.service';
 import { TrapIntelligenceService } from '../intelligence/trap-intelligence.service';
+import {
+  GUIDANCE_STATES,
+  PublicationDecision,
+  evaluatePublication,
+} from './publication-gate';
+import { buildInstitutionalCrossValidation } from './institutional-cross-validation';
+import { buildReasoningAnnotations } from '../sentinel-intelligence/visual/reasoning-annotations';
+import { AdaptiveCalibrationService } from '../improvement/adaptive-calibration.service';
+import { buildOptionContext } from '../strategy/option-context';
+import { StrategyLifecycleService } from '../strategy/strategy-lifecycle.service';
 import { MarketStateMachineService, StateEvaluation } from '../state-machine/state-machine.service';
 import { MarketTimelineEngine, RecordInput } from '../timeline/timeline.engine';
 import { enforceVocabulary, statusHeadline } from '../vocabulary/vocabulary';
@@ -112,6 +123,9 @@ export class SentinelOrchestratorService {
     private readonly emotion: EmotionIntelligenceService,
     private readonly traps: TrapIntelligenceService,
     private readonly news: NewsIntelligenceService,
+    private readonly behaviour: MarketBehaviourService,
+    private readonly lifecycle: StrategyLifecycleService,
+    private readonly calibration: AdaptiveCalibrationService,
     private readonly strategies: StrategyEngineService,
     private readonly risk: RiskIntelligenceService,
     private readonly confidence: ConfidenceEngine,
@@ -205,7 +219,35 @@ export class SentinelOrchestratorService {
       )),
       ...(await trackAgent('news', () => this.news.signals(symbol), { detail: `newswire scan — ${symbol}` })),
     ];
-    const detections = this.strategies.scan(snapshot, at);
+    // ---- Phase 2 — market behaviour understanding -----------------------
+    // Structure, liquidity and continuation/reversal, composed from the
+    // snapshot already fetched. Emitted as signals so it reaches the
+    // confidence engine, the activity timeline and the publication gate
+    // through the paths that already exist.
+    const behaviourRead = await trackAgent(
+      'market-technical',
+      async () => this.behaviour.analyse(snapshot),
+      { detail: 'reading structure, liquidity and market behaviour' },
+    );
+    signals.push(...this.behaviour.signals(behaviourRead));
+
+    const rawDetections = this.strategies.scan(snapshot, at);
+
+    // ---- Phase 4 — apply learned per-regime reliability ------------------
+    // A strategy that has repeatedly failed in this regime contributes less
+    // confidence than the same rule match in a regime where it works. Scaling
+    // only — a poorly-performing strategy is never suppressed, because a
+    // silenced strategy can never demonstrate that it recovered, and hiding it
+    // would also remove it from the trader's own judgement.
+    const detections = rawDetections.map((detection) => {
+      const calibration = this.calibration.reliabilityFor(detection.strategyId, behaviourRead.regime);
+      if (!calibration || calibration.successRate === null) return detection;
+      return {
+        ...detection,
+        confidence: Math.max(0, Math.min(100, detection.confidence * calibration.reliability)),
+        rulesMatched: [...detection.rulesMatched, `Learned calibration: ${calibration.rationale}`],
+      };
+    });
     signals.push(...strategySignals(detections));
 
     // ---- Module 6, then Module 7 ---------------------------------------
@@ -266,7 +308,7 @@ export class SentinelOrchestratorService {
     emitAgentActivity('compliance-audit', 'thinking', { detail: `labelling ${observations.length} observations` });
 
     // ---- what, if anything, is worth saying -----------------------------
-    const { synthesis, crossValidation } = await trackAgent(
+    const { synthesis, crossValidation, publication } = await trackAgent(
       'orchestrator',
       () =>
         this.decide({
@@ -279,6 +321,7 @@ export class SentinelOrchestratorService {
           confidence,
           stateEval,
           historical,
+          behaviour: behaviourRead,
           sessionKey,
           at,
         }),
@@ -355,11 +398,109 @@ export class SentinelOrchestratorService {
       confidence,
       snapshot,
       state: currentState,
+      // One authority on what surfaces. See `StrategyAdvisorService.sideInFocus`.
+      publication,
     });
+
+    // ---- Phase 3 — option-chain context on the surfaced side -------------
+    // Attached only when a side is actually in focus. Building it for a read
+    // that was never surfaced would put a strike in the response that nothing
+    // in the UI is entitled to show.
+    if (sideInFocus) {
+      sideInFocus.optionContext = buildOptionContext(snapshot, sideInFocus.bias);
+    }
+
+    // ---- Phase 3 — advance each strategy's own lifecycle -----------------
+    // Runs after the publication decision so SIDE_IN_FOCUS is reachable only
+    // by a strategy that actually cleared the gate, never by rule match alone.
+    const strategyLifecycles = await this.lifecycle.advance({
+      sessionKey,
+      symbol,
+      detections,
+      publishedStrategyId: publication.publish ? (detections[0]?.strategyId ?? null) : null,
+      behaviour: {
+        read: behaviourRead.behaviour.read,
+        direction: behaviourRead.behaviour.direction,
+        strength: behaviourRead.behaviour.strength,
+      },
+      lastPrice: snapshot.lastPrice,
+      regime: behaviourRead.regime,
+      at,
+    });
+
+    // ---- Phase 6 — do the independent evidence dimensions agree? --------
+    // Transparency, never a sixth gate: the four-condition publication gate
+    // remains the only authority on what reaches a trader. Hoisted out of the
+    // response literal so the observation log below reads the same object the
+    // response carries, rather than recomputing it.
+    const institutionalCrossValidation = buildInstitutionalCrossValidation({
+      leadingBias: detections[0]?.bias ?? snapshot.trendAnalysis?.direction ?? 'neutral',
+      signals,
+      optionChain: snapshot.optionChain,
+      historical,
+      behaviour: {
+        read: behaviourRead.behaviour.read,
+        direction: behaviourRead.behaviour.direction,
+        strength: behaviourRead.behaviour.strength,
+      },
+      lastPrice: snapshot.lastPrice,
+    });
+
+    // ---- live-validation observability ----------------------------------
+    // One structured line per observation, covering every event the live
+    // validation needs to capture: detections, the publication decision and
+    // its binding constraint, the confidence figure, lifecycle transitions,
+    // and whether an outcome reached the Brain. Instrumentation only — it
+    // reads state that was already computed and changes nothing.
+    //
+    // Set SENTINEL_OBSERVATION_LOG=false to silence it.
+    if (process.env.SENTINEL_OBSERVATION_LOG !== 'false') {
+      const transitions = strategyLifecycles.filter((l) => l.changed);
+      this.logger.log(
+        `OBSERVE ${symbol} | state=${stateEval.snapshot.current}` +
+          ` confidence=${confidence.score}/${confidence.threshold}` +
+          ` published=${publication.publish}` +
+          (publication.publish ? '' : ` blockedBy=${publication.conditions.find((c) => !c.passed)?.id ?? 'unknown'}`) +
+          ` corroboration=${publication.corroboratingSources.length}` +
+          ` conflicts=${publication.conflicts.length}` +
+          ` detections=[${detections.map((d) => `${d.strategyId}:${d.validated ? 'validated' : 'forming'}`).join(',') || 'none'}]` +
+          ` structure=${behaviourRead.structure.state}` +
+          `/${behaviourRead.structure.event ?? 'no-event'}` +
+          ` behaviour=${behaviourRead.behaviour.read}@${behaviourRead.behaviour.strength}` +
+          ` regime=${behaviourRead.regime ?? 'unclassified'}` +
+          ` consensus=${institutionalCrossValidation.consensus ?? 'none'}` +
+          `(${institutionalCrossValidation.agreeing}/${institutionalCrossValidation.voting},` +
+          `abstain=${institutionalCrossValidation.abstaining.length})` +
+          ` lifecycleChanges=[${transitions.map((t) => `${t.strategyId}→${t.state}`).join(',') || 'none'}]` +
+          ` sideInFocus=${sideInFocus ? sideInFocus.side : 'null'}`,
+      );
+    }
 
     return {
       synthesis,
       crossValidation,
+      publication,
+      marketBehaviour: {
+        regime: behaviourRead.regime,
+        structure: {
+          state: behaviourRead.structure.state,
+          event: behaviourRead.structure.event,
+          eventDirection: behaviourRead.structure.eventDirection,
+          lastSwingHigh: behaviourRead.structure.lastSwingHigh?.price ?? null,
+          lastSwingLow: behaviourRead.structure.lastSwingLow?.price ?? null,
+        },
+        liquidity: {
+          pools: behaviourRead.liquidity.pools.slice(0, 5),
+          recentSweep: behaviourRead.liquidity.recentSweep,
+        },
+        behaviour: {
+          read: behaviourRead.behaviour.read,
+          direction: behaviourRead.behaviour.direction,
+          strength: behaviourRead.behaviour.strength,
+        },
+        narrative: behaviourRead.narrative,
+        evidence: behaviourRead.evidence,
+      },
       observations,
       signals,
       marketContext,
@@ -373,6 +514,23 @@ export class SentinelOrchestratorService {
       strategyAdvice,
       strategyAdvices,
       sideInFocus,
+      strategyLifecycles,
+      institutionalCrossValidation,
+      // ---- Phase 5 — every element used in the reasoning, as chart drawings.
+      // Uses the existing `ChartAnnotation` contract so the TradingView
+      // Charting Library binding, when it lands, has one shape to render and
+      // one audit guarantee to honour.
+      chartAnnotations: buildReasoningAnnotations({
+        symbol,
+        candles: snapshot.candles ?? [],
+        behaviour: behaviourRead,
+        lifecycles: strategyLifecycles,
+        support: snapshot.support,
+        resistance: snapshot.resistance,
+        openingRange: snapshot.openingRange
+          ? { high: snapshot.openingRange.high, low: snapshot.openingRange.low }
+          : null,
+      }),
     };
   }
 
@@ -391,11 +549,15 @@ export class SentinelOrchestratorService {
     confidence: ConfidenceBreakdown;
     stateEval: StateEvaluation;
     historical: HistoricalSimilarityResult | null;
+    behaviour: MarketBehaviourRead;
     sessionKey: string;
     at: Date;
-  }): Promise<{ synthesis: ObserveResponse['synthesis']; crossValidation: ObserveResponse['crossValidation'] }> {
+  }): Promise<{
+    synthesis: ObserveResponse['synthesis'];
+    crossValidation: ObserveResponse['crossValidation'];
+    publication: PublicationDecision;
+  }> {
     const state = ctx.stateEval.snapshot.current;
-    const guidanceStates = ['SIDE_IN_FOCUS', 'OPPORTUNITY_ACTIVE', 'MOVE_DEVELOPING', 'MOMENTUM_WEAKENING', 'MOVE_COMPLETE'];
 
     // Read-only, zero-latency: SentinelIntelligence's own background watch
     // already computed and gated this, or hasn't reasoned about this symbol
@@ -405,8 +567,26 @@ export class SentinelOrchestratorService {
     const leadingPatternId = ctx.detections[0]?.strategyId ?? null;
     const crossValidation = buildCrossValidation(backgroundRun, leadingBias, leadingPatternId);
 
-    // --- confidence-gated market guidance (Master Plan principle 3) ------
-    if (ctx.confidence.meetsThreshold && guidanceStates.includes(state)) {
+    // --- the four-condition publication gate -----------------------------
+    // Confidence alone never publishes. See `publication-gate.ts` for why the
+    // threshold is fixed while the weights feeding it adapt.
+    const publication = evaluatePublication({
+      state,
+      confidence: ctx.confidence,
+      detections: ctx.detections,
+      marketProfile: ctx.snapshot.marketProfile,
+      historical: ctx.historical,
+      crossValidation,
+      behaviour: {
+        read: ctx.behaviour.behaviour.read,
+        direction: ctx.behaviour.behaviour.direction,
+        strength: ctx.behaviour.behaviour.strength,
+        structureState: ctx.behaviour.structure.state,
+      },
+      requestedThreshold: ctx.confidence.threshold,
+    });
+
+    if (publication.publish) {
       const leading = ctx.detections[0];
       const content = await this.composeGuidance(
         ctx.symbol,
@@ -434,6 +614,7 @@ export class SentinelOrchestratorService {
           state,
         },
         crossValidation,
+        publication,
       };
     }
 
@@ -465,10 +646,25 @@ export class SentinelOrchestratorService {
           state,
         },
         crossValidation,
+        publication,
       };
     }
 
-    return { synthesis: null, crossValidation };
+    // --- Wait and Watch --------------------------------------------------
+    // Nothing cleared. Record WHY on the timeline so the session narrative
+    // shows the evidence that was missing, not just an absence of guidance.
+    if (!publication.publish && publication.waitAndWatchReason && GUIDANCE_STATES.includes(state)) {
+      this.timeline.record(ctx.sessionKey, {
+        event: publication.waitAndWatchReason,
+        level: 'observation',
+        confidence: ctx.confidence.score,
+        state,
+        at: ctx.at,
+        dedupeKey: `wait:${state}:${publication.conditions.find((c) => !c.passed)?.id ?? 'unknown'}`,
+      });
+    }
+
+    return { synthesis: null, crossValidation, publication };
   }
 
   /** Module 8 — the session narrative entries this observation produced. */
