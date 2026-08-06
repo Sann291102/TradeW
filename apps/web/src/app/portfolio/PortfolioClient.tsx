@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Card, EmptyState, Skeleton, StatCard } from '@tradew/ui';
-import { inr, sign } from '@/lib/format';
+import { Card, EmptyState } from '@tradew/ui';
+
 import {
   type HoldingDto,
   type PortfolioSummary,
@@ -96,57 +96,29 @@ export function PortfolioClient() {
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-4 p-4">
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatPreview summary={summary} />
-      </section>
+      <PortfolioSubNav active={section} onChange={setSection} />
 
-      <div className="flex flex-col gap-4 lg:flex-row">
-        <PortfolioSubNav active={section} onChange={setSection} />
+      <div className="min-w-0">
+        {error && (
+          <p role="alert" className="mb-3 rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
+            {error}
+          </p>
+        )}
 
-        <div className="min-w-0 flex-1">
-          {error && (
-            <p role="alert" className="mb-3 rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
-              {error}
-            </p>
-          )}
-
-          <Card title={SECTION_TITLES[section]}>
-            {section === 'overview' && <OverviewSection summary={summary} />}
-            {section === 'holdings' && <HoldingsSection holdings={holdings} error={error} onChanged={load} />}
-            {section === 'positions' && <PositionsSection positions={positions} error={error} onChanged={load} />}
-            {section === 'orders' && <OrdersSection />}
-            {section === 'trade-history' && <TradeHistorySection />}
-            {section === 'performance' && <PerformanceSection />}
-          </Card>
-        </div>
+        <Card title={SECTION_TITLES[section]}>
+          {section === 'overview' && <OverviewSection summary={summary} />}
+          {section === 'holdings' && <HoldingsSection holdings={holdings} error={error} onChanged={load} />}
+          {section === 'positions' && <PositionsSection positions={positions} error={error} onChanged={load} />}
+          {section === 'orders' && <OrdersSection />}
+          {section === 'trade-history' && <TradeHistorySection />}
+          {section === 'performance' && <PerformanceSection />}
+        </Card>
       </div>
     </div>
   );
 }
 
-/** Compact always-visible header stats, independent of which section is
- *  open — the four figures a trader checks first on any broker portfolio
- *  page, per the reference layout. Full seven-tile breakdown lives in the
- *  Overview section itself. */
-function StatPreview({ summary }: { summary: PortfolioSummary | null }) {
-  if (!summary) {
-    return (
-      <>
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-20 w-full" />
-        ))}
-      </>
-    );
-  }
-  return (
-    <>
-      <StatCard label="Current Value" value={inr(summary.currentValue, 2)} />
-      <StatCard label="Today's P&L" value={`${sign(summary.dailyPnl)}${inr(Math.abs(summary.dailyPnl), 2)}`} />
-      <StatCard label="Overall P&L" value={`${sign(summary.overallPnl)}${inr(Math.abs(summary.overallPnl), 2)}`} />
-      <StatCard label="Available Balance" value={inr(summary.availableBalance, 2)} />
-    </>
-  );
-}
+
 
 /** `isSignedIn` reads localStorage, which does not exist during SSR; reading it
  *  in render would make server and client HTML disagree. Same pattern the order

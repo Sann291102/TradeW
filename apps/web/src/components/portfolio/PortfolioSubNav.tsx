@@ -23,22 +23,33 @@ const SECTIONS: Array<{ id: PortfolioSection; label: string }> = [
  */
 export function PortfolioSubNav({ active, onChange }: { active: PortfolioSection; onChange: (s: PortfolioSection) => void }) {
   return (
-    <nav aria-label="Portfolio sections" className="flex gap-1 overflow-x-auto lg:w-44 lg:shrink-0 lg:flex-col lg:overflow-visible">
-      {SECTIONS.map((s) => (
+    <nav aria-label="Portfolio sections" className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-card p-1.5 border border-border/80">
+      <div className="flex items-center gap-1 overflow-x-auto">
+        {SECTIONS.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => onChange(s.id)}
+            aria-current={active === s.id ? 'page' : undefined}
+            className={cn(
+              'shrink-0 rounded-md px-3.5 py-1.5 text-xs font-bold transition-colors duration-micro',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+              active === s.id ? 'bg-teal-bg text-teal' : 'text-muted hover:bg-hover hover:text-text',
+            )}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-2 pr-1">
         <button
-          key={s.id}
           type="button"
-          onClick={() => onChange(s.id)}
-          aria-current={active === s.id ? 'page' : undefined}
-          className={cn(
-            'shrink-0 rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors duration-micro',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
-            active === s.id ? 'bg-teal-bg text-teal' : 'text-muted hover:bg-hover hover:text-text',
-          )}
+          className="flex items-center gap-1.5 rounded-md border border-border2 bg-bg px-2.5 py-1.5 text-xs font-semibold text-text hover:bg-hover transition-colors"
         >
-          {s.label}
+          <span className="text-faint">📥</span>
+          <span>Download Report</span>
         </button>
-      ))}
+      </div>
     </nav>
   );
 }

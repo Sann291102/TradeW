@@ -78,8 +78,8 @@ export function SentinelLiveCharts({
     };
   }, [fullScreen]);
 
-  const indexHeight = fullScreen ? 620 : 340;
-  const optionHeight = fullScreen ? 300 : 158;
+  const indexHeight = fullScreen ? 620 : 415;
+  const optionHeight = fullScreen ? 300 : 192;
 
   const { candles: indexCandles, status: indexStatus, reason: indexReason } = useCandles(symbol, INDEX_INTERVAL, INDEX_DAYS);
   const { quotes: liveIndices } = useDhanLiveFeed();

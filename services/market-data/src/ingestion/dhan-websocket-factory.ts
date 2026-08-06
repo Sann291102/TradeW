@@ -1,5 +1,7 @@
-import WebSocket from 'ws';
+import * as WS from 'ws';
 import type { WebSocketFactory, WebSocketLike } from '@tradew/market-data';
+
+const WebSocket = (WS as any).default || WS;
 
 /**
  * Real transport for `DhanMarketFeed`. `packages/market-data` stays

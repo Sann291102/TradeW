@@ -10,7 +10,7 @@ import { useCandles } from '@/lib/hooks/useCandles';
 import { fmt } from '@/lib/format';
 
 type AssetTab = 'indices' | 'stocks' | 'fo' | 'commodities';
-type Range = '1D' | '1W' | '1M' | '1Y' | '5Y';
+type Range = '5m' | '15m' | '1H' | '1D' | '1W' | '1M' | '1Y';
 type ChartType = 'line' | 'candles';
 
 const ASSET_TABS: { key: AssetTab; label: string }[] = [
@@ -20,14 +20,16 @@ const ASSET_TABS: { key: AssetTab; label: string }[] = [
   { key: 'commodities', label: 'Commodities' },
 ];
 
-const RANGES: Range[] = ['1D', '1W', '1M', '1Y', '5Y'];
+const RANGES: Range[] = ['5m', '15m', '1H', '1D', '1W', '1M', '1Y'];
 
 const RANGE_CONFIG: Record<Range, { interval: CandleInterval; days: number; intervalMinutes?: number }> = {
-  '1D': { interval: '5m', days: 1, intervalMinutes: 5 },
-  '1W': { interval: '1h', days: 7, intervalMinutes: 60 },
-  '1M': { interval: '1d', days: 30 },
-  '1Y': { interval: '1d', days: 365 },
-  '5Y': { interval: '1d', days: 1825 },
+  '5m': { interval: '5m', days: 5, intervalMinutes: 5 },
+  '15m': { interval: '15m', days: 15, intervalMinutes: 15 },
+  '1H': { interval: '1h', days: 60, intervalMinutes: 60 },
+  '1D': { interval: '1d', days: 365 },
+  '1W': { interval: '1d', days: 730 },
+  '1M': { interval: '1d', days: 1825 },
+  '1Y': { interval: '1d', days: 3650 },
 };
 
 const INDEX_SYMBOLS = [

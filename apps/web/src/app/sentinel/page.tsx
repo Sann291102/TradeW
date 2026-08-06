@@ -90,21 +90,21 @@ export default function SentinelPage() {
     const fault =
       unavailable.kind === 'unauthenticated'
         ? {
-            title: 'Not signed in',
-            detail: 'Sentinel runs its observation against your account. Sign in to get a live read — no sample analysis is shown in the meantime.',
-          }
+          title: 'Not signed in',
+          detail: 'Sentinel runs its observation against your account. Sign in to get a live read — no sample analysis is shown in the meantime.',
+        }
         : unavailable.kind === 'api-unreachable'
           ? {
-              title: 'API not connected',
-              detail: `The TradeW API could not be reached, so no observation could be run for ${market.name}. Start services/api (port 4000) and reload.`,
-            }
+            title: 'API not connected',
+            detail: `The TradeW API could not be reached, so no observation could be run for ${market.name}. Start services/api (port 4000) and reload.`,
+          }
           : {
-              title: 'Sentinel service not connected',
-              detail: `The API answered but Sentinel could not complete the observation (HTTP ${unavailable.status}: ${unavailable.message}). Check that services/sentinel is running on port 4010.`,
-            };
+            title: 'Sentinel service not connected',
+            detail: `The API answered but Sentinel could not complete the observation (HTTP ${unavailable.status}: ${unavailable.message}). Check that services/sentinel is running on port 4010.`,
+          };
 
     return (
-      <div className="min-h-full bg-bg">
+      <div className="bg-bg">
         <main className="mx-auto max-w-[1600px] space-y-5 px-4 py-5 sm:px-6 sm:py-6">
           <SentinelHeader
             premium={hasCapability('sentinel')}
@@ -152,7 +152,7 @@ export default function SentinelPage() {
   const sourceLabel = 'live market data';
 
   return (
-    <div className="min-h-full bg-bg">
+    <div className="bg-bg">
       <main className="mx-auto max-w-[1600px] space-y-5 px-4 py-5 sm:px-6 sm:py-6">
         <SentinelHeader
           premium={hasCapability('sentinel')}
@@ -177,11 +177,12 @@ export default function SentinelPage() {
         <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
           <div className="min-w-0 space-y-5">
             <DayClassificationCard day={day} lastUpdated={lastUpdated} explanation={data?.explanation} />
-            <SentinelLiveCharts symbol={symbol} marketName={market.name} ceStrike={ceStrike} peStrike={peStrike} />
             <MarketContextPanel tags={tags} dimensions={dimensions} />
+            <SentinelLiveCharts symbol={symbol} marketName={market.name} ceStrike={ceStrike} peStrike={peStrike} />
           </div>
 
           <div className="min-w-0 space-y-5">
+            <LiveSafetyFeed cards={pushworthyCards(safetyCards)} />
             <StrategySelector
               mode={strategyMode}
               selectedStrategyIds={selectedStrategyIds}
@@ -193,16 +194,15 @@ export default function SentinelPage() {
             ) : (
               <WaitingForConfirmation publication={data?.publication} />
             )}
-            <MarketReasoningPanel
-              behaviour={data?.marketBehaviour}
-              lifecycles={data?.strategyLifecycles}
-              crossValidation={data?.institutionalCrossValidation}
-            />
-            <LiveSafetyFeed cards={pushworthyCards(safetyCards)} />
-            <ContextualTraining title={lesson.title} blurb={lesson.blurb} />
             <SentinelTimeline cards={safetyCards} entries={data?.timeline} />
           </div>
         </div>
+
+        <MarketReasoningPanel
+          behaviour={data?.marketBehaviour}
+          lifecycles={data?.strategyLifecycles}
+          crossValidation={data?.institutionalCrossValidation}
+        />
 
         <p className="pb-6 text-center text-[11px] text-faint">
           Sentinel observes market context and behavior in parallel. It never executes trades and never gives buy,

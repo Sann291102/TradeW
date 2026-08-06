@@ -4,10 +4,17 @@
 
 /* Design tokens (@tradew/ui/styles.css) are imported in layout.tsx before this
  * file, so the CSS custom properties below already exist. */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
   font-family: theme('fontFamily.sans');
+  font-size: 17px; /* Increased by +3px baseline from 14px */
   transition: background var(--dur-panel) var(--ease-standard);
 }
 

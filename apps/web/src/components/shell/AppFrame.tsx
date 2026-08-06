@@ -101,7 +101,7 @@ export function AppFrame({ children }: { children: ReactNode }) {
               initial={reduce ? false : { opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-              className="h-full"
+              className=""
             >
               {children}
             </motion.div>

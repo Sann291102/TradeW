@@ -9,6 +9,14 @@
 	email {$ACME_EMAIL}
 }
 
+# www -> apex. Kept as a separate site block so the apex stays the single
+# canonical origin: cookies set on the apex do not apply to www, so serving
+# both as equals would let a user be logged in on one and not the other.
+# Caddy provisions a cert for this name too, so it also needs a DNS A record.
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
+}
+
 {$DOMAIN} {
 	encode zstd gzip
 

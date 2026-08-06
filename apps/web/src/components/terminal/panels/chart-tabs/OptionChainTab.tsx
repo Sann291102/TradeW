@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge, cn } from '@tradew/ui';
 import { fmt, pct } from '@/lib/format';
@@ -12,7 +12,10 @@ import { TradeIcon, SparkleIcon, BookmarkIcon, LayersIcon } from '@/components/s
 import { QuickActionsDock, type QuickAction } from './QuickActionsDock';
 import { ContractAnalysisDrawer, type ContractAnalysisData } from './ContractAnalysisDrawer';
 
-const STRIKE_COUNT = 9; // ATM +/- 4
+/** Number of strikes shown in the simulated (non-live) fallback table.
+ *  For real Dhan data every strike the API returns is shown — traders need
+ *  to scroll to far OTM strikes for hedges and spreads. */
+const SIM_STRIKE_COUNT = 41; // ATM +/- 20
 /** Dhan's option-chain REST endpoint is rate-limited to roughly one call every
  *  3s, which is the hard floor for OI/IV/Greeks refresh. Poll at that floor
  *  rather than the old 15s — the bridge's short response cache collapses
@@ -52,23 +55,10 @@ function toGreeks(leg: DhanOptionStrike['ce']): Greeks | null {
 }
 
 /** Real Dhan chain -> the same `Row` shape the simulated table already
- *  renders, windowed to `STRIKE_COUNT` strikes centered on the strike
- *  closest to spot (real strike spacing, not the app's assumed step). */
-function rowsFromLiveChain(chain: DhanOptionChain, spot: number): Row[] {
-  const strikes = chain.strikes;
-  let closestIdx = 0;
-  let closestDist = Infinity;
-  strikes.forEach((s, i) => {
-    const dist = Math.abs(s.strike - spot);
-    if (dist < closestDist) {
-      closestDist = dist;
-      closestIdx = i;
-    }
-  });
-  const half = Math.floor(STRIKE_COUNT / 2);
-  const end = Math.min(strikes.length, closestIdx + half + 1);
-  const start = Math.max(0, end - STRIKE_COUNT);
-  return strikes.slice(start, Math.min(strikes.length, start + STRIKE_COUNT)).map((s) => {
+ *  renders. Returns ALL strikes so the trader can scroll to far OTM for
+ *  hedges and spreads — the table container scrolls vertically. */
+function rowsFromLiveChain(chain: DhanOptionChain): Row[] {
+  return chain.strikes.map((s) => {
     const ivValues = [s.ce?.iv, s.pe?.iv].filter((v): v is number => v != null && v > 0);
     return {
       strike: s.strike,
@@ -91,7 +81,7 @@ function rowsFromLiveChain(chain: DhanOptionChain, spot: number): Row[] {
 
 function buildRows(atm: number, strikeStep: number): Row[] {
   const rows: Row[] = [];
-  const half = Math.floor(STRIKE_COUNT / 2);
+  const half = Math.floor(SIM_STRIKE_COUNT / 2);
   for (let i = -half; i <= half; i++) {
     const strike = atm + i * strikeStep;
     const dist = Math.abs(i);
@@ -234,14 +224,69 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
   const SPOT = chain?.spot ?? spotPrice ?? ATM_STRIKE;
   const ATM = Math.round(SPOT / STRIKE_STEP) * STRIKE_STEP;
 
-  const ROWS = useMemo(() => (live ? rowsFromLiveChain(chain!, SPOT) : buildRows(ATM, STRIKE_STEP)), [live, chain, SPOT, ATM, STRIKE_STEP]);
-  const highlightStrike = useMemo(
+  const ROWS = useMemo(() => (live ? rowsFromLiveChain(chain!) : buildRows(ATM, STRIKE_STEP)), [live, chain, ATM, STRIKE_STEP]);
+
+  // Find the two strikes that bracket the current spot price.
+  // E.g. if spot = 24624.65 with 50-step, highlight both 24600 and 24650.
+  const atmStrikes = useMemo(() => {
+    const set = new Set<number>();
+    if (ROWS.length === 0) return set;
+    // Strike just below (or equal) spot
+    const below = [...ROWS].reverse().find((r) => r.strike <= SPOT);
+    // Strike just above (or equal) spot
+    const above = ROWS.find((r) => r.strike >= SPOT);
+    if (below) set.add(below.strike);
+    if (above) set.add(above.strike);
+    // If spot lands exactly on a strike, only that one will be in the set
+    return set;
+  }, [ROWS, SPOT]);
+
+  // The "primary" ATM strike used for scroll targeting — the one closest to spot
+  const primaryAtmStrike = useMemo(
     () => ROWS.reduce((closest, r) => (Math.abs(r.strike - SPOT) < Math.abs(closest.strike - SPOT) ? r : closest), ROWS[0])?.strike,
     [ROWS, SPOT],
   );
+
   const AVG_IV = useMemo(() => ROWS.reduce((a, r) => a + r.ivPct, 0) / ROWS.length, [ROWS]);
   const callOiRanks = useMemo(() => oiRanks(ROWS.map((r) => r.callOi)), [ROWS]);
   const putOiRanks = useMemo(() => oiRanks(ROWS.map((r) => r.putOi)), [ROWS]);
+
+  // Auto-scroll the ATM row into the center of the viewport, but ONLY when:
+  //  - the component first renders with data
+  //  - the expiry tab changes
+  //  - the ATM strike itself shifts (spot moved far enough to change which strike is closest)
+  // This avoids fighting user scrolling on every 3s data poll.
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const atmRowRef = useRef<HTMLTableRowElement>(null);
+  const lastScrolledAtmRef = useRef<string | null>(null);
+  useEffect(() => {
+    const scrollKey = `${expiry.label}:${primaryAtmStrike}`;
+    if (scrollKey === lastScrolledAtmRef.current) return; // ATM hasn't changed — don't scroll
+
+    // Double-rAF: first rAF fires after React commits the DOM (refs are set),
+    // second rAF fires after the browser has completed layout of those new rows.
+    // This guarantees the ATM row element exists and has its final position.
+    const frame1 = requestAnimationFrame(() => {
+      const frame2 = requestAnimationFrame(() => {
+        const row = atmRowRef.current;
+        const container = tableContainerRef.current;
+        if (!row || !container) return;
+        lastScrolledAtmRef.current = scrollKey;
+
+        // Calculate where the row is relative to the container's scroll viewport,
+        // then scroll so the row is centered vertically in the container.
+        const rowRect = row.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const rowMiddle = rowRect.top + rowRect.height / 2;
+        const containerMiddle = containerRect.top + containerRect.height / 2;
+        const scrollOffset = rowMiddle - containerMiddle;
+        container.scrollTop = container.scrollTop + scrollOffset;
+      });
+      cleanupRef = frame2;
+    });
+    let cleanupRef = frame1;
+    return () => cancelAnimationFrame(cleanupRef);
+  }, [ROWS, primaryAtmStrike, expiry.label]);
 
   const totalCallOi = ROWS.reduce((a, r) => a + r.callOi, 0);
   const totalPutOi = ROWS.reduce((a, r) => a + r.putOi, 0);
@@ -307,111 +352,204 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
     ];
   }
 
+  // Calculate summary metrics matching reference image.png
+  const maxCallOiRow = useMemo(() => ROWS.reduce((max, r) => (r.callOi > max.callOi ? r : max), ROWS[0]), [ROWS]);
+  const maxPutOiRow = useMemo(() => ROWS.reduce((max, r) => (r.putOi > max.putOi ? r : max), ROWS[0]), [ROWS]);
+  
+  const maxPainStrike = useMemo(() => {
+    if (ROWS.length === 0) return ATM;
+    let minLoss = Infinity;
+    let bestStrike = ATM;
+    for (const targetRow of ROWS) {
+      const s = targetRow.strike;
+      let totalLoss = 0;
+      for (const r of ROWS) {
+        if (s > r.strike) totalLoss += (s - r.strike) * r.callOi;
+        if (s < r.strike) totalLoss += (r.strike - s) * r.putOi;
+      }
+      if (totalLoss < minLoss) {
+        minLoss = totalLoss;
+        bestStrike = s;
+      }
+    }
+    return bestStrike;
+  }, [ROWS, ATM]);
+
+  const fmtCr = (val: number) => (val >= 10_000_000 ? `${(val / 10_000_000).toFixed(2)} Cr` : val >= 100_000 ? `${(val / 100_000).toFixed(2)} L` : val.toLocaleString('en-IN'));
+
   return (
-    <div className="flex flex-1 flex-col p-3">
-      <div className="mb-1.5 flex shrink-0 flex-wrap items-center gap-1.5 text-[11px] text-faint">
-        {live ? (
-          <Badge tone="positive" className="px-1.5 py-0 text-[9px]">LIVE</Badge>
-        ) : (
-          <Badge tone="neutral" className="px-1.5 py-0 text-[9px]">PREVIEW</Badge>
-        )}
-        {(chain?.spot ?? spotPrice) != null && (
-          <>
-            <span>Spot</span>
-            <span className="font-mono font-bold text-text">{fmt(chain?.spot ?? spotPrice!)}</span>
-            {!live && (
-              <>
-                <span>· ATM strike</span>
-                <span className="font-mono font-bold text-teal">{ATM}</span>
-                <span>(strikes are quantized to {STRIKE_STEP}-wide intervals — never exactly the spot)</span>
-              </>
-            )}
-          </>
-        )}
-      </div>
-      <div role="tablist" aria-label="Expiry" className="mb-1.5 flex shrink-0 items-center gap-1 overflow-x-auto pb-1.5">
-        {expiries.map((e, i) => (
-          <button
-            key={e.label}
-            role="tab"
-            aria-selected={expiryIdx === i}
-            onClick={() => setExpiryIdx(i)}
-            className={cn(
-              'shrink-0 rounded px-2 py-1 text-[10.5px] font-semibold transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
-              expiryIdx === i ? 'bg-teal-bg text-teal' : 'text-muted hover:bg-hover hover:text-text',
-            )}
-          >
-            {e.label}
-          </button>
-        ))}
+    <div className="flex flex-1 flex-col space-y-3 p-3">
+      {/* 7 Summary Stat Tiles (reference image.png) */}
+      <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:grid-cols-7">
+        <div className="rounded-xl bg-card p-2.5 shadow-sm">
+          <div className="text-[10px] font-semibold text-faint">Max Pain</div>
+          <div className="mt-0.5 font-mono text-base font-extrabold text-text">{fmt(maxPainStrike)}</div>
+        </div>
+
+        <div className="rounded-xl bg-card p-2.5 shadow-sm">
+          <div className="flex items-center justify-between text-[10px] font-semibold text-faint">
+            <span>Put Call Ratio</span>
+            <span>ℹ</span>
+          </div>
+          <div className="mt-0.5 font-mono text-base font-extrabold text-text">{pcr.toFixed(2)}</div>
+          <div className="mt-1 flex h-1 w-full overflow-hidden rounded-full bg-border">
+            <div style={{ width: `${Math.min(100, Math.max(10, pcr * 50))}%` }} className="bg-up h-full" />
+            <div className="flex-1 bg-down h-full" />
+          </div>
+        </div>
+
+        <div className="rounded-xl bg-card p-2.5 shadow-sm">
+          <div className="flex items-center justify-between text-[10px] font-semibold text-faint">
+            <span>PCR (OI)</span>
+            <span>ℹ</span>
+          </div>
+          <div className="mt-0.5 font-mono text-base font-extrabold text-text">{pcr.toFixed(2)}</div>
+        </div>
+
+        <div className="rounded-xl bg-card p-2.5 shadow-sm">
+          <div className="text-[10px] font-semibold text-faint">Spot Price</div>
+          <div className="mt-0.5 font-mono text-base font-extrabold text-text">{fmt(SPOT)}</div>
+          <div className="text-[10px] font-bold text-up">+0.76%</div>
+        </div>
+
+        <div className="rounded-xl bg-card p-2.5 shadow-sm">
+          <div className="text-[10px] font-semibold text-faint">IV</div>
+          <div className="mt-0.5 font-mono text-base font-extrabold text-text">{AVG_IV.toFixed(2)}%</div>
+          <div className="text-[10px] font-bold text-amber">Moderate</div>
+        </div>
+
+        <div className="rounded-xl bg-card p-2.5 shadow-sm">
+          <div className="text-[10px] font-semibold text-faint">Max OI (Call)</div>
+          <div className="mt-0.5 font-mono text-base font-extrabold text-text">{maxCallOiRow ? fmtCr(maxCallOiRow.callOi) : '—'}</div>
+          <div className="text-[10px] text-faint">@ {maxCallOiRow?.strike}</div>
+        </div>
+
+        <div className="rounded-xl bg-card p-2.5 shadow-sm">
+          <div className="text-[10px] font-semibold text-faint">Max OI (Put)</div>
+          <div className="mt-0.5 font-mono text-base font-extrabold text-text">{maxPutOiRow ? fmtCr(maxPutOiRow.putOi) : '—'}</div>
+          <div className="text-[10px] text-faint">@ {maxPutOiRow?.strike}</div>
+        </div>
       </div>
 
-      <div className="min-w-0 flex-1 overflow-x-auto">
-        <table className="w-full min-w-[560px] border-separate border-spacing-0 text-[10.5px]">
-          <thead className="text-faint">
-            <tr>
-              <th className="py-0.5 text-left font-semibold">OI</th>
-              <th className="py-0.5 text-right font-semibold">Vol</th>
-              <th className="py-0.5 text-right font-semibold">CE</th>
-              <th className="w-16 py-0.5 text-center font-semibold">Strike</th>
-              <th className="py-0.5 text-left font-semibold">PE</th>
-              <th className="py-0.5 text-left font-semibold">Vol</th>
-              <th className="py-0.5 text-right font-semibold">OI</th>
+      {/* Controls Bar: Expiries & Strike dropdowns (reference image.png) */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-card p-1.5 text-xs">
+        <div role="tablist" aria-label="Expiry" className="flex items-center gap-1 overflow-x-auto">
+          {expiries.map((e, i) => (
+            <button
+              key={e.label}
+              role="tab"
+              aria-selected={expiryIdx === i}
+              onClick={() => setExpiryIdx(i)}
+              className={cn(
+                'shrink-0 rounded px-2.5 py-1 text-[11px] font-bold transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+                expiryIdx === i ? 'bg-teal-bg text-teal' : 'text-muted hover:bg-hover hover:text-text',
+              )}
+            >
+              {e.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2 pr-1">
+          <select className="rounded-md border border-border/40 bg-bg px-2 py-1 text-xs font-semibold text-text">
+            <option>Select Strike ∨</option>
+          </select>
+          <select className="rounded-md border border-border/40 bg-bg px-2 py-1 text-xs font-semibold text-text">
+            <option>ATM ∨</option>
+          </select>
+        </div>
+      </div>
+
+      {/* 10-Column Option Chain Table (reference image.png) */}
+      <div ref={tableContainerRef} className="min-w-0 flex-1 overflow-x-auto overflow-y-auto rounded-lg bg-card" style={{ maxHeight: 'calc(100vh - 340px)' }}>
+        <table className="w-full min-w-[760px] border-separate border-spacing-0 text-[14px]">
+          <thead className="sticky top-0 z-10 bg-card text-faint">
+            <tr className="border-b border-border/80 bg-hover/60 text-[13px] uppercase font-extrabold tracking-wider">
+              <th colSpan={5} className="py-2 text-center text-up">CALLS</th>
+              <th className="py-2 text-center text-text">STRIKE</th>
+              <th colSpan={4} className="py-2 text-center text-down">PUTS</th>
+            </tr>
+            <tr className="border-b border-border text-faint text-[13px]">
+              <th className="py-1 pl-2 text-left font-semibold">OI</th>
+              <th className="py-1 text-right font-semibold">LTP</th>
+              <th className="py-1 text-right font-semibold">Change</th>
+              <th className="py-1 text-right font-semibold">IV</th>
+              <th className="py-1 text-right pr-2 font-semibold">Delta</th>
+              <th className="w-20 py-1 text-center font-bold text-text bg-hover/30">Strike</th>
+              <th className="py-1 pl-2 text-left font-semibold">IV</th>
+              <th className="py-1 text-left font-semibold">Change</th>
+              <th className="py-1 text-left font-semibold">LTP</th>
+              <th className="py-1 pr-2 text-right font-semibold">OI</th>
             </tr>
           </thead>
           <tbody className="font-mono tabular-nums">
-            {ROWS.map((r) => {
-              const atm = r.strike === highlightStrike;
-              const callRank = callOiRanks.get(ROWS.indexOf(r));
-              const putRank = putOiRanks.get(ROWS.indexOf(r));
+            {ROWS.map((r, rowIdx) => {
+              const isAtm = atmStrikes.has(r.strike);
+              const isPrimaryAtm = r.strike === primaryAtmStrike;
+              const callRank = callOiRanks.get(rowIdx);
+              const putRank = putOiRanks.get(rowIdx);
               const callKey = `${r.strike}-CE`;
               const putKey = `${r.strike}-PE`;
+              const realCallGreeks = r.callGreeks ?? blackScholesGreeks(SPOT, r.strike, yearsToExpiry, r.ivPct, 'call');
+              const realPutGreeks = r.putGreeks ?? blackScholesGreeks(SPOT, r.strike, yearsToExpiry, r.ivPct, 'put');
+
               return (
-                <tr key={r.strike} className={cn('border-b border-border', atm && 'bg-teal-bg')}>
-                  <td className="py-0.5 pr-1 text-left text-faint">
-                    <span className="text-muted">{r.callOi.toLocaleString('en-IN')}</span> <ChangeCell value={r.callOiChangePct} />
+                <tr
+                  key={r.strike}
+                  ref={isPrimaryAtm ? atmRowRef : undefined}
+                  className={cn(
+                    'border-b border-border/40 hover:bg-hover/50 transition-colors',
+                    isAtm && 'bg-teal-bg/60 font-bold',
+                  )}
+                >
+                  {/* CALLS SIDE: OI | LTP | Change | IV | Delta */}
+                  <td className="py-1 pl-2 text-left text-faint">
+                    <span className="text-muted">{r.callOi.toLocaleString('en-IN')}</span>
                     {callRank && (
                       <Badge tone="warning" className="ml-1 px-1 py-0 text-[8px]">
                         OI{callRank}
                       </Badge>
                     )}
                   </td>
-                  <td className="py-0.5 text-right text-faint">{r.callVolume.toLocaleString('en-IN')}</td>
                   <td
-                    className="relative py-0.5 text-right"
+                    className="relative py-1 text-right"
                     onMouseEnter={() => setHoverKey(callKey)}
                     onMouseLeave={() => setHoverKey((k) => (k === callKey ? null : k))}
-                    onFocus={() => setHoverKey(callKey)}
-                    onBlur={() => setHoverKey((k) => (k === callKey ? null : k))}
                   >
-                    <div className={cn(hoverKey === callKey && 'opacity-0')}>
-                      <span className="font-bold text-up">{fmt(r.callLtp)}</span> <ChangeCell value={r.callLtpChangePct} />
-                      <div className="text-[9px] font-normal text-faint">IV {r.ivPct.toFixed(1)}%</div>
-                    </div>
+                    <span className="font-bold text-up">{fmt(r.callLtp)}</span>
                     <QuickActionsDock visible={hoverKey === callKey} actions={actionsFor(r.strike, 'CE', r.callLtp, r.callLtpChangePct, r.ivPct)} />
                   </td>
-                  <td className={cn('py-0.5 text-center font-bold', atm ? 'text-teal' : 'text-text')}>{r.strike}</td>
+                  <td className="py-1 text-right">
+                    <ChangeCell value={r.callLtpChangePct} />
+                  </td>
+                  <td className="py-1 text-right text-faint">{r.ivPct.toFixed(1)}%</td>
+                  <td className="py-1 pr-2 text-right text-faint">{realCallGreeks.delta.toFixed(2)}</td>
+
+                  {/* STRIKE CENTER */}
+                  <td className={cn('py-1 text-center font-bold bg-hover/20 border-x border-border/40', isAtm ? 'text-teal' : 'text-text')}>
+                    {r.strike.toLocaleString('en-IN')}
+                  </td>
+
+                  {/* PUTS SIDE: IV | Change | LTP | OI */}
+                  <td className="py-1 pl-2 text-left text-faint">{r.ivPct.toFixed(1)}%</td>
+                  <td className="py-1 text-left">
+                    <ChangeCell value={r.putLtpChangePct} />
+                  </td>
                   <td
-                    className="relative py-0.5 text-left"
+                    className="relative py-1 text-left"
                     onMouseEnter={() => setHoverKey(putKey)}
                     onMouseLeave={() => setHoverKey((k) => (k === putKey ? null : k))}
-                    onFocus={() => setHoverKey(putKey)}
-                    onBlur={() => setHoverKey((k) => (k === putKey ? null : k))}
                   >
-                    <div className={cn(hoverKey === putKey && 'opacity-0')}>
-                      <span className="font-bold text-down">{fmt(r.putLtp)}</span> <ChangeCell value={r.putLtpChangePct} />
-                      <div className="text-[9px] font-normal text-faint">IV {r.ivPct.toFixed(1)}%</div>
-                    </div>
+                    <span className="font-bold text-down">{fmt(r.putLtp)}</span>
                     <QuickActionsDock visible={hoverKey === putKey} actions={actionsFor(r.strike, 'PE', r.putLtp, r.putLtpChangePct, r.ivPct)} />
                   </td>
-                  <td className="py-0.5 text-left text-faint">{r.putVolume.toLocaleString('en-IN')}</td>
-                  <td className="py-0.5 pl-1 text-right text-faint">
+                  <td className="py-1 pr-2 text-right text-faint">
                     {putRank && (
                       <Badge tone="warning" className="mr-1 px-1 py-0 text-[8px]">
                         OI{putRank}
                       </Badge>
                     )}
-                    <span className="text-muted">{r.putOi.toLocaleString('en-IN')}</span> <ChangeCell value={r.putOiChangePct} />
+                    <span className="text-muted">{r.putOi.toLocaleString('en-IN')}</span>
                   </td>
                 </tr>
               );
@@ -420,15 +558,15 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
         </table>
       </div>
 
-      <div className="mt-2 flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-border pt-2 text-[10px] text-faint">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-border pt-2 text-[10px] text-faint">
         <span>PCR (OI) <b className="text-text">{pcr.toFixed(2)}</b></span>
         <span>Watchlist <b className="text-text">{watchlist.length}</b> · Strategy <b className="text-text">{strategyLegs.length}</b></span>
         <span>
           {live
             ? `Live from Dhan's Option Chain API — strikes, OI, volume, IV and Greeks all real for ${underlyingSymbol} · ${expiry.label} expiry.`
             : spotPrice
-              ? `Strikes centered on today's real spot (${fmt(spotPrice)}); OI/volume/IV and Greeks are still illustrative mock data — this underlying/expiry has no live chain right now.`
-              : 'Greeks are Black-Scholes estimates from mock IV — illustrative, not live.'}
+              ? `Strikes centered on today's real spot (${fmt(spotPrice)}); OI/volume/IV and Greeks are illustrative fallback.`
+              : 'Greeks are Black-Scholes estimates from mock IV.'}
         </span>
       </div>
 

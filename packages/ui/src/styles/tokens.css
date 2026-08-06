@@ -57,15 +57,15 @@
 
   /* typography scale — theme-invariant, defined once on :root and inherited by
    * every theme (dark/high-contrast only override color tokens, not these) */
-  --fs-2xs: 11px;
-  --fs-xs: 12px;
-  --fs-sm: 13px;
-  --fs-base: 14px;
-  --fs-md: 15px;
-  --fs-lg: 18px;
-  --fs-xl: 22px;
-  --fs-2xl: 28px;
-  --fs-3xl: 36px;
+  --fs-2xs: 14px;
+  --fs-xs: 15px;
+  --fs-sm: 16px;
+  --fs-base: 17px;
+  --fs-md: 18px;
+  --fs-lg: 21px;
+  --fs-xl: 25px;
+  --fs-2xl: 31px;
+  --fs-3xl: 39px;
   --lh-tight: 1.15;
   --lh-normal: 1.45;
   --tracking-tight: -0.01em;

@@ -120,7 +120,7 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      {/* user + collapse toggle — real session (Milestone 4, Step 1), not a static placeholder */}
+      {/* user + collapse toggle */}
       <div className="shrink-0 border-t border-border p-2">
         {sessionStatus === 'authenticated' && sessionUser ? (
           <Link
