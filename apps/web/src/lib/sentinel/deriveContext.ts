@@ -37,7 +37,14 @@ export type DayLabel =
   | 'Choppy Day'
   | 'Trap-Prone Day'
   | 'Quiet Day'
-  | 'Sit Out Day';
+  | 'Sit Out Day'
+  | 'Low Confidence';
+
+/** The floor every Sentinel-facing confidence figure must clear before it
+ *  drives what's shown or pushed — the hero classification, the Live Safety
+ *  Feed. Below this, Sentinel says so explicitly rather than asserting a
+ *  specific read it can't back. */
+export const SENTINEL_CONFIDENCE_FLOOR = 70;
 
 export interface DayClassification {
   label: DayLabel;
@@ -97,6 +104,12 @@ export const DAY_TYPES: DayTypeInfo[] = [
     summary: 'Multiple structural risks are active at once, alongside elevated volatility.',
     character: 'The hostile conditions corroborate each other rather than appearing in isolation — the session offers little that is readable, and standing aside is a position many experienced traders take on days like this.',
   },
+  {
+    label: 'Low Confidence',
+    summary: `Sentinel's read on today's session scored below the ${SENTINEL_CONFIDENCE_FLOOR}% bar it holds every classification to.`,
+    character: 'Rather than assert a specific day type it can’t back with enough evidence, Sentinel names what it was leaning toward and why that fell short — see "Why?" below.',
+    note: 'Shown whenever the underlying confidence score does not clear the bar, regardless of which day type scored highest.',
+  },
 ];
 
 const MARKET_TAG: Record<string, string> = {
@@ -148,7 +161,38 @@ const PROFILE_TO_DAY: Record<MarketProfileType, DayLabel> = {
   'Inside Day': 'Quiet Day',
 };
 
+/**
+ * Public entry point — wraps `classifyDayRaw` with the confidence floor
+ * every Sentinel-facing read must clear (SENTINEL_CONFIDENCE_FLOOR). Applied
+ * here rather than inside each branch of `classifyDayRaw` because only the
+ * server-driven profile branch carries a real, comparable confidence score;
+ * the signal-derived fallback branches compute their own local `avgWeight`
+ * on a different 0..1 scale that isn't the same claim being gated. When the
+ * server sent a real confidence breakdown and it falls short, the specific
+ * day type is demoted to 'Low Confidence' regardless of which branch
+ * produced it — the raw label survives only inside the explanation, as
+ * context for what Sentinel was leaning toward.
+ */
 export function classifyDay(
+  signals: Signal[],
+  profile?: MarketProfile | null,
+  confidence?: ConfidenceBreakdown,
+): DayClassification {
+  const raw = classifyDayRaw(signals, profile, confidence);
+  if (confidence && confidence.score < SENTINEL_CONFIDENCE_FLOOR) {
+    return {
+      label: 'Low Confidence',
+      confidence: confidence.score / 100,
+      explanation:
+        `Sentinel was leaning toward ${raw.label} (${confidence.score}% confidence against the ${SENTINEL_CONFIDENCE_FLOOR}% bar every classification is held to), ` +
+        `but that falls short of a call Sentinel will stand behind. ${raw.explanation}`,
+      supportingSignals: raw.supportingSignals,
+    };
+  }
+  return raw;
+}
+
+function classifyDayRaw(
   signals: Signal[],
   profile?: MarketProfile | null,
   confidence?: ConfidenceBreakdown,
@@ -334,28 +378,29 @@ export interface SafetyCardData {
    * Whether this warrants *pushing* to the Live Safety Feed right now, vs. only
    * living in the timeline/history. The feed is meant to fire when a genuine
    * setup or behavior is experienced — not to echo every routine market reading
-   * on every refresh. True for: the corroborated synthesis, any behavioral
-   * (emotion) or structural-risk (trap-safety) event, and only high-confidence
-   * market-technical readings. A lone overbought-RSI note is context (Market
-   * Context panel), not a safety push.
+   * on every refresh, AND every card the feed pushes must clear
+   * SENTINEL_CONFIDENCE_FLOOR, same as the hero classification. Reversed
+   * 2026-08-05: emotion/trap-safety/risk/orchestrator observations used to
+   * bypass any confidence check on the theory that "the agent only fires once
+   * something's elevated" made the number moot — in practice that let a 45%
+   * "Book & Breathe" push with the same visual weight as a well-corroborated
+   * one, which is exactly the "confident-looking low-confidence result" this
+   * threshold exists to prevent. A lone overbought-RSI note below the bar is
+   * context (Market Context panel), not a safety push, same as before.
    */
   pushworthy: boolean;
 }
 
-/** The bar for market-technical observations to reach the Live Safety Feed on
- *  their own — below this they are ambient context, not an event to push. */
+/** Market-technical/strategy readings need to clear this before reaching the
+ *  feed on their own — deliberately above SENTINEL_CONFIDENCE_FLOOR (a
+ *  routine indicator crossing a level is weaker evidence than a corroborated
+ *  behavioral or structural-risk event, so it earns a higher bar, not a
+ *  lower one). Every other agent uses SENTINEL_CONFIDENCE_FLOOR directly. */
 const MARKET_PUSH_THRESHOLD = 0.8;
 
 function isPushworthy(agent: string, confidence: number): boolean {
-  if (agent === 'emotion' || agent === 'trap-safety' || agent === 'orchestrator') return true;
-  // Risk Intelligence only emits a signal once a factor is already in the
-  // elevated band, so anything it produces is an event, not ambient context.
-  if (agent === 'risk') return true;
-  // A strategy observation only reaches the feed once its rules fully
-  // confirmed — a forming setup is context, not something to interrupt with.
-  if (agent === 'strategy') return confidence >= MARKET_PUSH_THRESHOLD;
-  if (agent === 'market-technical') return confidence >= MARKET_PUSH_THRESHOLD;
-  return false;
+  if (agent === 'strategy' || agent === 'market-technical') return confidence >= MARKET_PUSH_THRESHOLD;
+  return confidence >= SENTINEL_CONFIDENCE_FLOOR / 100;
 }
 
 const ACTION_MAP: Record<string, ActionLabel> = {
@@ -429,7 +474,13 @@ export function extractSafetyFeed(observations: Observation[], synthesis: Synthe
       evidence: [],
       source: SOURCE_LABEL.orchestrator,
       pinned: true,
-      pushworthy: true, // a corroborated synthesis is the canonical "push"
+      // Even the corroborated synthesis has to clear the same bar as
+      // everything else now — SentinelOrchestratorService's own composite
+      // gate requires compositeWeight >= 0.7 to create this card at all, but
+      // the DISPLAYED confidence it derives (compositeWeight/2 + 0.3) can
+      // read as low as 65% right at that gate. "Corroborated" describes how
+      // the number was built, not a reason to exempt it from the number.
+      pushworthy: synthesis.confidence >= SENTINEL_CONFIDENCE_FLOOR / 100,
     });
   }
 

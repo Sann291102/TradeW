@@ -20,6 +20,9 @@ const LABEL_TONE: Record<DayLabel, string> = {
   // the light theme's red (below AA for text this size). This keeps the vetted
   // text-down/bg-down-bg pairing and still reads as a step beyond Trap-Prone.
   'Sit Out Day': 'text-down border-down bg-down-bg ring-2 ring-inset ring-down',
+  // Deliberately the most muted tone on the scale, not a severity color —
+  // this isn't a market read, it's Sentinel declining to assert one.
+  'Low Confidence': 'text-faint border-border2 bg-hover',
 };
 
 /**

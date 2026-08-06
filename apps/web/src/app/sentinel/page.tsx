@@ -148,8 +148,16 @@ export default function SentinelPage() {
   const lesson = suggestedLesson(safetyCards);
   const lastUpdated = loading ? 'refreshing…' : 'just now';
 
+  // Market-hours awareness: suppress live feed and strategy signals when the
+  // market is not actively trading. The backend still runs the full pipeline
+  // (so the day classification and prior-session context are available), but
+  // showing "Wait & Watch 60%" at 6:42 AM when no session is running is
+  // misleading — those are stale signals from yesterday's candles.
+  const sessionPhase = data?.marketState?.sessionPhase ?? 'active';
+  const isMarketActive = sessionPhase === 'active' || sessionPhase === 'closing';
+
   // Past the `unavailable` guard above, the observation is always a real one.
-  const sourceLabel = 'live market data';
+  const sourceLabel = isMarketActive ? 'live market data' : sessionPhase === 'pre-market' ? 'pre-market' : 'market closed';
 
   return (
     <div className="bg-bg">
@@ -182,19 +190,34 @@ export default function SentinelPage() {
           </div>
 
           <div className="min-w-0 space-y-5">
-            <LiveSafetyFeed cards={pushworthyCards(safetyCards)} />
-            <StrategySelector
-              mode={strategyMode}
-              selectedStrategyIds={selectedStrategyIds}
-              advices={data?.strategyAdvices}
-              onChange={onStrategyChange}
-            />
-            {data?.sideInFocus ? (
-              <SideInFocusCard focus={data.sideInFocus} />
+            {isMarketActive ? (
+              <>
+                <LiveSafetyFeed cards={pushworthyCards(safetyCards)} />
+                <StrategySelector
+                  mode={strategyMode}
+                  selectedStrategyIds={selectedStrategyIds}
+                  advices={data?.strategyAdvices}
+                  onChange={onStrategyChange}
+                />
+                {data?.sideInFocus ? (
+                  <SideInFocusCard focus={data.sideInFocus} />
+                ) : (
+                  <WaitingForConfirmation publication={data?.publication} />
+                )}
+              </>
             ) : (
-              <WaitingForConfirmation publication={data?.publication} />
+              <section className="rounded-2xl border border-border bg-card p-6 shadow-elev2">
+                <h2 className="mb-3 text-[11px] font-bold uppercase tracking-wideTrack text-faint">
+                  {sessionPhase === 'pre-market' ? 'Pre-Market' : 'Market Closed'}
+                </h2>
+                <p className="rounded-xl border border-border bg-bg p-4 text-[12.5px] leading-relaxed text-muted">
+                  {sessionPhase === 'pre-market'
+                    ? `NSE opens at 09:15 AM IST. Sentinel will begin live observation, strategy detection, and safety signals once the session opens. The day classification and prior-session context above reflect yesterday's close.`
+                    : `Today's session has ended. Sentinel's live feed, strategy signals, and side-in-focus are paused until the next session opens at 09:15 AM IST.`}
+                </p>
+              </section>
             )}
-            <SentinelTimeline cards={safetyCards} entries={data?.timeline} />
+            <SentinelTimeline cards={isMarketActive ? safetyCards : []} entries={data?.timeline} />
           </div>
         </div>
 

@@ -680,6 +680,7 @@ export class SentinelOrchestratorService {
 
     if (snapshot.sessionCandles.length > 0) {
       const open = snapshot.sessionCandles[0];
+      const openTime = new Date(open.timestamp);
       const gap = snapshot.priorDay ? open.open - snapshot.priorDay.close : null;
       out.push({
         event:
@@ -687,44 +688,53 @@ export class SentinelOrchestratorService {
           (gap !== null ? ` (${gap >= 0 ? '+' : ''}${gap.toFixed(1)} from the prior close)` : '') +
           (snapshot.vix !== null ? `. India VIX ${snapshot.vix.toFixed(1)}.` : '.'),
         level: 'info',
-        at,
+        at: openTime,
         dedupeKey: 'session:open',
       });
     }
 
     if (snapshot.openingRange) {
+      const openTime = snapshot.sessionCandles[0] ? new Date(snapshot.sessionCandles[0].timestamp) : at;
       out.push({
         event: `Opening range established: ${snapshot.openingRange.low.toFixed(1)} – ${snapshot.openingRange.high.toFixed(1)}.`,
         level: 'observation',
-        at,
+        at: openTime,
         dedupeKey: 'session:orb',
       });
     }
 
     if (snapshot.marketProfile) {
+      const profileTime = snapshot.sessionCandles.length > 0
+        ? new Date(snapshot.sessionCandles[snapshot.sessionCandles.length - 1].timestamp)
+        : at;
       out.push({
         event: `Session classified as ${snapshot.marketProfile.type} — ${snapshot.marketProfile.description}.`,
         level: 'observation',
-        at,
+        at: profileTime,
         dedupeKey: `profile:${snapshot.marketProfile.type}`,
       });
     }
 
+    const latestBarTime = snapshot.sessionCandles.length > 0
+      ? new Date(snapshot.sessionCandles[snapshot.sessionCandles.length - 1].timestamp)
+      : at;
+
     for (const d of detections) {
+      const eventTime = d.detectedAt ? new Date(d.detectedAt) : latestBarTime;
       out.push({
         event: d.validated
           ? `${d.strategyName} confirmed — all ${d.rulesMatched.length} rules met. ${d.rulesMatched.join('; ')}.`
           : `${d.strategyName} forming — ${d.rulesMatched.length} of ${d.rulesMatched.length + d.rulesUnmet.length} rules confirmed.`,
         level: 'setup',
         confidence: d.confidence,
-        at,
+        at: eventTime,
         dedupeKey: `detect:${d.strategyId}:${d.validated ? 'confirmed' : d.rulesMatched.length}`,
       });
       if (d.invalidationsTriggered.length > 0) {
         out.push({
           event: `${d.strategyName} invalidated — ${d.invalidationsTriggered.join('; ')}.`,
           level: 'setup',
-          at,
+          at: eventTime,
           dedupeKey: `invalid:${d.strategyId}`,
         });
       }
