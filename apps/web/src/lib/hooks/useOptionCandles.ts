@@ -7,6 +7,13 @@ import { fetchDhanOptionCandles } from '../dhanLiveFeed';
 export type OptionCandlesStatus = 'loading' | 'live' | 'unavailable';
 
 /**
+ * Why this contract has no series — the same split as `useCandles`, because the
+ * two messages are not interchangeable: "this strike has never traded" is a
+ * fact about the contract, "the data API declined" is a fault in our plumbing.
+ */
+export type OptionCandlesUnavailableReason = 'api-unreachable' | 'no-history';
+
+/**
  * REAL OHLC history for one option contract, from Dhan (via the bridge's
  * `/candles/option` route).
  *
@@ -27,18 +34,21 @@ export function useOptionCandles(
   optionType: 'CE' | 'PE' | undefined,
   interval: CandleInterval,
   days: number,
-): { candles: Candle[] | null; status: OptionCandlesStatus } {
+): { candles: Candle[] | null; status: OptionCandlesStatus; reason: OptionCandlesUnavailableReason | null } {
   const [candles, setCandles] = useState<Candle[] | null>(null);
   const [status, setStatus] = useState<OptionCandlesStatus>('loading');
+  const [reason, setReason] = useState<OptionCandlesUnavailableReason | null>(null);
 
   useEffect(() => {
     if (!underlyingSymbol || !expiryIso || strike == null || !optionType) {
       setCandles(null);
       setStatus('unavailable');
+      setReason('no-history');
       return;
     }
     let cancelled = false;
     setStatus('loading');
+    setReason(null);
 
     fetchDhanOptionCandles(underlyingSymbol, expiryIso, strike, optionType, interval, days)
       .then((raw) => {
@@ -46,15 +56,18 @@ export function useOptionCandles(
         if (!raw.length) {
           setCandles(null);
           setStatus('unavailable');
+          setReason('no-history');
           return;
         }
         setCandles(raw.map((c) => ({ ...c, timestamp: new Date(c.timestamp) })));
         setStatus('live');
+        setReason(null);
       })
       .catch(() => {
         if (!cancelled) {
           setCandles(null);
           setStatus('unavailable');
+          setReason('api-unreachable');
         }
       });
 
@@ -66,5 +79,5 @@ export function useOptionCandles(
     // chart itself (TradeChart's `liveLast`), which preserves zoom/pan.
   }, [underlyingSymbol, expiryIso, strike, optionType, interval, days]);
 
-  return { candles, status };
+  return { candles, status, reason };
 }
