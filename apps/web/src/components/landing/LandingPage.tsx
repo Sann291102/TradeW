@@ -7,6 +7,7 @@ import { LandingHeader } from './LandingHeader';
 import { MarketBackdrop } from './MarketBackdrop';
 import { Mascot } from './Mascot';
 import { AuthPanel } from './AuthPanel';
+import { NameYourAI } from './NameYourAI';
 import {
   SentinelIcon,
   ResearchIcon,
@@ -196,7 +197,20 @@ export function LandingPage() {
               </div>
             </Reveal>
 
+            {/*
+              The naming moment, in the hero and above the fold (AI-PERSONA.md
+              §2). Placed here rather than beside the signup form deliberately:
+              it is the product's first impression, and the point is that the
+              user has a relationship with the assistant BEFORE they are asked
+              for an email. The name is carried into the account by AuthPanel.
+            */}
             <Reveal delay={0.25}>
+              <div className="mx-auto mt-9 max-w-md text-left">
+                <NameYourAI />
+              </div>
+            </Reveal>
+
+            <Reveal delay={0.3}>
               <p className="mt-6 text-fs2xs text-faint">
                 No card required. Paper trading by default.
               </p>

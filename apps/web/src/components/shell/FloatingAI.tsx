@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { cn, Badge } from '@tradew/ui';
 import { useWorkspaceStore } from '@/lib/store/workspaceStore';
 import { useAssistant, type AssistantTurn } from '@/lib/assistant/useAssistant';
+import { useVoice } from '@/lib/voice/useVoice';
 import { SparkleIcon } from './icons';
 
 /**
@@ -43,9 +44,28 @@ export function FloatingAI() {
   const open = useWorkspaceStore((s) => s.aiDockOpen);
   const setOpen = useWorkspaceStore((s) => s.setAiDockOpen);
   const reduce = useReducedMotion();
-  const { turns, send } = useAssistant();
+  const { turns, send, busy, personaName } = useAssistant();
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * A spoken question goes down the identical path as a typed one, and the
+   * answer is spoken back. `send` returns the reply text precisely so voice-out
+   * does not have to reach into the transcript to find it.
+   */
+  const handleTranscript = useCallback(
+    async (text: string) => {
+      setOpen(true);
+      const reply = await send(text, 'voice');
+      if (reply) voice.say(reply);
+    },
+    // `voice` is defined below and is stable across renders for the fields used
+    // here; listing it would be a cycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [send, setOpen],
+  );
+
+  const voice = useVoice({ name: personaName, onTranscript: handleTranscript });
 
   // Keep the newest turn in view — the trace lines mean an answer is often
   // several lines tall, so without this the reply scrolls off as it renders.
@@ -55,7 +75,7 @@ export function FloatingAI() {
   }, [turns]);
 
   function submit(text: string) {
-    send(text);
+    void send(text, 'text');
     setDraft('');
   }
 
@@ -94,11 +114,43 @@ export function FloatingAI() {
                 <SparkleIcon className="h-4 w-4" />
               </span>
               <div className="min-w-0">
-                <div className="text-sm font-bold text-text">TradeW AI</div>
+                <div className="truncate text-sm font-bold text-text">{personaName}</div>
                 <div className="flex items-center gap-1 text-[11px] text-muted">
-                  <span className="h-1.5 w-1.5 rounded-full bg-up" /> Online
+                  {voice.state === 'listening' ? (
+                    <>
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal" /> Listening…
+                    </>
+                  ) : voice.state === 'speaking' ? (
+                    <>
+                      <span className="h-1.5 w-1.5 rounded-full bg-teal" /> Speaking
+                    </>
+                  ) : busy ? (
+                    <>
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber" /> Thinking…
+                    </>
+                  ) : (
+                    <>
+                      <span className="h-1.5 w-1.5 rounded-full bg-up" /> Online
+                    </>
+                  )}
                 </div>
               </div>
+
+              {/* Microphone state is always visible while live (AI-VOICE.md §6). */}
+              {voice.micLive && (
+                <span
+                  title={
+                    voice.wakeEnabled
+                      ? `Listening for “Hey ${personaName}”`
+                      : 'Microphone is open'
+                  }
+                  className="ml-auto flex items-center gap-1 rounded-full border border-teal px-1.5 py-0.5 text-[9px] font-bold text-teal"
+                >
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal" />
+                  MIC
+                </span>
+              )}
+
               <button
                 type="button"
                 onClick={() => setOpen(false)}
@@ -113,11 +165,17 @@ export function FloatingAI() {
               {turns.map((turn) => (
                 <Turn key={turn.id} turn={turn} />
               ))}
+              {voice.partial && (
+                <div className="ml-auto max-w-[85%] rounded-card rounded-br-sm border border-dashed border-teal px-3 py-2 text-sm italic text-muted">
+                  {voice.partial}
+                </div>
+              )}
+              {voice.error && <p className="text-[11px] text-amber">{voice.error}</p>}
               <div className="flex items-center gap-2 text-[11px] text-faint">
                 <Badge tone="brand" className="px-1.5 py-0 text-[9px]">
                   BETA
                 </Badge>
-                App control is live · market analysis is next
+                App control · voice · market analysis
               </div>
             </div>
 
@@ -142,12 +200,28 @@ export function FloatingAI() {
               className="flex items-center gap-2 border-t border-border p-3"
             >
               <input
-                aria-label="Message TradeW AI"
-                placeholder="Ask TradeW AI…"
+                aria-label={`Message ${personaName}`}
+                placeholder={`Ask ${personaName}…`}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 className="flex-1 rounded-lg border border-border2 bg-bg px-3 py-2 text-sm text-text placeholder:text-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
               />
+              {voice.supported.recognition && (
+                <button
+                  type="button"
+                  onClick={() => (voice.state === 'listening' ? voice.stopListening() : voice.startListening())}
+                  aria-label={voice.state === 'listening' ? 'Stop listening' : 'Speak to the assistant'}
+                  aria-pressed={voice.state === 'listening'}
+                  className={cn(
+                    'rounded-lg border px-2.5 py-2 text-sm transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+                    voice.state === 'listening'
+                      ? 'border-teal bg-teal text-white'
+                      : 'border-border2 text-muted hover:border-teal hover:text-teal',
+                  )}
+                >
+                  <MicIcon className="h-4 w-4" />
+                </button>
+              )}
               <button
                 type="submit"
                 disabled={!draft.trim()}
@@ -156,8 +230,44 @@ export function FloatingAI() {
                 Send
               </button>
             </form>
+
+            {voice.supported.recognition && (
+              <div className="flex items-center gap-2 border-t border-border px-4 py-2">
+                <label className="flex items-center gap-1.5 text-[10px] text-muted">
+                  <input
+                    type="checkbox"
+                    checked={voice.wakeEnabled}
+                    onChange={(e) => voice.toggleWake(e.target.checked)}
+                    className="h-3 w-3 accent-[var(--teal)]"
+                  />
+                  “Hey {personaName}”
+                </label>
+                <label className="flex items-center gap-1.5 text-[10px] text-muted">
+                  <input
+                    type="checkbox"
+                    checked={voice.voiceOutEnabled}
+                    onChange={(e) => voice.toggleVoiceOut(e.target.checked)}
+                    className="h-3 w-3 accent-[var(--teal)]"
+                  />
+                  Speak replies
+                </label>
+              </div>
+            )}
+
+            {/*
+              The upload disclosure. Wake detection in today's browsers uses the
+              vendor's cloud recognition service, so the user is told plainly
+              while it is on — never buried in a settings page (AI-VOICE.md §3).
+            */}
+            {voice.wakeEnabled && voice.wakeUsesRemoteAudio && (
+              <p className="border-t border-border bg-amber-bg px-4 py-2 text-[10px] leading-tight text-text">
+                Wake word uses your browser’s speech service, so audio is processed off-device while
+                it’s listening. Turn it off to use the mic button only.
+              </p>
+            )}
+
             <p className="border-t border-border px-4 py-2 text-[10px] leading-tight text-faint">
-              TradeW AI shares observations only — never investment advice.
+              {personaName} shares observations only — never investment advice.
             </p>
           </motion.aside>
         )}
@@ -181,6 +291,22 @@ function Turn({ turn }: { turn: AssistantTurn }) {
   }
 
   const isRefusal = turn.intent === 'refusal';
+
+  if (turn.pending) {
+    return (
+      <div className="max-w-[92%]">
+        <div className="flex gap-1 rounded-card rounded-tl-sm border border-border bg-bg px-3 py-3">
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="h-1.5 w-1.5 animate-pulse rounded-full bg-faint"
+              style={{ animationDelay: `${i * 120}ms` }}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-[92%] space-y-1.5">
@@ -214,10 +340,45 @@ function Turn({ turn }: { turn: AssistantTurn }) {
         </ul>
       )}
 
+      {/*
+        Provenance. The single most important chip in this component: it is what
+        stops a simulated-feed answer from reading like a live one. Rendered
+        whenever the server reported a feed, not only when it is simulated —
+        "live" is worth stating too.
+      */}
+      {turn.provenance && turn.provenance.feeds.length > 0 && (
+        <div className="pl-1">
+          <span
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-bold',
+              turn.provenance.live ? 'border-up text-up' : 'border-amber text-amber',
+            )}
+          >
+            <span
+              className={cn('h-1 w-1 rounded-full', turn.provenance.live ? 'bg-up' : 'bg-amber')}
+            />
+            {turn.provenance.live ? 'LIVE' : 'SIMULATED'} · {turn.provenance.feeds.join('/')}
+          </span>
+          {turn.provenance.caveat && (
+            <p className="mt-1 text-[10px] leading-tight text-amber">{turn.provenance.caveat}</p>
+          )}
+        </div>
+      )}
+
       {turn.disclaimer && (
         <p className="pl-1 text-[10px] text-faint">Observations only — never investment advice.</p>
       )}
     </div>
+  );
+}
+
+/** Microphone glyph. Local rather than in `icons.tsx` — only this dock uses it. */
+function MicIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={className} aria-hidden>
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v4" strokeLinecap="round" />
+    </svg>
   );
 }
 

@@ -42,6 +42,10 @@ export default defineConfig({
       'feed-proxy-routes.spec.mjs',
       // Option-chain strike selection and formatting: pure, no DOM.
       'src/lib/sentinel/**/*.test.ts',
+      // Wake-word matching and speech text preparation: pure, no DOM. The
+      // matcher's false-positive behaviour is the thing worth asserting — a
+      // wake word that fires on ordinary speech is worse than none.
+      'src/lib/voice/**/*.test.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,
