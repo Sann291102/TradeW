@@ -19,6 +19,7 @@ import { KnowledgeModule } from './knowledge/knowledge.module';
 import { NotificationModule } from './notification/notification.module';
 import { TelemetryModule } from './telemetry/telemetry.module';
 import { AdminModule } from './admin/admin.module';
+import { AiModule } from './ai/ai.module';
 import { ControlModule } from './control/control.module';
 import { HealthController } from './health.controller';
 
@@ -46,6 +47,9 @@ import { HealthController } from './health.controller';
     LearningModule,
     KnowledgeModule,
     NotificationModule,
+    // TradeW AI. After MarketDataModule (it reads quotes through that service)
+    // and after AuthModule (its routes are bearer-guarded).
+    AiModule,
     AdminModule,
     // The Admin Control Plane boundary. Signed, replay-protected, narrow.
     // Remove this line to disable remote control of this deployment entirely.

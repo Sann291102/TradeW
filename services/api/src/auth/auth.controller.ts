@@ -20,6 +20,17 @@ class AuthDto {
   @IsString()
   @MinLength(6)
   password!: string;
+
+  /**
+   * The name the user gave their assistant on the landing page, before this
+   * account existed (`AI-PERSONA.md` §2). Optional and best-effort: it is
+   * re-validated server-side, and a rejected name never fails the signup.
+   * Ignored entirely on `login`.
+   */
+  @ApiProperty({ required: false, maxLength: 24, example: 'Nova' })
+  @IsOptional()
+  @IsString()
+  aiPersonaName?: string;
 }
 
 class RefreshDto {
@@ -202,7 +213,7 @@ export class AuthController {
 
   /** Create an account. Returns the same `{ accessToken, refreshToken, user }` as login. */
   @Post('signup')
-  signup(@Req() req: any, @Body() dto: AuthDto) { return this.auth.signup(dto.email, dto.password, meta(req)); }
+  signup(@Req() req: any, @Body() dto: AuthDto) { return this.auth.signup(dto.email, dto.password, meta(req), dto.aiPersonaName); }
 
   /**
    * Exchange credentials for a token pair.

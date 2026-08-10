@@ -4,6 +4,7 @@ import * as bcrypt from 'bcryptjs';
 import { randomBytes, createHash } from 'crypto';
 import { OtpPurpose } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { PersonaService } from '../ai/persona/persona.service';
 import { OtpService } from './otp.service';
 
 type RequestMeta = { ip?: string; userAgent?: string };
@@ -16,6 +17,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly otp: OtpService,
+    private readonly persona: PersonaService,
   ) {}
 
   /**
@@ -66,12 +68,22 @@ export class AuthService {
     return { ok: true };
   }
 
-  async signup(email: string, password: string, meta: RequestMeta = {}) {
+  /**
+   * `aiPersonaName` carries the name the user gave their assistant on the
+   * landing page, before this account existed (`AI-PERSONA.md` §2).
+   *
+   * Applied best-effort: it is validated server-side like any other write, and
+   * a rejected name leaves the column null for onboarding to ask again rather
+   * than failing the signup. Losing an account over a bad assistant name would
+   * be an absurd trade, and the name is the least important thing in this call.
+   */
+  async signup(email: string, password: string, meta: RequestMeta = {}, aiPersonaName?: unknown) {
     const normalizedEmail = email.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (existing) throw new BadRequestException('Email already registered');
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await this.prisma.user.create({ data: { email: normalizedEmail, passwordHash } });
+    await this.persona.applyAtSignup(user.id, aiPersonaName);
     await this.audit('user.signup.success', user.id, meta);
     return this.issue(user.id, user.email);
   }
