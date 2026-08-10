@@ -8,11 +8,37 @@ import {
   type AiCallEvent,
   type TelemetrySink,
 } from '@tradew/ai-core';
+import { LeaderElectionService } from '../common/leader-election';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** Per-buffer cap. ~5k rows of small objects is a few MB — bounded enough to be
  *  safe, large enough to ride out a minute-long database blip. */
 const MAX_BUFFER = 5_000;
+
+/**
+ * Telemetry retention.
+ *
+ * The in-memory buffers were bounded from the start; the TABLES were not. Every
+ * HTTP request writes an `ApiCallLog` row, so table growth is a direct function
+ * of traffic with no ceiling and no expiry — at the 500-concurrent-user target
+ * that is on the order of tens of millions of rows a month, on the same
+ * Postgres instance that serves orders and positions. Left alone it degrades
+ * the admin queries first (they all filter on `createdAt`) and then the disk.
+ *
+ * 30 days is chosen against what the admin portal actually offers: its
+ * timeseries views are day- and week-scoped, so nothing in the product reads
+ * further back than this. Anything that needs a longer horizon needs an export
+ * to cold storage, not a bigger operational table.
+ */
+const RETENTION_DAYS = Number(process.env.TELEMETRY_RETENTION_DAYS ?? 30);
+/** Once an hour is far more often than a day-granular cutoff needs, and keeps
+ *  each delete small enough not to hold long locks. */
+const RETENTION_SWEEP_MS = 60 * 60_000;
+/** Bound per statement so one sweep after a long outage cannot lock the table
+ *  for minutes. Whatever is left is collected by the next sweep. */
+const RETENTION_BATCH = 20_000;
+/** Lease name — see common/leader-election.ts. */
+const RETENTION_JOB = 'telemetry-retention';
 
 /** One HTTP request, as recorded by `ApiCallInterceptor`. */
 export interface ApiCallRecord {
@@ -73,7 +99,12 @@ export class TelemetryService implements TelemetrySink, OnModuleInit, OnModuleDe
    *  without turning every page of traffic into its own transaction. */
   private static readonly FLUSH_MS = 2_000;
 
-  constructor(private readonly prisma: PrismaService) {
+  private retentionTimer: NodeJS.Timeout | null = null;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly leader: LeaderElectionService,
+  ) {
     // The SSE endpoint attaches one listener per connected admin; the default
     // ceiling of 10 would start printing spurious leak warnings with a handful
     // of open tabs.
@@ -87,13 +118,69 @@ export class TelemetryService implements TelemetrySink, OnModuleInit, OnModuleDe
     this.timer = setInterval(() => void this.flush(), TelemetryService.FLUSH_MS);
     // Do not hold the process open for a telemetry timer during shutdown.
     this.timer.unref?.();
+
+    // Flushing is per-instance (each holds its own buffers). PRUNING is not:
+    // it is one shared decision about shared rows, so it is leader-gated —
+    // otherwise every replica issues the same large DELETE at the same moment.
+    this.leader.register(RETENTION_JOB);
+    this.retentionTimer = setInterval(() => void this.pruneOldTelemetry(), RETENTION_SWEEP_MS);
+    this.retentionTimer.unref?.();
   }
 
   async onModuleDestroy(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
+    if (this.retentionTimer) clearInterval(this.retentionTimer);
     setTelemetrySink(null);
     // Best-effort final flush so a clean restart doesn't lose the last window.
     await this.flush();
+  }
+
+  /**
+   * Delete telemetry older than the retention window.
+   *
+   * Each table is deleted independently and failures are logged rather than
+   * thrown: retention is housekeeping, and a retention error must never
+   * propagate into the request path or stop the other tables being trimmed.
+   * `createdAt`/`startedAt` are indexed on all four tables, so the cutoff
+   * predicate is an index range scan rather than a sequential scan.
+   */
+  async pruneOldTelemetry(): Promise<void> {
+    if (!this.leader.isLeader(RETENTION_JOB)) return;
+    if (!Number.isFinite(RETENTION_DAYS) || RETENTION_DAYS <= 0) return;
+
+    const cutoff = new Date(Date.now() - RETENTION_DAYS * 86_400_000);
+    const deletions: Array<[string, () => Promise<{ count: number }>]> = [
+      ['apiCallLog', () => this.deleteBatch('ApiCallLog', 'createdAt', cutoff)],
+      ['aiCallLog', () => this.deleteBatch('AiCallLog', 'createdAt', cutoff)],
+      ['agentActivity', () => this.deleteBatch('AgentActivity', 'createdAt', cutoff)],
+      ['agentRun', () => this.deleteBatch('AgentRun', 'startedAt', cutoff)],
+    ];
+
+    for (const [label, run] of deletions) {
+      try {
+        const { count } = await run();
+        if (count > 0) this.logger.log(`retention: pruned ${count} ${label} rows older than ${RETENTION_DAYS}d`);
+      } catch (err) {
+        this.logger.warn(`retention: pruning ${label} failed — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  /**
+   * One bounded DELETE. Prisma's `deleteMany` has no LIMIT, and an unbounded
+   * delete over a backlog can hold row locks long enough to stall writes on the
+   * same table — which here means stalling the flush that serves live traffic.
+   * Table and column names are compile-time constants from the call site above,
+   * never request data.
+   */
+  private async deleteBatch(table: string, column: string, cutoff: Date): Promise<{ count: number }> {
+    const count = await this.prisma.$executeRawUnsafe(
+      `DELETE FROM "${table}" WHERE ctid IN (
+         SELECT ctid FROM "${table}" WHERE "${column}" < $1 LIMIT ${RETENTION_BATCH}
+       )`,
+      cutoff,
+    );
+    return { count };
   }
 
   // ---------------------------------------------------------------- ingest

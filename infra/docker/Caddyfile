@@ -20,6 +20,18 @@ www.{$DOMAIN} {
 {$DOMAIN} {
 	encode zstd gzip
 
+	# Security headers are set by the applications themselves (services/api's
+	# middleware in main.ts, apps/web's next.config.mjs) so that they are
+	# identical in development and production and cannot be lost by swapping the
+	# proxy. The two set here are the ones only the edge can know about.
+	header {
+		# Caddy terminates TLS, so this is the layer that can honestly promise
+		# HTTPS for the whole origin.
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		# Never advertise the proxy version to the internet.
+		-Server
+	}
+
 	# API — handle_path strips the /api prefix (browser /api/auth/login -> api /auth/login).
 	handle_path /api/* {
 		reverse_proxy api:4000 {
@@ -29,7 +41,14 @@ www.{$DOMAIN} {
 		}
 	}
 
-	# Everything else -> the Next.js web app.
+	# Everything else -> the Next.js web app, INCLUDING /feed/*.
+	#
+	# The feed bridge is deliberately NOT routed directly here. It has no
+	# authentication of its own, so the only thing standing between it and the
+	# internet is apps/web's explicit route allowlist (feed-proxy-routes.mjs).
+	# A `handle_path /feed/*` block at this layer would bypass that allowlist
+	# and republish every route the bridge has — which is exactly the structural
+	# defect the allowlist was introduced to fix. Leave this alone.
 	handle {
 		reverse_proxy web:3000
 	}

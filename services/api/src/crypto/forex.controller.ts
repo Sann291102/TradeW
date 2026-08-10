@@ -1,5 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiTags } from '@nestjs/swagger';
+import { PUBLIC_PROXY_LIMIT } from '../common/throttling';
 import { ForexService } from './forex.service';
 
 /**
@@ -24,6 +26,8 @@ import { ForexService } from './forex.service';
  * AuthGuard. Vendor quota is protected by the server-side cache, not by auth:
  * upstream cost is a function of time, not of how many callers there are.
  */
+// See CryptoController: metered for this service's availability, not the vendor's.
+@Throttle(PUBLIC_PROXY_LIMIT)
 @ApiTags('Forex')
 @Controller('forex')
 export class ForexController {

@@ -1463,3 +1463,54 @@ model AgentRun {
   @@index([status, startedAt])
   @@index([userId, startedAt])
 }
+
+// A time-bounded claim on a named singleton job, so exactly one process runs it.
+//
+// WHY THIS TABLE EXISTS (2026-08-10 production-readiness audit)
+//
+// Several services run work on a plain `setInterval` — the paper matching
+// engine, T+1 settlement, the EOD performance sweep, Sentinel's market watch
+// and adaptive calibration. Each of those is written as though it is the only
+// copy running, and today it is, because the deployment runs exactly one
+// replica of each service. Add a second replica and they do not merely
+// duplicate effort: two matching engines evaluating the same resting order
+// concurrently can both decide it fills, which is a double fill on a real
+// user's book. That made "run two API containers" not a scaling decision but a
+// correctness decision — which is the wrong shape for a scaling decision to
+// have.
+//
+// A LEASE, NOT A POSTGRES ADVISORY LOCK
+//
+// `pg_advisory_lock` is the obvious tool and the wrong one here. Session-level
+// advisory locks live on a specific connection, and Prisma hands work to a
+// pooled connection per query, so the lock's owner and the next caller are
+// usually not the same session — and behind PgBouncer in transaction mode
+// (the Stage 1 target) session locks do not survive at all. The transaction-
+// scoped variant does survive pooling, but it would mean holding a transaction
+// open for the entire tick, and a matching-engine tick makes outbound HTTP
+// calls to the price bridge. A row with an expiry is boring, works through any
+// pooler, and self-heals: a holder that crashes stops renewing and the lease
+// simply expires.
+//
+// The correctness argument is the expiry, not the row: a holder MUST stop
+// working once its own lease is past `expiresAt` (see LeaderElectionService),
+// because a paused or partitioned process cannot tell the difference between
+// "I still hold this" and "someone took it 30 seconds ago".
+model JobLease {
+  // The job's stable name, e.g. `matching-engine`. One row per singleton job.
+  name      String   @id
+  // Which process currently holds it. Random per boot — deliberately not the
+  // hostname, so two containers that a platform gives the same hostname to
+  // cannot silently share a lease.
+  holder    String
+  // Hard deadline. Past this instant the lease is free for anyone to take, and
+  // the previous holder must consider itself no longer the leader.
+  expiresAt DateTime
+  // When the current holder last renewed. Operational visibility only — the
+  // decision is made entirely on `expiresAt`.
+  renewedAt DateTime @default(now())
+  // First acquisition of the current holder's tenure, for the same reason.
+  acquiredAt DateTime @default(now())
+
+  @@index([expiresAt])
+}

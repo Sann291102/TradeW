@@ -1,0 +1,31 @@
+# Copy to prod.tfvars and fill in. `*.tfvars` is gitignored; this example is not.
+#
+#   terraform plan -var-file=env/prod.tfvars
+
+domain_name     = "tradew.example.in"
+route53_zone_id = "Z0123456789ABCDEFGHIJ"
+
+# CI sets this to the commit SHA. There is deliberately no default: a task
+# definition pinned to a moving tag cannot express a rollback.
+image_tag = "REPLACE_WITH_COMMIT_SHA"
+
+# Start here. The measured Stage 0 load (docs/LOAD-TEST-REPORT.md) says this is
+# generous rather than tight — resist sizing up before there is a metric saying
+# to.
+db_instance_class = "db.t4g.small"
+redis_node_type   = "cache.t4g.micro"
+
+# Off at first launch. Turning it on roughly doubles the database bill and is
+# the single most effective availability purchase available here; the honest
+# position at Stage 1 is that a few minutes of downtime is survivable.
+db_multi_az = false
+
+api_desired_count = 2
+web_desired_count = 2
+api_max_count     = 6
+
+# Do not change these. Each is a singleton for a stated reason and Terraform
+# will reject any other value — see variables.tf.
+# market_data_desired_count = 1
+# live_feed_desired_count   = 1
+# sentinel_desired_count    = 1

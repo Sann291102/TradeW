@@ -1,9 +1,12 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { LeaderElectionService } from '../common/leader-election';
 import { PrismaService } from '../prisma/prisma.service';
 import { PortfolioService } from './portfolio.service';
 import { isTradingDay, istDateKey, istMidnightUtc } from '../discipline/market-calendar';
 
 const SWEEP_MS = 10 * 60_000; // EOD capture, not price-driven — coarse cadence is enough
+/** Lease name — see common/leader-election.ts. */
+const PERFORMANCE_SWEEP_JOB = 'performance-snapshot-sweep';
 /** How far back "ALL" ever looks — a bound, not a silent one: past this,
  *  Performance simply doesn't have data for an account this old yet in the
  *  paper platform's lifetime. */
@@ -119,9 +122,14 @@ export class PerformanceService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PerformanceService.name);
   private timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly prisma: PrismaService, private readonly portfolio: PortfolioService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly portfolio: PortfolioService,
+    private readonly leader: LeaderElectionService,
+  ) {}
 
   onModuleInit(): void {
+    this.leader.register(PERFORMANCE_SWEEP_JOB);
     this.timer = setInterval(() => void this.sweep(), SWEEP_MS);
   }
   onModuleDestroy(): void {
@@ -132,6 +140,10 @@ export class PerformanceService implements OnModuleInit, OnModuleDestroy {
    *  a no-op for a user whose today's row already exists (upsert), and a
    *  no-op entirely on a non-trading day (nothing closed to capture). */
   private async sweep(): Promise<void> {
+    // Snapshot capture is an upsert, so a duplicate run is not corrupting — but
+    // it is a full scan over every user with a wallet, and N replicas doing it
+    // simultaneously is N× that load on the database for zero extra output.
+    if (!this.leader.isLeader(PERFORMANCE_SWEEP_JOB)) return;
     if (!isTradingDay()) return;
     let userIds: string[];
     try {

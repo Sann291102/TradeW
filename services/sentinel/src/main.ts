@@ -13,6 +13,11 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  // SIGTERM must run the module destructors, not skip them: the market watch,
+  // adaptive calibration and the ingestion queue all hold interval timers and
+  // in-flight work that should stop cleanly on a deploy rather than being cut
+  // mid-sweep.
+  app.enableShutdownHooks();
   // Local-dev only: lets the Terminal app (localhost:3000) call this service
   // directly from the browser. In staging/production the service stays
   // internal — only services/api reaches it — so cross-origin never applies.

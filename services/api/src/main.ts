@@ -20,6 +20,41 @@ async function bootstrap() {
   // Nest keeps the parsed `req.body` behaviour unchanged for every other route.
   const app = await NestFactory.create(AppModule, { rawBody: true });
 
+  /**
+   * Trust exactly as many reverse-proxy hops as are actually in front of this
+   * process, and no more.
+   *
+   * Everything that identifies a caller — the rate-limit bucket in
+   * common/throttling.ts, and the `ip` field on every row the security logger
+   * writes — reads `req.ip`. Without this, Express reports the proxy's address
+   * for every request: one shared rate-limit bucket for the entire internet
+   * (so the first noisy client throttles everyone), and an audit trail that
+   * records Caddy's IP for every login attempt.
+   *
+   * `true` would be worse than nothing: it makes Express believe the whole
+   * `X-Forwarded-For` chain, so a client can prepend a fabricated address and
+   * mint itself a fresh rate-limit bucket per request. The count must match the
+   * deployment — 1 behind Caddy (infra/docker), 2 behind CloudFront→ALB. It is
+   * 0 by default so a direct-exposure setup does not silently trust a header
+   * that nothing is stripping.
+   */
+  const trustedProxyHops = Number(process.env.TRUSTED_PROXY_HOPS ?? 0);
+  if (Number.isFinite(trustedProxyHops) && trustedProxyHops > 0) {
+    app.getHttpAdapter().getInstance().set('trust proxy', trustedProxyHops);
+  }
+
+  /**
+   * Terminate in-flight work before the process dies.
+   *
+   * Nest does not call `OnModuleDestroy` on SIGTERM unless shutdown hooks are
+   * enabled, and every deploy sends SIGTERM. Without this, a rolling restart
+   * killed the process mid-request and — worse — skipped `TelemetryService`'s
+   * final flush (up to 2s of API/AI/agent telemetry silently lost per deploy)
+   * and left `PrismaService` to have its sockets torn down by the OS rather
+   * than disconnected.
+   */
+  app.enableShutdownHooks();
+
   // Allowed browser origins. FRONTEND_URL may be a comma-separated list.
   const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000')
     .split(',')
@@ -110,8 +145,14 @@ async function bootstrap() {
   setupSwagger(app);
 
   const port = Number(process.env.API_PORT || process.env.PORT || 4000);
-  await app.listen(port);
-  console.log(`TradeW backend listening on ${port}`);
+  // Bind to loopback by default so a dev machine does not expose the API to its
+  // whole LAN (the 2026-08-10 finding: `app.listen(port)` bound 0.0.0.0, making
+  // every route — and, with the old forgeable JWT, every account — reachable
+  // from any host on the network). Container/K8s deployments set HOST=0.0.0.0
+  // explicitly, behind the private-network boundary. Mirrors services/sentinel.
+  const host = process.env.HOST || '127.0.0.1';
+  await app.listen(port, host);
+  console.log(`TradeW backend listening on ${host}:${port}`);
   if (isSwaggerEnabled()) {
     console.log(`API reference on http://localhost:${port}/${SWAGGER_PATH}`);
   }

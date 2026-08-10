@@ -1,7 +1,10 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { LeaderElectionService } from '../common/leader-election';
 import { PrismaService } from '../prisma/prisma.service';
 
 const SWEEP_MS = 5 * 60_000; // settlement is date-granular, not price-driven — no need for MatchingEngineService's 3s cadence
+/** Lease name — see common/leader-election.ts. */
+const SETTLEMENT_SWEEP_JOB = 'settlement-sweep';
 
 /**
  * Weighted-average merge of a newly-settled lot into an existing Holding.
@@ -41,9 +44,13 @@ export class SettlementService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SettlementService.name);
   private timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly leader: LeaderElectionService,
+  ) {}
 
   onModuleInit(): void {
+    this.leader.register(SETTLEMENT_SWEEP_JOB);
     this.timer = setInterval(() => void this.sweep(), SWEEP_MS);
   }
 
@@ -52,6 +59,13 @@ export class SettlementService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async sweep(): Promise<void> {
+    // Only the SWEEP is leader-gated. The per-request `settleUser` path stays
+    // available on every replica — it is idempotent and scoped to the caller,
+    // so a follower serving a user's own portfolio read must still be able to
+    // settle that user rather than showing them a stale book until the leader
+    // next sweeps.
+    if (!this.leader.isLeader(SETTLEMENT_SWEEP_JOB)) return;
+
     let due: Array<{ userId: string }>;
     try {
       due = await this.prisma.position.findMany({

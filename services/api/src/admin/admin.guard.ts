@@ -2,6 +2,7 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable, Unauthor
 import { JwtService } from '@nestjs/jwt';
 import { timingSafeEqual } from 'node:crypto';
 import { securityLog } from '../common/security-log';
+import { isSecretAcceptable } from '../common/secret-validation';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -45,8 +46,12 @@ export class AdminGuard implements CanActivate {
     };
 
     const expected = process.env.ADMIN_API_TOKEN;
-    if (!expected) {
-      deny('admin.portal.unconfigured');
+    // Fail closed on an absent OR structurally-invalid operator secret — see the
+    // matching note in AdminTokenGuard. A placeholder / too-short / vendor-key
+    // value disables the portal rather than guarding it, so a reused Anthropic
+    // key (the 2026-08-10 finding) can never stand in for the admin factor.
+    if (!expected || !isSecretAcceptable(expected, { minLength: 24 })) {
+      deny('admin.portal.unconfigured', { reason: expected ? 'weak_or_vendor_token' : 'unset' });
       throw new UnauthorizedException('Admin portal disabled (ADMIN_API_TOKEN not configured)');
     }
 

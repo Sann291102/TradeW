@@ -56,7 +56,7 @@ describe('AuthGuard — anonymous access to broker routes', () => {
 describe('AdminTokenGuard — operator-only broker routes', () => {
   const original = process.env.ADMIN_API_TOKEN;
   beforeEach(() => {
-    process.env.ADMIN_API_TOKEN = 'operator-secret-value';
+    process.env.ADMIN_API_TOKEN = 'operator-secret-value-32chars-long!';
   });
   afterEach(() => {
     if (original === undefined) delete process.env.ADMIN_API_TOKEN;
@@ -88,7 +88,7 @@ describe('AdminTokenGuard — operator-only broker routes', () => {
 
   it('accepts the correct admin token', () => {
     expect(
-      guard.canActivate(contextFor({ headers: { 'x-admin-token': 'operator-secret-value' }, url: '/x' })),
+      guard.canActivate(contextFor({ headers: { 'x-admin-token': 'operator-secret-value-32chars-long!' }, url: '/x' })),
     ).toBe(true);
   });
 

@@ -1,10 +1,18 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { LeaderElectionService } from '../common/leader-election';
 import { PrismaService } from '../prisma/prisma.service';
 import { MarketPriceService } from './market-price.service';
 import { OrderService } from './order.service';
 
 const POLL_MS = 3_000;
+
+/**
+ * The lease name. Fills are the reason leader election exists: two instances
+ * evaluating one resting order can both conclude it fills, and the user ends
+ * up with two positions from one order. See common/leader-election.ts.
+ */
+const JOB = 'matching-engine';
 
 type OrderWithInstrument = Prisma.OrderGetPayload<{ include: { instrument: true } }>;
 
@@ -28,9 +36,11 @@ export class MatchingEngineService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly marketPrice: MarketPriceService,
     private readonly orders: OrderService,
+    private readonly leader: LeaderElectionService,
   ) {}
 
   onModuleInit(): void {
+    this.leader.register(JOB);
     this.timer = setInterval(() => void this.tick(), POLL_MS);
   }
 
@@ -39,6 +49,10 @@ export class MatchingEngineService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async tick(): Promise<void> {
+    // Every replica keeps its timer running and every replica asks first. The
+    // check is local and synchronous, so a follower's tick costs a map lookup.
+    if (!this.leader.isLeader(JOB)) return;
+
     let resting: OrderWithInstrument[];
     try {
       resting = await this.prisma.order.findMany({

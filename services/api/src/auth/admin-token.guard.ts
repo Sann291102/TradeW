@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { timingSafeEqual } from 'crypto';
 import { securityLog } from '../common/security-log';
+import { isSecretAcceptable } from '../common/secret-validation';
 
 /**
  * Operator-only endpoints, gated by the static `ADMIN_API_TOKEN`.
@@ -30,16 +31,20 @@ export class AdminTokenGuard implements CanActivate {
     const req = context.switchToHttp().getRequest();
     const expected = process.env.ADMIN_API_TOKEN;
 
-    // Fail closed. An unset token disables the admin surface rather than
-    // allowing it — the opposite default would turn a missing env var into an
-    // open operator API.
-    if (!expected) {
+    // Fail closed on an absent OR structurally-invalid token. An unset token
+    // disables the admin surface rather than allowing it; a token that is a
+    // known placeholder, too short, or a reused vendor key (the 2026-08-10
+    // finding: ADMIN_API_TOKEN held a live Anthropic `sk-ant-` key, the same
+    // value as ANTHROPIC_API_KEY) is treated the same as unset — the surface is
+    // disabled until a real, dedicated secret is configured, instead of running
+    // with a credential that leaks two blast radii at once.
+    if (!expected || !isSecretAcceptable(expected, { minLength: 24 })) {
       securityLog({
         event: 'admin.auth.unconfigured',
         outcome: 'denied',
         ip: req.ip ?? null,
         userAgent: req.headers?.['user-agent'] ?? null,
-        detail: { path: req.url },
+        detail: { path: req.url, reason: expected ? 'weak_or_vendor_token' : 'unset' },
       });
       throw new UnauthorizedException('Admin API disabled (ADMIN_API_TOKEN not configured)');
     }

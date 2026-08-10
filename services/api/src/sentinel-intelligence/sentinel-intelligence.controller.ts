@@ -1,5 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiBody, ApiProperty, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { EXPENSIVE_LIMIT } from '../common/throttling';
 import { AuthGuard } from '../auth/auth.guard';
 import { CapabilityGuard, RequiresCapability } from '../entitlements/capability.guard';
 import { EntitlementsService } from '../entitlements/entitlements.service';
@@ -66,6 +68,10 @@ class ReasonRequestBody {
   status: 403,
   description: 'Missing the `sentinel` entitlement, or the plan’s quota is spent.',
 })
+// See SentinelController: an operational per-minute ceiling beside the
+// commercial per-period quota. `reindex` in particular rebuilds the whole
+// citation corpus, which is the single most expensive call in the API.
+@Throttle(EXPENSIVE_LIMIT)
 @UseGuards(AuthGuard, CapabilityGuard)
 @RequiresCapability('sentinel')
 @Controller('sentinel-intelligence')

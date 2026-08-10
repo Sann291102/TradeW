@@ -11,8 +11,60 @@ node_modules
 coverage
 *.log
 .DS_Store
-knowledge
+
+# ── CONTENT DIRECTORIES ─────────────────────────────────────────────────────
+#
+# `docs/` and `knowledge/` are excluded to keep the build context lean, and
+# then selectively re-included below. That is not a cosmetic split: some of
+# what lives under those paths is documentation, and some of it is
+# APPLICATION CONTENT that a service reads at build time or at runtime.
+# Excluding all of it produced two failures on 2026-08-10, one loud and one
+# silent:
+#
+#  · `apps/web`'s build reads `docs/learning/` to generate the strategy
+#    catalogue and lesson pages. Without it, `next build` fails outright with
+#    "Failed to collect page data for /learning/strategy/[id]" — the web image
+#    could not be built at all.
+#
+#  · `services/sentinel` builds its citation corpus by scanning
+#    `docs/Trading Books`, `docs/product-architecture`, `docs/handbook`,
+#    `knowledge/`, `knowledge-base/` and `agents/` (see
+#    si.config.ts DEFAULT_CORPUS_ROOTS). This one is SILENT: the image builds
+#    fine, the container starts fine, and the corpus is empty. Sentinel's
+#    citation guarantee is structural — `VerdictBuilder.knowledge()` cannot be
+#    called without citations, and the cross-checker DROPS uncited verdicts —
+#    so an empty corpus does not raise an error. It makes Sentinel
+#    permanently silent, which is a designed and normal-looking outcome. The
+#    flagship premium feature would have shipped as a no-op with no error
+#    anywhere.
+#
+# Adding a corpus root in si.config.ts therefore means adding it here too.
+
 docs
+!docs/learning
+!docs/product-architecture
+!docs/handbook
+# ~30 MB of PDFs, and by far the largest thing in any image. It earns its place:
+# these 14 books ARE Sentinel's knowledge base, and without them the corpus has
+# no `book`-tier documents to cite. If image size becomes a problem, move them
+# to object storage and give the scanner a remote root — do not simply drop
+# them here, because the failure is silent.
+!docs/Trading Books
+
+knowledge
+!knowledge/sentinel-learning
+# The engineering vault is a corpus root at `vault` authority tier, and is also
+# what the admin Knowledge Workspace serves.
+!knowledge/**/*.md
+!knowledge/_INDEX.md
+
+# `knowledge-base/` (market-concept ontology) and `agents/` are corpus roots
+# too, and are deliberately NOT excluded anywhere in this file.
+
+# Superseded code (CLAUDE.md Rule 1). The corpus scanner skips it by name as
+# well, so that a design that was explicitly abandoned cannot teach the
+# reasoning engine.
 archive
+
 infra/k8s
 infra/terraform

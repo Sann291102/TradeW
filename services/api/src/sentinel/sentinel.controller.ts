@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiBody, ApiProperty, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { EXPENSIVE_LIMIT } from '../common/throttling';
 import { AuthGuard } from '../auth/auth.guard';
 import { CapabilityGuard, RequiresCapability } from '../entitlements/capability.guard';
 import { EntitlementsService } from '../entitlements/entitlements.service';
@@ -95,6 +97,13 @@ class JournalEntryBody {
     'Missing the `sentinel` entitlement, or the plan’s quota is spent. The body carries ' +
     '`capability`, `reason` and the quota state so the client can render an upgrade prompt.',
 })
+// A rate limit ON TOP OF the entitlement quota, because the two protect
+// different things. The quota is a commercial ceiling counted per billing
+// period; this is an operational one counted per minute. A plan with a
+// 500/day quota still must not be spendable in ten seconds — that is a
+// thundering herd against the Sentinel service and the Brain, not a
+// billing question.
+@Throttle(EXPENSIVE_LIMIT)
 @UseGuards(AuthGuard, CapabilityGuard)
 @RequiresCapability('sentinel')
 @Controller('sentinel')

@@ -1,5 +1,7 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiTags } from '@nestjs/swagger';
+import { PUBLIC_PROXY_LIMIT } from '../common/throttling';
 import { CryptoService } from './crypto.service';
 
 /**
@@ -21,6 +23,10 @@ import { CryptoService } from './crypto.service';
  * AuthGuard. Vendor quota is protected by the server-side cache, not by auth:
  * upstream cost is a function of time, not of how many callers there are.
  */
+// Public and cached, so the vendor bill is bounded by time — but the CPU,
+// sockets and event-loop time spent serving an anonymous flood are not. The
+// throttle is here for this service's own availability, not the vendor's quota.
+@Throttle(PUBLIC_PROXY_LIMIT)
 @ApiTags('Crypto')
 @Controller('crypto')
 export class CryptoController {

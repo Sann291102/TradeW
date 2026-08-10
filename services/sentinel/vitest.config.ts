@@ -57,6 +57,9 @@ export default defineConfig({
       // executed. Added during the pre-live-validation pass: an untested clock
       // is not something to take into a live session.
       'src/market-clock.spec.ts',
+      // The internal api→sentinel auth boundary: fails closed on a weak/unset
+      // service token, constant-time compare (2026-08-10 assessment).
+      'src/service-token-guard.spec.ts',
     ],
     environment: 'node',
     // Deterministic and clock-injected throughout: a slow test is a real hang,

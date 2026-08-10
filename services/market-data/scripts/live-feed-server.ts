@@ -1393,8 +1393,16 @@ async function main(): Promise<void> {
     res.writeHead(404).end();
   });
 
-  server.listen(PORT, () => {
-    console.log(`Dhan live-feed bridge listening on http://localhost:${PORT} (no DB, no auth — demo bridge only)`);
+  // This bridge has NO authentication of its own — its entire security model is
+  // "reachable only via the web origin's /feed allowlist" (see the header
+  // docstring and apps/web/feed-proxy-routes.mjs). That model is only true if it
+  // is actually bound to loopback. `server.listen(PORT)` bound 0.0.0.0/:: and so
+  // published an unauthenticated market-data server to the whole LAN (verified
+  // 2026-08-10). Bind loopback by default; a container that must expose it
+  // behind the private network sets DHAN_LIVE_HOST=0.0.0.0 deliberately.
+  const HOST = process.env.DHAN_LIVE_HOST || '127.0.0.1';
+  server.listen(PORT, HOST, () => {
+    console.log(`Dhan live-feed bridge listening on http://${HOST}:${PORT} (no DB, no auth — demo bridge only)`);
     console.log(`tracking ${ALL_INSTRUMENTS.length} instruments: ${INDEX_INSTRUMENTS.length} indices, ${stocks.length} stocks, ${etfs.length} ETFs, ${commodities.length} commodities`);
   });
 

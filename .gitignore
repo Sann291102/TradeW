@@ -40,3 +40,15 @@ services/sentinel/data/
 
 .claude/Settings.local.json
 
+
+# Terraform (infra/terraform, added 2026-08-10 with the Stage 1 AWS target).
+# `*.tfvars` holds real domain names and zone ids; `*.tfstate` holds generated
+# database passwords in plain text and must never be committed — the S3 backend
+# in main.tf is where state belongs.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log

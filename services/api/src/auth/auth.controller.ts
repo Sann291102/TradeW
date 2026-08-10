@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { IsEmail, IsObject, IsOptional, IsString, Matches, MinLength } from 'class-validator';
+import { AUTH_LIMIT, OTP_LIMIT } from '../common/throttling';
 import { SECURITY } from '../swagger/swagger.setup';
 import { AuthService } from './auth.service';
 import { AuthGuard } from './auth.guard';
@@ -189,18 +191,24 @@ export class AuthController {
   }
 
   /** Phone sign-in step 1 — SMS a one-time code. */
+  // Sends an SMS on every call — metered hardest of anything here.
+  @Throttle(OTP_LIMIT)
   @Post('phone/request')
   requestPhoneCode(@Req() req: any, @Body() dto: PhoneRequestDto) {
     return this.auth.requestPhoneCode(dto.phone, meta(req));
   }
 
   /** Phone sign-in step 2 — verify the code. Signs in, or registers if new. */
+  // Verifies a short numeric code: guessable by brute force if unmetered.
+  @Throttle(AUTH_LIMIT)
   @Post('phone/verify')
   verifyPhoneCode(@Req() req: any, @Body() dto: PhoneVerifyDto) {
     return this.auth.verifyPhoneCode(dto.phone, dto.code, meta(req));
   }
 
   /** Create an account. Returns the same `{ accessToken, refreshToken, user }` as login. */
+  // Unmetered signup is free unlimited row creation by any anonymous caller.
+  @Throttle(AUTH_LIMIT)
   @Post('signup')
   signup(@Req() req: any, @Body() dto: AuthDto) { return this.auth.signup(dto.email, dto.password, meta(req)); }
 
@@ -211,6 +219,9 @@ export class AuthController {
    * paste it into **Authorize**, or use the login bar at the top to do both
    * steps at once. It expires in `ACCESS_TOKEN_TTL` (15 minutes by default).
    */
+  // The online password-guessing boundary. bcrypt protects the stored hash;
+  // only this protects the endpoint.
+  @Throttle(AUTH_LIMIT)
   @Post('login')
   login(@Req() req: any, @Body() dto: AuthDto) { return this.auth.login(dto.email, dto.password, meta(req)); }
 
@@ -224,12 +235,17 @@ export class AuthController {
   refresh(@Req() req: any, @Body() dto: RefreshDto) { return this.auth.refresh(dto.refreshToken, meta(req)); }
 
   /** Password reset step 1 — email a one-time code. Public and enumeration-safe. */
+  // Sends mail on every call: unmetered, it is a free spam cannon aimed at
+  // arbitrary addresses and at this deployment's sender reputation.
+  @Throttle(OTP_LIMIT)
   @Post('password/forgot')
   forgotPassword(@Req() req: any, @Body() dto: ForgotPasswordDto) {
     return this.auth.requestPasswordReset(dto.email, meta(req));
   }
 
   /** Password reset step 2 — verify the code and set the new password. Public. */
+  // A short reset code is only single-use if it cannot be enumerated first.
+  @Throttle(AUTH_LIMIT)
   @Post('password/reset')
   resetPassword(@Req() req: any, @Body() dto: ResetPasswordDto) {
     return this.auth.resetPassword(dto.email, dto.code, dto.newPassword, meta(req));

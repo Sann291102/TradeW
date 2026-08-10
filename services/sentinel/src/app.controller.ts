@@ -11,6 +11,7 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import { timingSafeEqual } from 'node:crypto';
 import { MarketDataUnavailableError } from './market-data/candle-market-data.provider';
 import { KnowledgeCenterService } from './brain/knowledge-center.service';
 import { StrategyIntelligenceService } from './brain/strategy-intelligence.service';
@@ -29,15 +30,39 @@ import { MarketTimelineEngine } from './timeline/timeline.engine';
  * Only services/api holds it — apps never call Sentinel directly
  * (ARCHITECTURE.md §1 single-public-ingress rule).
  */
+/** Placeholder values that must never authenticate the internal channel — the
+ *  committed dev default was `dev-sentinel-token` (2026-08-10 finding). */
+const WEAK_SERVICE_TOKENS = new Set(['', 'dev-sentinel-token', 'dev-sentinel-service-token', 'changeme', 'secret']);
+
 @Injectable()
 export class ServiceTokenGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
-    const expected = process.env.SERVICE_TOKEN;
-    if (!expected) throw new UnauthorizedException('SERVICE_TOKEN not configured');
+    const expected = process.env.SERVICE_TOKEN ?? '';
+    // Fail closed on an unset OR placeholder/too-short token. A weak shared
+    // secret on the api→sentinel hop is not a boundary; treat it as unconfigured
+    // so the surface is disabled until a real value is set, rather than guarded
+    // by a value that is public in the repo history.
+    if (!expected || expected.length < 24 || WEAK_SERVICE_TOKENS.has(expected.toLowerCase())) {
+      throw new UnauthorizedException('SERVICE_TOKEN not configured');
+    }
     const req = context.switchToHttp().getRequest();
-    if (req.headers['x-service-token'] !== expected) throw new UnauthorizedException('Invalid service token');
+    const presented = req.headers['x-service-token'];
+    // Constant-time compare: the token never rotates per request, so a
+    // short-circuiting `!==` would let a network-adjacent caller search it
+    // byte-by-byte across many requests.
+    if (typeof presented !== 'string' || !constantTimeEquals(presented, expected)) {
+      throw new UnauthorizedException('Invalid service token');
+    }
     return true;
   }
+}
+
+/** timingSafeEqual throws on length mismatch, so length is checked first. */
+function constantTimeEquals(a: string, b: string): boolean {
+  const left = Buffer.from(a, 'utf8');
+  const right = Buffer.from(b, 'utf8');
+  if (left.length !== right.length || left.length === 0) return false;
+  return timingSafeEqual(left, right);
 }
 
 @Controller()

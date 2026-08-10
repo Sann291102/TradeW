@@ -89,3 +89,134 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate --schema packages/database/prisma/schema.prisma
       - run: npx tsc --noEmit -p apps/web/tsconfig.json
+
+  # ---------------------------------------------------------------------------
+  # Added 2026-08-10 (production-readiness audit). Everything below gates a
+  # class of failure that the test and typecheck jobs structurally cannot see:
+  # they check the code, and these check the things AROUND the code that decide
+  # whether a deploy works.
+  # ---------------------------------------------------------------------------
+
+  migrations:
+    name: Migration drift
+    runs-on: ubuntu-latest
+    # A schema.prisma edited without a matching migration typechecks, tests
+    # green, and then fails on the production `migrate deploy` — or worse,
+    # succeeds against a database that has silently drifted. This runs the real
+    # migrations against a real Postgres and asserts the resulting database
+    # matches the schema file exactly.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tradew
+          POSTGRES_PASSWORD: tradew
+          POSTGRES_DB: tradew_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U tradew"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://tradew:tradew@localhost:5432/tradew_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Apply every migration from scratch
+        run: npx prisma migrate deploy --schema packages/database/prisma/schema.prisma
+      - name: Assert no drift between schema.prisma and the migrated database
+        # An empty diff is the pass condition. `--exit-code` makes a non-empty
+        # diff a non-zero exit, so this fails loudly rather than printing SQL
+        # into a log nobody reads.
+        run: |
+          npx prisma migrate diff \
+            --from-url "$DATABASE_URL" \
+            --to-schema-datamodel packages/database/prisma/schema.prisma \
+            --exit-code \
+          && echo "no drift" \
+          || (echo "::error::schema.prisma has changes with no migration. Generate one with 'prisma migrate diff --script' and commit it."; exit 1)
+
+  docker:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    # Every Dockerfile change until now was verified by deploying it. Three real
+    # image bugs found on 2026-08-10 — a missing runtime file in the web image,
+    # a missing HOST in the API's compose environment, and a bridge with no
+    # container at all — would each have surfaced here first. Build only; no
+    # push, no registry credentials needed on a PR.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: web, file: apps/web/Dockerfile }
+          - { name: api, file: services/api/Dockerfile }
+          - { name: sentinel, file: services/sentinel/Dockerfile }
+          - { name: market-data, file: services/market-data/Dockerfile }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          push: false
+          load: false
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  compose:
+    name: Compose config valid
+    runs-on: ubuntu-latest
+    # `docker compose config` resolves every interpolation, anchor and
+    # depends_on. It catches the duplicate-key and dangling-reference mistakes
+    # that a compose file will otherwise report at 2am on the VM.
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f infra/docker/docker-compose.prod.yml --env-file infra/docker/.env.prod.example config >/dev/null
+      - run: docker compose -f infra/docker/docker-compose.yml config >/dev/null
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Advisory, not blocking — deliberately.
+      #
+      # A blocking audit gate fails on the day an advisory is published for a
+      # transitive dependency five levels down, with no fix available, in code
+      # that is not on any request path. The predictable response is to disable
+      # the gate, and then nobody is looking at all. `--audit-level=critical`
+      # blocks; everything else is reported for a human to triage.
+      #
+      # Standing state as of 2026-08-10: 16 findings (9 moderate, 7 high), all
+      # transitive — postcss via next, qs via express. Both need a major-version
+      # bump of a framework, which is its own piece of work.
+      - name: Report all advisories
+        run: npm audit --omit=dev || true
+      - name: Fail only on critical
+        run: npm audit --omit=dev --audit-level=critical
+
+  terraform:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: fmt
+        run: terraform -chdir=infra/terraform fmt -check -recursive
+      - name: validate
+        # `init -backend=false` validates the configuration without needing
+        # credentials or a state bucket, so this runs on a fork's PR too.
+        run: |
+          terraform -chdir=infra/terraform init -backend=false
+          terraform -chdir=infra/terraform validate

@@ -50,10 +50,16 @@ export class EntitlementsService {
     const now = new Date();
     const base = { userId, capability, decidedAt: now };
 
-    // Sentinel capability is granted to all accounts by default for testing & live market observation
-    if (capability === 'sentinel') {
-      return { ...base, allowed: true, reason: 'trial' };
-    }
+    // NOTE (2026-08-10): a short-circuit here previously returned
+    // `{ allowed: true, reason: 'trial' }` for `capability === 'sentinel'`,
+    // "for testing" — but Sentinel is the flagship PREMIUM capability, so that
+    // one line made the entire entitlement gate a no-op for it: every account,
+    // paid or not, got Sentinel free, and it silently overrode admin
+    // revocations. It also contradicted this service's own test suite. Removed
+    // so Sentinel is decided by the same override → subscription → quota path as
+    // every other capability. Grant it the normal way (a subscription to a plan
+    // that includes it, or an EntitlementOverride) — the demo account is seeded
+    // with a Sentinel Pro subscription and does exactly that.
 
     // 1. admin overrides win, newest first
     const override = await this.prisma.entitlementOverride.findFirst({
@@ -128,7 +134,9 @@ export class EntitlementsService {
     });
     for (const o of overrides) (o.granted ? result.add(o.capability) : result.delete(o.capability));
 
-    result.add('sentinel');
+    // Sentinel is NOT force-added here — see the note in check(). It appears in
+    // this list only when a real subscription grant or a granting override
+    // provides it, so capabilitiesOf() and check() agree on who has it.
 
     return [...result].sort();
   }

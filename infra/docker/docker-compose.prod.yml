@@ -39,7 +39,21 @@ services:
       args:
         NEXT_PUBLIC_API_URL: /api
     <<: *restart
+    environment:
+      NODE_ENV: production
+      # next.config.mjs reads these at SERVER START to build its rewrites, so
+      # they are runtime configuration and need no rebuild. Both default to
+      # 127.0.0.1 — which inside this container means "myself", so without them
+      # every `/feed/*` request the browser makes would be proxied to a port
+      # nothing is listening on in the web container and return 502. Caddy
+      # handles `/api/*` before it ever reaches Next, but API_PROXY_TARGET is
+      # set anyway so the fallback path is correct rather than coincidentally
+      # unused.
+      API_PROXY_TARGET: http://api:4000
+      FEED_PROXY_TARGET: http://live-feed:4600
     expose: ['3000']
+    depends_on:
+      live-feed: { condition: service_started }
     networks: [tradew]
 
   api:
@@ -52,7 +66,13 @@ services:
     environment:
       NODE_ENV: production
       PORT: '4000'
+      HOST: 0.0.0.0
       SENTINEL_SERVICE_URL: http://sentinel:4010
+      # Exactly one proxy (Caddy) sits in front of this container. Without it
+      # every request looks like it came from Caddy, so the rate limiter would
+      # meter the whole internet in one bucket and the security audit log would
+      # record Caddy's IP for every login. See services/api/src/main.ts.
+      TRUSTED_PROXY_HOPS: '1'
     expose: ['4000']
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -75,9 +95,15 @@ services:
       NODE_ENV: production
       PORT: '4010'
       HOST: 0.0.0.0
+      # Without this Sentinel resolves live candles/quotes against the env
+      # default (localhost:4600, i.e. itself) and silently falls back to the
+      # Candle table and then the simulator — the failure mode is not an error,
+      # it is a Sentinel that reads stale prices while looking healthy.
+      SENTINEL_LIVE_FEED_URL: http://live-feed:4600
     expose: ['4010']
     depends_on:
       postgres: { condition: service_healthy }
+      live-feed: { condition: service_started }
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4010/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
@@ -107,6 +133,44 @@ services:
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4020/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [tradew]
+
+  # The Dhan live-feed bridge. Added 2026-08-10 (readiness audit).
+  #
+  # This service was MISSING from production while both the web app and Sentinel
+  # depended on it: apps/web proxies an allowlist of `/feed/*` routes to it
+  # (feed-proxy-routes.mjs) and Sentinel resolves live candles/quotes through
+  # SENTINEL_LIVE_FEED_URL before falling back to the Candle table. Deployed
+  # without it, `/feed/*` returns 502 and Sentinel silently degrades to stored
+  # or simulated data — a data-quality failure that looks like a working app.
+  #
+  # SINGLETON, for the same reason as market-data: it opens a Dhan feed
+  # connection, and Dhan counts those per account (five, then it evicts the
+  # oldest with code 805). Never set replicas > 1.
+  #
+  # It has NO AUTHENTICATION of its own — that is why it is only ever reachable
+  # through the web origin's allowlist, and why it must not be published here.
+  live-feed:
+    image: ${IMAGE_MARKET_DATA:-tradew-market-data:local}
+    build:
+      context: ../..
+      dockerfile: services/market-data/Dockerfile
+    <<: *restart
+    command: ['npx', 'ts-node', '-T', '--project', 'tsconfig.scripts.json', 'scripts/live-feed-server.ts']
+    env_file: [../../.env.prod]
+    environment:
+      NODE_ENV: production
+      DHAN_LIVE_PORT: '4600'
+      # The script defaults to 127.0.0.1, which inside a container means "no
+      # other container can reach me". Bind the container's interfaces; it is
+      # still unreachable from outside the compose network.
+      DHAN_LIVE_HOST: 0.0.0.0
+    expose: ['4600']
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4600/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
       timeout: 5s
       retries: 5
     networks: [tradew]

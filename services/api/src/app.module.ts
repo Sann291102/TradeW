@@ -1,5 +1,10 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { resolveSecret } from './common/secret-validation';
+import { CommonModule } from './common/common.module';
+import { GLOBAL_PER_MIN, ROUTE_DEFAULT_PER_MIN, TradewThrottlerGuard } from './common/throttling';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { EntitlementsModule } from './entitlements/entitlements.module';
@@ -25,11 +30,38 @@ import { HealthController } from './health.controller';
 @Module({
   imports: [
     PrismaModule,
+    // Leader election, so the background loops below (matching engine, T+1
+    // settlement, performance sweep, telemetry retention) run on exactly one
+    // instance no matter how many replicas serve HTTP. Global; imported here
+    // right after Prisma because it needs the database and nothing else.
+    CommonModule,
     // Before every feature module: it registers the global interceptor that
     // records requests, and installs the ai-core telemetry sink at init. Later
     // in the list and the first requests of a boot would go unrecorded.
     TelemetryModule,
-    JwtModule.register({ global: true, secret: process.env.JWT_SECRET || 'dev-secret-change-me', signOptions: { expiresIn: '7d' } }),
+    // JWT_SECRET is the token-signing boundary: with it, anyone can mint a
+    // valid session for any user. It therefore has NO fallback — `resolveSecret`
+    // aborts boot on a missing, placeholder, too-short, or vendor-key value
+    // rather than silently signing with a public default (the 2026-08-10
+    // finding: the old `|| 'dev-secret-change-me'` let a forged admin token
+    // through). Vendor-key prefixes are allowed here only because a long random
+    // base64url secret can coincidentally start with 'sk-'; length + placeholder
+    // checks are what matter for the signing key.
+    JwtModule.register({
+      global: true,
+      secret: resolveSecret('JWT_SECRET', process.env.JWT_SECRET, { rejectVendorKeys: false }),
+      signOptions: { expiresIn: '7d' },
+    }),
+    // Rate limiting. Two buckets per caller — one spanning the whole API, one
+    // per route — see common/throttling.ts for why both are needed and why the
+    // in-memory store is correct only while a single API replica runs.
+    ThrottlerModule.forRoot({
+      throttlers: [
+        { name: 'global', ttl: 60_000, limit: GLOBAL_PER_MIN },
+        { name: 'route', ttl: 60_000, limit: ROUTE_DEFAULT_PER_MIN },
+      ],
+      errorMessage: 'Too many requests. Slow down and try again shortly.',
+    }),
     AuthModule,
     EntitlementsModule,
     InstrumentsModule,
@@ -52,5 +84,13 @@ import { HealthController } from './health.controller';
     ControlModule,
   ],
   controllers: [HealthController],
+  providers: [
+    // The ONLY global guard in this application. Authentication deliberately
+    // stays decorator-driven per route (see auth/auth.guard.spec.ts) — rate
+    // limiting is the opposite case: a route that is accidentally left off the
+    // list should still be metered, so this one is registered globally and
+    // opted *out* of, not into.
+    { provide: APP_GUARD, useClass: TradewThrottlerGuard },
+  ],
 })
 export class AppModule {}
