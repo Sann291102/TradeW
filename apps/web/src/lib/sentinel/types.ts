@@ -189,6 +189,14 @@ export type TradeManagementGuidance = {
   note: string;
 };
 
+export type LiveValidationStatus = {
+  status: 'developing' | 'target_reached' | 'invalidated' | 'observing';
+  label: string;
+  pnlPoints: number;
+  entryPrice: number;
+  currentPrice: number;
+};
+
 export type SideInFocus = {
   side: 'CE' | 'PE';
   bias: 'bullish' | 'bearish';
@@ -197,6 +205,7 @@ export type SideInFocus = {
   rationale: string[];
   tradeManagement: TradeManagementGuidance;
   disclaimer: string;
+  liveValidation?: LiveValidationStatus;
 };
 
 /** One entry from the educational strategy registry (GET /sentinel/strategies/registry). */

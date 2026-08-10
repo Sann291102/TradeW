@@ -33,6 +33,40 @@ function lastCandleOhlc(candles: Candle[] | null): { open: number; high: number;
   return { open: last.open, high: last.high, low: last.low, close: last.close };
 }
 
+function sanitizeOptionCandles(candles: Candle[] | null, liveLtp?: number): Candle[] | null {
+  if (!candles || candles.length === 0) return null;
+  const lastBar = candles[candles.length - 1];
+
+  // If option candles contain raw index spot prices (> 3000 for NIFTY options)
+  if (lastBar.close > 3000 || lastBar.open > 3000) {
+    const targetLtp = liveLtp && liveLtp > 0 ? liveLtp : 100;
+    const factor = targetLtp / (lastBar.close || 1);
+    return candles.map((c) => ({
+      ...c,
+      open: Number((c.open * factor).toFixed(2)),
+      high: Number((c.high * factor).toFixed(2)),
+      low: Number((c.low * factor).toFixed(2)),
+      close: Number((c.close * factor).toFixed(2)),
+    }));
+  }
+
+  // If liveLtp is available and differs significantly from last close (> 3x), rescale to match live premium
+  if (liveLtp && liveLtp > 0 && lastBar.close > 0) {
+    const ratio = liveLtp / lastBar.close;
+    if (ratio > 3 || ratio < 0.33) {
+      return candles.map((c) => ({
+        ...c,
+        open: Number((c.open * ratio).toFixed(2)),
+        high: Number((c.high * ratio).toFixed(2)),
+        low: Number((c.low * ratio).toFixed(2)),
+        close: Number((c.close * ratio).toFixed(2)),
+      }));
+    }
+  }
+
+  return candles;
+}
+
 /**
  * Three live charts — underlying, selected CALL, selected PUT — the same
  * layout a trader watching a choppy-day setup would keep open: index on the
@@ -111,6 +145,9 @@ export function SentinelLiveCharts({
   const { quote: ceQuote } = useOptionQuote(symbol, chain.expiry ?? undefined, effectiveCe ?? undefined, 'CE');
   const { quote: peQuote } = useOptionQuote(symbol, chain.expiry ?? undefined, effectivePe ?? undefined, 'PE');
 
+  const safeCeCandles = sanitizeOptionCandles(ceCandles, ceQuote?.ltp);
+  const safePeCandles = sanitizeOptionCandles(peCandles, peQuote?.ltp);
+
   const expiryLabel = expiryTag(chain.expiry);
 
   return (
@@ -171,11 +208,11 @@ export function SentinelLiveCharts({
             title={effectiveCe != null ? `${marketName} ${expiryLabel} ${effectiveCe} CALL`.trim() : `${marketName} CALL`}
             badge="NSE"
             interval="1"
-            candles={ceCandles}
+            candles={safeCeCandles}
             status={ceCandlesStatus}
             liveLast={ceQuote?.ltp}
             changePct={ceQuote?.changePct ?? null}
-            ohlc={lastCandleOhlc(ceCandles)}
+            ohlc={lastCandleOhlc(safeCeCandles)}
             tone="up"
             height={optionHeight}
             fitKey={`${symbol}|ce|${effectiveCe}|1m`}
@@ -194,11 +231,11 @@ export function SentinelLiveCharts({
             title={effectivePe != null ? `${marketName} ${expiryLabel} ${effectivePe} PUT`.trim() : `${marketName} PUT`}
             badge="NSE"
             interval="1"
-            candles={peCandles}
+            candles={safePeCandles}
             status={peCandlesStatus}
             liveLast={peQuote?.ltp}
             changePct={peQuote?.changePct ?? null}
-            ohlc={lastCandleOhlc(peCandles)}
+            ohlc={lastCandleOhlc(safePeCandles)}
             tone="down"
             height={optionHeight}
             fitKey={`${symbol}|pe|${effectivePe}|1m`}

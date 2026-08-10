@@ -32,10 +32,11 @@ export class ComplianceService {
     observations: SentinelObservationOut[],
     surfacedContent?: string | null,
   ): Promise<void> {
+    if (observations.length === 0) return;
     try {
       await this.prisma.sentinelObservation.createMany({
         data: observations.map((o) => ({
-          userId,
+          userId: userId || null,
           agent: o.agent,
           category: o.category,
           pattern: o.pattern ?? null,
@@ -44,6 +45,7 @@ export class ComplianceService {
           evidence: o.evidence,
           confidence: o.confidence,
           surfaced: surfacedContent !== null && surfacedContent !== undefined && o.agent === 'orchestrator',
+          createdAt: o.createdAt ? new Date(o.createdAt) : new Date(),
         })),
       });
     } catch (err) {
@@ -53,13 +55,27 @@ export class ComplianceService {
     }
   }
 
-  async feed(userId: string, limit = 50) {
+  async feed(userId: string | null, limit = 100): Promise<SentinelObservationOut[]> {
     try {
-      return await this.prisma.sentinelObservation.findMany({
-        where: { OR: [{ userId }, { userId: null }] },
+      const since24h = new Date(Date.now() - 24 * 3600 * 1000);
+      const rows = await this.prisma.sentinelObservation.findMany({
+        where: {
+          OR: userId ? [{ userId }, { userId: null }] : [{ userId: null }],
+          createdAt: { gte: since24h },
+        },
         orderBy: { createdAt: 'desc' },
         take: Math.min(limit, 200),
       });
+      return rows.map((r) => ({
+        agent: r.agent,
+        category: r.category,
+        pattern: r.pattern ?? undefined,
+        symbol: r.symbol ?? undefined,
+        content: r.content,
+        evidence: Array.isArray(r.evidence) ? (r.evidence as string[]) : [r.content],
+        confidence: r.confidence,
+        createdAt: r.createdAt.toISOString(),
+      }));
     } catch (err) {
       // read path — degrade to an empty feed rather than a 500, matching
       // every other Brain query surface (KnowledgeCenterService et al).

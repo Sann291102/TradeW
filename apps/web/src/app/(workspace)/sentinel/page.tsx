@@ -144,7 +144,7 @@ export default function SentinelPage() {
     confidence: data?.confidence,
     risk: data?.risk,
   });
-  const safetyCards = extractSafetyFeed(observations, data?.synthesis ?? null);
+  const safetyCards = extractSafetyFeed(observations, data?.synthesis ?? null, data?.sideInFocus ?? null);
   const lesson = suggestedLesson(safetyCards);
   const lastUpdated = loading ? 'refreshing…' : 'just now';
 
@@ -190,21 +190,19 @@ export default function SentinelPage() {
           </div>
 
           <div className="min-w-0 space-y-5">
+            <LiveSafetyFeed cards={pushworthyCards(safetyCards)} />
+            {data?.sideInFocus ? (
+              <SideInFocusCard focus={data.sideInFocus} />
+            ) : (
+              <WaitingForConfirmation publication={data?.publication} />
+            )}
             {isMarketActive ? (
-              <>
-                <LiveSafetyFeed cards={pushworthyCards(safetyCards)} />
-                <StrategySelector
-                  mode={strategyMode}
-                  selectedStrategyIds={selectedStrategyIds}
-                  advices={data?.strategyAdvices}
-                  onChange={onStrategyChange}
-                />
-                {data?.sideInFocus ? (
-                  <SideInFocusCard focus={data.sideInFocus} />
-                ) : (
-                  <WaitingForConfirmation publication={data?.publication} />
-                )}
-              </>
+              <StrategySelector
+                mode={strategyMode}
+                selectedStrategyIds={selectedStrategyIds}
+                advices={data?.strategyAdvices}
+                onChange={onStrategyChange}
+              />
             ) : (
               <section className="rounded-2xl border border-border bg-card p-6 shadow-elev2">
                 <h2 className="mb-3 text-[11px] font-bold uppercase tracking-wideTrack text-faint">
@@ -212,12 +210,12 @@ export default function SentinelPage() {
                 </h2>
                 <p className="rounded-xl border border-border bg-bg p-4 text-[12.5px] leading-relaxed text-muted">
                   {sessionPhase === 'pre-market'
-                    ? `NSE opens at 09:15 AM IST. Sentinel will begin live observation, strategy detection, and safety signals once the session opens. The day classification and prior-session context above reflect yesterday's close.`
-                    : `Today's session has ended. Sentinel's live feed, strategy signals, and side-in-focus are paused until the next session opens at 09:15 AM IST.`}
+                    ? `NSE opens at 09:15 AM IST. Sentinel continues displaying saved safety observations from the last 24 hours. Live session scanning opens at 09:15 AM IST.`
+                    : `Today's trading session has ended. Displaying saved safety observations from the past 24 hours. Live scanning resumes when the next session opens at 09:15 AM IST.`}
                 </p>
               </section>
             )}
-            <SentinelTimeline cards={isMarketActive ? safetyCards : []} entries={data?.timeline} />
+            <SentinelTimeline cards={safetyCards} entries={data?.timeline} />
           </div>
         </div>
 

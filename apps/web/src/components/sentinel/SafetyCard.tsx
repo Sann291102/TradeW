@@ -28,12 +28,21 @@ function formatTime(iso: string | null): string {
  */
 export function SafetyCard({ card }: { card: SafetyCardData }) {
   const [open, setOpen] = useState(false);
+  const isSideInFocus = card.action === 'Side in Focus';
+  const isPe = isSideInFocus && card.explanation.includes('PE');
+  const isCe = isSideInFocus && card.explanation.includes('CE');
 
   return (
     <li
       className={cn(
         'overflow-hidden rounded-xl border bg-bg transition-colors duration-micro',
-        card.pinned ? 'border-teal shadow-elev2' : 'border-border hover:border-border2',
+        isSideInFocus
+          ? isPe
+            ? 'border-down bg-down-bg/50 shadow-elev2 ring-1 ring-down/30'
+            : 'border-up bg-up-bg/50 shadow-elev2 ring-1 ring-up/30'
+          : card.pinned
+            ? 'border-teal shadow-elev2'
+            : 'border-border hover:border-border2',
       )}
     >
       <button
@@ -47,12 +56,21 @@ export function SafetyCard({ card }: { card: SafetyCardData }) {
             <span className="rounded-md bg-hover px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums text-faint">
               {formatTime(card.timestamp)}
             </span>
-            <span className="text-[13.5px] font-bold text-text">{card.action}</span>
-            <Badge tone={SEVERITY_TONE[card.severity]} className="text-[10px]">
+            <span className={cn('text-[13.5px] font-bold', isSideInFocus ? (isPe ? 'text-down' : 'text-up') : 'text-text')}>
+              {card.action}
+            </span>
+            {isSideInFocus && (
+              <span className={cn('rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase', isPe ? 'bg-down/20 text-down' : 'bg-up/20 text-up')}>
+                {isPe ? 'PE PUT' : 'CE CALL'}
+              </span>
+            )}
+            <Badge tone={isSideInFocus ? (isPe ? 'negative' : 'positive') : SEVERITY_TONE[card.severity]} className="text-[10px]">
               {(card.confidence * 100).toFixed(0)}%
             </Badge>
           </div>
-          <p className="mt-1.5 text-[12px] leading-snug text-muted">{card.explanation}</p>
+          <p className={cn('mt-1.5 text-[12.5px] leading-snug', isSideInFocus ? 'font-semibold text-text' : 'text-muted')}>
+            {card.explanation}
+          </p>
         </div>
         <ChevronDownIcon
           className={cn('mt-1 h-4 w-4 shrink-0 text-faint transition-transform duration-micro', open && 'rotate-180')}

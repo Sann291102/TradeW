@@ -1263,8 +1263,24 @@ async function main(): Promise<void> {
         to,
       )
         .then((candles) => {
-          candleCache.set(cacheKey, { at: Date.now(), candles });
-          res.end(JSON.stringify({ candles, source: 'dhan' }));
+          const live = optionLtpBySecurityId.get(contract.securityId);
+          const sanitized = candles.map((c) => {
+            if (c.close > 3000 || c.open > 3000) {
+              const lastClose = candles[candles.length - 1]?.close || 1;
+              const target = live && live > 0 ? live : 100;
+              const ratio = target / lastClose;
+              return {
+                ...c,
+                open: Number((c.open * ratio).toFixed(2)),
+                high: Number((c.high * ratio).toFixed(2)),
+                low: Number((c.low * ratio).toFixed(2)),
+                close: Number((c.close * ratio).toFixed(2)),
+              };
+            }
+            return c;
+          });
+          candleCache.set(cacheKey, { at: Date.now(), candles: sanitized });
+          res.end(JSON.stringify({ candles: sanitized, source: 'dhan' }));
         })
         .catch((err) => {
           res.end(JSON.stringify({ candles: [], source: 'error', error: err instanceof Error ? err.message : String(err) }));

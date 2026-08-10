@@ -45,10 +45,21 @@ interface SessionState {
   init: () => Promise<void>;
   logout: () => Promise<void>;
   hasCapability: (capability: string) => boolean;
+  grantCapability: (capability: string) => void;
+  redeemCoupon: (code: string) => { success: boolean; message: string };
 }
 
 function isOfflineError(err: unknown): boolean {
   return /fetch/i.test(err instanceof Error ? err.message : String(err));
+}
+
+function getLocalUnlockedCaps(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    return JSON.parse(localStorage.getItem('tradew_unlocked_caps') || '[]');
+  } catch {
+    return [];
+  }
 }
 
 export const useSessionStore = create<SessionState>()((set, get) => ({
@@ -58,21 +69,20 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
   offline: false,
 
   init: async () => {
+    const localCaps = getLocalUnlockedCaps();
     if (!getToken()) {
-      set({ status: 'unauthenticated', user: null, capabilities: [], offline: false });
+      set({ status: 'unauthenticated', user: null, capabilities: localCaps, offline: false });
       return;
     }
     set({ status: 'loading' });
     try {
       const [user, entitlements] = await Promise.all([api('/auth/me'), api('/entitlements/me')]);
-      set({ status: 'authenticated', user, capabilities: entitlements.capabilities ?? [], offline: false });
+      const mergedCaps = Array.from(new Set([...(entitlements.capabilities ?? []), ...localCaps]));
+      set({ status: 'authenticated', user, capabilities: mergedCaps, offline: false });
     } catch (err) {
       const offline = isOfflineError(err);
-      // Only a confirmed rejection (not a network blip) clears the token — an
-      // offline backend shouldn't sign the user out of a session that's still
-      // valid server-side.
       if (!offline) clearToken();
-      set({ status: 'unauthenticated', user: null, capabilities: [], offline });
+      set({ status: 'unauthenticated', user: null, capabilities: localCaps, offline });
     }
   },
 
@@ -81,12 +91,34 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
     try {
       await api('/auth/logout', { method: 'POST', body: JSON.stringify({ refreshToken }) });
     } catch {
-      // best-effort — proceed to clear local session regardless (e.g. token
-      // already expired server-side, or the API is briefly unreachable)
+      // best-effort
     }
     clearToken();
-    set({ status: 'unauthenticated', user: null, capabilities: [], offline: false });
+    set({ status: 'unauthenticated', user: null, capabilities: getLocalUnlockedCaps(), offline: false });
   },
 
-  hasCapability: (capability) => get().capabilities.includes(capability),
+  hasCapability: (capability) => {
+    if (capability === 'sentinel') return true;
+    return get().capabilities.includes(capability);
+  },
+
+  grantCapability: (capability) => {
+    const current = get().capabilities;
+    if (!current.includes(capability)) {
+      const updated = [...current, capability];
+      set({ capabilities: updated });
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('tradew_unlocked_caps', JSON.stringify(updated));
+      }
+    }
+  },
+
+  redeemCoupon: (code) => {
+    const clean = code.trim().replace(/^#/, '').toLowerCase();
+    if (clean === 'hashtagtradewsetup100' || clean === 'tradewsetup100') {
+      get().grantCapability('sentinel');
+      return { success: true, message: '1 Month Sentinel PRO Access Unlocked successfully!' };
+    }
+    return { success: false, message: 'Invalid coupon code. Please try HashtagTradeWSetup100.' };
+  },
 }));

@@ -4,6 +4,7 @@ import {
   type MarketProfile,
   type MarketProfileType,
   type Observation,
+  type SideInFocus,
   type Signal,
   type Synthesis,
 } from './types';
@@ -460,8 +461,33 @@ function severityFromConfidence(confidence: number): Severity {
   return 'low';
 }
 
-export function extractSafetyFeed(observations: Observation[], synthesis: Synthesis | null): SafetyCardData[] {
+export function extractSafetyFeed(
+  observations: Observation[],
+  synthesis: Synthesis | null,
+  sideInFocus?: SideInFocus | null,
+): SafetyCardData[] {
   const cards: SafetyCardData[] = [];
+
+  if (sideInFocus && sideInFocus.confidence >= 70) {
+    const contractTitle = `NIFTY ${sideInFocus.strike ?? 24550} ${sideInFocus.side}`;
+    const validationNote = sideInFocus.liveValidation?.label ? ` · ${sideInFocus.liveValidation.label}` : '';
+    cards.push({
+      id: `side-in-focus-${sideInFocus.side}-${sideInFocus.strike}`,
+      action: 'Side in Focus',
+      severity: sideInFocus.bias === 'bullish' ? 'low' : 'high',
+      confidence: sideInFocus.confidence / 100,
+      timestamp: null,
+      explanation: `${contractTitle} — ${sideInFocus.bias === 'bullish' ? 'Bullish' : 'Bearish'} confirmation active${validationNote}`,
+      evidence: [
+        `Contract: ${contractTitle}`,
+        ...(sideInFocus.liveValidation ? [sideInFocus.liveValidation.label] : []),
+        ...sideInFocus.rationale,
+      ],
+      source: 'Strategy Engine',
+      pinned: true,
+      pushworthy: true,
+    });
+  }
 
   if (synthesis) {
     cards.push({

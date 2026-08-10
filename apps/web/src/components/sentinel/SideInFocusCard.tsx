@@ -45,14 +45,28 @@ export function SideInFocusCard({ focus }: { focus: SideInFocus }) {
             </p>
           </div>
         </div>
-        <span
-          className={cn(
-            'rounded-lg border px-2.5 py-1 font-mono text-[11px] font-bold tabular-nums',
-            isCe ? 'border-up bg-card text-up' : 'border-down bg-card text-down',
+        <div className="flex flex-col items-end gap-1.5">
+          <span
+            className={cn(
+              'rounded-lg border px-2.5 py-1 font-mono text-[11px] font-bold tabular-nums',
+              isCe ? 'border-up bg-card text-up' : 'border-down bg-card text-down',
+            )}
+          >
+            {Math.round(focus.confidence)}%
+          </span>
+          {focus.liveValidation && (
+            <span
+              className={cn(
+                'rounded-md px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide',
+                focus.liveValidation.status === 'invalidated'
+                  ? 'bg-down/20 text-down border border-down/30'
+                  : 'bg-up/20 text-up border border-up/30',
+              )}
+            >
+              {focus.liveValidation.label}
+            </span>
           )}
-        >
-          {Math.round(focus.confidence)}%
-        </span>
+        </div>
       </div>
 
       {focus.rationale.length > 0 && (

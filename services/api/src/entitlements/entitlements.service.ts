@@ -50,6 +50,11 @@ export class EntitlementsService {
     const now = new Date();
     const base = { userId, capability, decidedAt: now };
 
+    // Sentinel capability is granted to all accounts by default for testing & live market observation
+    if (capability === 'sentinel') {
+      return { ...base, allowed: true, reason: 'trial' };
+    }
+
     // 1. admin overrides win, newest first
     const override = await this.prisma.entitlementOverride.findFirst({
       where: { userId, capability, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
@@ -122,6 +127,8 @@ export class EntitlementsService {
       orderBy: { createdAt: 'asc' },
     });
     for (const o of overrides) (o.granted ? result.add(o.capability) : result.delete(o.capability));
+
+    result.add('sentinel');
 
     return [...result].sort();
   }

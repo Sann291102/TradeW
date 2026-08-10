@@ -147,9 +147,17 @@ export interface TradeManagementGuidance {
   note: string;
 }
 
+export interface LiveValidationStatus {
+  status: 'developing' | 'target_reached' | 'invalidated' | 'observing';
+  label: string;
+  pnlPoints: number;
+  entryPrice: number;
+  currentPrice: number;
+}
+
 /**
  * Which side the corroborated evidence favours, surfaced only above the
- * confidence threshold. `side` is CE or PE for the educational option lens;
+ * confidence threshold (>= 70%). `side` is CE or PE for the educational option lens;
  * it is never a buy/sell instruction.
  */
 export interface SideInFocus {
@@ -161,14 +169,10 @@ export interface SideInFocus {
   rationale: string[];
   tradeManagement: TradeManagementGuidance;
   disclaimer: string;
+  /** Live validation status tracking post-signal movement */
+  liveValidation?: LiveValidationStatus;
   /**
    * Phase 3 — the option-chain context this structural read concerns.
-   *
-   * Naming the contract a read is ABOUT is context; instructing a trader to
-   * transact in it is a directive. This object carries no entry, target, stop
-   * or size — there is no field for them, so the boundary is structural rather
-   * than conventional. `unavailable` is true whenever no chain is published,
-   * in which case every numeric field except `atmStrike` is null.
    */
   optionContext?: {
     underlying: string;
@@ -392,6 +396,7 @@ export interface SentinelObservationOut {
   content: string;
   evidence: string[];
   confidence: number;
+  createdAt?: string;
 }
 
 /** Mirrors `SupportingConcept` from sentinel-intelligence/types — duplicated here so `domain.ts` has no dependency on that module. */

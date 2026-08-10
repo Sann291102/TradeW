@@ -344,6 +344,17 @@ export class SentinelOrchestratorService {
 
     await this.compliance.record(request.userId, observations, synthesis?.content ?? null);
 
+    // Merge observations persisted in DB over the last 24 hours
+    const past24hDbObservations = await this.compliance.feed(request.userId, 100);
+    const observationMap = new Map<string, SentinelObservationOut>();
+    for (const obs of [...observations, ...past24hDbObservations]) {
+      const key = `${obs.agent}:${obs.pattern ?? obs.category}:${obs.content}`;
+      if (!observationMap.has(key)) {
+        observationMap.set(key, obs);
+      }
+    }
+    const all24hObservations = Array.from(observationMap.values());
+
     // Market Context Engine: additive narrative, never blocks the response.
     const marketContext = await this.marketContext.contextFor(symbol, snapshot).catch(() => undefined);
 
@@ -501,7 +512,7 @@ export class SentinelOrchestratorService {
         narrative: behaviourRead.narrative,
         evidence: behaviourRead.evidence,
       },
-      observations,
+      observations: all24hObservations,
       signals,
       marketContext,
       marketProfile: snapshot.marketProfile,
