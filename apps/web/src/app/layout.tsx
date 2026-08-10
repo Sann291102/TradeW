@@ -1,7 +1,6 @@
 // Design tokens first (defines the CSS vars), then app globals that consume them.
 import '@tradew/ui/styles.css';
 import './globals.css';
-import { AppFrame } from '@/components/shell/AppFrame';
 
 export const metadata = {
   title: 'TradeW — AI Trading Operating System',
@@ -27,9 +26,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
-      <body>
-        <AppFrame>{children}</AppFrame>
-      </body>
+      {/* No AppFrame here. The workspace shell lives in `(workspace)/layout.tsx`
+          so that which routes get chrome is decided by the route tree rather
+          than by a pathname compared at render time — see that file for the
+          bug this prevents. */}
+      <body>{children}</body>
     </html>
   );
 }

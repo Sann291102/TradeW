@@ -8,7 +8,6 @@ import { TopBar } from './TopBar';
 import { Ticker } from './Ticker';
 import { FloatingAI } from './FloatingAI';
 import { NotificationCenter } from './NotificationCenter';
-import { isBareRoute, isStandaloneRoute } from './nav-config';
 import { useWorkspaceStore } from '@/lib/store/workspaceStore';
 import { useHydrateWorkspaceStore } from '@/lib/store/useHydrated';
 import { useKeyboardShortcuts } from '@/lib/store/useKeyboardShortcuts';
@@ -21,8 +20,20 @@ import { useDisciplineStore } from '@/lib/store/disciplineStore';
 /**
  * AppFrame — the permanent application shell (Milestone 2, Step 1; overlay
  * wiring added Milestone 3). Wraps every workspace route with Sidebar +
- * TopBar + Ticker + content, and renders auth/marketing routes bare. Placed
- * in the ROOT layout so existing pages get the chrome WITHOUT being moved.
+ * TopBar + Ticker + content.
+ *
+ * It used to sit in the ROOT layout and strip its own chrome by testing
+ * `usePathname()` against BARE_ROUTES/STANDALONE_ROUTES, so that pages could
+ * get the shell without being moved. That check has been removed: it made the
+ * shell depend on a string that can disagree with what actually rendered.
+ * Signed out on `/profile`, the auth gate redirected the RSC payload to `/`,
+ * Next patched the landing page into the tree while pathname still read
+ * `/profile`, and this component wrapped the marketing page in trader chrome.
+ *
+ * Mounting now lives in `app/(workspace)/layout.tsx`, so only routes inside
+ * that group get the shell and the desync is structurally impossible. Bare
+ * routes are bare because of where their files are, not because of a
+ * comparison made at render time.
  *
  * As of Milestone 3, Sidebar/TopBar/FloatingAI read their open/collapsed
  * state directly from the workspace store (not props) — this file just
@@ -66,10 +77,6 @@ export function AppFrame({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
-
-  if (isBareRoute(pathname) || isStandaloneRoute(pathname)) {
-    return <>{children}</>;
-  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-text">
