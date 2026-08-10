@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fetchDhanExpiryList, fetchDhanOptionChain } from '@/lib/dhanLiveFeed';
 import { ceRows, peRows, nearestStrikeIndex, pickNearestExpiry, type StrikeRow } from './optionChain';
 
@@ -35,16 +35,25 @@ const EMPTY: OptionChainStrikes = { status: 'loading', expiry: null, spot: null,
  */
 export function useOptionChainStrikes(symbol: string, enabled: boolean): OptionChainStrikes {
   const [state, setState] = useState<OptionChainStrikes>(EMPTY);
+  /**
+   * The ATM strike this hook last reported, fed back into `nearestStrikeIndex`
+   * so the pick is sticky across polls. A ref rather than state: it must not
+   * itself trigger a render, and the poll below reads it at call time.
+   */
+  const atmStrikeRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!enabled) {
       setState(EMPTY);
+      atmStrikeRef.current = null;
       return;
     }
 
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
     setState((s) => ({ ...s, status: 'loading' }));
+    // A different market's ladder shares nothing with the previous one.
+    atmStrikeRef.current = null;
 
     const load = async () => {
       try {
@@ -52,31 +61,41 @@ export function useOptionChainStrikes(symbol: string, enabled: boolean): OptionC
         const todayIso = new Date().toISOString().slice(0, 10);
         const expiry = pickNearestExpiry(expiries, todayIso);
         if (!expiry) {
-          if (!cancelled) setState({ ...EMPTY, status: 'unavailable' });
+          if (!cancelled) {
+            atmStrikeRef.current = null;
+            setState({ ...EMPTY, status: 'unavailable' });
+          }
           return;
         }
         const chain = await fetchDhanOptionChain(symbol, expiry);
         if (cancelled) return;
         if (!chain) {
+          atmStrikeRef.current = null;
           setState({ ...EMPTY, status: 'unavailable', expiry });
           return;
         }
         const ce = ceRows(chain);
         const pe = peRows(chain);
         if (ce.length === 0 && pe.length === 0) {
+          atmStrikeRef.current = null;
           setState({ ...EMPTY, status: 'unavailable', expiry, spot: chain.spot });
           return;
         }
+        const atmIndex = nearestStrikeIndex(ce, chain.spot, atmStrikeRef.current);
+        atmStrikeRef.current = ce[atmIndex]?.strike ?? null;
         setState({
           status: 'live',
           expiry,
           spot: chain.spot,
           ce,
           pe,
-          atmIndex: nearestStrikeIndex(ce, chain.spot),
+          atmIndex,
         });
       } catch {
-        if (!cancelled) setState({ ...EMPTY, status: 'unavailable' });
+        if (!cancelled) {
+          atmStrikeRef.current = null;
+          setState({ ...EMPTY, status: 'unavailable' });
+        }
       }
     };
 
