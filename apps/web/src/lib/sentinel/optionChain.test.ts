@@ -64,6 +64,35 @@ describe('nearestStrikeIndex', () => {
   it('returns -1 for an empty ladder', () => {
     expect(nearestStrikeIndex([], 100)).toBe(-1);
   });
+
+  describe('hysteresis around a strike boundary', () => {
+    // 50-point ladder; the raw midpoint between 24300 and 24350 is 24325, and
+    // the hysteresis band is a quarter step (12.5 points) past it.
+    const ladder = [{ strike: 24250 }, { strike: 24300 }, { strike: 24350 }, { strike: 24400 }];
+
+    it('holds the incumbent while spot dithers just past the midpoint', () => {
+      // 24326 is nearer 24350, but not by enough to move off 24300.
+      expect(ladder[nearestStrikeIndex(ladder, 24326, 24300)].strike).toBe(24300);
+      expect(ladder[nearestStrikeIndex(ladder, 24324, 24350)].strike).toBe(24350);
+    });
+
+    it('moves once spot clears the band', () => {
+      // 24340 is 15 points nearer 24350 than 24300 — past the 12.5 threshold.
+      expect(ladder[nearestStrikeIndex(ladder, 24340, 24300)].strike).toBe(24350);
+    });
+
+    it('picks the plain nearest strike with no incumbent', () => {
+      expect(ladder[nearestStrikeIndex(ladder, 24326)].strike).toBe(24350);
+    });
+
+    it('falls back to nearest when the incumbent has left the ladder', () => {
+      expect(ladder[nearestStrikeIndex(ladder, 24326, 23000)].strike).toBe(24350);
+    });
+
+    it('falls back to nearest when there is no measurable step', () => {
+      expect(nearestStrikeIndex([{ strike: 24300 }], 24326, 24300)).toBe(0);
+    });
+  });
 });
 
 describe('ceRows / peRows', () => {

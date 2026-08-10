@@ -55,15 +55,23 @@ export interface DhanCandle {
 /**
  * Real historical candles for the TradingView (lightweight-charts) charts,
  * from the bridge's `/candles` route (which proxies Dhan's charged, cached
- * Historical Data REST API). Returns [] for symbols the bridge doesn't cover
- * or on any error, so the caller falls back to simulated candles.
+ * Historical Data REST API).
+ *
+ * Two failure shapes, deliberately kept apart so the chart can name the right
+ * one (see `CandlesUnavailableReason`):
+ *  - THROWS when the bridge or Dhan itself faulted ('api-unreachable').
+ *  - Returns [] when the answer was good but empty — a symbol the bridge does
+ *    not cover, or one Dhan holds no bars for ('no-history').
+ * Neither path ever yields a fabricated series.
  */
 export async function fetchDhanCandles(symbol: string, interval: string, days: number): Promise<DhanCandle[]> {
   const url = `${DHAN_LIVE_URL}/candles?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&days=${days}`;
   const res = await fetch(url);
-  if (!res.ok) return [];
-  const data = (await res.json()) as { candles?: DhanCandle[]; source?: string };
-  return data.source === 'dhan' && Array.isArray(data.candles) ? data.candles : [];
+  if (!res.ok) throw new Error(`market-data bridge returned ${res.status}`);
+  const data = (await res.json()) as { candles?: DhanCandle[]; source?: string; error?: string };
+  if (data.source === 'dhan') return Array.isArray(data.candles) ? data.candles : [];
+  if (data.source === 'none') return [];
+  throw new Error(data.error ?? `market-data bridge reported source '${data.source ?? 'unknown'}'`);
 }
 
 /**
@@ -74,8 +82,11 @@ export async function fetchDhanCandles(symbol: string, interval: string, days: n
  * This replaces the Black-Scholes-derived stand-in the contract chart used to
  * draw. That series could only approximate the shape, and once its scale anchor
  * drifted from the live premium it rendered a visible cliff at the final bar.
- * Returns [] when the contract can't be resolved or Dhan declines, so the
- * caller can fall back and say so.
+ *
+ * Same two-shape contract as `fetchDhanCandles`: THROWS when the bridge or Dhan
+ * faulted, returns [] when the contract simply has no bars. The caller needs
+ * the difference to say "no traded history" versus "the data API declined" —
+ * they are not the same message to a trader watching an illiquid strike.
  */
 export async function fetchDhanOptionCandles(
   symbol: string,
@@ -89,14 +100,14 @@ export async function fetchDhanOptionCandles(
     `${DHAN_LIVE_URL}/candles/option?symbol=${encodeURIComponent(symbol)}` +
     `&expiry=${encodeURIComponent(expiryIso)}&strike=${strike}&type=${optionType}` +
     `&interval=${encodeURIComponent(interval)}&days=${days}`;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return [];
-    const data = (await res.json()) as { candles?: DhanCandle[]; source?: string };
-    return data.source === 'dhan' && Array.isArray(data.candles) ? data.candles : [];
-  } catch {
-    return [];
-  }
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`market-data bridge returned ${res.status}`);
+  const data = (await res.json()) as { candles?: DhanCandle[]; source?: string; error?: string };
+  if (data.source === 'dhan') return Array.isArray(data.candles) ? data.candles : [];
+  // 'none' — unresolvable contract or a malformed request. Nothing to draw,
+  // but nothing faulted upstream either.
+  if (data.source === 'none') return [];
+  throw new Error(data.error ?? `market-data bridge reported source '${data.source ?? 'unknown'}'`);
 }
 
 /** One option leg (CE or PE) from Dhan's real Option Chain API. */
@@ -131,8 +142,8 @@ export interface DhanOptionChain {
  * Real expiry dates (ISO `YYYY-MM-DD`) for an underlying's option chain, from
  * the bridge's `/optionchain/expirylist` route (proxying Dhan's Option Chain
  * API, server-side rate-limited — see live-feed-server.ts). Returns [] for
- * symbols with no options market (ETFs, commodities) or if unreachable, so
- * the caller falls back to the simulated expiry table.
+ * symbols with no options market (ETFs, commodities) or if unreachable; the
+ * caller reports that as 'unavailable' rather than inventing expiries.
  */
 export async function fetchDhanExpiryList(symbol: string): Promise<string[]> {
   try {
@@ -176,8 +187,8 @@ export async function fetchDhanHasOptionChain(symbol: string): Promise<boolean |
 /**
  * Real option chain (spot + every strike's CE/PE — OI, volume, LTP, IV, real
  * Greeks) for an underlying + expiry, from the bridge's `/optionchain`
- * route. Returns null on any failure/empty result so the caller falls back
- * to the simulated chain.
+ * route. Returns null on any failure/empty result; the caller reports that as
+ * 'unavailable' rather than falling back to a fabricated chain.
  */
 export async function fetchDhanOptionChain(symbol: string, expiryIso: string): Promise<DhanOptionChain | null> {
   try {

@@ -32,8 +32,39 @@ export function pickNearestExpiry(expiries: string[], todayIso?: string): string
   return (future[0] ?? valid[valid.length - 1]) ?? null;
 }
 
-/** Index of the strike closest to spot; -1 for an empty ladder. */
-export function nearestStrikeIndex(strikes: { strike: number }[], spot: number | null): number {
+/**
+ * How far past the midpoint between two strikes spot must travel before the
+ * ATM is allowed to move, as a fraction of one strike step. Without this the
+ * ATM flips on every poll while spot dithers around a boundary — and each flip
+ * re-keys the CE/PE charts, firing two fresh Dhan historical calls, which is
+ * what exhausted the rate limit mid-session.
+ */
+const ATM_HYSTERESIS_RATIO = 0.25;
+
+/** Smallest gap between adjacent strikes in an ascending ladder, or null when
+ *  there aren't two distinct strikes to measure. */
+function strikeStep(strikes: { strike: number }[]): number | null {
+  let step = Infinity;
+  for (let i = 1; i < strikes.length; i++) {
+    const gap = Math.abs(strikes[i].strike - strikes[i - 1].strike);
+    if (gap > 0 && gap < step) step = gap;
+  }
+  return Number.isFinite(step) ? step : null;
+}
+
+/**
+ * Index of the strike closest to spot; -1 for an empty ladder.
+ *
+ * `incumbentStrike` is the strike currently being shown, if any. Passing it
+ * makes the choice sticky: the incumbent is kept until another strike is
+ * nearer by more than ATM_HYSTERESIS_RATIO of a strike step, so a spot sitting
+ * on a boundary doesn't oscillate. Omit it for a plain nearest-strike pick.
+ */
+export function nearestStrikeIndex(
+  strikes: { strike: number }[],
+  spot: number | null,
+  incumbentStrike?: number | null,
+): number {
   if (strikes.length === 0) return -1;
   if (spot == null) return Math.floor(strikes.length / 2);
   let bestIdx = 0;
@@ -45,7 +76,16 @@ export function nearestStrikeIndex(strikes: { strike: number }[], spot: number |
       bestIdx = i;
     }
   }
-  return bestIdx;
+
+  if (incumbentStrike == null) return bestIdx;
+  const incumbentIdx = strikes.findIndex((s) => s.strike === incumbentStrike);
+  // The incumbent has left the ladder (window scrolled, expiry rolled) — no
+  // one to be sticky about.
+  if (incumbentIdx === -1) return bestIdx;
+  const step = strikeStep(strikes);
+  if (step == null) return bestIdx;
+  const incumbentDist = Math.abs(strikes[incumbentIdx].strike - spot);
+  return incumbentDist - bestDist > step * ATM_HYSTERESIS_RATIO ? bestIdx : incumbentIdx;
 }
 
 /** CE rows (strike + LTP) from a chain, ascending by strike. */

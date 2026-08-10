@@ -126,7 +126,7 @@ export function SentinelLiveCharts({
   const effectiveCe = ceStrike ?? chain.ce[chain.atmIndex]?.strike ?? null;
   const effectivePe = peStrike ?? chain.pe[chain.atmIndex]?.strike ?? null;
 
-  const { candles: ceCandles, status: ceCandlesStatus } = useOptionCandles(
+  const { candles: ceCandles, status: ceCandlesStatus, reason: ceReason } = useOptionCandles(
     symbol,
     chain.expiry ?? undefined,
     effectiveCe ?? undefined,
@@ -134,7 +134,7 @@ export function SentinelLiveCharts({
     OPTION_INTERVAL,
     OPTION_DAYS,
   );
-  const { candles: peCandles, status: peCandlesStatus } = useOptionCandles(
+  const { candles: peCandles, status: peCandlesStatus, reason: peReason } = useOptionCandles(
     symbol,
     chain.expiry ?? undefined,
     effectivePe ?? undefined,
@@ -149,6 +149,37 @@ export function SentinelLiveCharts({
   const safePeCandles = sanitizeOptionCandles(peCandles, peQuote?.ltp);
 
   const expiryLabel = expiryTag(chain.expiry);
+
+  /**
+   * Copy for a contract panel with nothing to draw. An upstream fault and an
+   * untraded strike look identical on screen but are opposite diagnoses, so
+   * they never share a message.
+   */
+  const contractUnavailable = (
+    strike: number | null,
+    side: 'CE' | 'PE',
+    reason: 'api-unreachable' | 'no-history' | null,
+  ): { title: string; detail: string } => {
+    if (strike == null) {
+      return {
+        title: side === 'CE' ? 'No call strike selected' : 'No put strike selected',
+        detail: `Select a ${side} strike from Option Chain to watch it here.`,
+      };
+    }
+    if (reason === 'api-unreachable') {
+      return {
+        title: 'Market data API declined',
+        detail: `Dhan's historical API could not be read for ${symbol} ${strike} ${side} — the bridge is down, rate-limited, or its token has expired. No candles are drawn in place of the real ones.`,
+      };
+    }
+    return {
+      title: 'No traded history for this contract',
+      detail: `Dhan has no traded candles for ${symbol} ${strike} ${side}.`,
+    };
+  };
+
+  const ceUnavailable = contractUnavailable(effectiveCe, 'CE', ceReason);
+  const peUnavailable = contractUnavailable(effectivePe, 'PE', peReason);
 
   return (
     <section
@@ -197,7 +228,7 @@ export function SentinelLiveCharts({
             unavailableTitle={indexReason === 'api-unreachable' ? 'Market data API not connected' : 'No history available'}
             unavailableDetail={
               indexReason === 'api-unreachable'
-                ? 'The Dhan live-feed bridge (port 4600) is not reachable, so no real candles could be loaded.'
+                ? 'The Dhan live-feed bridge (port 4600) could not be read — it is down, rate-limited, or its token has expired. No candles are drawn in place of the real ones.'
                 : `Dhan returned no candles for ${symbol} at 5m.`
             }
           />
@@ -217,12 +248,8 @@ export function SentinelLiveCharts({
             height={optionHeight}
             fitKey={`${symbol}|ce|${effectiveCe}|1m`}
             intervalMinutes={1}
-            unavailableTitle={effectiveCe == null ? 'No call strike selected' : 'No traded history for this contract'}
-            unavailableDetail={
-              effectiveCe == null
-                ? 'Select a CE strike from Option Chain to watch it here.'
-                : `Dhan has no traded candles for ${symbol} ${effectiveCe} CE.`
-            }
+            unavailableTitle={ceUnavailable.title}
+            unavailableDetail={ceUnavailable.detail}
           />
         </div>
 
@@ -240,12 +267,8 @@ export function SentinelLiveCharts({
             height={optionHeight}
             fitKey={`${symbol}|pe|${effectivePe}|1m`}
             intervalMinutes={1}
-            unavailableTitle={effectivePe == null ? 'No put strike selected' : 'No traded history for this contract'}
-            unavailableDetail={
-              effectivePe == null
-                ? 'Select a PE strike from Option Chain to watch it here.'
-                : `Dhan has no traded candles for ${symbol} ${effectivePe} PE.`
-            }
+            unavailableTitle={peUnavailable.title}
+            unavailableDetail={peUnavailable.detail}
           />
         </div>
       </div>

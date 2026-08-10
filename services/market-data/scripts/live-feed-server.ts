@@ -643,55 +643,36 @@ async function fetchDhanCandles(meta: InstrumentMeta, interval: string, from: Da
   if (!isDaily) body.interval = INTRADAY_INTERVAL[interval] ?? '5';
 
   const endpoint = isDaily ? `${DHAN_API}/charts/historical` : `${DHAN_API}/charts/intraday`;
-  try {
-    const resp = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'access-token': accessToken },
-      body: JSON.stringify(body),
-    });
-    if (resp.ok) {
-      const data = (await resp.json()) as DhanChartResponse;
-      const candles = toCandles(data, isDaily ? undefined : meta.exchangeSegment);
-      if (candles.length > 0) return candles;
-    }
-  } catch (err) {
-    console.warn(`[dhan] REST API request failed for ${meta.symbol}:`, err instanceof Error ? err.message : String(err));
+  const resp = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'access-token': accessToken },
+    body: JSON.stringify(body),
+  }).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[dhan] REST API request failed for ${meta.symbol}:`, message);
+    throw new Error(`Dhan historical API unreachable for ${meta.symbol}: ${message}`);
+  });
+
+  if (!resp.ok) {
+    // Rate limit, expired token, missing Data-API entitlement — every one of
+    // these is a real fault the caller must be told about, verbatim. This used
+    // to fall through to a seeded random walk that the route then labelled
+    // `source: 'dhan'`, so an option chart silently drew index-level prices for
+    // a contract worth a couple of hundred rupees and nothing on screen said
+    // so. See the no-fabricated-data rule (2026-07-26).
+    const detail = await resp.text().catch(() => '');
+    console.warn(`[dhan] historical API returned ${resp.status} for ${meta.symbol}: ${detail.slice(0, 200)}`);
+    throw new Error(
+      `Dhan historical API returned ${resp.status} for ${meta.symbol}${detail ? `: ${detail.slice(0, 200)}` : ''}`,
+    );
   }
 
-  // Token expired or Dhan historical API unavailable — generate realistic market candles
-  const basePrices: Record<string, number> = {
-    NIFTY: 24624.65,
-    BANKNIFTY: 52134.3,
-    SENSEX: 78581.0,
-    FINNIFTY: 26843.9,
-    RELIANCE: 2945.2,
-    TCS: 3589.0,
-    HDFCBANK: 1816.5,
-    INFY: 1845.0,
-    TATAMOTORS: 985.0,
-    GOLD: 71820.0,
-    SILVER: 83200.0,
-    CRUDEOIL: 6420.0,
-  };
-  const base = basePrices[meta.symbol] ?? 1000;
-  const count = isDaily ? 250 : 75;
-  const now = Date.now();
-  const stepMs = isDaily ? 86400000 : 300000;
-  const fallback: CandleJson[] = [];
-  let price = base * 0.98;
-
-  for (let i = 0; i < count; i++) {
-    const timestamp = now - (count - 1 - i) * stepMs;
-    const noise = (Math.sin(i * 0.2) + (Math.random() - 0.48)) * (base * 0.004);
-    const open = price;
-    const close = open + noise;
-    const high = Math.max(open, close) + Math.random() * (base * 0.002);
-    const low = Math.min(open, close) - Math.random() * (base * 0.002);
-    const volume = Math.floor(50000 + Math.random() * 200000);
-    fallback.push({ timestamp, open, high, low, close, volume });
-    price = close;
-  }
-  return fallback;
+  // Dhan answered. An empty series here is a genuine "no bars for this
+  // contract" (illiquid strike, listed today, outside the retained window),
+  // not a fault — returned as-is so the UI says "no traded history" rather
+  // than "API down".
+  const data = (await resp.json()) as DhanChartResponse;
+  return toCandles(data, isDaily ? undefined : meta.exchangeSegment);
 }
 
 // ---------------------------------------------------------------------------
@@ -775,7 +756,15 @@ interface OptionStrikeOut {
 
 let optionChainQueue: Promise<unknown> = Promise.resolve();
 let lastOptionChainCallAt = 0;
-const OPTION_CHAIN_MIN_GAP_MS = 2_500;
+/**
+ * Floor gap between consecutive Dhan option-chain-family calls. Dhan documents
+ * no more than one call every ~3s; this sat at 2,500 ms, i.e. ~24 calls/min
+ * against a ~20/min ceiling. A page left open kept that up indefinitely, so
+ * Dhan eventually started declining — invisible on the chain itself (it serves
+ * `lastGoodChain`) but not on the charts, which had no such protection. 3,100 ms
+ * keeps a margin over the documented minimum rather than riding exactly on it.
+ */
+const OPTION_CHAIN_MIN_GAP_MS = 3_100;
 
 /** How many strikes either side of spot get a live websocket subscription per
  *  underlying+expiry (each costs two slots, CE + PE). The chain table shows 9
@@ -1189,7 +1178,8 @@ async function main(): Promise<void> {
       const days = Math.max(1, Math.min(3650, Number(url.searchParams.get('days') || 5)));
       const meta = ALL_INSTRUMENTS.find((i) => i.symbol === symbol);
       if (!meta) {
-        // Not a symbol the bridge covers — frontend falls back to mock candles.
+        // Not a symbol the bridge covers. `none` is distinct from `error`: the
+        // frontend reports it as "no history", not as an upstream fault.
         res.end(JSON.stringify({ candles: [], source: 'none' }));
         return;
       }
