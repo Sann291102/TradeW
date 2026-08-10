@@ -85,7 +85,20 @@ enum PositionCloseReason {
 model User {
   id                   String                @id @default(uuid())
   email                String                @unique
-  passwordHash         String
+  // Nullable since Google sign-in: a user who has only ever authenticated
+  // through Google has no password to hash, and storing a random unusable one
+  // would make "can this account log in with a password?" unanswerable. Code
+  // reading this must treat null as "no password credential", never as an
+  // empty password — `login()` rejects null before reaching bcrypt.
+  passwordHash         String?
+  // Set when the account is linked to a Google identity. Unique so two TradeW
+  // users can never claim the same Google account; nullable because most
+  // accounts are email+password only.
+  googleId             String?               @unique
+  // E.164, e.g. +919876543210. Unique so a number identifies one account, and
+  // nullable because phone is an optional second way in, not a requirement.
+  phone                String?               @unique
+  phoneVerifiedAt      DateTime?
   country              String                @default("IN")
   experienceLevel      String?
   optionsFamiliarity   String?
@@ -1246,29 +1259,40 @@ enum OtpPurpose {
   login
   password_reset
   email_verify
+  // Phone sign-in. Codes for this purpose are keyed by E.164 number rather
+  // than email, and are delivered over SMS instead of mail — see SmsService.
+  phone_verify
 }
 
-// Short-lived email one-time codes.
+// Short-lived one-time codes.
 //
-// Keyed by email rather than userId on purpose: a login code is requested
-// before we know whether the address belongs to an account, and revealing
-// that difference to the caller is an account-enumeration leak.
+// Keyed by destination rather than userId on purpose: a login code is
+// requested before we know whether the address belongs to an account, and
+// revealing that difference to the caller is an account-enumeration leak.
+//
+// `destination` is an email address for mail-delivered purposes and an E.164
+// phone number for `phone_verify`. It was `email` on a model named EmailOtp
+// until phone sign-in arrived; the column was widened rather than a parallel
+// PhoneOtp table added, because every hardening property below (expiry,
+// attempt cap, supersede-on-reissue, hashed storage) applies identically to
+// both channels and duplicating them would mean maintaining two copies of
+// security-critical logic. TRADEW-OS.md §2.1, "extend before you build".
 //
 // The code is stored as a SHA-256 hash for the same reason RefreshToken is —
 // database read access must not yield a usable credential. `attempts` bounds
 // brute force against a 6-digit space; the row is consumed (not deleted) so
 // a replay is distinguishable from an expiry in the audit trail.
-model EmailOtp {
-  id         String     @id @default(uuid())
-  email      String
-  purpose    OtpPurpose
-  codeHash   String
-  expiresAt  DateTime
-  consumedAt DateTime?
-  attempts   Int        @default(0)
-  createdAt  DateTime   @default(now())
+model Otp {
+  id          String     @id @default(uuid())
+  destination String
+  purpose     OtpPurpose
+  codeHash    String
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  attempts    Int        @default(0)
+  createdAt   DateTime   @default(now())
 
-  @@index([email, purpose, consumedAt])
+  @@index([destination, purpose, consumedAt])
   @@index([expiresAt])
 }
 

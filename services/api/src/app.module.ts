@@ -11,6 +11,7 @@ import { CryptoModule } from './crypto/crypto.module';
 import { NewsModule } from './news/news.module';
 import { BrokerModule } from './broker/broker.module';
 import { MailModule } from './mail/mail.module';
+import { SmsModule } from './sms/sms.module';
 import { SentinelModule } from './sentinel/sentinel.module';
 import { SentinelIntelligenceModule } from './sentinel-intelligence/sentinel-intelligence.module';
 import { LearningModule } from './learning/learning.module';
@@ -18,6 +19,7 @@ import { KnowledgeModule } from './knowledge/knowledge.module';
 import { NotificationModule } from './notification/notification.module';
 import { TelemetryModule } from './telemetry/telemetry.module';
 import { AdminModule } from './admin/admin.module';
+import { ControlModule } from './control/control.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -36,6 +38,7 @@ import { HealthController } from './health.controller';
     NewsModule,
     BrokerModule,
     MailModule,
+    SmsModule,
     DisciplineModule,
     SimModule,
     SentinelModule,
@@ -44,6 +47,9 @@ import { HealthController } from './health.controller';
     KnowledgeModule,
     NotificationModule,
     AdminModule,
+    // The Admin Control Plane boundary. Signed, replay-protected, narrow.
+    // Remove this line to disable remote control of this deployment entirely.
+    ControlModule,
   ],
   controllers: [HealthController],
 })

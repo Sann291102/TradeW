@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes, createHash } from 'crypto';
+import { OtpPurpose } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from './otp.service';
 
@@ -81,6 +82,14 @@ export class AuthService {
       await this.audit('user.login.failure', null, meta, { email: email.trim().toLowerCase() });
       throw new UnauthorizedException('Invalid credentials');
     }
+    // A Google-only or phone-only account has no password credential. Reject
+    // before bcrypt: `compare(password, null)` is not a meaningful question,
+    // and the answer must be indistinguishable from a wrong password so this
+    // cannot be used to discover which accounts are Google-linked.
+    if (!user.passwordHash) {
+      await this.audit('user.login.failure', user.id, meta, { reason: 'no_password_credential' });
+      throw new UnauthorizedException('Invalid credentials');
+    }
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) {
       await this.audit('user.login.failure', user.id, meta);
@@ -88,6 +97,106 @@ export class AuthService {
     }
     await this.audit('user.login.success', user.id, meta);
     return this.issue(user.id, user.email);
+  }
+
+  /**
+   * Google sign-in. Called with an already-verified profile — this method
+   * trusts its input, so the caller (GoogleOauthService) is responsible for
+   * having validated the token with Google first.
+   *
+   * Three cases, in order:
+   *  1. Known googleId       → sign in.
+   *  2. Known email, no link → LINK the Google identity to the existing
+   *     account rather than failing. Google has verified the address, so the
+   *     person controls that mailbox; refusing here would strand anyone who
+   *     signed up with a password and later clicked "Continue with Google".
+   *  3. Neither              → create the account.
+   *
+   * Case 2 is why `emailVerified` is required: linking on an unverified
+   * address would let anyone who can set a Google profile email to yours take
+   * over your TradeW account.
+   */
+  async loginWithGoogle(
+    profile: { googleId: string; email: string; emailVerified: boolean },
+    meta: RequestMeta = {},
+  ) {
+    const email = profile.email.trim().toLowerCase();
+
+    const linked = await this.prisma.user.findUnique({ where: { googleId: profile.googleId } });
+    if (linked) {
+      await this.audit('user.login.success', linked.id, meta, { method: 'google' });
+      return this.issue(linked.id, linked.email);
+    }
+
+    if (!profile.emailVerified) {
+      throw new UnauthorizedException('Google account email is not verified');
+    }
+
+    const byEmail = await this.prisma.user.findUnique({ where: { email } });
+    if (byEmail) {
+      const updated = await this.prisma.user.update({
+        where: { id: byEmail.id },
+        data: { googleId: profile.googleId },
+      });
+      await this.audit('user.google.linked', updated.id, meta);
+      return this.issue(updated.id, updated.email);
+    }
+
+    // New account with no passwordHash — Google is the only credential until
+    // the user sets a password.
+    const created = await this.prisma.user.create({
+      data: { email, googleId: profile.googleId },
+    });
+    await this.audit('user.signup.success', created.id, meta, { method: 'google' });
+    return this.issue(created.id, created.email);
+  }
+
+  /**
+   * Phone sign-in — step 1: SMS a one-time code.
+   *
+   * Unlike password reset, this one mints a code for numbers with no account
+   * too, because a successful verify CREATES the account (see below). There is
+   * therefore nothing to enumerate: every valid number gets the same response
+   * whether or not it is already registered.
+   */
+  async requestPhoneCode(phone: string, meta: RequestMeta = {}): Promise<{ ok: true; devCode?: string }> {
+    const normalised = phone.replace(/\s+/g, '');
+    const { devCode } = await this.otp.request(normalised, OtpPurpose.phone_verify);
+    await this.audit('user.phone.code_requested', null, meta, { phone: normalised });
+    return devCode ? { ok: true, devCode } : { ok: true };
+  }
+
+  /**
+   * Phone sign-in — step 2: verify the code, then sign in or register.
+   *
+   * A verified phone number is treated as sufficient to create an account, so
+   * this doubles as signup. The synthesised email is a placeholder the user
+   * can change later; it is marked with a reserved domain so it is obvious in
+   * the database that nobody ever typed it.
+   */
+  async verifyPhoneCode(phone: string, code: string, meta: RequestMeta = {}) {
+    const normalised = phone.replace(/\s+/g, '');
+    await this.otp.verify(normalised, OtpPurpose.phone_verify, code);
+
+    const existing = await this.prisma.user.findUnique({ where: { phone: normalised } });
+    if (existing) {
+      await this.prisma.user.update({
+        where: { id: existing.id },
+        data: { phoneVerifiedAt: new Date() },
+      });
+      await this.audit('user.login.success', existing.id, meta, { method: 'phone' });
+      return this.issue(existing.id, existing.email);
+    }
+
+    const created = await this.prisma.user.create({
+      data: {
+        email: `${normalised.replace(/\D/g, '')}@phone.tradew.local`,
+        phone: normalised,
+        phoneVerifiedAt: new Date(),
+      },
+    });
+    await this.audit('user.signup.success', created.id, meta, { method: 'phone' });
+    return this.issue(created.id, created.email);
   }
 
   async refresh(refreshToken: string, meta: RequestMeta = {}) {

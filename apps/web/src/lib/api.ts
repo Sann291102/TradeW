@@ -10,18 +10,47 @@ export function getRefreshToken() {
   return localStorage.getItem('tradew_refresh_token');
 }
 
+/**
+ * A NON-SECRET marker that a session exists, mirrored into a cookie.
+ *
+ * The credential itself stays in localStorage — that has not changed. But
+ * Next middleware runs on the server and cannot read localStorage, so without
+ * some server-visible signal the route gate would have to be a client-side
+ * redirect, which means rendering the workspace and yanking it away a tick
+ * later. This cookie exists purely so the gate can decide before paint.
+ *
+ * It is deliberately valueless. Forging `tw_auth=1` gets you a workspace shell
+ * that 401s on the first API call, because every real authorization decision
+ * is still made by the API against the bearer token. Do not put anything in
+ * here that would be worth stealing, and do not start trusting it for
+ * anything but routing.
+ */
+export const AUTH_HINT_COOKIE = 'tw_auth';
+
+function setAuthHint(present: boolean) {
+  if (typeof document === 'undefined') return;
+  document.cookie = present
+    ? // Mirrors REFRESH_TOKEN_DAYS (30d) — the window in which a session can
+      // still be revived by a refresh, not the 15-minute access token.
+      `${AUTH_HINT_COOKIE}=1; path=/; max-age=${60 * 60 * 24 * 30}; SameSite=Lax`
+    : `${AUTH_HINT_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
+}
+
 export function setSession(accessToken: string, refreshToken?: string) {
   localStorage.setItem('tradew_token', accessToken);
   if (refreshToken) localStorage.setItem('tradew_refresh_token', refreshToken);
+  setAuthHint(true);
 }
 
 export function setToken(token: string) {
   localStorage.setItem('tradew_token', token);
+  setAuthHint(true);
 }
 
 export function clearToken() {
   localStorage.removeItem('tradew_token');
   localStorage.removeItem('tradew_refresh_token');
+  setAuthHint(false);
 }
 
 async function refreshAccessToken() {
