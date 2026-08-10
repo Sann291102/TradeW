@@ -9,9 +9,12 @@ Per the brief: **do not send users directly to Paper Trading after signup.** Onb
 ## 2. Flow
 
 ```
-Signup → Welcome → Trading Experience → Goals → Preferred Markets → Risk Profile
-       → Workspace Setup → Platform Tour → Dashboard → Sentinel Introduction → Trading
+[Landing: Name your AI]  →  Signup → Welcome → Trading Experience → Goals
+       → Preferred Markets → Risk Profile → Workspace Setup → Platform Tour
+       → Dashboard → Sentinel Introduction → Trading
 ```
+
+**The first step happens before signup and outside this flow** (added 2026-08-10). The AI introduces itself on the landing page and asks to be named; the name is carried into the account at signup (`AI-PERSONA.md` §2). Onboarding therefore does **not** ask again — it greets the user by the name they already chose. The one exception is a user who reaches signup without having named (direct link, cleared storage, second device): they are asked once, at Welcome, so no account ever reaches a workspace with an unnamed assistant.
 
 | Step | Captures | Feeds |
 |---|---|---|

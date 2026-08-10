@@ -15,7 +15,7 @@ TradeW is an operating system, not a website — so it must **resume, not restar
 | Open tabs / active workspace | `services/api` (workspace session) | which surfaces were open, which was focused |
 | Watchlists + active watchlist tab | `services/api` (existing watchlist domain) | already persisted; continuity ties it into session restore |
 | Charts (symbol, timeframe, indicators, drawings) | `services/api` (or TradingView layout store for the TV workspace, `TRADINGVIEW-WORKSPACE.md` §4) | the chart state the user last had open |
-| AI conversations | `services/tradew-ai` (conversation history) | the docked-assistant thread, resumable mid-conversation |
+| AI conversations | `services/api` (`AiConversation`/`AiMessage`) | the docked-assistant thread, resumable mid-conversation. Full lifecycle — one thread per trading day, rolling at 02:30 IST — in [`AI-CONVERSATION-LIFECYCLE.md`](AI-CONVERSATION-LIFECYCLE.md). **Ownership refined 2026-08-10:** this row previously said `services/tradew-ai`; the reasoning runtime is stateless and holds no user-scoped tables, so the conversation store sits with the ingress. Reasoning in that doc's §6 |
 | AI context | derived, not stored raw | the *active page context* is recomputed on load from the restored route (`TRADEW-ASSISTANT.md` §4); only the conversation itself persists |
 | Learning progress | `services/api` (`learning_progress` table, `LEARNING-HUB.md` §4) | resume the lesson/path where left off |
 | Research | Sentinel Brain (Research Vault, `RESEARCH-VAULT.md`) | the user's in-flight research threads |
