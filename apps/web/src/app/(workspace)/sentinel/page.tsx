@@ -33,7 +33,7 @@ import { SentinelDashboard } from '@/components/sentinel/dashboard/SentinelDashb
 export default function SentinelPage() {
   const [symbol, setSymbol] = useState(DEFAULT_MARKET);
   const [strategyMode] = useState<StrategyMode>('auto');
-  const { data, unavailable, loading } = useSentinel(symbol, { strategyMode });
+  const { data, summary, unavailable, loading } = useSentinel(symbol, { strategyMode });
   const status = useSessionStore((s) => s.status);
   const user = useSessionStore((s) => s.user);
   const hasCapability = useSessionStore((s) => s.hasCapability);
@@ -109,6 +109,11 @@ export default function SentinelPage() {
             </>
           }
           controls={controls}
+          sessionStats={{
+            signalsTriggered: (data?.signals ?? []).filter((s) => s.triggered).length,
+            tradesToday: summary?.tradesToday ?? null,
+            flaggedEvents: summary?.flaggedEvents ?? null,
+          }}
         />
       </main>
     </div>

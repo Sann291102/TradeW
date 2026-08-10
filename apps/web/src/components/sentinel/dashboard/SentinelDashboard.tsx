@@ -9,6 +9,7 @@ import { RiskRadar } from './RiskRadar';
 import { EmotionMirror } from './EmotionMirror';
 import { SessionTimeline } from './SessionTimeline';
 import { QuickActions } from './QuickActions';
+import { SessionStats } from './SessionStats';
 
 /**
  * The Sentinel dashboard composition — the reference-design layout, wired
@@ -24,6 +25,7 @@ export function SentinelDashboard({
   greeting,
   statusLine,
   controls,
+  sessionStats,
 }: {
   model: DashboardModel;
   symbol: string;
@@ -31,6 +33,7 @@ export function SentinelDashboard({
   greeting: string;
   statusLine: ReactNode;
   controls: ReactNode;
+  sessionStats: { signalsTriggered: number; tradesToday: number | null; flaggedEvents: number | null };
 }) {
   return (
     <div className="space-y-4">
@@ -66,12 +69,18 @@ export function SentinelDashboard({
         </div>
       </div>
 
-      {/* timeline + actions */}
+      {/* timeline + stats + actions */}
       <div className="grid grid-cols-12 items-start gap-4">
-        <div className="col-span-12 xl:col-span-9">
+        <div className="col-span-12 xl:col-span-8">
           <SessionTimeline dots={model.timeline} />
         </div>
-        <div className="col-span-12 xl:col-span-3">
+        <div className="col-span-12 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:col-span-4 xl:grid-cols-1">
+          <SessionStats
+            observations={model.observationCount}
+            signalsTriggered={sessionStats.signalsTriggered}
+            tradesToday={sessionStats.tradesToday}
+            flaggedEvents={sessionStats.flaggedEvents}
+          />
           <QuickActions />
         </div>
       </div>

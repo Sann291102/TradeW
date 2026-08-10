@@ -96,6 +96,37 @@ export function useSentinel(symbol: string = 'NIFTY', focus: SentinelFocus = {})
 
   useEffect(() => {
     void refresh();
+    // Live feed: re-run the observation on a cadence so the dashboard tracks
+    // the market as it moves (the agents run server-side; this pulls their
+    // latest read). /observe is cached server-side on an unchanged-market
+    // draft, so a 45s poll is cheap. Paused when the tab is hidden to avoid
+    // needless work, and the backend still returns the honest pre-market /
+    // closed state outside session hours rather than stale "live" numbers.
+    const POLL_MS = 45_000;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer || typeof document === 'undefined' || document.hidden) return;
+      timer = setInterval(() => void refresh(), POLL_MS);
+    };
+    const stop = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.hidden) stop();
+      else {
+        void refresh();
+        start();
+      }
+    };
+    start();
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      stop();
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [refresh]);
 
   /**
