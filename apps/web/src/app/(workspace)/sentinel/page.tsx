@@ -3,233 +3,125 @@
 import { useState } from 'react';
 import { useSentinel } from '@/lib/sentinel/useSentinel';
 import { useSessionStore } from '@/lib/store/sessionStore';
-import { classifyDay, extractMarketContext, extractSafetyFeed, pushworthyCards, suggestedLesson } from '@/lib/sentinel/deriveContext';
+import { buildDashboardModel } from '@/lib/sentinel/dashboardModel';
 import { DEFAULT_MARKET, findMarket } from '@/lib/sentinel/markets';
 import type { StrategyMode } from '@/lib/sentinel/types';
 import { MarketSelector } from '@/components/sentinel/MarketSelector';
 import { OptionChainPanel } from '@/components/sentinel/OptionChainPanel';
-import { StrategySelector } from '@/components/sentinel/StrategySelector';
-import { MarketReasoningPanel } from '@/components/sentinel/MarketReasoningPanel';
-import { SideInFocusCard, WaitingForConfirmation } from '@/components/sentinel/SideInFocusCard';
-import { DayClassificationCard } from '@/components/sentinel/DayClassificationCard';
-import { SentinelLiveCharts } from '@/components/sentinel/SentinelLiveCharts';
-import { MarketContextPanel } from '@/components/sentinel/MarketContextPanel';
-import { LiveSafetyFeed } from '@/components/sentinel/LiveSafetyFeed';
-import { ContextualTraining } from '@/components/sentinel/ContextualTraining';
-import { SentinelTimeline } from '@/components/sentinel/SentinelTimeline';
 import { SentinelLocked } from '@/components/sentinel/SentinelLocked';
-import { SentinelHeader } from '@/components/sentinel/SentinelHeader';
+import { SentinelDashboard } from '@/components/sentinel/dashboard/SentinelDashboard';
 
 /**
- * Sentinel — Market Context Intelligence workspace.
+ * Sentinel — the reference-design operational dashboard.
  *
- * Redesigned from first principles: this used to render an "AI dashboard"
- * (AI Reflection Cards / Agent Activity Timeline / Observation Feed /
- * Session Summary — archived to archive/, see archive/README.md) that
- * exposed how the multi-agent backend reasons. It now answers five
- * standing questions instead — what kind of day is this, what's the
- * current market context, what should the trader watch, why, and (where
- * genuinely derivable) which side has stronger confirmation — and shows
- * only the conclusion, never the internal agent architecture producing it.
- * Same backend, same auth, same entitlement gating (SUBSCRIPTIONS.md §4) —
+ * Rebuilt 2026-08-11 to match the authoritative Sentinel reference images: a
+ * status-card row (Market Regime · Confidence · Composite Risk · State Machine
+ * · Session Observations), a Live Market Overview with a real candle chart and
+ * a computed indicator strip, the single-conclusion Sentinel Observation card,
+ * an 8-factor Risk Radar, Emotion Mirror, Session Timeline and Quick Actions.
+ *
+ * Every element is wired to the REAL `/sentinel/observe` response via
+ * `buildDashboardModel` — no fabricated values. The previous two-column
+ * "Market Context Intelligence" composition is archived to
+ * archive/apps-web-sentinel-dashboard-redesign-2026-08-11/ (see
+ * archive/README.md). Same backend, same auth, same entitlement gating —
  * only the presentation changed.
  *
- * `SentinelIntelligencePanel` — the second reasoning engine's surface
- * (citation-grounded multi-agent verdicts plus the three-panel visual
- * strategy workspace: chart, option context, AI annotations) that used to be
- * embedded here between the day classification and market context cards —
- * was removed 2026-08-05 per explicit product direction: this workspace
- * should show only the single-conclusion Sentinel read, not a second,
- * separate reasoning surface alongside it. Archived, not deleted, to
- * archive/apps-web-sentinel-intelligence-2026-08-05/ (see archive/README.md).
- *
-
- * Shares the standard Sidebar/TopBar shell like every other workspace (a
- * first pass rendered this with no chrome at all — reverted 2026-07-21,
- * see nav-config.tsx: it left no way to navigate back out).
+ * Shares the standard Sidebar/TopBar shell like every other workspace
+ * (ARCHITECTURE.md §2.2).
  */
 export default function SentinelPage() {
-  // User-centric market selection: the "market head" selector drives the
-  // entire workspace. Changing it re-runs /observe for that symbol
-  // (useSentinel) and every panel below re-derives.
   const [symbol, setSymbol] = useState(DEFAULT_MARKET);
-  // Phase 3 — strategy focus (Auto by default) drives the observe call, and
-  // the option-chain selection is passed to the panel as observation context.
-  const [strategyMode, setStrategyMode] = useState<StrategyMode>('auto');
-  // Phase 2 — one or more strategies can be pinned simultaneously in manual mode.
-  const [selectedStrategyIds, setSelectedStrategyIds] = useState<string[]>([]);
-  // Strikes the trader picked from the Option Chain toolbar control — feeds
-  // the CALL/PUT panels in SentinelLiveCharts below. Null until a pick is
-  // made (or the panel is never opened), in which case those charts default
-  // to the ATM strike themselves.
-  const [ceStrike, setCeStrike] = useState<number | null>(null);
-  const [peStrike, setPeStrike] = useState<number | null>(null);
-  const { data, unavailable, loading } = useSentinel(symbol, { strategyMode, selectedStrategyIds });
+  const [strategyMode] = useState<StrategyMode>('auto');
+  const { data, unavailable, loading } = useSentinel(symbol, { strategyMode });
   const status = useSessionStore((s) => s.status);
+  const user = useSessionStore((s) => s.user);
   const hasCapability = useSessionStore((s) => s.hasCapability);
 
-  const onStrategyChange = (next: { mode: StrategyMode; selectedStrategyIds?: string[] }) => {
-    setStrategyMode(next.mode);
-    setSelectedStrategyIds(next.selectedStrategyIds ?? []);
-  };
-
   const market = findMarket(symbol);
-  const observations = data?.observations ?? [];
-  const signals = data?.signals ?? [];
-
   const locked = status === 'authenticated' && !hasCapability('sentinel');
+  if (locked) return <SentinelLocked />;
 
-  if (locked) {
-    return <SentinelLocked />;
-  }
+  const controls = (
+    <>
+      <OptionChainPanel symbol={symbol} />
+      <MarketSelector value={symbol} onChange={setSymbol} />
+    </>
+  );
 
-  // No observation, and nothing invented in its place. Each fault is named
-  // for what it actually is — the old single "sign in for live analysis"
-  // banner was shown for API outages and dead-service errors too.
+  // No observation, and nothing invented in its place — each fault named for
+  // what it actually is (unchanged behavior from the previous page).
   if (unavailable) {
     const fault =
       unavailable.kind === 'unauthenticated'
         ? {
-          title: 'Not signed in',
-          detail: 'Sentinel runs its observation against your account. Sign in to get a live read — no sample analysis is shown in the meantime.',
-        }
+            title: 'Not signed in',
+            detail:
+              'Sentinel runs its observation against your account. Sign in to get a live read — no sample analysis is shown in the meantime.',
+          }
         : unavailable.kind === 'api-unreachable'
           ? {
-            title: 'API not connected',
-            detail: `The TradeW API could not be reached, so no observation could be run for ${market.name}. Start services/api (port 4000) and reload.`,
-          }
+              title: 'API not connected',
+              detail: `The TradeW API could not be reached, so no observation could be run for ${market.name}. Start services/api (port 4000) and reload.`,
+            }
           : {
-            title: 'Sentinel service not connected',
-            detail: `The API answered but Sentinel could not complete the observation (HTTP ${unavailable.status}: ${unavailable.message}). Check that services/sentinel is running on port 4010.`,
-          };
+              title: 'Sentinel service not connected',
+              detail: `The API answered but Sentinel could not complete the observation (HTTP ${unavailable.status}: ${unavailable.message}). Check that services/sentinel is running on port 4010.`,
+            };
 
     return (
       <div className="bg-bg">
-        <main className="mx-auto max-w-[1600px] space-y-5 px-4 py-5 sm:px-6 sm:py-6">
-          <SentinelHeader
-            premium={hasCapability('sentinel')}
-            status={
-              <>
-                Reading <span className="font-semibold text-muted">{market.name}</span> · {fault.title.toLowerCase()}
-              </>
-            }
-            controls={
-              <>
-                <OptionChainPanel symbol={symbol} />
-                <MarketSelector value={symbol} onChange={setSymbol} />
-              </>
-            }
-          />
-
+        <main className="mx-auto max-w-[1600px] px-4 py-5 sm:px-6">
+          <header className="mb-5">
+            <h1 className="text-[24px] font-extrabold tracking-tightTrack text-text">{greeting(user?.email)}</h1>
+            <p className="mt-1 text-[12.5px] text-muted">
+              Reading <span className="font-semibold">{market.name}</span> · {fault.title.toLowerCase()}
+            </p>
+          </header>
           <div className="rounded-2xl border border-border bg-card p-10 text-center shadow-elev2">
             <p className="text-[14px] font-bold text-text">{fault.title}</p>
             <p className="mx-auto mt-2 max-w-xl text-[12.5px] leading-relaxed text-muted">{fault.detail}</p>
           </div>
-
-          <p className="pb-6 text-center text-[11px] text-faint">
-            Sentinel observes market context and behavior in parallel. It never executes trades and never gives buy,
-            sell, entry, exit or target recommendations.
-          </p>
         </main>
       </div>
     );
   }
 
-  // The Market Intelligence and Confidence engines are authoritative when the
-  // response carries them; the signal-derived path below is the demo/offline
-  // fallback only (see lib/sentinel/deriveContext.ts).
-  const day = classifyDay(signals, data?.marketProfile, data?.confidence);
-  const { tags, dimensions } = extractMarketContext(signals, {
-    profile: data?.marketProfile,
-    confidence: data?.confidence,
-    risk: data?.risk,
-  });
-  const safetyCards = extractSafetyFeed(observations, data?.synthesis ?? null, data?.sideInFocus ?? null);
-  const lesson = suggestedLesson(safetyCards);
-  const lastUpdated = loading ? 'refreshing…' : 'just now';
-
-  // Market-hours awareness: suppress live feed and strategy signals when the
-  // market is not actively trading. The backend still runs the full pipeline
-  // (so the day classification and prior-session context are available), but
-  // showing "Wait & Watch 60%" at 6:42 AM when no session is running is
-  // misleading — those are stale signals from yesterday's candles.
-  const sessionPhase = data?.marketState?.sessionPhase ?? 'active';
-  const isMarketActive = sessionPhase === 'active' || sessionPhase === 'closing';
-
-  // Past the `unavailable` guard above, the observation is always a real one.
-  const sourceLabel = isMarketActive ? 'live market data' : sessionPhase === 'pre-market' ? 'pre-market' : 'market closed';
+  const model = buildDashboardModel(data ?? null, loading);
+  const sourceLabel = model.marketActive
+    ? 'live market data'
+    : model.sessionPhase === 'pre-market'
+      ? 'pre-market'
+      : 'market closed';
 
   return (
     <div className="bg-bg">
-      <main className="mx-auto max-w-[1600px] space-y-5 px-4 py-5 sm:px-6 sm:py-6">
-        <SentinelHeader
-          premium={hasCapability('sentinel')}
-          status={
+      <main className="mx-auto max-w-[1600px] px-4 py-5 sm:px-6">
+        <SentinelDashboard
+          model={model}
+          symbol={symbol}
+          marketName={market.name}
+          greeting={greeting(user?.email)}
+          statusLine={
             <>
               Reading <span className="font-semibold text-muted">{market.name}</span> · {sourceLabel}
               {loading && ' · refreshing…'}
             </>
           }
-          controls={
-            <>
-              <OptionChainPanel symbol={symbol} onSelectionChange={({ ce, pe }) => { setCeStrike(ce); setPeStrike(pe); }} />
-              <MarketSelector value={symbol} onChange={setSymbol} />
-            </>
-          }
+          controls={controls}
         />
-
-        {/* Two-column institutional layout: the market read (what the tape is
-            doing) on the left, Sentinel's own commentary on it in the right
-            rail. Collapses to one column below xl — the charts need real
-            width before the split is worth having. */}
-        <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
-          <div className="min-w-0 space-y-5">
-            <DayClassificationCard day={day} lastUpdated={lastUpdated} explanation={data?.explanation} />
-            <MarketContextPanel tags={tags} dimensions={dimensions} />
-            <SentinelLiveCharts symbol={symbol} marketName={market.name} ceStrike={ceStrike} peStrike={peStrike} />
-          </div>
-
-          <div className="min-w-0 space-y-5">
-            <LiveSafetyFeed cards={pushworthyCards(safetyCards)} />
-            {data?.sideInFocus ? (
-              <SideInFocusCard focus={data.sideInFocus} />
-            ) : (
-              <WaitingForConfirmation publication={data?.publication} />
-            )}
-            {isMarketActive ? (
-              <StrategySelector
-                mode={strategyMode}
-                selectedStrategyIds={selectedStrategyIds}
-                advices={data?.strategyAdvices}
-                onChange={onStrategyChange}
-              />
-            ) : (
-              <section className="rounded-2xl border border-border bg-card p-6 shadow-elev2">
-                <h2 className="mb-3 text-[11px] font-bold uppercase tracking-wideTrack text-faint">
-                  {sessionPhase === 'pre-market' ? 'Pre-Market' : 'Market Closed'}
-                </h2>
-                <p className="rounded-xl border border-border bg-bg p-4 text-[12.5px] leading-relaxed text-muted">
-                  {sessionPhase === 'pre-market'
-                    ? `NSE opens at 09:15 AM IST. Sentinel continues displaying saved safety observations from the last 24 hours. Live session scanning opens at 09:15 AM IST.`
-                    : `Today's trading session has ended. Displaying saved safety observations from the past 24 hours. Live scanning resumes when the next session opens at 09:15 AM IST.`}
-                </p>
-              </section>
-            )}
-            <SentinelTimeline cards={safetyCards} entries={data?.timeline} />
-          </div>
-        </div>
-
-        <MarketReasoningPanel
-          behaviour={data?.marketBehaviour}
-          lifecycles={data?.strategyLifecycles}
-          crossValidation={data?.institutionalCrossValidation}
-        />
-
-        <p className="pb-6 text-center text-[11px] text-faint">
-          Sentinel observes market context and behavior in parallel. It never executes trades and never gives buy,
-          sell, entry, exit or target recommendations.
-        </p>
       </main>
     </div>
   );
+}
+
+/** IST-aware greeting with the trader's first name from their email local part. */
+function greeting(email?: string | null): string {
+  const hourIst = Number(
+    new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }).format(new Date()),
+  );
+  const part = hourIst < 12 ? 'Good Morning' : hourIst < 17 ? 'Good Afternoon' : 'Good Evening';
+  const local = (email ?? '').split('@')[0]?.split(/[.\-_]/)[0] ?? '';
+  const name = local ? local.charAt(0).toUpperCase() + local.slice(1) : 'Trader';
+  return `${part}, ${name} 👋`;
 }
