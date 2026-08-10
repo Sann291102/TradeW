@@ -1,9 +1,12 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { IsInt, Min } from 'class-validator';
 import { AuthGuard } from '../auth/auth.guard';
+import { SECURITY } from '../swagger/swagger.setup';
 import { HoldingsService } from './holdings.service';
 
 class SellHoldingDto {
+  @ApiProperty({ minimum: 1, description: 'Units to sell from the settled holding.', example: 10 })
   @IsInt()
   @Min(1)
   quantity!: number;
@@ -16,6 +19,8 @@ class SellHoldingDto {
  * as the rest of the OMS — Nest allows multiple controllers sharing one
  * path prefix — so the frontend's existing `/sim/*` client convention holds.
  */
+@ApiTags('Holdings')
+@ApiBearerAuth(SECURITY.bearer)
 @UseGuards(AuthGuard)
 @Controller('sim')
 export class HoldingsController {

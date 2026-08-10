@@ -217,28 +217,28 @@ export default function ResearchPage() {
                     <div className="w-4 bg-up h-20 rounded-t-sm" />
                     <div className="w-4 bg-teal h-10 rounded-t-sm" />
                   </div>
-                  <span className="text-[10px] text-faint mt-1 block">Jun '24</span>
+                  <span className="text-[10px] text-faint mt-1 block">Jun &rsquo;24</span>
                 </div>
                 <div className="text-center flex-1">
                   <div className="flex items-end gap-1 h-32 justify-center">
                     <div className="w-4 bg-up h-24 rounded-t-sm" />
                     <div className="w-4 bg-teal h-12 rounded-t-sm" />
                   </div>
-                  <span className="text-[10px] text-faint mt-1 block">Sep '24</span>
+                  <span className="text-[10px] text-faint mt-1 block">Sep &rsquo;24</span>
                 </div>
                 <div className="text-center flex-1">
                   <div className="flex items-end gap-1 h-32 justify-center">
                     <div className="w-4 bg-up h-28 rounded-t-sm" />
                     <div className="w-4 bg-teal h-14 rounded-t-sm" />
                   </div>
-                  <span className="text-[10px] text-faint mt-1 block">Dec '24</span>
+                  <span className="text-[10px] text-faint mt-1 block">Dec &rsquo;24</span>
                 </div>
                 <div className="text-center flex-1">
                   <div className="flex items-end gap-1 h-32 justify-center">
                     <div className="w-4 bg-up h-32 rounded-t-sm" />
                     <div className="w-4 bg-teal h-16 rounded-t-sm" />
                   </div>
-                  <span className="text-[10px] text-faint mt-1 block">Mar '25</span>
+                  <span className="text-[10px] text-faint mt-1 block">Mar &rsquo;25</span>
                 </div>
               </div>
               <div className="mt-2 flex items-center justify-center gap-4 text-[10px]">

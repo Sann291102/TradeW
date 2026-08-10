@@ -1,5 +1,9 @@
 import { PrismaClient, InstrumentType } from '@prisma/client';
-import * as bcrypt from 'bcryptjs';
+// Default import, not `import * as`: this file has no `"type"` in its
+// package.json, so Node reparses it as ESM once it sees `import` syntax, and
+// bcryptjs v2 is CommonJS. A namespace import then exposes the exports under
+// `.default` and `bcrypt.hash` is undefined at runtime.
+import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 const expiry = new Date('2026-07-30T00:00:00.000Z');

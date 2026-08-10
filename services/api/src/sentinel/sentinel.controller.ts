@@ -1,16 +1,100 @@
 import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiBody, ApiProperty, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/auth.guard';
 import { CapabilityGuard, RequiresCapability } from '../entitlements/capability.guard';
 import { EntitlementsService } from '../entitlements/entitlements.service';
+import { SECURITY } from '../swagger/swagger.setup';
 import { SentinelApiService } from './sentinel.service';
 
 type AuthedRequest = { user: { sub: string } };
+
+/**
+ * DOCUMENTATION MODELS ONLY — see the equivalent note in
+ * `entitlements.controller.ts`. The handlers keep their inline `@Body()` types
+ * so the global `ValidationPipe` continues to skip them; these classes exist to
+ * give the generated reference a real schema and are attached with
+ * `@ApiBody({ type })`.
+ */
+class ObserveBody {
+  @ApiProperty({ required: false, default: 'NIFTY', example: 'NIFTY' })
+  symbol?: string;
+
+  @ApiProperty({ required: false, description: 'Free-text context for this observation.' })
+  context?: string;
+
+  @ApiProperty({
+    required: false,
+    type: [Object],
+    description:
+      'Demo/paper bridge. Client-side simulator trades, used for THIS call only and never persisted. ' +
+      'A brokerage-linked account omits these — its trades are read from Postgres instead.',
+  })
+  clientTrades?: unknown[];
+
+  @ApiProperty({ required: false, type: [Object], description: 'As `clientTrades`, for open positions.' })
+  clientPositions?: unknown[];
+
+  @ApiProperty({ required: false, enum: ['auto', 'manual'], default: 'auto' })
+  strategyMode?: 'auto' | 'manual';
+
+  @ApiProperty({ required: false, type: [String], description: 'Strategy ids to focus on when `strategyMode` is manual.' })
+  selectedStrategyIds?: string[];
+
+  @ApiProperty({ required: false, deprecated: true, description: 'Singular predecessor of `selectedStrategyIds`.' })
+  selectedStrategyId?: string;
+
+  @ApiProperty({ required: false, description: 'Override the confidence gate for this call.', example: 0.7 })
+  confidenceThreshold?: number;
+}
+
+class ExplainBody {
+  @ApiProperty({ example: 'Why did NIFTY reverse at the open?' })
+  question!: string;
+
+  @ApiProperty({ required: false })
+  context?: string;
+}
+
+class BrainSearchBody {
+  @ApiProperty({ example: 'opening range breakout' })
+  query!: string;
+
+  @ApiProperty({ required: false, description: 'Restrict the search to one memory namespace.' })
+  namespace?: string;
+
+  @ApiProperty({ required: false, example: 20 })
+  limit?: number;
+}
+
+class MarketCloseReviewBody {
+  @ApiProperty({ required: false, default: 'NIFTY', example: 'NIFTY' })
+  symbol?: string;
+}
+
+class JournalEntryBody {
+  @ApiProperty({ description: 'The entry itself.' })
+  content!: string;
+
+  @ApiProperty({ required: false, example: 'calm' })
+  mood?: string;
+
+  @ApiProperty({ required: false, type: [String] })
+  tags?: string[];
+}
 
 /**
  * Public Sentinel endpoints. Every route requires the 'sentinel' entitlement,
  * decided by the centralized EntitlementsService (never a hardcoded check),
  * and premium AI requests are metered against the plan's quota.
  */
+@ApiTags('Sentinel')
+@ApiBearerAuth(SECURITY.bearer)
+@ApiResponse({
+  status: 403,
+  description:
+    'Missing the `sentinel` entitlement, or the plan’s quota is spent. The body carries ' +
+    '`capability`, `reason` and the quota state so the client can render an upgrade prompt.',
+})
 @UseGuards(AuthGuard, CapabilityGuard)
 @RequiresCapability('sentinel')
 @Controller('sentinel')
@@ -20,6 +104,7 @@ export class SentinelController {
     private readonly entitlements: EntitlementsService,
   ) {}
 
+  @ApiBody({ type: ObserveBody })
   @Post('observe')
   async observe(
     @Req() req: AuthedRequest,
@@ -68,6 +153,7 @@ export class SentinelController {
     return this.sentinel.strategyRegistry(exposed === undefined ? true : exposed === 'true');
   }
 
+  @ApiBody({ type: ExplainBody })
   @Post('explain')
   async explain(@Req() req: AuthedRequest, @Body() body: { question: string; context?: string }) {
     const result = await this.sentinel.explain(req.user.sub, body.question, body?.context);
@@ -76,6 +162,7 @@ export class SentinelController {
   }
 
   /** Knowledge Center — query surface over the Brain's accumulated memory. */
+  @ApiBody({ type: BrainSearchBody })
   @Post('brain/search')
   async brainSearch(@Req() req: AuthedRequest, @Body() body: { query: string; namespace?: string; limit?: number }) {
     const result = await this.sentinel.brainSearch(req.user.sub, body.query, body.namespace, body.limit);
@@ -111,6 +198,7 @@ export class SentinelController {
   }
 
   /** Module 11 — end-of-day review of the session Sentinel narrated. */
+  @ApiBody({ type: MarketCloseReviewBody, required: false })
   @Post('market-close/review')
   marketCloseReview(@Req() req: AuthedRequest, @Body() body: { symbol?: string }) {
     return this.sentinel.marketCloseReview(req.user.sub, body?.symbol ?? 'NIFTY');
@@ -126,6 +214,7 @@ export class SentinelController {
     return this.sentinel.listJournal(req.user.sub, limit ? Number(limit) : 50);
   }
 
+  @ApiBody({ type: JournalEntryBody })
   @Post('journal')
   addJournal(@Req() req: AuthedRequest, @Body() body: { content: string; mood?: string; tags?: string[] }) {
     return this.sentinel.addJournal(req.user.sub, body);

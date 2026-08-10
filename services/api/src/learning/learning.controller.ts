@@ -1,9 +1,43 @@
 import { Body, Controller, ForbiddenException, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiBody, ApiProperty, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/auth.guard';
+import { SECURITY } from '../swagger/swagger.setup';
 import { LearningApiService } from './learning.service';
 import { LearningProgressService } from './learning-progress.service';
 
 type AuthedRequest = { user: { sub: string; email?: string } };
+
+/**
+ * DOCUMENTATION MODELS ONLY — see the equivalent note in
+ * `entitlements.controller.ts`. Attached with `@ApiBody({ type })`; the handler
+ * signatures keep their inline types and their runtime behaviour.
+ *
+ * `lessonId` is `courseId::conceptId` throughout — the course half is what
+ * decides access, which is why every one of these carries it.
+ */
+class AskTeacherBody {
+  @ApiProperty({ example: 'options-101::greeks', description: '`courseId::conceptId`.' })
+  lessonId!: string;
+
+  @ApiProperty({ example: 'Why does theta accelerate near expiry?' })
+  question!: string;
+}
+
+class LessonRefBody {
+  @ApiProperty({ example: 'options-101::greeks', description: '`courseId::conceptId`.' })
+  lessonId!: string;
+}
+
+class RecordQuizBody {
+  @ApiProperty({ example: 'options-101::greeks', description: '`courseId::conceptId`.' })
+  lessonId!: string;
+
+  @ApiProperty({ description: 'Questions answered correctly.', example: 8 })
+  score!: number;
+
+  @ApiProperty({ description: 'Questions in the quiz.', example: 10 })
+  total!: number;
+}
 
 interface CourseLite {
   id: string;
@@ -25,6 +59,14 @@ interface CourseLite {
  * because the free course must stay open while the rest is gated — a single
  * @RequiresCapability could not express "one course free, the rest premium".
  */
+@ApiTags('Learning')
+@ApiBearerAuth(SECURITY.bearer)
+@ApiResponse({
+  status: 403,
+  description:
+    'The course is premium and the caller has neither Pro nor admin. The body carries the ' +
+    'upgrade payload. The free course stays open to every signed-in user.',
+})
 @UseGuards(AuthGuard)
 @Controller('learning')
 export class LearningController {
@@ -111,6 +153,7 @@ export class LearningController {
     return this.learning.getPractice(lessonId);
   }
 
+  @ApiBody({ type: AskTeacherBody })
   @Post('teacher')
   async teacher(@Req() req: AuthedRequest, @Body() body: { lessonId: string; question: string }) {
     await this.enforce(req, courseIdOf(body.lessonId));
@@ -127,6 +170,7 @@ export class LearningController {
     return this.progress.summary(req.user.sub, totals);
   }
 
+  @ApiBody({ type: LessonRefBody })
   @Post('progress/lesson-complete')
   async completeLesson(@Req() req: AuthedRequest, @Body() body: { lessonId: string }) {
     await this.enforce(req, courseIdOf(body.lessonId));
@@ -134,6 +178,7 @@ export class LearningController {
     return { ok: true };
   }
 
+  @ApiBody({ type: RecordQuizBody })
   @Post('progress/quiz')
   async recordQuiz(@Req() req: AuthedRequest, @Body() body: { lessonId: string; score: number; total: number }) {
     await this.enforce(req, courseIdOf(body.lessonId));
@@ -156,6 +201,7 @@ export class LearningController {
   }
 
   /** Admin "Regenerate Lesson": clear the generation cache, then re-fetch. */
+  @ApiBody({ type: LessonRefBody })
   @Post('admin/regenerate')
   async adminRegenerate(@Req() req: AuthedRequest, @Body() body: { lessonId: string }) {
     await this.requireAdmin(req);

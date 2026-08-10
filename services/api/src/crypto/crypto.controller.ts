@@ -1,4 +1,5 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { CryptoService } from './crypto.service';
 
 /**
@@ -20,6 +21,7 @@ import { CryptoService } from './crypto.service';
  * AuthGuard. Vendor quota is protected by the server-side cache, not by auth:
  * upstream cost is a function of time, not of how many callers there are.
  */
+@ApiTags('Crypto')
 @Controller('crypto')
 export class CryptoController {
   constructor(private readonly crypto: CryptoService) {}

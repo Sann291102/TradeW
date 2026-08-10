@@ -1,4 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { StocksService } from './stocks.service';
 
 /**
@@ -23,6 +24,7 @@ import { StocksService } from './stocks.service';
  * AuthGuard. Vendor quota is protected by the server-side cache, not by auth:
  * upstream cost is a function of time, not of how many callers there are.
  */
+@ApiTags('US Stocks')
 @Controller('us-stocks')
 export class StocksController {
   constructor(private readonly stocks: StocksService) {}

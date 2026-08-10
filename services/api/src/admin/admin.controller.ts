@@ -1,13 +1,17 @@
 import { Body, Controller, Get, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { ApiExcludeEndpoint, ApiProperty, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { IsBoolean, IsEmail } from 'class-validator';
 import { AdminGuard } from './admin.guard';
 import { AdminService } from './admin.service';
+import { SECURITY } from '../swagger/swagger.setup';
 import { TelemetryService } from '../telemetry/telemetry.service';
 
 class SetAdminDto {
+  @ApiProperty({ format: 'email', description: 'The user whose privilege is changing.' })
   @IsEmail()
   email!: string;
 
+  @ApiProperty({ description: 'True grants admin, false revokes it.' })
   @IsBoolean()
   isAdmin!: boolean;
 }
@@ -25,6 +29,14 @@ class SetAdminDto {
  * the admin surface too — a second listener would be a second thing to secure,
  * and this surface is the one that least deserves a bespoke auth path.
  */
+@ApiTags('Admin')
+/**
+ * Both credentials, both required — a single security requirement naming two
+ * schemes rather than two separate requirements, which OpenAPI would read as
+ * "either one will do". `AdminGuard` demands both, so the document has to say
+ * both, or the reference would advertise a way in that does not exist.
+ */
+@ApiSecurity({ [SECURITY.bearer]: [], [SECURITY.adminToken]: [] })
 @Controller('admin')
 @UseGuards(AdminGuard)
 export class AdminController {
@@ -126,6 +138,11 @@ export class AdminController {
    * whose teardown is easy to get subtly wrong, and a leaked listener here
    * accumulates on every dashboard reload for the life of the process.
    */
+  // Excluded from the reference rather than listed-and-broken: "Try it out" on
+  // an endless text/event-stream response leaves Swagger UI spinning forever
+  // with no way to cancel. It is described in the page's own introduction
+  // instead, together with the query-parameter credentials EventSource needs.
+  @ApiExcludeEndpoint()
   @Get('stream')
   stream(@Req() req: StreamRequest, @Res() res: StreamResponse): void {
     res.writeHead(200, {

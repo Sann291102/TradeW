@@ -1,6 +1,8 @@
 import { Controller, Delete, Get, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminTokenGuard } from '../auth/admin-token.guard';
+import { SECURITY } from '../swagger/swagger.setup';
 import { securityLog } from '../common/security-log';
 import { clearSecureCookie, readCookie, serializeSecureCookie } from '../common/secure-cookie';
 import { STATE_TTL_MS } from './oauth-state';
@@ -84,6 +86,7 @@ const COOKIE_PATH = '/';
  * credential row. See `oauth-state.ts` for the threat model and
  * `dhan-auth.service.ts` for the single-use enforcement.
  */
+@ApiTags('Broker')
 @Controller('broker/dhan')
 export class DhanAuthController {
   constructor(private readonly dhan: DhanAuthService) {}
@@ -99,6 +102,7 @@ export class DhanAuthController {
    * present it must match, which closes the case where an attacker knows or
    * guesses a state value but cannot write cookies for this origin.
    */
+  @ApiBearerAuth(SECURITY.bearer)
   @UseGuards(AuthGuard)
   @Get('connect')
   async connect(@Req() req: AuthedRequest, @Res() res: RedirectingResponse) {
@@ -136,6 +140,7 @@ export class DhanAuthController {
    * single global credential, disclosing the operator's broker client id and
    * name to every authenticated user.
    */
+  @ApiBearerAuth(SECURITY.bearer)
   @UseGuards(AuthGuard)
   @Get('status')
   status(@Req() req: AuthedRequest, @Query('userId') userId?: string) {
@@ -146,6 +151,7 @@ export class DhanAuthController {
 
   /** Revoke the caller's own stored credential. Scoped to the token's subject —
    *  there is no route that deletes another user's credential. */
+  @ApiBearerAuth(SECURITY.bearer)
   @UseGuards(AuthGuard)
   @Delete('credential')
   disconnect(@Req() req: AuthedRequest) {
@@ -231,6 +237,7 @@ export class DhanAuthController {
    * `AdminTokenGuard`, not `AuthGuard`: this is a cross-user view, so ownership
    * cannot authorize it and there is no per-user reading of it that makes sense.
    */
+  @ApiSecurity(SECURITY.adminToken)
   @UseGuards(AdminTokenGuard)
   @Get('admin/credentials')
   listCredentials() {
@@ -246,6 +253,7 @@ export class DhanAuthController {
    * which is why this is the only route here that legitimately names another
    * user — and why it is not reachable with a user bearer token at all.
    */
+  @ApiSecurity(SECURITY.adminToken)
   @UseGuards(AdminTokenGuard)
   @Post('admin/feed-default/:userId')
   setFeedDefault(@Param('userId') userId: string, @Req() req: AuthedRequest) {

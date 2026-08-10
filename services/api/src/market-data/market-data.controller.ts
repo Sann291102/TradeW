@@ -1,7 +1,11 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/auth.guard';
+import { SECURITY } from '../swagger/swagger.setup';
 import { MarketDataService } from './market-data.service';
 
+@ApiTags('Market Data')
+@ApiBearerAuth(SECURITY.bearer)
 @UseGuards(AuthGuard)
 @Controller('market-data')
 export class MarketDataController {

@@ -11,9 +11,14 @@ loadEnv({ path: resolve(__dirname, '../../../.env') });
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { SWAGGER_PATH, isSwaggerEnabled, setupSwagger } from './swagger/swagger.setup';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // `rawBody` is required by ControlGuard: the Admin Control Plane's Ed25519
+  // signature covers the exact bytes sent, and re-serializing the parsed body
+  // would not reproduce them (key order, unicode escaping, duplicate keys).
+  // Nest keeps the parsed `req.body` behaviour unchanged for every other route.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   // Allowed browser origins. FRONTEND_URL may be a comma-separated list.
   const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000')
@@ -37,12 +42,24 @@ async function bootstrap() {
    * part of a UI redress attack. The document-level policy for the app itself
    * lives in apps/web/next.config.mjs.
    */
-  app.use((_req: unknown, res: SecurityHeaderResponse, next: () => void) => {
+  app.use((req: SecurityHeaderRequest, res: SecurityHeaderResponse, next: () => void) => {
     // An API response never legitimately loads a script, styles a document, or
     // frames anything, so its CSP can be as strict as CSP gets.
+    //
+    // Swagger UI is the one exception, and it has to be: it IS a document, and
+    // `default-src 'none'` would refuse its own bundle and stylesheet and render
+    // a blank page. It gets a policy scoped to what it actually needs — its own
+    // same-origin assets, and the inline script/style tags swagger-ui-express
+    // emits for its bootstrap config. Still no external origins, so a
+    // compromised upstream package cannot phone anywhere, and the strict policy
+    // above continues to cover every route that serves data.
     res.setHeader(
       'Content-Security-Policy',
-      "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+      isSwaggerDocsRequest(req)
+        ? "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
+          "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; " +
+          "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+        : "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     );
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -86,15 +103,38 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Token', 'X-Request-Id'],
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+
+  // After the pipes and CORS so the document reflects the app as it actually
+  // runs, and after the middleware above so the docs page is served with the
+  // CSP that lets it render. No-op when disabled — see isSwaggerEnabled().
+  setupSwagger(app);
+
   const port = Number(process.env.API_PORT || process.env.PORT || 4000);
   await app.listen(port);
   console.log(`TradeW backend listening on ${port}`);
+  if (isSwaggerEnabled()) {
+    console.log(`API reference on http://localhost:${port}/${SWAGGER_PATH}`);
+  }
 }
 
 /** Only `setHeader` is used, so the response is typed structurally rather than
  *  pulling @types/express in for one middleware. */
 interface SecurityHeaderResponse {
   setHeader(name: string, value: string): void;
+}
+
+/** Likewise — the CSP branch reads nothing but the path. */
+interface SecurityHeaderRequest {
+  url?: string;
+}
+
+/**
+ * The Swagger UI document and the assets it pulls in, but NOT `/docs-json` or
+ * `/docs-yaml`: those are data, and data keeps the strict policy.
+ */
+function isSwaggerDocsRequest(req: SecurityHeaderRequest): boolean {
+  const path = (req.url ?? '').split('?')[0];
+  return path === `/${SWAGGER_PATH}` || path.startsWith(`/${SWAGGER_PATH}/`);
 }
 
 bootstrap();

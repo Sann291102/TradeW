@@ -1,7 +1,9 @@
 import { Controller, Get, MessageEvent, Query, Sse, UseGuards } from '@nestjs/common';
+import { ApiExcludeEndpoint, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Observable, interval, map, merge } from 'rxjs';
 import { fromEvent } from 'rxjs';
 import { AdminGuard } from '../admin/admin.guard';
+import { SECURITY } from '../swagger/swagger.setup';
 import { KnowledgeWorkspaceGuard } from './knowledge.guard';
 import { ActivityEvent, KnowledgeService } from './knowledge.service';
 
@@ -29,6 +31,9 @@ import { ActivityEvent, KnowledgeService } from './knowledge.service';
  * SSE routes `AdminGuard` allows query-param credentials for, since
  * `EventSource` cannot set an Authorization header.
  */
+@ApiTags('Admin Knowledge')
+/** Both, for the same reason as `AdminController` — see the note there. */
+@ApiSecurity({ [SECURITY.bearer]: [], [SECURITY.adminToken]: [] })
 @UseGuards(KnowledgeWorkspaceGuard, AdminGuard)
 @Controller('admin/knowledge')
 export class KnowledgeController {
@@ -65,6 +70,8 @@ export class KnowledgeController {
   }
 
   /** Live change feed. Heartbeat keeps intermediaries from closing an idle stream. */
+  // Excluded for the same reason as GET /admin/stream — see that endpoint.
+  @ApiExcludeEndpoint()
   @Sse('stream')
   stream(): Observable<MessageEvent> {
     const changes = fromEvent(this.knowledge.changes, 'change').pipe(
