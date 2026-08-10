@@ -1,9 +1,13 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWorkspaceStore } from '../store/workspaceStore';
-import { resolveUtterance } from './router';
+import { fetchQuotes, type LiveQuote } from '../marketData';
+import { fetchDhanQuotes } from '../dhanLiveFeed';
+import { planUtterance, type MultiStepPlan, type PlanStep } from './planner';
+import { narrate } from './narration';
+import type { QuoteAsk } from './quotes';
 import type { AssistantAction, AssistantIntent, RefusalReason } from './types';
 
 /**
@@ -20,11 +24,24 @@ export interface AssistantTurn {
   id: string;
   role: 'user' | 'assistant';
   text: string;
-  /** Comet-style trace of what the agent actually did to the workspace. */
+  /**
+   * Comet-style trace of what the agent actually did to the workspace, already
+   * filtered for the active narration mode. Empty in silent mode — `rawSteps`
+   * keeps the record regardless.
+   */
   steps?: string[];
+  /** Always populated. Silent mode hides `steps`, never this. */
+  rawSteps?: string[];
   intent?: AssistantIntent;
   refusalReason?: RefusalReason;
   disclaimer?: boolean;
+  /**
+   * Set on the turn that is waiting for a yes/no. The dock renders the plan and
+   * the reason instead of executing anything — see `safety.ts`.
+   */
+  pendingPlan?: MultiStepPlan;
+  /** Per-step outcome, shown after a multi-step plan runs. */
+  planSteps?: PlanStep[];
 }
 
 let turnSeq = 0;
@@ -33,11 +50,123 @@ function turnId(): string {
   return `t${++turnSeq}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// ---------------------------------------------------------------------------
+// Quote formatting
+// ---------------------------------------------------------------------------
+
+const inr = new Intl.NumberFormat('en-IN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const MARKET_PHASE: Record<LiveQuote['marketStatus'], string> = {
+  'pre-open': 'Pre-open',
+  open: 'Market open',
+  closed: 'Market closed',
+};
+
+/**
+ * Turn quotes into the assistant's answer.
+ *
+ * Two rules, both non-negotiable:
+ *
+ * 1. **State the source.** `LiveQuote.source` varies per row on the same
+ *    response — indices come back `simulated` from our own engine while liquid
+ *    equities come back `dhan`. Presenting both as "the price" without saying
+ *    which is which is precisely the fabrication problem the repo already
+ *    fixed for candles. Simulated rows say so in plain words.
+ * 2. **Report, don't interpret.** Numbers, phase, timestamp. No "holding up
+ *    well", no "approaching resistance" — that is the analysis agents' job
+ *    (`TRADEW-AI.md` §3) and this function must not quietly become them.
+ */
+/**
+ * Get quotes from the SAME place the rest of the workspace gets them.
+ *
+ * ── THE MISTAKE THIS FUNCTION EXISTS TO PREVENT ────────────────────────────
+ *
+ * There are two market-data clients in this app and they return different
+ * numbers for the same symbol at the same moment:
+ *
+ * - `dhanLiveFeed.ts` → the live-feed bridge on :4600. Real broker ticks.
+ *   NIFTY 24,583.80. Used by IndexOverview, Ticker, MarketMovers,
+ *   SectorHeatmap, TrendingStocks, WatchlistWidget, MarketsWorkspace,
+ *   CommodityMarkets, DashboardHero and SentinelLiveCharts — i.e. everything
+ *   the user can actually see.
+ * - `marketData.ts` → services/api's DB-backed routes, whose rows come from
+ *   the Simulated Market Data Engine. NIFTY 24,850, `source: 'simulated'`.
+ *
+ * The assistant was first wired to the second one. It answered "24,850" while
+ * the tile two centimetres away said "24,583.80", which is worse than refusing
+ * to answer: it makes the app look like it is guessing. An assistant that
+ * contradicts the screen is not a feature.
+ *
+ * So: live bridge first, simulated engine only as a labelled fallback. If both
+ * fail the caller says so rather than inventing a number.
+ */
+async function loadQuotes(symbols: string[]): Promise<LiveQuote[]> {
+  const wanted = new Set(symbols.map((s) => s.toUpperCase()));
+
+  try {
+    const snap = await fetchDhanQuotes();
+    const all = [...snap.indices, ...snap.stocks, ...snap.etfs, ...snap.commodities];
+    const hits = all.filter((q) => wanted.has(q.symbol.toUpperCase()));
+    if (hits.length) {
+      // The bridge leaves open/high/low/close nullable (no intraday history
+      // before the first tick of a session); LiveQuote wants numbers. Fall back
+      // to ltp rather than rendering "null" at the user.
+      return hits.map<LiveQuote>((q) => ({
+        ...q,
+        open: q.open ?? q.ltp,
+        high: q.high ?? q.ltp,
+        low: q.low ?? q.ltp,
+        close: q.close ?? q.ltp,
+        marketStatus: q.marketStatus,
+      }));
+    }
+  } catch {
+    // Bridge down or symbol not carried — fall through.
+  }
+
+  return fetchQuotes(symbols);
+}
+
+function formatQuotes(quotes: LiveQuote[], ask: QuoteAsk): string {
+  const lines: string[] = [];
+
+  for (const q of quotes) {
+    const sign = q.change >= 0 ? '+' : '';
+    lines.push(`**${q.displayName}** — ${inr.format(q.ltp)}`);
+    lines.push(`${sign}${inr.format(q.change)} (${sign}${q.changePct.toFixed(2)}%)`);
+
+    if (ask === 'range' || ask === 'volume') {
+      lines.push(
+        `Open ${inr.format(q.open)} · High ${inr.format(q.high)} · Low ${inr.format(q.low)} · Prev close ${inr.format(q.close)}`,
+      );
+    }
+    if (ask === 'volume') {
+      lines.push(`Volume ${new Intl.NumberFormat('en-IN').format(q.volume)}`);
+    }
+
+    const when = new Date(q.updatedAt).toLocaleTimeString('en-IN', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const provenance =
+      q.source === 'simulated'
+        ? "TradeW's simulated market engine — not a live exchange feed"
+        : `live feed (${q.source})`;
+    lines.push(`${MARKET_PHASE[q.marketStatus]} · ${provenance} · as of ${when}`);
+    lines.push('');
+  }
+
+  return lines.join('\n').trimEnd();
+}
+
 const GREETING: AssistantTurn = {
   id: 'greeting',
   role: 'assistant',
   text:
-    "I'm TradeW AI. I can open anything in the app — try “open NIFTY 24300 call of 21st July” — or ask me about the markets. Say “what can you do” for the full list.",
+    "I'm TradeW AI. Ask me a price — “what is NIFTY 50 trading at” — or tell me where to go: “open NIFTY 24300 call of 21st July”. Tap the mic to speak instead of typing. Say “what can you do” for the full list.",
 };
 
 export function useAssistant() {
@@ -57,6 +186,12 @@ export function useAssistant() {
   const addWorkspaceTab = useWorkspaceStore((s) => s.addWorkspaceTab);
 
   const [turns, setTurns] = useState<AssistantTurn[]>([GREETING]);
+
+  // `confirmPlan` needs the turn it is resolving, but must not be rebuilt on
+  // every transcript change — that would re-render the dock on each turn and
+  // invalidate the callback the confirmation buttons are bound to.
+  const turnsRef = useRef(turns);
+  turnsRef.current = turns;
 
   /**
    * The only place an action becomes a side effect. Exhaustive over
@@ -96,6 +231,52 @@ export function useAssistant() {
         case 'newWorkspaceTab':
           addWorkspaceTab();
           break;
+        case 'quote':
+          // The one asynchronous action. Deliberately fire-and-forget with its
+          // own turn appended on settle, rather than making `send` async: the
+          // user's message and the "Reading NIFTY…" acknowledgement must land
+          // immediately, or the dock looks frozen while the request is in
+          // flight.
+          void (async () => {
+            try {
+              const quotes = await loadQuotes(action.symbols);
+              const missing = action.symbols.filter(
+                (s) => !quotes.some((q) => q.symbol.toUpperCase() === s.toUpperCase()),
+              );
+              setTurns((prev) => [
+                ...prev,
+                {
+                  id: turnId(),
+                  role: 'assistant',
+                  intent: 'quote',
+                  disclaimer: true,
+                  text: quotes.length
+                    ? formatQuotes(quotes, action.ask)
+                    : `I couldn't find a quote for ${action.symbols.join(', ')}.`,
+                  steps: [
+                    `Read ${quotes.length} quote${quotes.length === 1 ? '' : 's'} from the ${
+                      quotes[0]?.source === 'dhan' ? 'live feed' : 'simulated engine'
+                    }`,
+                    ...(missing.length ? [`No data for ${missing.join(', ')}`] : []),
+                  ],
+                },
+              ]);
+            } catch {
+              // Say what actually went wrong. An empty dock or a fabricated
+              // number would both be worse than admitting the fetch failed.
+              setTurns((prev) => [
+                ...prev,
+                {
+                  id: turnId(),
+                  role: 'assistant',
+                  intent: 'quote',
+                  text: "I couldn't reach the market-data service just now, so I don't have a price to give you. I won't guess at one.",
+                  steps: ['GET /market-data/quotes failed'],
+                },
+              ]);
+            }
+          })();
+          break;
       }
     },
     [
@@ -113,12 +294,65 @@ export function useAssistant() {
     ],
   );
 
+  /**
+   * Run every step, recording what each one did.
+   *
+   * Steps run independently and a failure does NOT abort the rest — a plan that
+   * half-executed while claiming success is the worst possible outcome, so the
+   * contract is "run what can run, then say exactly what didn't"
+   * (AI-OPERATING-SYSTEM.md §4).
+   */
+  const runPlan = useCallback(
+    (plan: MultiStepPlan) => {
+      const done: PlanStep[] = plan.steps.map((s) => {
+        try {
+          executeAction(s.action);
+          return { ...s, status: 'done' as const };
+        } catch (e) {
+          return {
+            ...s,
+            status: 'failed' as const,
+            error: e instanceof Error ? e.message : 'failed',
+          };
+        }
+      });
+
+      const failed = done.filter((s) => s.status === 'failed');
+      const trace = done.map(
+        (s) => `${s.status === 'done' ? '✓' : '✕'} ${s.describe}${s.error ? ` — ${s.error}` : ''}`,
+      );
+
+      return { done, failed, trace };
+    },
+    [executeAction],
+  );
+
   const send = useCallback(
     (raw: string) => {
       const text = raw.trim();
       if (!text) return;
 
-      const plan = resolveUtterance(text);
+      const mode = useWorkspaceStore.getState().assistantMode;
+      const plan = planUtterance(text);
+
+      // Consequential plans stop here and wait. Nothing has run yet.
+      if (plan.risk === 'confirm' && plan.steps.length) {
+        setTurns((prev) => [
+          ...prev,
+          { id: turnId(), role: 'user', text },
+          {
+            id: turnId(),
+            role: 'assistant',
+            text: plan.riskReason ?? 'This will change your workspace.',
+            intent: plan.intent,
+            pendingPlan: plan,
+          },
+        ]);
+        return;
+      }
+
+      const { done, failed, trace } = runPlan(plan);
+      const rawSteps = plan.steps.length ? trace : plan.steps.map((s) => s.describe);
 
       setTurns((prev) => [
         ...prev,
@@ -126,20 +360,66 @@ export function useAssistant() {
         {
           id: turnId(),
           role: 'assistant',
-          text: plan.reply,
-          steps: plan.steps.length ? plan.steps : undefined,
+          text:
+            failed.length && done.length > failed.length
+              ? `${plan.reply}\n\n${failed.length} of ${done.length} steps didn't complete.`
+              : plan.reply,
+          steps: narrate(mode, rawSteps, plan.steps.map((s) => s.action)),
+          rawSteps,
+          planSteps: done.length > 1 ? done : undefined,
           intent: plan.intent,
           refusalReason: plan.refusalReason,
           disclaimer: plan.disclaimer,
         },
       ]);
-
-      for (const action of plan.actions) executeAction(action);
     },
-    [executeAction],
+    [runPlan],
   );
+
+  /** The user said yes to a confirmation. Runs the plan it was holding. */
+  const confirmPlan = useCallback(
+    (turnIdToResolve: string) => {
+      const turn = turnsRef.current.find((t) => t.id === turnIdToResolve);
+      const plan = turn?.pendingPlan;
+      if (!plan) return;
+
+      const mode = useWorkspaceStore.getState().assistantMode;
+      const { done, trace } = runPlan(plan);
+
+      setTurns((prev) => [
+        // Clear the pending flag so the prompt cannot be answered twice.
+        ...prev.map((t) => (t.id === turnIdToResolve ? { ...t, pendingPlan: undefined } : t)),
+        {
+          id: turnId(),
+          role: 'assistant',
+          text: 'Done.',
+          steps: narrate(mode, trace, plan.steps.map((s) => s.action)),
+          rawSteps: trace,
+          planSteps: done.length > 1 ? done : undefined,
+          intent: 'command',
+        },
+      ]);
+    },
+    [runPlan],
+  );
+
+  /** The user said no. Nothing ran, and the transcript says so. */
+  const cancelPlan = useCallback((turnIdToResolve: string) => {
+    setTurns((prev) => [
+      ...prev.map((t) => (t.id === turnIdToResolve ? { ...t, pendingPlan: undefined } : t)),
+      {
+        id: turnId(),
+        role: 'assistant',
+        text: "Cancelled — I haven't changed anything.",
+        intent: 'command',
+      },
+    ]);
+  }, []);
 
   const reset = useCallback(() => setTurns([GREETING]), []);
 
-  return useMemo(() => ({ turns, send, reset }), [turns, send, reset]);
+  return useMemo(
+    () => ({ turns, send, reset, confirmPlan, cancelPlan }),
+    [turns, send, reset, confirmPlan, cancelPlan],
+  );
 }

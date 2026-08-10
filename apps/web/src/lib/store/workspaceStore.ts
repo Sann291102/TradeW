@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, type StorageValue } from 'zustand/middleware';
+import type { NarrationMode } from '../assistant/narration';
 
 /**
  * TradeW workspace store (Phase 1, Milestone 3).
@@ -277,6 +278,19 @@ interface WorkspaceStore {
   // theme + chrome
   theme: ThemeName;
   setTheme: (t: ThemeName) => void;
+
+  /**
+   * How much the assistant explains while it works — layer 7 of
+   * `docs/product-architecture/AI-OPERATING-SYSTEM.md`. Persisted, because a
+   * narration preference the user has to re-set every session is not a
+   * preference, it is a nag.
+   *
+   * This is the first slice of the assistant's memory layer (§7 there). It is
+   * deliberately an EXPLICIT setting rather than something inferred from
+   * behaviour: preferences are learned by asking, never by watching.
+   */
+  assistantMode: NarrationMode;
+  setAssistantMode: (m: NarrationMode) => void;
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
 
@@ -338,6 +352,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
       theme: 'dark',
       setTheme: (t) => set({ theme: t }),
+
+      assistantMode: 'normal',
+      setAssistantMode: (m) => set({ assistantMode: m }),
       sidebarCollapsed: false,
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
@@ -537,6 +554,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       // the regenerated built-in layouts are excluded (WORKSPACE-SHELL.md §5).
       partialize: (s) => ({
         theme: s.theme,
+        assistantMode: s.assistantMode,
         sidebarCollapsed: s.sidebarCollapsed,
         workspaceTabs: s.workspaceTabs,
         activeTabId: s.activeTabId,

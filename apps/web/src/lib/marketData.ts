@@ -33,7 +33,20 @@ export interface LiveQuote {
   volume: number;
   marketStatus: MarketStatus;
   updatedAt: string;
-  source: 'simulated';
+  /**
+   * Provenance of this ROW, not of the response — the two genuinely differ.
+   * A single `GET /market-data/quotes?symbols=NIFTY,RELIANCE` comes back with
+   * NIFTY `simulated` and RELIANCE `dhan`.
+   *
+   * This was typed `'simulated'` when simulation was the only source. That is
+   * no longer true and the narrow literal was actively harmful: it told every
+   * consumer the check was pointless, so anything that wanted to label a
+   * number's origin had a dead branch. `services/api` types the field `string`
+   * and passes `Quote.source` through unchanged, so this widens to match.
+   * Anything user-facing must read it — see `lib/assistant/useAssistant.ts`'s
+   * `formatQuotes`.
+   */
+  source: string;
 }
 
 export async function fetchIndices(): Promise<LiveQuote[]> {

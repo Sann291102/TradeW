@@ -42,6 +42,11 @@ export default defineConfig({
       'feed-proxy-routes.spec.mjs',
       // Option-chain strike selection and formatting: pure, no DOM.
       'src/lib/sentinel/**/*.test.ts',
+      // The assistant's utterance resolver. Belongs under the "a mistake here is
+      // an exposure, not a rendering bug" rule above: this grammar decides
+      // whether "should I buy NIFTY at this price" is answered with a number or
+      // refused, and it is pure and framework-free by design (types.ts).
+      'src/lib/assistant/**/*.test.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,

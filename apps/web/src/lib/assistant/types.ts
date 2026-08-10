@@ -1,4 +1,5 @@
 import type { PanelKind, ThemeName } from '../store/workspaceStore';
+import type { QuoteAsk } from './quotes';
 
 /**
  * TradeW AI assistant — control-layer types (Phase 1).
@@ -33,6 +34,13 @@ import type { PanelKind, ThemeName } from '../store/workspaceStore';
  */
 export type AssistantAction =
   | { type: 'navigate'; href: string }
+  /**
+   * Read back live quotes for these symbols. The ONLY action that performs
+   * I/O, and the only one whose result becomes a new assistant turn rather
+   * than a change to the workspace — see `useAssistant`. It is read-only by
+   * construction: `GET /market-data/quotes` has no write side.
+   */
+  | { type: 'quote'; symbols: string[]; ask: QuoteAsk }
   | { type: 'selectSymbol'; symbol: string }
   | { type: 'openOverlay'; overlay: 'commandPalette' | 'notifications' | 'shortcuts' }
   | { type: 'setTheme'; theme: ThemeName }
@@ -52,7 +60,7 @@ export type AssistantAction =
  *                until Phase 2 rather than answered with an invented reply.
  * - `refusal`  — outside the assistant's remit (see domain-guard.ts).
  */
-export type AssistantIntent = 'command' | 'analysis' | 'refusal';
+export type AssistantIntent = 'command' | 'quote' | 'analysis' | 'refusal';
 
 /** Why a refusal happened — drives which copy the dock renders. */
 export type RefusalReason =
@@ -103,4 +111,18 @@ export function refusalPlan(reply: string, refusalReason: RefusalReason): Assist
 
 export function analysisPlan(reply: string, steps: string[] = []): AssistantPlan {
   return { intent: 'analysis', reply, actions: [], steps, disclaimer: true };
+}
+
+/**
+ * A quote lookup. Carries the disclaimer even though a last price is a fact
+ * rather than an opinion — `TRADEW-AI.md` §4 attaches it to every response that
+ * touches trading data, and a number is exactly the kind of response someone
+ * might act on.
+ */
+export function quotePlan(
+  reply: string,
+  actions: AssistantAction[],
+  steps: string[] = [],
+): AssistantPlan {
+  return { intent: 'quote', reply, actions, steps, disclaimer: true };
 }
