@@ -6,7 +6,9 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "//prepare": "Runs automatically on `npm ci`/`npm install` at the root. This package is consumed by its `types: dist/index.d.ts` entry, not its source, and dist/ is gitignored — so on a clean checkout every consumer (all three CI jobs, and any fresh clone) failed with TS2307 'Cannot find module @tradew/types' until something built it. Nothing did. A prepare hook is the fix that works everywhere rather than one build step per CI job.",
+    "prepare": "npm run build"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
