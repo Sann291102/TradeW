@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "declaration": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "ES2021",
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "incremental": true,
+    "strict": true,
+    "skipLibCheck": true
+  },
+  // Compile only src/ for the Nest build. Without this, tsc also pulls in
+  // scripts/**, which pushes the inferred rootDir up to the package root and
+  // emits everything under dist/src/** — leaving `start:prod` (node dist/main.js)
+  // to run a stale entry. Scripts are still type-checked/run via tsconfig.scripts.json.
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "scripts"]
+}

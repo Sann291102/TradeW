@@ -18,6 +18,7 @@ import { BrokerModule } from './broker/broker.module';
 import { MailModule } from './mail/mail.module';
 import { SmsModule } from './sms/sms.module';
 import { SentinelModule } from './sentinel/sentinel.module';
+import { AssistantModule } from './assistant/assistant.module';
 import { SentinelIntelligenceModule } from './sentinel-intelligence/sentinel-intelligence.module';
 import { LearningModule } from './learning/learning.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
@@ -74,6 +75,7 @@ import { HealthController } from './health.controller';
     DisciplineModule,
     SimModule,
     SentinelModule,
+    AssistantModule,
     SentinelIntelligenceModule,
     LearningModule,
     KnowledgeModule,

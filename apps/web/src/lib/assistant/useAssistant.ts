@@ -7,6 +7,8 @@ import { fetchQuotes, type LiveQuote } from '../marketData';
 import { fetchDhanQuotes } from '../dhanLiveFeed';
 import { planUtterance, type MultiStepPlan, type PlanStep } from './planner';
 import { narrate } from './narration';
+import { riskOf } from './safety';
+import { askBrain, type BrainPlan } from './brain';
 import type { QuoteAsk } from './quotes';
 import type { AssistantAction, AssistantIntent, RefusalReason } from './types';
 
@@ -160,6 +162,60 @@ function formatQuotes(quotes: LiveQuote[], ask: QuoteAsk): string {
   }
 
   return lines.join('\n').trimEnd();
+}
+
+/**
+ * Read-only workspace context sent with a brain request, so the model can
+ * resolve "here", "this" and "back". Deliberately minimal: no positions, no
+ * orders, no P&L, no credentials. The brain's job is to understand a sentence,
+ * not to be trusted with the account.
+ */
+function contextSnapshot(): Record<string, unknown> {
+  const s = useWorkspaceStore.getState();
+  // The selected symbol is per workspace TAB, not global — reading a top-level
+  // field would silently send null and cost the brain the antecedent for "it".
+  const activeTab = s.workspaceTabs.find((t) => t.id === s.activeTabId);
+  return {
+    route: typeof window !== 'undefined' ? window.location.pathname : null,
+    selectedSymbol: activeTab?.selectedSymbol ?? null,
+    theme: s.theme,
+  };
+}
+
+/** Turn a brain reply into transcript turns. */
+function brainTurns(brain: BrainPlan, mode: ReturnType<typeof narrate> extends never ? never : Parameters<typeof narrate>[0]): AssistantTurn[] {
+  if (brain.unsupported) {
+    return [{ id: turnId(), role: 'assistant', text: brain.unsupported, intent: 'command' }];
+  }
+  if (brain.needsAnalysis) {
+    return [
+      {
+        id: turnId(),
+        role: 'assistant',
+        intent: 'analysis',
+        disclaimer: true,
+        text: "That needs the analysis agents — reading chart structure and interpreting option data is the next phase. I won't improvise an answer.",
+        steps: mode === 'silent' ? [] : ['Classified → market analysis'],
+        rawSteps: ['Classified → market analysis'],
+      },
+    ];
+  }
+  if (!brain.steps.length) return [];
+
+  const trace = [
+    ...brain.steps.map((s) => `✓ ${s.describe}`),
+    ...(brain.dropped > 0 ? [`${brain.dropped} suggested action(s) were not permitted and were discarded`] : []),
+  ];
+  return [
+    {
+      id: turnId(),
+      role: 'assistant',
+      text: brain.goal || 'Done.',
+      steps: narrate(mode, trace, brain.steps.map((s) => s.action)),
+      rawSteps: trace,
+      intent: 'command',
+    },
+  ];
 }
 
 const GREETING: AssistantTurn = {
@@ -334,6 +390,114 @@ export function useAssistant() {
 
       const mode = useWorkspaceStore.getState().assistantMode;
       const plan = planUtterance(text);
+
+      /**
+       * The fast path missed — only THEN do we spend a model round-trip
+       * (AI-OPERATING-SYSTEM.md §3).
+       *
+       * ── WHICH REFUSALS MAY BE RECONSIDERED, AND WHICH MAY NOT ────────────
+       *
+       * Not all refusals are the same thing, and treating them as one category
+       * was a bug. `domain-guard.ts` produces two kinds:
+       *
+       *  - HARD BOUNDARIES ('order-boundary', 'advice-boundary',
+       *    'sentinel-boundary') — deliberate limits. These must never reach the
+       *    brain. Asking a language model to reconsider a boundary hands the
+       *    decision to the component least able to be held to it.
+       *
+       *  - 'out-of-domain' — a COMPREHENSION judgement made by regex: "I don't
+       *    think this is about markets or this app." That is a guess, and it is
+       *    exactly the guess an LLM is better at. Observed 2026-08-11: "I want
+       *    to look back at how disciplined I was yesterday" — a request for a
+       *    page that exists, in an app that has a discipline journal — was
+       *    refused as off-topic, and because refusals were excluded wholesale
+       *    the brain never got the chance to route it to /discipline.
+       *
+       * So out-of-domain falls through to the brain; the three real boundaries
+       * do not. The brain has no order action in its vocabulary regardless, so
+       * this widens comprehension without widening capability.
+       */
+      const isReconsiderable =
+        (plan.intent === 'analysis' && plan.steps.length === 0) ||
+        (plan.intent === 'refusal' && plan.refusalReason === 'out-of-domain');
+
+      if (isReconsiderable) {
+        /**
+         * Show ONE answer, not two.
+         *
+         * The first cut appended the brain's reply after the fast path's, so
+         * "I want to review how disciplined I was yesterday" rendered a refusal
+         * ("that's outside what I cover") immediately followed by a success
+         * ("Review discipline from yesterday · ✓ Open Discipline"). Both were
+         * true of their own layer and the pair read as the app arguing with
+         * itself.
+         *
+         * So the fast path's reply is withheld while the brain is consulted and
+         * a placeholder stands in its place. The brain's answer REPLACES the
+         * placeholder; if the brain is unreachable the placeholder becomes the
+         * original reply, which is the honest fallback rather than a dead end.
+         */
+        const placeholderId = turnId();
+        setTurns((prev) => [
+          ...prev,
+          { id: turnId(), role: 'user', text },
+          { id: placeholderId, role: 'assistant', text: 'Working that out…', intent: 'command' },
+        ]);
+
+        void askBrain(text, contextSnapshot()).then((brain) => {
+          const replacement: AssistantTurn[] = brain
+            ? brainTurns(brain, mode)
+            : [
+                {
+                  id: turnId(),
+                  role: 'assistant',
+                  text: plan.reply,
+                  intent: plan.intent,
+                  refusalReason: plan.refusalReason,
+                  disclaimer: plan.disclaimer,
+                },
+              ];
+
+          setTurns((prev) =>
+            prev.flatMap((t) => (t.id === placeholderId ? replacement : [t])),
+          );
+
+          if (!brain) return;
+          if (brain.steps.length) {
+            const risk = riskOf(brain.steps.map((s) => s.action));
+            if (risk.tier === 'confirm') {
+              setTurns((prev) => [
+                ...prev,
+                {
+                  id: turnId(),
+                  role: 'assistant',
+                  text: risk.reason ?? 'This will change your workspace.',
+                  intent: 'command',
+                  pendingPlan: {
+                    goal: brain.goal || text,
+                    steps: brain.steps.map((s) => ({
+                      id: turnId(),
+                      describe: s.describe,
+                      action: s.action,
+                      status: 'pending' as const,
+                    })),
+                    risk: 'confirm',
+                    riskReason: risk.reason,
+                    intent: 'command',
+                    reply: brain.goal || text,
+                  },
+                },
+              ]);
+              return;
+            }
+            for (const s of brain.steps) executeAction(s.action);
+          }
+        });
+        // The placeholder is the only reply for this utterance; falling through
+        // would emit the fast path's answer underneath it and reintroduce the
+        // double-reply this branch exists to prevent.
+        return;
+      }
 
       // Consequential plans stop here and wait. Nothing has run yet.
       if (plan.risk === 'confirm' && plan.steps.length) {
