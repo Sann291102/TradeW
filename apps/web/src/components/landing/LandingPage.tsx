@@ -61,15 +61,32 @@ function Reveal({
 }) {
   const reduce = useReducedMotion();
   const ref = useRef<HTMLDivElement | null>(null);
-  const [shown, setShown] = useState(false);
+  /**
+   * 'ssr'    — server render and first paint: VISIBLE, so the page reads with
+   *            no JavaScript at all.
+   * 'hidden' — client has run, this element is off screen, so it may be hidden
+   *            and revealed on scroll. Nobody can see it change.
+   * 'shown'  — revealed, or was already on screen when the client took over.
+   */
+  const [state, setState] = useState<'ssr' | 'hidden' | 'shown'>('ssr');
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+
+    // Anything already on screen goes straight to 'shown'. Hydration must never
+    // hide something the reader can already see.
+    const rect = el.getBoundingClientRect();
+    if (rect.bottom > 0 && rect.top < window.innerHeight) {
+      setState('shown');
+      return;
+    }
+
+    setState('hidden');
     const io = new IntersectionObserver(
       ([entry]) => {
         if (entry!.isIntersecting) {
-          setShown(true);
+          setState('shown');
           io.disconnect();
         }
       },
@@ -81,12 +98,30 @@ function Reveal({
 
   if (reduce) return <div className={className}>{children}</div>;
 
+  // Two rules are load-bearing here, and each one cost a real blank-page bug.
+  //
+  // 1. `initial={false}` — render at the `animate` value instead of animating
+  //    up from a hidden one. `initial={{ opacity: 0 }}` is what the SERVER
+  //    serialises, so it shipped all 24 sections as `style="opacity:0"`, and
+  //    they became visible only once React had hydrated. On a cold dev bundle
+  //    that is a blank page for seconds; if hydration fails or JS is blocked it
+  //    is blank permanently, with nothing in the console to explain it.
+  //    Observed 2026-08-11 on `/?next=%2Fdashboard#auth` — 21 of 24 sections
+  //    pinned at opacity 0, the sign-in form among them, so the page was not
+  //    merely ugly, it was unusable. Content must not depend on JavaScript to
+  //    be VISIBLE; motion may only ever add to markup that already reads.
+  //
+  // 2. The element type never changes across states. An earlier attempt at (1)
+  //    rendered a plain <div> until hydration and then swapped to motion.div —
+  //    which replaces the DOM node, leaving the IntersectionObserver holding a
+  //    DETACHED element that can never intersect. Everything below the fold
+  //    stayed invisible forever. Keep one element; vary only its animate target.
   return (
     <motion.div
       ref={ref}
       className={className}
-      initial={{ opacity: 0, y: 16 }}
-      animate={shown ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }}
+      initial={false}
+      animate={state === 'hidden' ? { opacity: 0, y: 16 } : { opacity: 1, y: 0 }}
       transition={{ duration: 0.45, delay, ease: [0.4, 0, 0.2, 1] }}
     >
       {children}
