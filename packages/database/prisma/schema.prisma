@@ -102,6 +102,18 @@ model User {
   country              String                @default("IN")
   experienceLevel      String?
   optionsFamiliarity   String?
+  // The name this user gave their AI (AI-PERSONA.md §8). Chosen on the landing
+  // page BEFORE signup and carried in at account creation, so it is nullable
+  // only for accounts created before this shipped or through a path that
+  // skipped the naming step — those are asked once during onboarding.
+  //
+  // This is USER-CONTROLLED TEXT THAT REACHES A MODEL PROMPT, a speech
+  // synthesizer, and the wake-word matcher. It is validated server-side by
+  // `validatePersonaName` on every write (AI-PERSONA.md §4) and slotted as a
+  // structured field, never concatenated into a prompt body (§5). Treat any
+  // read of this column as untrusted input.
+  aiPersonaName        String?
+  aiPersonaNamedAt     DateTime?
   // Admin portal access. Deliberately a per-user boolean rather than a role
   // enum: there is exactly one privileged surface (`/admin`) and one level of
   // privilege on it, so a role table would model a distinction that does not
@@ -135,6 +147,7 @@ model User {
   brokerOAuthStates    BrokerOAuthState[]
   apiCallLogs          ApiCallLog[]
   aiCallLogs           AiCallLog[]
+  aiConversations      AiConversation[]
   holdings             Holding[]
   holdingSettlements   HoldingSettlement[]
   portfolioSnapshots   PortfolioSnapshot[]
@@ -1462,4 +1475,91 @@ model AgentRun {
   @@index([system, startedAt])
   @@index([status, startedAt])
   @@index([userId, startedAt])
+}
+
+// ---------------------------------------------------------------------------
+// TradeW AI conversations — AI-CONVERSATION-LIFECYCLE.md
+// ---------------------------------------------------------------------------
+
+enum AiConversationStatus {
+  active
+  archived
+}
+
+enum AiMessageRole {
+  user
+  assistant
+}
+
+enum AiInputMode {
+  text
+  voice
+}
+
+/// One user's conversation with their assistant for one trading day.
+///
+/// The thread is permanent WITHIN a trading day — reload, tab close, device
+/// switch all resume it — and rolls at 02:30 IST, when the day's thread is
+/// archived and the next message opens a new one
+/// (AI-CONVERSATION-LIFECYCLE.md §2–§4).
+///
+/// Owned by `services/api`, not `services/tradew-ai`: the reasoning runtime is
+/// stateless and holds no user-scoped tables, and a second schema owner for
+/// user data would violate TRADEW-OS.md §2.5. See that doc's §6 for the full
+/// reasoning and for why this refines WORKSPACE-CONTINUITY.md §2.
+model AiConversation {
+  id            String               @id @default(uuid())
+  userId        String
+  // The IST trading day this thread belongs to, as a date. Resolved by
+  // `tradingDayFor()` — NOT `new Date()` truncated, because the boundary is
+  // 02:30 IST, so 01:00 IST on the 11th still belongs to the 10th.
+  tradingDay    DateTime             @db.Date
+  status        AiConversationStatus @default(active)
+  // The persona name at the time this thread was created. Snapshotted rather
+  // than joined so a rename does not retroactively rewrite what the user was
+  // told they were talking to (AI-PERSONA.md §7).
+  personaName   String?
+  startedAt     DateTime             @default(now())
+  lastMessageAt DateTime?
+  archivedAt    DateTime?
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages      AiMessage[]
+
+  // One thread per user per trading day. This is the roll's correctness
+  // guarantee: a race between two concurrent first-messages-of-the-day can
+  // only ever produce one row, and the loser retries into it.
+  @@unique([userId, tradingDay])
+  @@index([userId, status])
+  @@index([userId, tradingDay])
+}
+
+/// One turn in a conversation. A voice turn is stored as its transcript; the
+/// audio itself is never persisted (AI-VOICE.md §6).
+model AiMessage {
+  id                String         @id @default(uuid())
+  conversationId    String
+  role              AiMessageRole
+  content           String
+  inputMode         AiInputMode    @default(text)
+  // `command` | `analysis` | `refusal` | `capability` — the stage-1
+  // classification (TRADEW-ASSISTANT.md §9), kept so routing decisions are
+  // auditable after the fact rather than only inferable from the reply text.
+  intent            String?
+  // The AssistantActions actually executed for this turn, as the user-visible
+  // trace. Never contains an order action — the action type has no such
+  // variant (apps/web/src/lib/assistant/types.ts).
+  actions           Json?
+  // The compliance gate's verdict for an assistant turn (TRADEW-ASSISTANT.md
+  // §11). Present on EVERY assistant message, including refusals and errors —
+  // an absent verdict is itself a finding, because the gate is fail-closed and
+  // a message that reached the user without one should not exist.
+  complianceVerdict Json?
+  // Where the evidence in this answer came from, including whether the market
+  // feed was live or simulated. Non-null for analysis turns; the UI renders it
+  // so a simulated-feed answer is never mistaken for a live one.
+  provenance        Json?
+  createdAt         DateTime       @default(now())
+  conversation      AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
 }
