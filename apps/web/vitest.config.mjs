@@ -53,6 +53,8 @@ export default defineConfig({
       // The pre-paint session decision. Regression cover for the middleware
       // redirect loop that rendered a blank page after every server start.
       'src/lib/session-redirect.test.ts',
+      // Voice selection and speech text — the parts testable without audio.
+      'src/lib/assistant/voice-output.test.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,

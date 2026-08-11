@@ -169,7 +169,7 @@ export function FloatingAI() {
                   <span className="h-1.5 w-1.5 rounded-full bg-up" /> Online
                 </div>
               </div>
-              {speech.supported && (
+              {speech.supported && speech.hasVoice && (
                 <button
                   type="button"
                   onClick={() => {

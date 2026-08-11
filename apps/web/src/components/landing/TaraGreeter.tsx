@@ -138,7 +138,7 @@ export function TaraGreeter() {
           <span className="flex items-center gap-1 text-[11px] text-muted">
             <span className="h-1.5 w-1.5 rounded-full bg-up" /> Online
           </span>
-          {speech.supported && (
+          {speech.supported && speech.hasVoice && (
             <button
               type="button"
               onClick={() => {

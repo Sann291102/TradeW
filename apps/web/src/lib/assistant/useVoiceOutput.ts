@@ -40,6 +40,18 @@ import { FEMALE_VOICE_HINTS, VOICE_LANG_PREFERENCE } from './identity';
 export interface VoiceOutput {
   /** False where the browser has no speechSynthesis, or on the server. */
   supported: boolean;
+  /**
+   * True only once a usable voice has actually been found.
+   *
+   * `supported` and this are NOT the same thing, and conflating them is a real
+   * bug: a browser can expose the whole speechSynthesis API and ship zero
+   * voices. Measured in headless Chromium — `getVoices()` returns `[]`, yet
+   * `speak()` still fires `onstart` and `onend`, so the code reports a
+   * successful utterance while producing no sound at all. A toggle that says
+   * she is speaking when nothing can be heard is worse than one that admits
+   * she has no voice, so callers gate on this, not on `supported`.
+   */
+  hasVoice: boolean;
   speaking: boolean;
   /** The voice actually chosen, for display. Null until voices load. */
   voiceName: string | null;
@@ -155,5 +167,12 @@ export function useVoiceOutput(enabled: boolean): VoiceOutput {
     [voice],
   );
 
-  return { supported, speaking, voiceName: voice?.name ?? null, speak, cancel };
+  return {
+    supported,
+    hasVoice: voice !== null,
+    speaking,
+    voiceName: voice?.name ?? null,
+    speak,
+    cancel,
+  };
 }
