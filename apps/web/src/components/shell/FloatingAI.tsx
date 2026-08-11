@@ -85,7 +85,9 @@ export function FloatingAI() {
         aria-label="Ask TradeW AI"
         aria-expanded={open}
         className={cn(
-          'fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full',
+          // z-[120], above the discipline gate's z-[110]. See the note on the
+          // dock's own z-index below for why the assistant outranks that gate.
+          'fixed bottom-5 right-5 z-[120] flex h-12 w-12 items-center justify-center rounded-full',
           'bg-teal text-white shadow-card transition-transform duration-micro',
           'hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
           open && 'pointer-events-none opacity-0',
@@ -104,7 +106,28 @@ export function FloatingAI() {
             animate={{ opacity: 1, x: 0, y: 0 }}
             exit={reduce ? { opacity: 0 } : { opacity: 0, x: 24, y: 8 }}
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-            className="fixed bottom-5 right-5 z-50 flex h-[560px] max-h-[calc(100vh-2.5rem)] w-[380px] max-w-[calc(100vw-2.5rem)] flex-col overflow-hidden rounded-card border border-border bg-card shadow-card"
+            /**
+             * z-[120] — ABOVE the discipline gate (z-[110]).
+             *
+             * The gate is a full-screen `fixed inset-0` overlay, so at z-50 the
+             * assistant was not merely behind it, it was unreachable: the FAB
+             * could not be clicked, the input could not be typed into, and the
+             * mic could not be pressed. Whenever a discipline session was
+             * required, the AI simply did not respond — which reads exactly like
+             * a broken assistant rather than a deliberate gate.
+             *
+             * The gate exists to make someone set limits BEFORE TRADING. The
+             * assistant cannot place, modify or cancel an order — that is
+             * structural (AssistantAction has no order variant) — so nothing it
+             * can do bypasses the gate's purpose. Asking "what is NIFTY trading
+             * at", or "what is this screen asking me for", while the gate is up
+             * is safe, and being unable to is just a dead product.
+             *
+             * The gate still blocks everything it is meant to: the workspace,
+             * the order ticket, the command palette. Only the observation-only
+             * assistant sits above it.
+             */
+            className="fixed bottom-5 right-5 z-[120] flex h-[560px] max-h-[calc(100vh-2.5rem)] w-[380px] max-w-[calc(100vw-2.5rem)] flex-col overflow-hidden rounded-card border border-border bg-card shadow-card"
           >
             <header className="flex items-center gap-2 border-b border-border px-4 py-3">
               <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal text-white">
