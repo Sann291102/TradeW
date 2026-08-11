@@ -63,9 +63,32 @@ function refFor(header: PacketHeader): InstrumentRef {
   };
 }
 
-/** Epoch seconds -> Date. Dhan sends 0 when a trade time is unavailable. */
+/**
+ * IST is UTC+05:30 and India observes no daylight saving, so a fixed offset is
+ * genuinely correct here — unlike most zones, where a constant would be a bug
+ * waiting for a DST boundary.
+ */
+const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
+
+/**
+ * Last-trade-time -> Date. Dhan sends 0 when a trade time is unavailable.
+ *
+ * The WebSocket feed's LTT is **not** a UTC epoch, despite the docs labelling
+ * it only "EPOCH". It counts seconds from the Unix epoch as though IST wall
+ * clock were UTC, so reading it directly lands every tick 5h30m in the future.
+ * Measured against the live feed: an MCX contract's final tick of the session
+ * decodes to 23:29:59 — which is nonsense as UTC (04:59:59 IST, hours after
+ * MCX shuts) and exactly right as IST (the 23:30 IST close). NSE rows land on
+ * their own close the same way. Subtracting the offset recovers a true instant.
+ *
+ * Do NOT factor this together with the REST conversion in the historical
+ * backfill: `/v2/charts/historical` genuinely is a UTC epoch (09:15 IST opens
+ * at 03:45:00Z, verified). The two Dhan surfaces disagree, so one shared helper
+ * would necessarily be wrong for one of them.
+ */
 function tradeTime(epochSeconds: number, fallback: Date): Date {
-  return epochSeconds > 0 ? new Date(epochSeconds * 1000) : fallback;
+  if (epochSeconds <= 0) return fallback;
+  return new Date(epochSeconds * 1000 - IST_OFFSET_MS);
 }
 
 /**

@@ -18,6 +18,9 @@ import {
 
 let failures = 0;
 
+/** UTC+05:30. Dhan's WS last-trade-time is IST-based — see the LTT section. */
+const IST_OFFSET_S = (5 * 60 + 30) * 60;
+
 function check(label: string, actual: unknown, expected: unknown): void {
   const ok = Number.isFinite(actual as number) && Number.isFinite(expected as number)
     ? Math.abs((actual as number) - (expected as number)) < 0.011
@@ -54,7 +57,10 @@ console.log('\nTicker packet');
   check('ltp', tick.ltp, 1234.55);
   check('securityId', tick.ref.securityId, '11536');
   check('exchangeSegment', tick.ref.exchangeSegment, 'NSE_EQ');
-  check('trade time (epoch s)', Math.floor(tick.at.getTime() / 1000), 1753100000);
+  // This previously asserted the epoch round-tripped unchanged, which pinned a
+  // real bug: the WS feed's LTT is an IST-based epoch, so reading it straight
+  // stamped every tick 5h30m into the future. See the LTT section below.
+  check('trade time (epoch s)', Math.floor(tick.at.getTime() / 1000), 1753100000 - IST_OFFSET_S);
 }
 
 // --- Quote packet (50 bytes) -------------------------------------------------
@@ -145,6 +151,50 @@ console.log('\nPrev-close and OI packets');
   header(oi, FEED_CODE.OI, 12, 2, 49081);
   oi.writeInt32LE(1_750_000, 8);
   check('openInterest', tickOf(parsePacket(oi)).openInterest, 1_750_000);
+}
+
+// --- Last trade time is an IST-based epoch -----------------------------------
+// Regression guard. Dhan's docs call the WS field only "EPOCH"; it is in fact
+// seconds counted as though IST wall clock were UTC, so decoding it directly
+// stamped every real tick 5h30m in the future. Measured against the live feed:
+// an MCX contract's last tick decoded to 23:29:59 — impossible as UTC (that is
+// 04:59:59 IST, hours after MCX shuts) and exactly the 23:30 IST close as IST.
+//
+// The assertion is written as the invariant rather than as the subtraction, so
+// it fails if someone "simplifies" the conversion back to new Date(s * 1000):
+// the raw epoch rendered as a UTC wall clock must equal the decoded instant
+// rendered as an IST wall clock. Restating `- 19800` would pass either way.
+console.log('\nLast trade time (IST-based epoch)');
+{
+  const wall = (d: Date, timeZone: string) =>
+    d.toLocaleString('en-GB', { timeZone, hour12: false, dateStyle: 'short', timeStyle: 'medium' });
+
+  // 12:13:20 IST on 2025-07-21, as Dhan puts it on the wire.
+  const raw = 1753100000;
+  const buf = Buffer.alloc(16);
+  header(buf, FEED_CODE.TICKER, 16, 1, 11536);
+  buf.writeFloatLE(100, 8);
+  buf.writeInt32LE(raw, 12);
+
+  const at = tickOf(parsePacket(buf)).at;
+  check('decoded IST wall clock matches the raw epoch', wall(at, 'Asia/Kolkata'), wall(new Date(raw * 1000), 'UTC'));
+  check('decoded instant is true UTC', at.toISOString(), '2025-07-21T06:43:20.000Z');
+
+  // The MCX close that exposed the bug, end to end.
+  const mcx = Buffer.alloc(16);
+  header(mcx, FEED_CODE.TICKER, 16, 5, 428);
+  mcx.writeFloatLE(100, 8);
+  mcx.writeInt32LE(Math.floor(Date.UTC(2026, 7, 10, 23, 29, 59) / 1000), 12);
+  check('MCX 23:30 IST close decodes to 18:00Z', tickOf(parsePacket(mcx)).at.toISOString(), '2026-08-10T17:59:59.000Z');
+
+  // ltt == 0 still means "unavailable" and must take the caller's fallback
+  // unshifted — the offset applies to trade times, not to our own clock.
+  const none = Buffer.alloc(16);
+  header(none, FEED_CODE.TICKER, 16, 1, 11536);
+  none.writeFloatLE(100, 8);
+  none.writeInt32LE(0, 12);
+  const fallback = new Date('2026-08-10T20:00:00.000Z');
+  check('ltt=0 uses fallback unshifted', tickOf(parsePacket(none, 0, fallback)).at.toISOString(), fallback.toISOString());
 }
 
 // --- Multi-packet frame ------------------------------------------------------
