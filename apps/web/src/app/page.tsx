@@ -33,7 +33,47 @@ export const metadata = {
  * flash the marketing page at a signed-in user before React could redirect.
  * Static string, no interpolated data, so inlining is safe.
  */
-const SESSION_REDIRECT_SCRIPT = `(function(){try{if(localStorage.getItem('tradew_token')){location.replace('/dashboard');}}catch(e){}})();`;
+/**
+ * ── THE REDIRECT LOOP THIS SCRIPT USED TO CAUSE (fixed 2026-08-11) ─────────
+ *
+ * This previously read `if (localStorage.getItem('tradew_token')) redirect`.
+ * `middleware.ts` gates the workspace on the `tw_auth` COOKIE. Two components,
+ * two different definitions of "signed in", and they can disagree — the
+ * localStorage token outlives the cookie whenever the cookie is cleared,
+ * expires, or is dropped by the browser while localStorage survives.
+ *
+ * When they disagreed the app hung in an infinite loop:
+ *
+ *   /dashboard → middleware sees no cookie → /?next=%2Fdashboard#auth
+ *              → this script sees a token  → /dashboard
+ *              → middleware sees no cookie → … forever
+ *
+ * The browser shows a blank page with the tab title set and a spinner that
+ * never stops, then ERR_TOO_MANY_REDIRECTS. Reproduced at 27 navigations.
+ * It surfaced most often "when starting the web server", because that is
+ * exactly when a cookie gets dropped while localStorage does not.
+ *
+ * ── THE FIX: ONE DEFINITION OF SIGNED IN ──────────────────────────────────
+ *
+ * Redirect only when BOTH the token and the cookie are present, because the
+ * cookie is what the middleware will actually check — a token without one
+ * cannot get through, so following it is guaranteed to bounce.
+ *
+ * And when the token is there without the cookie, it is stale: clear it, so
+ * `lib/api.ts` stops sending a bearer that will only 401, and the visitor gets
+ * the sign-in form instead of a loop. Note the redirect is NOT re-armed after
+ * clearing — this render stays on the landing page by design.
+ *
+ * Two independent guards, either of which alone breaks the loop. That is
+ * deliberate: this failure mode is invisible in every automated check that
+ * does not use a real browser, so it gets belt and braces.
+ */
+const SESSION_REDIRECT_SCRIPT = `(function(){try{
+var t=localStorage.getItem('tradew_token');
+var c=document.cookie.indexOf('tw_auth=')!==-1;
+if(t&&!c){localStorage.removeItem('tradew_token');localStorage.removeItem('tradew_refresh_token');return;}
+if(t&&c&&location.search.indexOf('next=')===-1){location.replace('/dashboard');}
+}catch(e){}})();`;
 
 export default function Home() {
   return (

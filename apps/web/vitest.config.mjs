@@ -50,6 +50,9 @@ export default defineConfig({
       // Active pricing — a drifted price is a billing incident with a UI in
       // front of it, and the withdrawn annual term must stay withdrawn.
       'src/lib/pricing.test.ts',
+      // The pre-paint session decision. Regression cover for the middleware
+      // redirect loop that rendered a blank page after every server start.
+      'src/lib/session-redirect.test.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,
