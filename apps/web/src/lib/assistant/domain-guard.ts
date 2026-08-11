@@ -1,10 +1,11 @@
+import { ASSISTANT_NAME } from './identity';
 import { findSymbol } from './instruments';
 import { refusalPlan, type AssistantPlan } from './types';
 
 /**
  * The assistant's remit fence.
  *
- * TradeW AI answers ONLY about (a) this application and (b) markets — market
+ * ${ASSISTANT_NAME} answers ONLY about (a) this application and (b) markets — market
  * structure, market information, market news. Markets means all markets
  * (Indian equities/derivatives first, plus forex, commodities and crypto);
  * everything else is declined.

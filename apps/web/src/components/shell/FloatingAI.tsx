@@ -6,9 +6,15 @@ import { cn, Badge } from '@tradew/ui';
 import { useWorkspaceStore } from '@/lib/store/workspaceStore';
 import { useAssistant, type AssistantTurn } from '@/lib/assistant/useAssistant';
 import { useVoiceInput } from '@/lib/assistant/useVoiceInput';
+import { useVoiceOutput } from '@/lib/assistant/useVoiceOutput';
 import { NARRATION_MODES } from '@/lib/assistant/narration';
+import {
+  ASSISTANT_DISCLAIMER,
+  ASSISTANT_NAME,
+  ASSISTANT_TRIGGER_LABEL,
+} from '@/lib/assistant/identity';
 import { MascotMark } from '@/components/brand/MascotMark';
-import { MicIcon } from './icons';
+import { MicIcon, SpeakerIcon, SpeakerOffIcon } from './icons';
 
 /**
  * TradeW AI floating assistant (shell chrome) — the permanent bottom-right dock
@@ -76,13 +82,37 @@ export function FloatingAI() {
   // and making them reach for the keyboard to confirm defeats the point.
   const voice = useVoiceInput((text) => submit(text));
 
+  /**
+   * Tara's voice. Off until asked for, and persisted, because an app that
+   * starts talking unprompted in an open-plan office gets muted permanently.
+   * Silent narration mode suppresses it too — "don't narrate" includes "don't
+   * say it out loud".
+   */
+  const speechOn = useWorkspaceStore((s) => s.assistantSpeech);
+  const setSpeechOn = useWorkspaceStore((s) => s.setAssistantSpeech);
+  const speech = useVoiceOutput(speechOn && mode !== 'silent');
+
+  // Speak each NEW assistant turn once. Keyed on turn id rather than on the
+  // array, or every unrelated re-render would replay the last reply.
+  const spokenRef = useRef<string | null>(null);
+  useEffect(() => {
+    const last = turns[turns.length - 1];
+    if (!last || last.role !== 'assistant') return;
+    if (spokenRef.current === last.id) return;
+    spokenRef.current = last.id;
+    // The greeting is not spoken: the dock opens on a click, and a voice
+    // arriving unprompted from a click is startling.
+    if (last.id === 'greeting') return;
+    speech.speak(last.text);
+  }, [turns, speech]);
+
   return (
     <>
       {/* FAB */}
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label="Ask TradeW AI"
+        aria-label={ASSISTANT_TRIGGER_LABEL}
         aria-expanded={open}
         className={cn(
           // z-[120], above the discipline gate's z-[110]. See the note on the
@@ -101,7 +131,7 @@ export function FloatingAI() {
           <motion.aside
             key="ai-dock"
             role="dialog"
-            aria-label="TradeW AI assistant"
+            aria-label={`${ASSISTANT_NAME} assistant`}
             initial={reduce ? { opacity: 0 } : { opacity: 0, x: 24, y: 8 }}
             animate={{ opacity: 1, x: 0, y: 0 }}
             exit={reduce ? { opacity: 0 } : { opacity: 0, x: 24, y: 8 }}
@@ -134,16 +164,34 @@ export function FloatingAI() {
                 <MascotMark size={18} />
               </span>
               <div className="min-w-0">
-                <div className="text-sm font-bold text-text">TradeW AI</div>
+                <div className="text-sm font-bold text-text">{ASSISTANT_NAME}</div>
                 <div className="flex items-center gap-1 text-[11px] text-muted">
                   <span className="h-1.5 w-1.5 rounded-full bg-up" /> Online
                 </div>
               </div>
+              {speech.supported && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (speechOn) speech.cancel();
+                    setSpeechOn(!speechOn);
+                  }}
+                  aria-label={speechOn ? `Mute ${ASSISTANT_NAME}` : `Let ${ASSISTANT_NAME} speak`}
+                  aria-pressed={speechOn}
+                  title={speech.voiceName ? `Voice: ${speech.voiceName}` : undefined}
+                  className={cn(
+                    'ml-auto rounded-lg p-1.5 transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+                    speechOn ? 'text-teal hover:bg-hover' : 'text-faint hover:bg-hover hover:text-text',
+                  )}
+                >
+                  {speechOn ? <SpeakerIcon className="h-4 w-4" /> : <SpeakerOffIcon className="h-4 w-4" />}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setOpen(false)}
                 aria-label="Close assistant"
-                className="ml-auto rounded-lg px-2 py-1 text-xs font-semibold text-muted hover:bg-hover hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                className="rounded-lg px-2 py-1 text-xs font-semibold text-muted hover:bg-hover hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
               >
                 Close
               </button>
@@ -214,8 +262,8 @@ export function FloatingAI() {
               className="flex items-center gap-2 border-t border-border p-3"
             >
               <input
-                aria-label="Message TradeW AI"
-                placeholder={voice.listening ? 'Listening…' : 'Ask TradeW AI…'}
+                aria-label={`Message ${ASSISTANT_NAME}`}
+                placeholder={voice.listening ? 'Listening…' : `Ask ${ASSISTANT_NAME}…`}
                 value={voice.interim || draft}
                 onChange={(e) => setDraft(e.target.value)}
                 className="min-w-0 flex-1 rounded-lg border border-border2 bg-bg px-3 py-2 text-sm text-text placeholder:text-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
@@ -227,7 +275,7 @@ export function FloatingAI() {
                 <button
                   type="button"
                   onClick={() => (voice.listening ? voice.stop() : voice.start())}
-                  aria-label={voice.listening ? 'Stop listening' : 'Speak to TradeW AI'}
+                  aria-label={voice.listening ? 'Stop listening' : `Speak to ${ASSISTANT_NAME}`}
                   aria-pressed={voice.listening}
                   className={cn(
                     'shrink-0 rounded-lg border p-2 transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
@@ -253,7 +301,7 @@ export function FloatingAI() {
               </p>
             )}
             <p className="border-t border-border px-4 py-2 text-[10px] leading-tight text-faint">
-              TradeW AI shares observations only — never investment advice.
+              {ASSISTANT_DISCLAIMER}
             </p>
           </motion.aside>
         )}

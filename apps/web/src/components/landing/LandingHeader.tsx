@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { ASSISTANT_NAME } from '@/lib/assistant/identity';
 
 /**
  * Kept to five entries even though the page now has ten sections. The nav is a
@@ -11,7 +12,7 @@ import Link from 'next/link';
  */
 const NAV = [
   { label: 'Platform', href: '#platform' },
-  { label: 'TradeW AI', href: '#assistant' },
+  { label: ASSISTANT_NAME, href: '#assistant' },
   { label: 'Sentinel', href: '#sentinel' },
   { label: 'Pricing', href: '#pricing' },
   { label: 'Security', href: '#security' },

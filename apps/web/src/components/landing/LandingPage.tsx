@@ -6,6 +6,8 @@ import { motion, useReducedMotion } from 'framer-motion';
 import { LandingHeader } from './LandingHeader';
 import { MarketBackdrop } from './MarketBackdrop';
 import { Mascot } from './Mascot';
+import { TaraGreeter } from './TaraGreeter';
+import { ASSISTANT_NAME } from '@/lib/assistant/identity';
 import { AuthPanel } from './AuthPanel';
 import {
   SentinelIcon,
@@ -581,21 +583,11 @@ export function LandingPage() {
             an unrelated widget. */}
         <section id="assistant" className="scroll-mt-16 border-t border-border px-6 py-24">
           <div className="mx-auto max-w-6xl">
-            <div className="grid gap-14 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)] lg:items-start lg:gap-16">
-              <Reveal className="text-center lg:sticky lg:top-24 lg:text-left">
-                <Mascot size={200} className="mx-auto lg:mx-0" />
-                <p className="mt-6 text-fs2xs font-semibold uppercase tracking-wideTrack text-teal">
-                  TradeW AI
-                </p>
-                <h2 className="mt-4 text-balance text-fs2xl font-bold tracking-tightTrack text-navy">
-                  It runs the app. It never runs your money.
-                </h2>
-                <p className="mt-4 text-fsXs leading-normal2 text-muted">
-                  One assistant, permanently within reach on every screen — by text
-                  or by voice. The same character you are looking at now is the
-                  button in the corner of every workspace.
-                </p>
-              </Reveal>
+            <Reveal>
+              <TaraGreeter />
+            </Reveal>
+
+            <div className="mt-4 grid gap-4">
 
               <div className="space-y-4">
                 <Reveal>
@@ -1039,7 +1031,7 @@ export function LandingPage() {
               <ul className="mt-4 space-y-2.5 text-fsXs">
                 {[
                   ['#platform', 'Surfaces'],
-                  ['#assistant', 'TradeW AI'],
+                  ['#assistant', ASSISTANT_NAME],
                   ['#sentinel', 'Sentinel'],
                   ['#learning', 'Learning Hub'],
                 ].map(([href, label]) => (

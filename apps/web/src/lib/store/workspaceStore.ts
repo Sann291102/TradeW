@@ -291,6 +291,14 @@ interface WorkspaceStore {
    */
   assistantMode: NarrationMode;
   setAssistantMode: (m: NarrationMode) => void;
+
+  /**
+   * Whether Tara reads her replies aloud. Off by default and persisted: an app
+   * that starts talking unprompted is one the user mutes permanently, and a
+   * preference they have to re-set every session is not a preference.
+   */
+  assistantSpeech: boolean;
+  setAssistantSpeech: (on: boolean) => void;
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
 
@@ -340,6 +348,13 @@ interface WorkspaceStore {
   unreadCount: () => number;
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
+  /** Replace the whole list — used by NotificationSync when it pulls the real
+   *  feed from services/api. The single writer for server-sourced state. */
+  setNotifications: (items: NotificationItem[]) => void;
+  /** When true, new notifications arrive silently (no TradeW chime). Persisted
+   *  so a muted operator stays muted across reloads. */
+  notificationsMuted: boolean;
+  toggleNotificationsMuted: () => void;
 }
 
 const STORAGE_KEY = 'tradew-workspace-v1';
@@ -355,6 +370,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
       assistantMode: 'normal',
       setAssistantMode: (m) => set({ assistantMode: m }),
+
+      assistantSpeech: false,
+      setAssistantSpeech: (on) => set({ assistantSpeech: on }),
       sidebarCollapsed: false,
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
@@ -541,6 +559,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       markNotificationRead: (id) =>
         set((s) => ({ notifications: s.notifications.map((n) => (n.id === id ? { ...n, read: true } : n)) })),
       markAllNotificationsRead: () => set((s) => ({ notifications: s.notifications.map((n) => ({ ...n, read: true })) })),
+      setNotifications: (items) => set({ notifications: items }),
+      notificationsMuted: false,
+      toggleNotificationsMuted: () => set((s) => ({ notificationsMuted: !s.notificationsMuted })),
     }),
     {
       name: STORAGE_KEY,
@@ -555,10 +576,12 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       partialize: (s) => ({
         theme: s.theme,
         assistantMode: s.assistantMode,
+        assistantSpeech: s.assistantSpeech,
         sidebarCollapsed: s.sidebarCollapsed,
         workspaceTabs: s.workspaceTabs,
         activeTabId: s.activeTabId,
         notifications: s.notifications,
+        notificationsMuted: s.notificationsMuted,
       }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<WorkspaceStore>;

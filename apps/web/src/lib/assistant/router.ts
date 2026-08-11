@@ -1,6 +1,7 @@
 import { resolveCommand } from './commands';
 import { guardDomain, guardHardBoundaries } from './domain-guard';
 import { resolveQuoteQuestion } from './quotes';
+import { ASSISTANT_NAME } from './identity';
 import { analysisPlan, commandPlan, quotePlan, type AssistantPlan } from './types';
 
 /**
@@ -30,7 +31,7 @@ import { analysisPlan, commandPlan, quotePlan, type AssistantPlan } from './type
 const CAPABILITY_RE = /\b(what can you do|what do you do|who are you|your capabilities|what are you able|help me|how can you help|commands?\b.*\b(list|available)|what should i ask)\b/i;
 
 const CAPABILITY_REPLY = [
-  "I'm TradeW AI — I run this application for you and I read the market back to you. Three things:",
+  `I'm ${ASSISTANT_NAME} — I run this application for you and I read the market back to you. Three things:`,
   '',
   '**I quote live prices.** Ask and I fetch the real number:',
   '• "what is NIFTY 50 trading at", "RELIANCE price"',
@@ -43,7 +44,7 @@ const CAPABILITY_REPLY = [
   '• "show the option chain", "hide the order ticket", "apply the scalping layout"',
   '• "switch to light mode", "open the command palette"',
   '',
-  '**You can speak instead of typing** — tap the mic and say any of the above.',
+  '**You can speak instead of typing** — tap the mic and say any of the above, and tap the speaker if you would like me to reply out loud.',
   '',
   "Still coming: reading a chart's structure, interpreting an option chain, and explaining what a move means. Those need the analysis agents and I'll tell you plainly when you've asked for one rather than improvising.",
   '',

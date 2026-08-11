@@ -7,6 +7,7 @@ import { fetchQuotes, type LiveQuote } from '../marketData';
 import { fetchDhanQuotes } from '../dhanLiveFeed';
 import { planUtterance, type MultiStepPlan, type PlanStep } from './planner';
 import { narrate } from './narration';
+import { ASSISTANT_NAME } from './identity';
 import { riskOf } from './safety';
 import { askBrain, type BrainPlan } from './brain';
 import type { QuoteAsk } from './quotes';
@@ -222,7 +223,7 @@ const GREETING: AssistantTurn = {
   id: 'greeting',
   role: 'assistant',
   text:
-    "I'm TradeW AI. Ask me a price — “what is NIFTY 50 trading at” — or tell me where to go: “open NIFTY 24300 call of 21st July”. Tap the mic to speak instead of typing. Say “what can you do” for the full list.",
+    `Hi, I'm ${ASSISTANT_NAME} — TradeW's AI. Ask me a price — “what is NIFTY 50 trading at” — or tell me where to go: “open NIFTY 24300 call of 21st July”. Tap the mic to speak to me, and the speaker if you'd like me to talk back. Say “what can you do” for the full list.`,
 };
 
 export function useAssistant() {
