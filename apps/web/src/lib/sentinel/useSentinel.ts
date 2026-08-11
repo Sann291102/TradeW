@@ -1,7 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
+import { playNotificationSound } from '@/lib/notificationSound';
+import { useWorkspaceStore } from '@/lib/store/workspaceStore';
 import type { JournalEntry, ObserveResponse, SessionSummaryData, StrategyMode } from './types';
 
 /**
@@ -56,6 +58,14 @@ export function useSentinel(symbol: string = 'NIFTY', focus: SentinelFocus = {})
   const [unavailable, setUnavailable] = useState<SentinelUnavailable | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Signature of the last observation set we've already surfaced. The live feed
+  // is a poll, so "new text arrived" means: this poll's observations differ from
+  // the previous one. A ref (not state) so updating it never re-renders, and it
+  // survives across polls. `feedPrimed` suppresses the chime on the very first
+  // load — the initial batch is not "new", it's just what was already there.
+  const feedSignature = useRef<string>('');
+  const feedPrimed = useRef(false);
+
   const strategyMode = focus.strategyMode ?? 'auto';
   const selectedStrategyIds = focus.selectedStrategyIds ?? [];
   // Stable key so the effect below doesn't re-fire on every render from a new
@@ -76,6 +86,17 @@ export function useSentinel(symbol: string = 'NIFTY', focus: SentinelFocus = {})
       })) as ObserveResponse;
       setData(observe);
       setUnavailable(null);
+
+      // Live-feed sound: ring the TradeW mark when the observation feed gains
+      // genuinely new text. Signature = the synthesis narrative + each
+      // observation's content, so a re-poll that returns the same read stays
+      // silent. Skipped on the first primed load and when the operator has muted.
+      const signature = `${observe.synthesis?.content ?? ''}||${(observe.observations ?? []).map((o) => `${o.createdAt ?? ''}:${o.content}`).join('|')}`;
+      if (feedPrimed.current && signature !== feedSignature.current && (observe.observations?.length ?? 0) > 0) {
+        if (!useWorkspaceStore.getState().notificationsMuted) playNotificationSound();
+      }
+      feedSignature.current = signature;
+      feedPrimed.current = true;
       try {
         setSummary((await api('/sentinel/session-summary')) as SessionSummaryData);
         setJournal((await api('/sentinel/journal?limit=10')) as JournalEntry[]);
