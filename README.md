@@ -234,7 +234,9 @@ TradeW/
 - **Authentication & Authorization**
   - JWT-based sign-up/login/refresh with bcrypt password hashing
   - Rotating refresh tokens (stored hashed; revoked-on-use)
-  - Email one-time-code foundation (`EmailOtp` model, `OtpService`, SMTP mailer) — enumeration-safe, brute-force-throttled
+  - Email one-time-code foundation (`Otp` model, `OtpService`, SMTP mailer) — enumeration-safe, brute-force-throttled
+  - Branded transactional emails (`mail/templates.ts`): HTML+text templates for OTP, **login-alert on every sign-in**, password-changed, payment receipts and the EOD summary — one template layer, sent as `admin@tradew-setup.com`
+  - Google sign-in (OAuth 2.0) — wired end-to-end; enabled by setting `GOOGLE_CLIENT_ID/SECRET`
   - User profile + preferences (persistent settings)
   - Audit logging (all events tracked with IP, user agent, metadata)
 
@@ -271,7 +273,15 @@ TradeW/
 
 - **Market News & Notifications**
   - Real financial newswires (Economic Times, Moneycontrol RSS) on a public Market News route, de-duplicated, cached, newest-first
-  - Persistent notifications with a typed `NotificationCategory` enum
+  - Persistent notifications with a typed `NotificationCategory` enum, backed end-to-end: bell badge, drawer and `/notifications` page all read the real `/notifications` API via a 30s live sync, with a synthesized "TradeW mark" chime on new arrivals (and on new Sentinel live-feed observations) — mutable per user
+
+- **Payments (Razorpay, seam)**
+  - `services/api/src/payments/` — order creation, signature-verified checkout callback, and an authoritative webhook, all fulfilling through `EntitlementsService.activate` (idempotent on the Razorpay payment id — never double-grants)
+  - Premium checkout page (`apps/web/.../checkout`) for Sentinel Pro terms; honestly reports `billingEnabled:false` until `RAZORPAY_KEY_ID/SECRET` are set — no account can be charged out of the box
+  - Payment receipt / processing / failed email templates
+
+- **End-of-Day Summary Email**
+  - Daily portfolio value + P&L + orders wrap-up, gated by leader-election, trading-day, after-close-hour and once-per-user-per-day — off by default (`EOD_EMAIL_ENABLED=true` to turn on)
 
 - **Broker Integration (Dhan OAuth "consent" flow)**
   - Per-user broker credential ownership; CSRF/replay-protected OAuth state; single feed-default row for the shared bridge
@@ -310,17 +320,24 @@ TradeW/
   - The *research* backend (`services/tradew-ai`) is a README only; the reasoning agents (chart read, support/resistance, option-chain interpretation) are parked for Phase 2
   - `packages/ai-core` provides the foundation (providers, memory, RAG) they will build on
 
-- **Email one-time codes**
-  - `EmailOtp` model, `OtpService` and SMTP mailer are built and unit-testable
-  - Not yet surfaced as public `/auth` OTP endpoints (foundation only)
-
 - **News intelligence**
   - Real headlines are served; a 13-category LLM classifier exists in `packages/ai-core` and a `NewsEvent` model exists
   - Classification is intentionally NOT wired to user-facing output pending compliance review
 
 - **Notifications**
-  - Persisted with categories and exposed via API
-  - Multi-channel fanout (email/Slack/push) not built
+  - Persisted with categories, exposed via API, live-synced in-app with sound (see Implemented)
+  - Slack/push channels not built; email is covered separately (login-alert, payment, EOD — see Implemented) rather than as generic per-notification fanout
+
+- **Admin Dashboard (`apps/admin`)**
+  - Operator-only Next.js console: token-gated session, Engine Health / Knowledge / Agents / Reasoning / Rules / Learning Platform / Observability / Audit modules, "View as Trader" passthrough
+  - Backed by real `services/api` `/admin/*` endpoints, double-gated (`isAdmin` JWT + shared `ADMIN_API_TOKEN`)
+  - Deliberately never public — see [`infra/docker/DEPLOY-DEV.md`](infra/docker/DEPLOY-DEV.md): loopback-bound + SSH tunnel only, no Caddy route
+  - Roadmap items still open: KYC review UI, DLQ retry worker UI
+
+- **Payments (Razorpay)**
+  - Order/checkout/webhook flow and entitlement fulfillment are implemented and idempotent
+  - `billingEnabled:false` until `RAZORPAY_KEY_ID/SECRET` are configured — no live gateway credentials wired yet, so nothing can be charged today
+  - Sells Sentinel Pro terms only; Learning Hub/demo-pass checkout not yet mapped to a plan
 
 ### 📅 Not Yet Implemented
 
@@ -338,11 +355,6 @@ TradeW/
 
 - **Public SDK/API**
   - OpenAPI spec generation and SDK codegen not configured (Phase 3)
-
-- **Admin Dashboard**
-  - `apps/admin` folder exists; no implementation yet
-  - Operator actions currently exposed as `ADMIN_API_TOKEN`-guarded routes in `services/api`
-  - Roadmap: KYC review, audit log viewer, DLQ retry, user mgmt
 
 - **Mobile App**
   - `apps/mobile` folder exists; no implementation yet (roadmap v0.9)
@@ -471,20 +483,54 @@ DHAN_ACCESS_TOKEN=                          # optional fallback for the feed bri
 SENTINEL_SERVICE_URL=http://localhost:4010
 SENTINEL_SERVICE_TOKEN=dev-sentinel-token-change-me-in-prod
 
-# Operator / admin API (guards /entitlements/admin/* and /broker/dhan/admin/*)
+# Operator / admin API (guards /entitlements/admin/*, /broker/dhan/admin/*,
+# and the whole apps/admin console via AdminGuard)
 ADMIN_API_TOKEN=            # leave empty to disable the admin surface (fails closed)
 
-# Outbound email (OTP). Leave blank in dev — the mailer logs the message and
-# OTP endpoints return the code as `devCode` so flows stay testable.
+# Outbound email (OTP, login alerts, password-changed, payment receipts, EOD
+# summary — see mail/templates.ts). Leave SMTP_* blank in dev — the mailer logs
+# the message and OTP endpoints return the code as `devCode` so flows stay
+# testable without credentials.
 SMTP_HOST=
 SMTP_PORT=587
 SMTP_USER=
 SMTP_PASS=
-MAIL_FROM=TradeW <no-reply@tradew.local>
+MAIL_FROM=TradeW · Setup <admin@tradew-setup.com>
+SUPPORT_EMAIL=admin@tradew-setup.com   # reply-to shown in email footers
+
+# Google Sign-In (services/api/src/auth/google-oauth.service.ts). Leave blank
+# to disable — /auth/google returns 503 and the button reports "not available".
+# Redirect URI registered in Google Cloud must equal GOOGLE_REDIRECT_URI exactly.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=http://localhost:4000/auth/google/callback
+API_PUBLIC_URL=http://localhost:4000
+
+# Payments — Razorpay (services/api/src/payments). Leave blank to keep billing
+# disabled (GET /payments/catalog reports billingEnabled:false).
+RAZORPAY_KEY_ID=
+RAZORPAY_KEY_SECRET=
+RAZORPAY_WEBHOOK_SECRET=       # from the Razorpay dashboard webhook config
+
+# End-of-day summary email. Off by default; requires SMTP configured above.
+EOD_EMAIL_ENABLED=false
+EOD_EMAIL_HOUR_IST=16
 
 # Knowledge Workspace (internal developer tool; reads TradeW/knowledge/)
 KNOWLEDGE_WORKSPACE_ENABLED=  # true=on, false=off, unset=on outside production
 KNOWLEDGE_ROOT=               # defaults to ../../knowledge relative to service
+```
+
+#### Admin Console (`apps/admin/.env`)
+
+```bash
+# services/api base URL this console talks to (server-side only, never sent to
+# the browser).
+ADMIN_API_URL=http://localhost:4000
+# The SAME shared secret as ADMIN_API_TOKEN above — must match exactly.
+ADMIN_API_TOKEN=
+# apps/web's URL, for the "View as Trader" passthrough.
+NEXT_PUBLIC_TRADEW_WEB_URL=http://localhost:3000
 ```
 
 #### Web App (`apps/web/.env.local`)
@@ -1161,9 +1207,10 @@ These are known, deliberately-deferred items — each documented in code where i
 
 **For Deployment/DevOps:**
 1. Read [`ARCHITECTURE.md`](ARCHITECTURE.md) §7 (Deployment)
-2. Review [`infra/docker/docker-compose.yml`](infra/docker/docker-compose.yml) (local dev) and [`docker-compose.prod.yml`](infra/docker/docker-compose.prod.yml) + [`Caddyfile`](infra/docker/Caddyfile) (production)
-3. Review [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) (CI/CD → ghcr.io → Oracle Cloud over SSH)
-4. `infra/k8s/` and `infra/terraform/` are notes only (future scaling)
+2. For a single-VPS dev/staging deploy, follow [`infra/docker/DEPLOY-DEV.md`](infra/docker/DEPLOY-DEV.md) end to end (provisioning → DNS → secrets → bring-up → optional operator console)
+3. Review [`infra/docker/docker-compose.yml`](infra/docker/docker-compose.yml) (local dev) and [`docker-compose.prod.yml`](infra/docker/docker-compose.prod.yml) + [`docker-compose.admin.yml`](infra/docker/docker-compose.admin.yml) (loopback-only operator console) + [`Caddyfile`](infra/docker/Caddyfile) (production)
+4. Review [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) (CI/CD → ghcr.io → Oracle Cloud over SSH)
+5. `infra/k8s/` and `infra/terraform/` are notes only (future scaling)
 
 ---
 
