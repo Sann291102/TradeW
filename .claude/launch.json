@@ -35,6 +35,13 @@
       "runtimeArgs": ["run", "dev", "-w", "@tradew/admin"],
       "port": 3001,
       "autoPort": true
+    },
+    {
+      "name": "tradew-ai",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:ai"],
+      "port": 4020,
+      "autoPort": false
     }
   ]
 }
