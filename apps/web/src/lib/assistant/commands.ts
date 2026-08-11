@@ -44,7 +44,17 @@ const VIEW_ALIASES: ReadonlyArray<{ view: string; label: string; aliases: string
   { view: 'depth', label: 'Market Depth', aliases: ['market depth', 'depth', 'order book'] },
   { view: 'technicals', label: 'Technicals', aliases: ['technicals', 'technical indicators', 'indicators'] },
   { view: 'markets', label: 'Markets', aliases: ['markets tab', 'market movers'] },
-  { view: 'charts', label: 'Charts', aliases: ['candles', 'candlestick'] },
+  // 'chart'/'charts' were MISSING here, so "show the chart" — the single most
+  // obvious way to ask for this tab — matched nothing at all. Only 'candles'
+  // and 'candlestick' worked, which nobody guesses. Bare 'chart' is safe
+  // despite "open RELIANCE chart" also being a symbol command: the resolver
+  // below folds `findSymbol` into the same href, so both phrasings land on the
+  // same place.
+  {
+    view: 'charts',
+    label: 'Charts',
+    aliases: ['chart', 'charts', 'price chart', 'chart view', 'candles', 'candlestick'],
+  },
 ];
 
 /**

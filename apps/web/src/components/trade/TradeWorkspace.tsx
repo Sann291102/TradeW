@@ -166,6 +166,24 @@ export function TradeWorkspace({ strategies = [] }: { strategies?: Strategy[] })
             symbol={symbol}
             contract={contract}
             initialExpiryLabel={expiry?.label}
+            /**
+             * `initialView` was computed above — validated against the known
+             * tab set, with a comment explaining that the assistant addresses
+             * these tabs by URL — and then never passed here. The parsing was
+             * right, the wiring was missing, so `?view=` had no effect at all:
+             * ChartPanel always fell back to 'charts'.
+             *
+             * The symptom was worse than a dead feature. The assistant DID
+             * navigate, so it reported "Option Chain is open" while the screen
+             * stayed on Charts, and repeated it when told otherwise — from its
+             * side the navigation genuinely had succeeded. Reported 2026-08-11
+             * with a screenshot of exactly that exchange.
+             *
+             * Verified by loading /trade?view=optionChain directly: before this
+             * line the tab stayed on Charts even on a full page load, which is
+             * what proved the fault was here rather than in the assistant.
+             */
+            initialView={initialView}
             priceLines={strategyPriceLines}
             trailingControls={<><LayoutMenu /><ClosedPanelsMenu /></>}
           />

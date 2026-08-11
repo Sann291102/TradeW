@@ -139,10 +139,17 @@ export function useVoiceInput(onFinal: (text: string) => void): VoiceInput {
       if (e?.error === 'aborted') return;
       setError(
         e?.error === 'not-allowed'
-          ? 'Microphone permission is blocked for this site.'
+          ? // Actionable, because "blocked" alone leaves the user with no idea
+            // that the fix is three clicks away in their own browser. Chrome
+            // remembers a denial per-origin, so this persists until changed.
+            'Microphone is blocked. Click the icon at the left of the address bar → Site settings → allow Microphone, then reload.'
           : e?.error === 'no-speech'
-            ? "I didn't catch that."
-            : 'Voice input failed.',
+            ? "I didn't catch that — try again."
+            : e?.error === 'audio-capture'
+              ? 'No microphone found. Check that one is connected and selected in your system settings.'
+              : e?.error === 'network'
+                ? 'Speech recognition needs a network connection and could not reach it.'
+                : 'Voice input failed.',
       );
       setListening(false);
     };

@@ -156,6 +156,39 @@ export default function ChartPanel({
   const [tf, setTf] = useState<(typeof TIMEFRAMES)[number]>('15m');
   const [maximized, setMaximized] = useState(false);
 
+  /**
+   * Follow `?view=` when it CHANGES, not just on mount.
+   *
+   * ── THE BUG THIS FIXES (2026-08-11) ──────────────────────────────────────
+   *
+   * `useState(initialView ?? 'charts')` reads its argument on the first render
+   * and never again. The assistant addresses these tabs by URL — "show the
+   * option chain" pushes `/trade?view=optionChain` — but if this panel is
+   * already mounted (the user is on /trade looking at the chart, which is the
+   * normal case) React keeps the existing state and the tab never moves.
+   *
+   * The result was the worst kind of failure: the URL updated, so the
+   * assistant truthfully reported "Option Chain is open", while the screen
+   * stayed on Charts. Told "that's charts, not option chain", she said it
+   * again — because from her side the navigation HAD succeeded. Reported by
+   * the user with a screenshot showing exactly that exchange.
+   *
+   * ── WHY IT KEYS ON CHANGE, NOT ON PRESENCE ───────────────────────────────
+   *
+   * Syncing whenever `initialView` is merely set would fight the user: click
+   * "Technicals" by hand while the URL still says `view=optionChain` and the
+   * effect would drag you back on the next render. Tracking the last value the
+   * URL asked for means a manual click sticks until the URL asks for something
+   * different.
+   */
+  const lastRequestedView = useRef(initialView);
+  useEffect(() => {
+    if (initialView && initialView !== lastRequestedView.current) {
+      lastRequestedView.current = initialView;
+      setView(initialView);
+    }
+  }, [initialView]);
+
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
