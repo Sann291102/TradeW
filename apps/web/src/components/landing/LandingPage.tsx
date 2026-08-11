@@ -13,6 +13,13 @@ import {
   LearningIcon,
   MarketsIcon,
 } from '@/components/shell/icons';
+import {
+  DEMO_PASSES,
+  FREE_PAPER_ORDERS_PER_DAY,
+  LEARNING_MONTHLY,
+  SENTINEL_TERMS,
+  inr,
+} from '@tradew/types';
 
 /**
  * The TradeW marketing landing page — the first surface a visitor who is not
@@ -180,6 +187,7 @@ const SURFACES = [
       'Progress, bookmarks and search across every lesson',
       'Historical case studies that explain what happened and why',
       'Every lesson traces to a validated source, or it is not published',
+      'Lifetime Free if you actually do the work — strategies, quizzes, participation',
     ],
   },
   {
@@ -288,6 +296,15 @@ const ONBOARDING = [
  * softener — checkout genuinely is not built, and a page that implied
  * otherwise would be collecting intent under false terms.
  */
+/**
+ * Plans, read from `@tradew/types` rather than retyped.
+ *
+ * This block used to hold its own hardcoded figures, which is exactly how the
+ * marketing page and the in-app upgrade screen end up disagreeing. The numbers
+ * now come from the same list `GET /pricing` serves.
+ */
+const SENTINEL_CHEAPEST = SENTINEL_TERMS.reduce((a, b) => (b.monthly < a.monthly ? b : a));
+
 const PLANS = [
   {
     name: 'Free',
@@ -295,14 +312,14 @@ const PLANS = [
     note: 'No card required',
     points: [
       'The full workspace, watchlists and research',
-      'Two paper order executions a day',
+      `${FREE_PAPER_ORDERS_PER_DAY} paper order executions a day`,
       'Learning Hub lessons browsable',
     ],
   },
   {
     name: 'Demo Pass',
-    price: '₹99',
-    note: '7 days · ₹199 for 30 days',
+    price: inr(DEMO_PASSES[0].price),
+    note: `${DEMO_PASSES[0].term} · ${inr(DEMO_PASSES[1].price)} for ${DEMO_PASSES[1].term}`,
     points: [
       'Unlimited paper orders for the term',
       'Everything in Free',
@@ -311,18 +328,20 @@ const PLANS = [
   },
   {
     name: 'Learning Hub',
-    price: '₹299',
-    note: 'One-time, lifetime',
+    price: inr(LEARNING_MONTHLY),
+    note: 'per month',
     points: [
       'Every lesson body unlocked',
-      'All future content included',
-      'No recurring billing on this one',
+      'The full curriculum, updated as it grows',
+      'Or earn Lifetime Free by finishing the work — see below',
     ],
   },
   {
     name: 'Sentinel',
-    price: '₹999',
-    note: 'per month on the 12-month term · ₹1,399 monthly',
+    price: inr(SENTINEL_CHEAPEST.monthly),
+    note: `per month on the ${SENTINEL_CHEAPEST.term.toLowerCase()} term · ${inr(
+      SENTINEL_TERMS[0]!.monthly,
+    )} monthly`,
     highlight: true,
     points: [
       'Live observations, day classification and trap detection',
@@ -347,7 +366,7 @@ const FAQ = [
   },
   {
     q: 'What does it actually cost to try?',
-    a: 'Nothing. A free account gets the workspace, research and two paper executions a day. Paid plans are listed above so you know what you are walking towards — and payments are not switched on yet, so no account can be charged today.',
+    a: `Nothing. A free account gets the workspace, research and ${FREE_PAPER_ORDERS_PER_DAY} paper executions a day. Paid plans are listed above so you know what you are walking towards — and payments are not switched on yet, so no account can be charged today.`,
   },
   {
     q: 'Which markets does it cover?',

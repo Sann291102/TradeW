@@ -48,6 +48,9 @@ export default defineConfig({
       // Position Management "Convert product type" merge math.
       'src/sim/position-convert.spec.ts',
       // Who is allowed to use a paid capability, and until when.
+      // Active pricing served to every surface. Asserts across the API boundary
+      // that no route can produce a withdrawn annual Sentinel term.
+      'src/pricing/pricing.spec.ts',
       'src/entitlements/entitlements.spec.ts',
       // Bearer-token parsing: the gate in front of every authenticated route.
       'src/auth/auth.guard.spec.ts',

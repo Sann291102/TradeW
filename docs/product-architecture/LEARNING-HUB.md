@@ -40,7 +40,34 @@ Superseded lesson versions are archived, never deleted — same "archive, versio
 
 ## 5. Entitlement
 
-Lifetime Access, ₹299, one-time — see [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md) §2. Entitlement check happens at `services/api` (same chokepoint pattern as Sentinel's trial/upgrade gate) before serving lesson bodies; lesson *listing*/previews can stay free to browse, matching the existing "always see Sentinel nav, gated content behind it" pattern from the brief.
+**₹299 / month** — see [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md) §2. Entitlement check happens at `services/api` (same chokepoint pattern as Sentinel's trial/upgrade gate) before serving lesson bodies; lesson *listing*/previews stay free to browse, matching the existing "always see Sentinel nav, gated content behind it" pattern from the brief.
+
+### 5.1 Lifetime Free — earned, not bought
+
+> **Changed 2026-08-11.** Learning was a ₹299 one-time lifetime purchase. It is
+> now a monthly subscription, plus a **Lifetime Free** entitlement a learner
+> earns by actually doing the work: participating in the required strategies,
+> completing the required quizzes, and meeting the stated participation
+> criteria.
+
+Three rules govern the implementation, and they exist because this is a
+grant of permanent paid access:
+
+1. **Never a frontend boolean.** Eligibility is computed server-side from
+   participation records the backend already owns. A client may *display*
+   progress toward it; it may never assert that the criterion is met.
+2. **Auditable.** The grant must record which criteria were satisfied, by which
+   evidence, and when — a permanent entitlement that cannot be explained after
+   the fact cannot be defended when it is disputed or abused.
+3. **Reuse the existing schema.** `learning_progress`, the quiz/strategy records
+   and `services/api/src/learning/` already track participation. Eligibility is
+   a *query over existing data*, not a second tracking system.
+
+**Open, and deliberately not invented here:** the exact thresholds — how many
+strategies, which quizzes, what pass mark, over what window. Those are product
+rules, not engineering ones. The implementation defines the smallest explicit
+model that can express them and reads the numbers from configuration, so
+setting them is a decision rather than a code change.
 
 ## 6. Non-goals
 

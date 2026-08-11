@@ -47,6 +47,9 @@ export default defineConfig({
       // whether "should I buy NIFTY at this price" is answered with a number or
       // refused, and it is pure and framework-free by design (types.ts).
       'src/lib/assistant/**/*.test.ts',
+      // Active pricing — a drifted price is a billing incident with a UI in
+      // front of it, and the withdrawn annual term must stay withdrawn.
+      'src/lib/pricing.test.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,

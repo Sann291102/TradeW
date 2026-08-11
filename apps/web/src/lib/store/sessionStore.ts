@@ -98,7 +98,36 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
   },
 
   hasCapability: (capability) => {
-    if (capability === 'sentinel') return true;
+    /**
+     * Reads the real entitlement list. Nothing is unconditionally granted.
+     *
+     * ── WHAT WAS HERE, AND WHY IT WAS REMOVED (2026-08-11) ────────────────
+     *
+     * This began with `if (capability === 'sentinel') return true;` — an
+     * unconditional, uncommented unlock introduced in bf8944b ("Made changes
+     * from antigravity"). Its effects, all observed in the browser on a
+     * freshly-created account whose `/entitlements/me` returned an empty
+     * capability list:
+     *
+     *   - Settings told the user "Sentinel is active on your account", which
+     *     was simply untrue.
+     *   - Because that branch renders instead of the tier grid, the Sentinel
+     *     pricing and upgrade UI was unreachable for EVERY user — the plans
+     *     could not be seen, let alone bought.
+     *   - The `/trade` Sentinel panel showed "ACTIVE PRO · observing" while
+     *     `/api/sentinel/observe` returned 403 to the same session.
+     *
+     * It was never a security hole: `services/api` enforces entitlement on
+     * every premium route and did so throughout (SUBSCRIPTIONS.md §4). But a
+     * client that asserts an entitlement the server denies produces a UI that
+     * lies to the user and hides the product's own pricing.
+     *
+     * If a blanket unlock is wanted for demos, the mechanism already exists and
+     * is visible: the "Redeem Testing Coupon" control, which writes to
+     * `tradew_unlocked_caps` and is read below via `getLocalUnlockedCaps()`.
+     * Use that — it is opt-in, inspectable, and does not misreport the state of
+     * an account nobody unlocked.
+     */
     return get().capabilities.includes(capability);
   },
 

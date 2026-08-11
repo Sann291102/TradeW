@@ -3,20 +3,30 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Card, Badge, buttonClasses, cn } from '@tradew/ui';
+import { SENTINEL_TERMS, sentinelSaving, inr } from '@tradew/types';
 import { useSessionStore } from '@/lib/store/sessionStore';
 
-// Sentinel pricing tiers (SUBSCRIPTIONS.md §3): monthly-equivalent + total, with
-// savings shown explicitly. Pricing display only — checkout isn't built yet.
-const SENTINEL_TIERS = [
-  { term: '1 Month', monthly: 1399, total: 1399, save: 0 },
-  { term: '3 Months', monthly: 1299, total: 3897, save: 300 },
-  { term: '6 Months', monthly: 1199, total: 7194, save: 1200, popular: true },
-  { term: '12 Months', monthly: 999, total: 11988, save: 4800 },
-];
+/**
+ * Sentinel terms now come from `@tradew/types` rather than being retyped here.
+ *
+ * They used to be a local literal, and a second copy lived on the marketing
+ * landing page — which is how a product ends up quoting one price to a visitor
+ * and a different one to a subscriber. One list, one file, served by
+ * `GET /pricing` for anything that needs it over the wire.
+ *
+ * The 9- and 12-month terms were withdrawn 2026-08-11; they are absent from the
+ * source list rather than filtered out here, so there is no local code path
+ * that could render one.
+ */
+const SENTINEL_TIERS = SENTINEL_TERMS.map((t) => ({
+  ...t,
+  save: sentinelSaving(t),
+  // 6 months is the longest term now that annual is gone, so it carries the
+  // badge the 6-month tier already had.
+  popular: t.months === 6,
+}));
 
-function inr0(n: number) {
-  return '₹' + new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n);
-}
+const inr0 = inr;
 
 /**
  * Settings + Plans workspace (Milestone 4, Step 1). The Sentinel section now
