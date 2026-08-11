@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AdminController } from './admin.controller';
 import { AdminGuard } from './admin.guard';
 import { AdminService } from './admin.service';
+import { CognitionModule } from '../cognition/cognition.module';
 
 /**
  * The admin portal's backend.
@@ -15,8 +16,15 @@ import { AdminService } from './admin.service';
  *
  * `PrismaModule` and `TelemetryModule` are both `@Global`, so neither is
  * imported here.
+ *
+ * `CognitionModule` is the one exception to the no-inbound-dependency rule
+ * above, and it points the correct way: the console *reads* the network, the
+ * network does not read the console. The import is here rather than the
+ * cognition module being made global, so the dependency is visible in one file
+ * instead of being ambient everywhere.
  */
 @Module({
+  imports: [CognitionModule],
   controllers: [AdminController],
   providers: [AdminService, AdminGuard],
 })

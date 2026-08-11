@@ -31,12 +31,27 @@ export interface SentinelFocus {
  */
 export type SentinelUnavailable =
   | { kind: 'unauthenticated' }
+  | { kind: 'entitlement-required' }
   | { kind: 'api-unreachable' }
   | { kind: 'service-error'; status: number; message: string };
 
+/**
+ * 401 and 403 are NOT the same fault, and used to be collapsed together here.
+ * `SentinelController` puts `AuthGuard` before `CapabilityGuard`
+ * (services/api/src/sentinel/sentinel.controller.ts) — AuthGuard throws 401
+ * only when there is no valid session; CapabilityGuard throws 403 only once a
+ * session already passed AuthGuard and the `sentinel` capability check
+ * (EntitlementsService.check) came back false. A 403 therefore always means
+ * "you are signed in, you're just not entitled to Sentinel" — telling that
+ * user "Not signed in" sends them nowhere useful, most confusingly right after
+ * they believe they *just* activated Sentinel Pro (e.g. via the client-only
+ * "Redeem Testing Coupon", which never touches the server — see
+ * sessionStore.ts's `hasCapability` docstring for the same failure mode).
+ */
 function classify(err: unknown): SentinelUnavailable {
   if (err instanceof ApiError) {
-    if (err.status === 401 || err.status === 403) return { kind: 'unauthenticated' };
+    if (err.status === 401) return { kind: 'unauthenticated' };
+    if (err.status === 403) return { kind: 'entitlement-required' };
     return { kind: 'service-error', status: err.status, message: err.message };
   }
   // fetch itself threw — services/api is not reachable at NEXT_PUBLIC_API_URL.

@@ -27,6 +27,7 @@ import { KnowledgeModule } from './knowledge/knowledge.module';
 import { NotificationModule } from './notification/notification.module';
 import { TelemetryModule } from './telemetry/telemetry.module';
 import { AdminModule } from './admin/admin.module';
+import { CognitionModule } from './cognition/cognition.module';
 import { ControlModule } from './control/control.module';
 import { HealthController } from './health.controller';
 
@@ -84,6 +85,10 @@ import { HealthController } from './health.controller';
     LearningModule,
     KnowledgeModule,
     NotificationModule,
+    // The four-layer perceptor network. Registers its sensors at init but runs
+    // no passes unless COGNITION_ENABLED=true — so importing it costs a roster
+    // and nothing else. Placed before AdminModule because the console reads it.
+    CognitionModule,
     AdminModule,
     // The Admin Control Plane boundary. Signed, replay-protected, narrow.
     // Remove this line to disable remote control of this deployment entirely.

@@ -313,6 +313,140 @@ export interface TimeseriesRow {
   tokens?: number;
 }
 
+// ------------------------------------------------------------------ cognition
+
+export type PerceptDomain = 'market' | 'application' | 'assistant' | 'learning' | 'platform';
+export type NeuralLayerId = 'L1_PERCEPTION' | 'L2_ENCODING' | 'L3_ASSOCIATION' | 'L4_CONSOLIDATION';
+export type PerceptorStatus = 'healthy' | 'stale' | 'failing' | 'quarantined' | 'disabled';
+
+export interface PerceptorHealthRow {
+  perceptorId: string;
+  status: PerceptorStatus;
+  lastSensedAt: string | null;
+  lastPerceptAt: string | null;
+  consecutiveFailures: number;
+  lastError: string | null;
+  perceptsLastPass: number;
+  meanSalience: number;
+  totalPercepts: number;
+}
+
+export interface PerceptorRow {
+  id: string;
+  domain: PerceptDomain;
+  label: string;
+  description: string;
+  cadence: 'event' | 'interval' | 'manual';
+  expectedIntervalMs?: number;
+  emits: string[];
+  enabled: boolean;
+  health: PerceptorHealthRow | null;
+}
+
+export interface LayerRow {
+  id: NeuralLayerId;
+  index: number;
+  label: string;
+  description: string;
+  passes: number;
+  inputs: number;
+  outputs: number;
+  /** outputs / inputs. Near zero means the layer is not doing its job; very
+   *  high means it is doing it indiscriminately. */
+  ratio: number;
+}
+
+export interface CognitionOverview {
+  /** False when COGNITION_ENABLED is unset — the roster still renders. */
+  enabled: boolean;
+  /** False on a replica that is not holding the cognition job lease. */
+  isLeader: boolean;
+  passIntervalMs: number;
+  at: string;
+  layers: LayerRow[];
+  perceptors: PerceptorHealthRow[];
+  synapses: {
+    total: number;
+    /** Scored by at least one outcome. The rest are guesses. */
+    proven: number;
+    unproven: number;
+    meanWeight: number;
+    totalActivations: number;
+    totalReinforcements: number;
+    /** Firings still waiting for an outcome. A number that only grows means
+     *  the feedback loop has stalled and nothing is learning. */
+    pendingTraces: number;
+  };
+}
+
+export interface EpisodeRow {
+  id: string;
+  episodeId: string;
+  domain: string | null;
+  trigger: string;
+  status: 'running' | 'ok' | 'degraded' | 'error';
+  perceptCount: number;
+  gatedCount: number;
+  collapsedCount: number;
+  hypothesisCount: number;
+  promotedCount: number;
+  proposalCount: number;
+  layerTimings: Record<string, number> | null;
+  error: string | null;
+  reward: number | null;
+  rewardReason: string | null;
+  scoredAt: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface PerceptRow {
+  id: string;
+  perceptorId: string;
+  domain: PerceptDomain;
+  kind: string;
+  subjectType: string;
+  subjectId: string;
+  observedAt: string;
+  salience: number;
+  confidence: number;
+  features: Record<string, number>;
+  summary: string;
+  tags: string[];
+  occurrences: number;
+  episodeId: string;
+  createdAt: string;
+}
+
+export interface SynapseRow {
+  id: string;
+  layer: NeuralLayerId;
+  source: string;
+  target: string;
+  weight: number;
+  activations: number;
+  reinforcements: number;
+  meanReward: number;
+  lastActivatedAt: string | null;
+  lastReinforcedAt: string | null;
+}
+
+export interface ProposalRow {
+  id: string;
+  episodeId: string;
+  domain: PerceptDomain;
+  kind: 'investigate' | 'tune' | 'learn' | 'notify';
+  title: string;
+  rationale: string;
+  confidence: number;
+  perceptIds: string[];
+  status: 'pending' | 'accepted' | 'dismissed' | 'done';
+  resolvedBy: string | null;
+  resolution: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+}
+
 export const admin = {
   overview: (hours = 24) => adminApi<Overview>(`/overview?hours=${hours}`),
   health: () => adminApi<HealthReport>('/health'),
@@ -341,6 +475,35 @@ export const admin = {
   audit: (q: Record<string, string | number | undefined> = {}) => adminApi<AuditRow[]>(`/audit?${qs(q)}`),
   setAdmin: (email: string, isAdmin: boolean) =>
     adminApi('/users/set-admin', { method: 'POST', body: JSON.stringify({ email, isAdmin }) }),
+
+  cognition: {
+    overview: () => adminApi<CognitionOverview>('/cognition/overview'),
+    perceptors: () => adminApi<PerceptorRow[]>('/cognition/perceptors'),
+    episodes: (q: Record<string, string | number | undefined> = {}) =>
+      adminApi<EpisodeRow[]>(`/cognition/episodes?${qs(q)}`),
+    episode: (episodeId: string) =>
+      adminApi<{ episode: EpisodeRow | null; percepts: PerceptRow[]; proposals: ProposalRow[] }>(
+        `/cognition/episodes/${encodeURIComponent(episodeId)}`,
+      ),
+    percepts: (q: Record<string, string | number | undefined> = {}) => adminApi<PerceptRow[]>(`/cognition/percepts?${qs(q)}`),
+    synapses: (q: Record<string, string | number | undefined> = {}) => adminApi<SynapseRow[]>(`/cognition/synapses?${qs(q)}`),
+    proposals: (q: Record<string, string | number | undefined> = {}) => adminApi<ProposalRow[]>(`/cognition/proposals?${qs(q)}`),
+
+    setPerceptorEnabled: (id: string, enabled: boolean) =>
+      adminApi(`/cognition/perceptors/${encodeURIComponent(id)}/enabled`, {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
+      }),
+    /** `dismissed` is the network's only negative training signal — see the
+     *  controller comment on this endpoint. */
+    resolveProposal: (id: string, status: 'accepted' | 'dismissed' | 'done', resolution?: string) =>
+      adminApi(`/cognition/proposals/${encodeURIComponent(id)}/resolve`, {
+        method: 'POST',
+        body: JSON.stringify({ status, resolution }),
+      }),
+    run: (domain?: PerceptDomain) =>
+      adminApi<EpisodeRow>('/cognition/run', { method: 'POST', body: JSON.stringify(domain ? { domain } : {}) }),
+  },
 };
 
 function qs(params: Record<string, string | number | undefined>): string {

@@ -331,6 +331,39 @@ export interface MarketStateSnapshot {
   history: StateTransition[];
 }
 
+// ------------------------------------------------------- Sentinel events
+// The validated contract that leaves this service for delivery channels.
+// Shapes live here (and the derivation in `events/sentinel-event.ts`) for the
+// same reason `PublicationDecision` is mirrored inline above: `domain.ts` must
+// not depend on a module that depends on it. Read that file's header before
+// adding a field — the ABSENCE of side/bias/strike here is the safety
+// property, not an oversight.
+
+export type SentinelEventKind =
+  | 'guidance-published'
+  | 'risk-elevated'
+  | 'emotional-risk'
+  | 'state-transition'
+  | 'safety-warning';
+
+export type SentinelEventSeverity = 'info' | 'warning' | 'critical';
+
+export interface SentinelEvent {
+  kind: SentinelEventKind;
+  severity: SentinelEventSeverity;
+  /** short, non-directive headline */
+  title: string;
+  /** the body a channel renders; already vocabulary-enforced where synthesized */
+  body: string;
+  symbol: string;
+  /** collapses repeats of the same kind across polls; shares the timeline's vocabulary */
+  dedupeKey: string;
+  at: string; // ISO
+  /** 0-100 as the confidence engine reports it; null when the kind has no confidence */
+  confidence: number | null;
+  state: MarketStateValue;
+}
+
 // ---------------------------------------------------------------- Module 8
 // Market Timeline Engine — one continuous session narrative.
 
@@ -583,6 +616,21 @@ export interface ObserveResponse {
   timeline: TimelineEntry[];
   /** §5 — the "Why?" inspector payload for the current reading */
   explanation: ConfidenceExplainResult;
+  /**
+   * The validated events this observation produced, for delivery channels
+   * (in-app notification, email, push) — derived by
+   * `events/sentinel-event.ts`.
+   *
+   * Structurally distinct from every other field here: the rest of this
+   * response describes the market *to the workspace*, where the evidence sits
+   * beside the read. An event travels alone, so it carries no direction by
+   * construction and never will. A dispatcher must consume THIS and nothing
+   * else from this response.
+   *
+   * Usually empty — most polls of a session produce no event at all, which is
+   * the intended resting state.
+   */
+  events?: SentinelEvent[];
   /**
    * Phase 3 — auto/manual strategy focus read for this observation. In
    * manual mode with multiple strategies pinned, this mirrors the first

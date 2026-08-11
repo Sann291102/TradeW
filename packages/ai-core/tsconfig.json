@@ -12,5 +12,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*"]
+  // Specs are excluded from the build, not merely from the published surface.
+  // ai-core is consumed by its compiled `dist/`, and `postinstall` builds it on
+  // every clean checkout — a spec left in `include` would put vitest on the
+  // critical path of `npm install` for every service in the monorepo, and emit
+  // test files into the package's public output.
+  "include": ["src/**/*"],
+  "exclude": ["src/**/*.spec.ts"]
 }

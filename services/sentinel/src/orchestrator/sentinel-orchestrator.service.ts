@@ -28,6 +28,7 @@ import {
   StrategyAdvice,
   StrategyMatch,
 } from '../domain';
+import { deriveSentinelEvents } from '../events/sentinel-event';
 import { ExplainService } from '../explain/explain.service';
 import { EmotionIntelligenceService } from '../intelligence/emotion-intelligence.service';
 import { MarketBehaviourService, type MarketBehaviourRead } from '../intelligence/market-behaviour.service';
@@ -457,6 +458,22 @@ export class SentinelOrchestratorService {
       lastPrice: snapshot.lastPrice,
     });
 
+    // ---- validated events for delivery channels --------------------------
+    // Derived from the gate's decision, NOT from `sideInFocus` — which is in
+    // scope right here and must stay out of this call. See the header of
+    // `events/sentinel-event.ts`: an event cannot carry a direction, and the
+    // way that stays true is that the deriving function is never handed one.
+    const events = deriveSentinelEvents({
+      symbol,
+      at,
+      state: stateEval.snapshot.current,
+      transition: stateEval.transition,
+      published: publication.publish,
+      synthesis,
+      risk: riskAssessment,
+      confidence,
+    });
+
     // ---- live-validation observability ----------------------------------
     // One structured line per observation, covering every event the live
     // validation needs to capture: detections, the publication decision and
@@ -483,7 +500,8 @@ export class SentinelOrchestratorService {
           `(${institutionalCrossValidation.agreeing}/${institutionalCrossValidation.voting},` +
           `abstain=${institutionalCrossValidation.abstaining.length})` +
           ` lifecycleChanges=[${transitions.map((t) => `${t.strategyId}→${t.state}`).join(',') || 'none'}]` +
-          ` sideInFocus=${sideInFocus ? sideInFocus.side : 'null'}`,
+          ` sideInFocus=${sideInFocus ? sideInFocus.side : 'null'}` +
+          ` events=[${events.map((e) => `${e.kind}:${e.severity}`).join(',') || 'none'}]`,
       );
     }
 
@@ -491,6 +509,7 @@ export class SentinelOrchestratorService {
       synthesis,
       crossValidation,
       publication,
+      events,
       marketBehaviour: {
         regime: behaviourRead.regime,
         structure: {

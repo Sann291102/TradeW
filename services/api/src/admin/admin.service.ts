@@ -22,6 +22,14 @@ import { PrismaService } from '../prisma/prisma.service';
  *   prompts are never selected. An admin can see THAT a call happened and what
  *   it cost, not what was in it — the portal is an operational view, not a
  *   surveillance tool over users' trading conversations.
+ *
+ * · **Prisma and nothing else.** `ControlModule` provides this class directly
+ *   rather than importing `AdminModule`, so the console's one-way boundary
+ *   survives — and that only works while the only thing this constructor needs
+ *   is the `@Global` `PrismaService`. Injecting a second service here breaks
+ *   the control plane's boot with an unresolvable dependency, because that
+ *   module never imported whatever the new dependency came from. Live state
+ *   belongs on the controller, which can inject whatever it likes.
  */
 @Injectable()
 export class AdminService {
@@ -478,6 +486,107 @@ export class AdminService {
       nodeVersion: process.version,
       checkedAt: new Date(),
     };
+  }
+
+  // ------------------------------------------------------------- cognition
+
+  /**
+   * Note what is NOT here: the live network snapshot and the sensor roster.
+   * Those come off `CognitionService` on the controller, because they are the
+   * network's in-memory state rather than a Prisma read — and because pulling
+   * that dependency into this class is what broke the control plane's boot the
+   * first time round (see the constructor note above).
+   *
+   * The split is also the honest one. Postgres holds what the network has
+   * *recorded*; the live object holds what it is *doing*. On an instance where
+   * the loop is disabled, the tables still have yesterday's rows while the
+   * network is idle, and it is that second fact the console has to show —
+   * otherwise a disabled network is indistinguishable from a working one.
+   */
+
+  /**
+   * Recent passes.
+   *
+   * `unscoredOnly` exists because "how many episodes are still waiting for an
+   * outcome" is the question that reveals a stalled feedback loop, and a
+   * stalled feedback loop stops all learning without producing a single error.
+   */
+  async cognitionEpisodes(params: {
+    limit?: number;
+    domain?: string;
+    status?: string;
+    hours?: number;
+    unscoredOnly?: boolean;
+  }) {
+    return this.prisma.cognitiveEpisode.findMany({
+      where: {
+        startedAt: { gte: this.since(params.hours) },
+        ...(params.domain ? { domain: params.domain } : {}),
+        ...(params.status ? { status: params.status } : {}),
+        ...(params.unscoredOnly ? { scoredAt: null } : {}),
+      },
+      orderBy: { startedAt: 'desc' },
+      take: this.take(params.limit, 60, 300),
+    });
+  }
+
+  /** One pass and everything it perceived. The console's drill-down. */
+  async cognitionEpisode(episodeId: string) {
+    const [episode, percepts, proposals] = await Promise.all([
+      this.prisma.cognitiveEpisode.findUnique({ where: { episodeId } }),
+      this.prisma.percept.findMany({
+        where: { episodeId },
+        orderBy: { salience: 'desc' },
+        take: 200,
+      }),
+      this.prisma.cognitiveProposal.findMany({ where: { episodeId }, orderBy: { confidence: 'desc' } }),
+    ]);
+    return { episode, percepts, proposals };
+  }
+
+  async cognitionPercepts(params: { limit?: number; domain?: string; perceptorId?: string; hours?: number }) {
+    return this.prisma.percept.findMany({
+      where: {
+        createdAt: { gte: this.since(params.hours) },
+        ...(params.domain ? { domain: params.domain } : {}),
+        ...(params.perceptorId ? { perceptorId: params.perceptorId } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: this.take(params.limit, 100, 500),
+    });
+  }
+
+  /**
+   * The learned weights.
+   *
+   * Ordered by weight, and every row carries `reinforcements` alongside it. The
+   * console renders that column deliberately: a high weight with zero
+   * reinforcements is a *guess* the network has never had scored, and presenting
+   * it beside a weight that survived forty outcomes without that distinction
+   * would misrepresent the one number this whole system exists to produce.
+   */
+  async cognitionSynapses(params: { limit?: number; layer?: string; provenOnly?: boolean }) {
+    return this.prisma.neuralSynapse.findMany({
+      where: {
+        ...(params.layer ? { layer: params.layer } : {}),
+        ...(params.provenOnly ? { reinforcements: { gt: 0 } } : {}),
+      },
+      orderBy: [{ weight: 'desc' }, { reinforcements: 'desc' }],
+      take: this.take(params.limit, 100, 500),
+    });
+  }
+
+  /** The operator queue. `pending` first — this is a worklist, not a log. */
+  async cognitionProposals(params: { limit?: number; status?: string; domain?: string; hours?: number }) {
+    return this.prisma.cognitiveProposal.findMany({
+      where: {
+        createdAt: { gte: this.since(params.hours, 24 * 7) },
+        ...(params.status ? { status: params.status } : {}),
+        ...(params.domain ? { domain: params.domain } : {}),
+      },
+      orderBy: [{ status: 'asc' }, { confidence: 'desc' }],
+      take: this.take(params.limit, 50, 200),
+    });
   }
 }
 

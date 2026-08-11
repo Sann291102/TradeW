@@ -171,7 +171,9 @@ export function Table({ head, children }: { head: ReactNode; children: ReactNode
   );
 }
 
-export function Th({ children, className = '' }: { children: ReactNode; className?: string }) {
+/** `children` is optional so an actions column can have a deliberately blank
+ *  header — a placeholder label there is noise, not information. */
+export function Th({ children, className = '' }: { children?: ReactNode; className?: string }) {
   return <th className={`whitespace-nowrap border-b border-white/[0.06] px-3 py-2 font-medium ${className}`}>{children}</th>;
 }
 

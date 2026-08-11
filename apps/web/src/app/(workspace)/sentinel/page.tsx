@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useSentinel } from '@/lib/sentinel/useSentinel';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { buildDashboardModel } from '@/lib/sentinel/dashboardModel';
@@ -52,22 +53,34 @@ export default function SentinelPage() {
   // No observation, and nothing invented in its place — each fault named for
   // what it actually is (unchanged behavior from the previous page).
   if (unavailable) {
-    const fault =
+    const fault: { title: string; detail: string; action?: { href: string; label: string } } =
       unavailable.kind === 'unauthenticated'
         ? {
             title: 'Not signed in',
             detail:
               'Sentinel runs its observation against your account. Sign in to get a live read — no sample analysis is shown in the meantime.',
           }
-        : unavailable.kind === 'api-unreachable'
+        : unavailable.kind === 'entitlement-required'
           ? {
-              title: 'API not connected',
-              detail: `The TradeW API could not be reached, so no observation could be run for ${market.name}. Start services/api (port 4000) and reload.`,
+              // Distinct from 'unauthenticated': the server confirmed a valid
+              // session but no Sentinel Pro entitlement (403, not 401) — see
+              // classify() in lib/sentinel/useSentinel.ts. Telling a signed-in
+              // user "sign in" here is exactly the confusing dead end this
+              // branch replaces.
+              title: 'Sentinel Pro required',
+              detail:
+                "You're signed in, but this account doesn't have an active Sentinel Pro subscription — that's what's blocking the observation, not your session.",
+              action: { href: '/checkout', label: 'View Sentinel Pro plans →' },
             }
-          : {
-              title: 'Sentinel service not connected',
-              detail: `The API answered but Sentinel could not complete the observation (HTTP ${unavailable.status}: ${unavailable.message}). Check that services/sentinel is running on port 4010.`,
-            };
+          : unavailable.kind === 'api-unreachable'
+            ? {
+                title: 'API not connected',
+                detail: `The TradeW API could not be reached, so no observation could be run for ${market.name}. Start services/api (port 4000) and reload.`,
+              }
+            : {
+                title: 'Sentinel service not connected',
+                detail: `The API answered but Sentinel could not complete the observation (HTTP ${unavailable.status}: ${unavailable.message}). Check that services/sentinel is running on port 4010.`,
+              };
 
     return (
       <div className="bg-bg">
@@ -81,6 +94,14 @@ export default function SentinelPage() {
           <div className="rounded-2xl border border-border bg-card p-10 text-center shadow-elev2">
             <p className="text-[14px] font-bold text-text">{fault.title}</p>
             <p className="mx-auto mt-2 max-w-xl text-[12.5px] leading-relaxed text-muted">{fault.detail}</p>
+            {fault.action && (
+              <Link
+                href={fault.action.href}
+                className="mt-4 inline-block text-[12.5px] font-semibold text-teal hover:underline"
+              >
+                {fault.action.label}
+              </Link>
+            )}
           </div>
         </main>
       </div>

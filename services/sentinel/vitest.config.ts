@@ -39,6 +39,10 @@ export default defineConfig({
       // The publication gate: the four conditions that decide whether anything
       // reaches a trader at all. Confidence alone never publishes.
       'src/orchestrator/publication-gate.spec.ts',
+      // The validated event contract that leaves this service for notification
+      // channels. Asserts the two properties a comment cannot hold: an event
+      // structurally carries no direction, and a repeated poll dedupes.
+      'src/events/sentinel-event.spec.ts',
       // Phase 2 — market structure, liquidity behaviour and the
       // continuation/reversal read that Sentinel reasons about.
       'src/intelligence/market-structure.spec.ts',

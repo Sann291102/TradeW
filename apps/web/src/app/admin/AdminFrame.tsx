@@ -12,6 +12,7 @@ const SECTIONS = [
   { href: '/admin', label: 'Overview', exact: true },
   { href: '/admin/orders', label: 'Orders' },
   { href: '/admin/ai', label: 'AI & Sentinel' },
+  { href: '/admin/cognition', label: 'Perceptors & Neural' },
   { href: '/admin/knowledge', label: 'Knowledge' },
   { href: '/admin/system', label: 'Users & System' },
 ];

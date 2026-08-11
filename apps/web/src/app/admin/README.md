@@ -60,8 +60,49 @@ the probing is the signal.
 | **Overview** | Is anything wrong right now? Traffic, error rate, AI spend, order flow, user count |
 | **Orders & OMS** | Every order and fill, rejection reasons, and orders stuck in `PENDING` — a stalled OMS worker is invisible from every trader-facing screen |
 | **AI & Sentinel** | The live agent orbit, per-agent spend and latency, orchestrator runs, and every raw LLM call |
+| **Perceptors & Neural** | What the platform senses across all five domains, where in the four layers the signal stops, what repeated outcomes have taught it, and what it wants a human to decide |
 | **Knowledge** | The engineering vault graph, moved here from the public site, plus live vault writes |
 | **Users & System** | Accounts, the auth audit trail, route latency, request log, service health |
+
+## Perceptors & Neural Networks
+
+The four-layer cognition network — see
+`knowledge/Decisions/2026-08-12 - Cognition network (perceptors + four layers).md`
+for the architecture and `packages/ai-core/src/cognition/` for the code.
+
+**Off by default.** `COGNITION_ENABLED=true` starts the loop; without it the
+sensors are still registered and the page still renders the roster. That is
+deliberate — a page that shows nothing when a feature is off cannot tell an
+operator whether the feature is off or broken, so the distinction is stated in
+words at the top of the page rather than left to be inferred from empty tables.
+
+| Env var | Default | What it does |
+| --- | --- | --- |
+| `COGNITION_ENABLED` | *(unset)* | `true` starts the pass loop |
+| `COGNITION_PASS_MS` | `300000` | How often a full pass runs |
+| `COGNITION_FLUSH_MS` | `30000` | How often dirty weights are written back |
+| `COGNITION_SALIENCE_FLOOR` | `0.15` | L1's attention budget |
+| `COGNITION_RETENTION_DAYS` | `30` | Percept/episode pruning. **Never applies to weights** |
+
+Three numbers on this page are worth knowing how to read, because each of them
+looks fine when it is not:
+
+- **Unproven weights.** A weight no outcome has ever scored is a *guess*. It is
+  rendered dimmed and labelled, never as a finding. `proven = 0` with a large
+  total means the network is associating and nothing is ever being scored.
+- **Awaiting an outcome.** Eligibility traces with no result yet. A number that
+  only grows means the feedback loop has stalled, which stops all learning
+  without producing a single error or failed request.
+- **Gated.** Percepts dropped below the salience floor. Always zero means the
+  floor is too low to be doing anything, and the layers below it are being fed
+  noise.
+
+**Resolving a proposal is a write to the model, not just to a row.** "Wrong"
+(`dismissed`) is the only negative training signal the network ever receives —
+every other input it gets is "something happened". It reinforces the specific
+chain of activations that produced the proposal, while the traces are still
+live. Clicking it casually degrades the weights; not clicking it at all means
+they only ever move in one direction.
 
 ## The Sentinel orbit
 
@@ -126,6 +167,30 @@ architecture decisions, gotchas, agent research notes — and exposing it put
 internal reasoning in front of every signed-in user. It now lives at
 `/admin/knowledge`, with a live-writes rail added, because the operational
 question is "are the agents still writing to the vault".
+
+## There is a second, unfinished admin app — do not add to it
+
+`apps/admin` (`npm run dev:admin`) is a separate Next.js console with eight
+routes: Engine Health, Knowledge Management, Agent Management, Reasoning
+Inspector, TradingView Rule Management, Learning Platform, Observability, and
+Audit & Compliance.
+
+**All eight are five-line `ModulePlaceholder` stubs.** Its own README still says
+"Status: design-only". It has a login page, a session cookie and a middleware,
+and no page that renders data.
+
+This console — the one you are reading about — is the real one, and it reaches
+the same `/admin/*` API. The two overlap almost completely in intent: `apps/admin`
+Engine Health / Agent Management / Reasoning Inspector are **AI & Sentinel**;
+Observability is **Overview** plus **Users & System**; Audit & Compliance is the
+audit trail in **Users & System**; Knowledge Management is **Knowledge**.
+
+Finishing `apps/admin` would mean rebuilding the gate, the API client and the
+chart primitives that already exist here, and then maintaining two operator
+surfaces with two auth models over one API. That is a decision for the owner,
+not something to drift into — so nothing was added to it. The realistic choices
+are to archive it under `TradeW/archive/` per Rule 1, or to keep it and move
+this console's sections across wholesale. Until then, new operator UI goes here.
 
 ## Adding a section
 

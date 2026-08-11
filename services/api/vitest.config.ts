@@ -63,6 +63,9 @@ export default defineConfig({
       'src/common/throttling.spec.ts',
       // Background timers run on exactly one instance (the horizontal-scaling gate).
       'src/common/leader-election.spec.ts',
+      // Sentinel events becoming durable notifications: the receiving end of the
+      // no-direction boundary, durable dedupe, and never failing an observation.
+      'src/sentinel/sentinel-event-dispatcher.spec.ts',
     ],
     environment: 'node',
     // The suite is deterministic and clock-injected; a slow test means a real
