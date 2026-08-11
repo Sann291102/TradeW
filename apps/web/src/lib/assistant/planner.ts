@@ -60,6 +60,8 @@ export interface MultiStepPlan {
   reply: string;
   refusalReason?: RefusalReason;
   disclaimer?: boolean;
+  /** Settled — the brain must not be asked for a second opinion. */
+  final?: boolean;
 }
 
 /** Connectives that always mean "and then do this other thing". */
@@ -202,5 +204,6 @@ function fromSingle(plan: AssistantPlan): MultiStepPlan {
     reply: plan.reply,
     refusalReason: plan.refusalReason,
     disclaimer: plan.disclaimer,
+    final: plan.final,
   };
 }

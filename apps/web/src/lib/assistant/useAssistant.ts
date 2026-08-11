@@ -419,8 +419,13 @@ export function useAssistant() {
        * this widens comprehension without widening capability.
        */
       const isReconsiderable =
-        (plan.intent === 'analysis' && plan.steps.length === 0) ||
-        (plan.intent === 'refusal' && plan.refusalReason === 'out-of-domain');
+        // A plan that declared itself final is never re-asked. The brain's
+        // failure mode on an explain-question is a plausible navigation
+        // ("✓ Open Research") presented as an answer, and that must not be
+        // allowed to overwrite a deliberate, honest "I can't source that yet".
+        !plan.final &&
+        ((plan.intent === 'analysis' && plan.steps.length === 0) ||
+        (plan.intent === 'refusal' && plan.refusalReason === 'out-of-domain'));
 
       if (isReconsiderable) {
         /**

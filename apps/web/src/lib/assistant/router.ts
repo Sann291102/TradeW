@@ -1,6 +1,7 @@
 import { resolveCommand } from './commands';
 import { guardDomain, guardHardBoundaries } from './domain-guard';
 import { resolveQuoteQuestion } from './quotes';
+import { conceptReply, resolveConceptQuestion } from './concepts';
 import { ASSISTANT_NAME } from './identity';
 import { analysisPlan, commandPlan, quotePlan, type AssistantPlan } from './types';
 
@@ -81,6 +82,31 @@ export function resolveUtterance(text: string, today = new Date()): AssistantPla
       [{ type: 'quote', symbols: quote.symbols, ask: quote.ask }],
       [`Classified → quote lookup (${quote.ask})`, `Resolved ${quote.symbols.join(', ')}`],
     );
+  }
+
+  /**
+   * Explain-questions are settled here — AFTER quote lookup and before the
+   * brain. Observed 2026-08-11: "How does FVG work, and what is BOS, MSS,
+   * CHoCH?" came back as a single step, "✓ Open Research" — a page visit
+   * presented as an answer. The brain produced it because navigating looks
+   * helpful and its guardrail against doing so is only a prompt.
+   *
+   * Deterministic code cannot be talked out of it, so the classification lives
+   * in `concepts.ts` and the honest reply wins over a plausible-looking one.
+   *
+   * ORDER MATTERS, and a test caught it: "what is the current price of NIFTY"
+   * opens with the same "what is" phrasing as "what is a fair value gap". A
+   * price question is a lookup, not a concept question, so quotes resolve
+   * first and this only sees what is left.
+   */
+  const concept = resolveConceptQuestion(t);
+  if (concept) {
+    return analysisPlan(conceptReply(concept), [
+      'Classified → concept question',
+      concept.unsourced.length
+        ? `Not in the knowledge base: ${concept.unsourced.join(', ')}`
+        : 'Analysis agents not yet connected',
+    ], true);
   }
 
   const outOfDomain = guardDomain(t);

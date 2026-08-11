@@ -55,6 +55,8 @@ export default defineConfig({
       'src/lib/session-redirect.test.ts',
       // Voice selection and speech text — the parts testable without audio.
       'src/lib/assistant/voice-output.test.ts',
+      // Explain-questions must never resolve to navigation.
+      'src/lib/assistant/concepts.test.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,

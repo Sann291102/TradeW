@@ -86,6 +86,41 @@ export function useVoiceInput(onFinal: (text: string) => void): VoiceInput {
     setSupported(getConstructor() !== null);
   }, []);
 
+  /**
+   * Clear the "microphone is blocked" message the moment permission is
+   * actually granted.
+   *
+   * Reported 2026-08-11 with a screenshot: the user opened Chrome's site
+   * settings, switched Microphone to Allow — and the blocked message was still
+   * sitting in the dock, because nothing ever cleared it. An error that
+   * outlives the condition it describes is indistinguishable from a broken
+   * feature, and it sends people back to fix something they already fixed.
+   *
+   * The Permissions API emits `change` on that toggle, so the message can
+   * retire itself. It is not available everywhere (Firefox does not expose
+   * 'microphone'), which is why this is a best-effort listener wrapped in a
+   * catch rather than a load-bearing part of the flow — `start()` also clears
+   * the error, so the worst case is the old behaviour.
+   */
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.permissions?.query) return;
+    let status: PermissionStatus | null = null;
+    const onChange = () => {
+      if (status?.state === 'granted') setError(null);
+    };
+    navigator.permissions
+      .query({ name: 'microphone' as PermissionName })
+      .then((s) => {
+        status = s;
+        if (s.state === 'granted') setError(null);
+        s.addEventListener('change', onChange);
+      })
+      .catch(() => {
+        // Browser does not expose this permission name — nothing to do.
+      });
+    return () => status?.removeEventListener('change', onChange);
+  }, []);
+
   // Stop the microphone if the component unmounts mid-listen. Without this the
   // recogniser keeps the mic indicator lit after the dock closes, which reads
   // as the app listening in the background.

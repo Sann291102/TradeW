@@ -94,6 +94,17 @@ export interface AssistantPlan {
   /** Analysis intents carry the observation-only disclaimer; commands don't
    *  (TRADEW-ASSISTANT.md §7 — a navigation ack is not an analytical claim). */
   disclaimer?: boolean;
+  /**
+   * This answer is settled — do NOT send the utterance to the conversation
+   * brain for a second opinion.
+   *
+   * Needed because the brain's failure mode on an explain-question is to
+   * produce a plausible-looking navigation ("✓ Open Research") and call it an
+   * answer. A deliberate, honest "I can't source that yet" must not be
+   * overwritten by one. Set only where the deterministic layer knows the
+   * answer is complete, never as a general opt-out.
+   */
+  final?: boolean;
 }
 
 /** Convenience constructors — keep plan shapes consistent across resolvers. */
@@ -109,8 +120,12 @@ export function refusalPlan(reply: string, refusalReason: RefusalReason): Assist
   return { intent: 'refusal', reply, actions: [], steps: [], refusalReason };
 }
 
-export function analysisPlan(reply: string, steps: string[] = []): AssistantPlan {
-  return { intent: 'analysis', reply, actions: [], steps, disclaimer: true };
+export function analysisPlan(
+  reply: string,
+  steps: string[] = [],
+  final = false,
+): AssistantPlan {
+  return { intent: 'analysis', reply, actions: [], steps, disclaimer: true, final };
 }
 
 /**
