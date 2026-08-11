@@ -1,0 +1,122 @@
+---
+type: gotcha
+date: 2026-08-11
+tags: [gotcha, sentinel, ui, safety, rule-2, side-in-focus]
+status: resolved
+---
+
+# The Live Safety Feed fabricated a CE direction on signals that had none
+
+**Read before touching `SafetyCard.tsx`, `extractSafetyFeed`, or
+`StrategyAdvisorService.sideInFocus`.**
+
+Four independent defects stacked into one user-visible outcome: the feed told
+traders Sentinel favoured **calls** on evidence that said the opposite, or said
+nothing at all. This is a Rule 2 class of failure — a directional recommendation
+the engine never produced — not a styling bug.
+
+## The root confusion: one label, two unrelated sources
+
+`ActionLabel` "Side in Focus" is reached by two routes that know completely
+different things:
+
+| Route | Knows a side? |
+|---|---|
+| `sideInFocus` — the genuine directional read | **Yes.** `side = bias === 'bullish' ? 'CE' : 'PE'` |
+| `ACTION_MAP[pattern]` — `cpr_breakout_bounce`, `orb_retest`, `vwap_pullback`, `ema_cross_bounce` | **No.** A bare detection carries no side at all |
+
+Every defect below is downstream of treating those two as interchangeable.
+
+## 1. The badge was recovered from prose, and defaulted to bullish
+
+```ts
+const isPe = isSideInFocus && card.explanation.includes('PE');
+const isCe = isSideInFocus && card.explanation.includes('CE');   // computed, never used
+…
+{isPe ? 'PE PUT' : 'CE CALL'}      // ← anything not matched as PE is a CALL
+```
+
+A bearish CPR breakdown ("Price closed below the CPR bottom") contains neither
+token, so it fell through to **CE CALL**, with green/up border, green title and
+a `positive`-toned confidence badge. Every visual cue said bullish. The mirror
+case: any incidental uppercase `PE` — as in "**OPE**N range" — forced PE PUT.
+
+Fixed by carrying `side` on `SafetyCardData` and extracting the rule into a pure
+`contractBadge()` in `deriveContext.ts`. Putting it there rather than in the
+component is what makes it testable: `apps/web/vitest.config.mjs` documents that
+it must not start collecting component tests, so a rule left in JSX is a rule
+with no cover.
+
+## 2. A neutral read was defaulted to bullish
+
+```ts
+const bias = detectedBias !== 'neutral' ? detectedBias : 'bullish';
+```
+
+Neutral means *the evidence declined to pick a direction*. Coercing it to
+bullish manufactures a CE out of precisely the case that should surface nothing.
+The harness caught this in its own output — the failing assertion returned a
+card whose rationale read **"Liquidity Sweep points neutral"** beside
+`"side":"CE","bias":"bullish"`.
+
+## 3. The publication gate was accepted and ignored
+
+`sideInFocus` took `publication: PublicationDecision` and **never referenced it**,
+gating only on `confScore < 70`. That is exactly the second weaker gate that
+[[Patterns/2026-08-06 - Sentinel pre-live-validation hardening (two gates collapsed into one)]]
+records removing — and the long doc comment describing the removal was still
+sitting above the reverted body. **A doc comment is not a gate.** When a comment
+explains at length why something must hold, check the body still does it.
+
+## 4. "Progress" was measuring a rounding artifact
+
+```ts
+const entryPrice = strike ?? currentPrice;      // the ATM strike, not a price
+const pnlPoints = bias === 'bullish' ? currentPrice - entryPrice : entryPrice - currentPrice;
+```
+
+`spot − nearest-round-strike` is bounded by half a strike step. On NIFTY (step
+50) `pnlPoints` could never leave ±25 however far the market travelled, so
+`invalidated` (≤ −25) was unreachable and "Move Developing (+10)" reported where
+spot sat relative to a round number — not movement, and not since anything.
+
+Replaced with an anchor: spot at the moment the side was surfaced, held per
+symbol and reset on side flip or IST day change (`anchorFor`). Keying by symbol
+**alone** is load-bearing — keying by `(symbol, side)` would let a CE→PE→CE
+sequence resurrect the morning's stale CE anchor and report a day of drift as
+progress on a minute-old read.
+
+Movement is measured **in the surfaced side's favour**: CE gains as spot rises,
+PE gains as spot falls. Reporting raw market direction instead would make a PE
+card read "market up 5" at the exact moment the read is winning, pairing a
+gain-protection line with a number contradicting it.
+
+Steps are per-symbol (`PROGRESS_STEPS_BY_SYMBOL`) because one shared triple
+cannot work: NIFTY drifts 5 points in noise while BANKNIFTY moves in hundreds,
+so a flat 5/10/15 fires all three BANKNIFTY steps within seconds of any read.
+
+## Also: the feed showed the same signal twice
+
+`extractSafetyFeed` pushed the orchestrator's `synthesis` card *and* every
+observation, with no dedupe. When synthesis restated a pattern already present
+the user saw one signal twice — once as the terse measurement, once as an LLM
+rewrite. The tutor voice traders disliked ("Consider waiting for confirmation
+before making further decisions") is generated by the synthesis prompt's
+mandated `evidence -> pattern name -> soft suggestion` shape, not by any signal.
+Suppressing the duplicate removes both problems at once.
+
+## Verification worth copying
+
+The advisor harness (`npm run advisor:test`) already asserted the correct
+behaviour for #2 and #3 — **those two tests were failing on the branch**, which
+is how a documented decision had silently reverted. Before claiming a fix,
+stash it and confirm the tests fail without it; a test that passes both ways
+guards nothing. The first `deriveContext` tests written for #1 had exactly that
+flaw — asserting `side === undefined` passes trivially against code where the
+field never existed.
+
+## Related
+
+- [[Patterns/2026-08-06 - Sentinel pre-live-validation hardening (two gates collapsed into one)]]
+- [[Patterns/2026-08-04 - SentinelIntelligence live-performance gate (books must be proven live)]]
+- [[Patterns/2026-08-03 - Test infrastructure pass (runners made discoverable, money math covered)]]
