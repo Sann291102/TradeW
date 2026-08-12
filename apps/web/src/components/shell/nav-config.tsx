@@ -99,14 +99,11 @@ export function isBareRoute(pathname: string): boolean {
  * Left this mechanism in place, empty, in case a real standalone-shell need
  * comes up again.
  */
-export const STANDALONE_ROUTES: string[] = [
-  // The admin portal. It renders its own shell (AdminFrame) and must NOT get
-  // the trader chrome: no Sidebar linking back into the workspace, no Ticker,
-  // no FloatingAI, no discipline panel. Mixing the two would make the operator
-  // surface look like a page of the product, which is precisely the confusion
-  // to avoid when one of them can read every user's activity.
-  '/admin',
-];
+// Admin has been migrated to apps/admin (port 3001) — a fully separate Next.js
+// app with its own server, session cookie, and no dependency on the web shell.
+// STANDALONE_ROUTES is kept for any future routes that need to opt out of the
+// trader chrome without being a full separate app.
+export const STANDALONE_ROUTES: string[] = [];
 
 export function isStandaloneRoute(pathname: string): boolean {
   return STANDALONE_ROUTES.some((r) => pathname === r || pathname.startsWith(r + '/'));
