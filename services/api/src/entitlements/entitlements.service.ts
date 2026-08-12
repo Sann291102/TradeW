@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { findCoupon } from './coupon.catalog';
 
 /**
  * Centralized Subscription & Entitlement service — the ONLY place premium
@@ -139,6 +140,78 @@ export class EntitlementsService {
     // provides it, so capabilitiesOf() and check() agree on who has it.
 
     return [...result].sort();
+  }
+
+  // -------------------------------------------------------------- redemption
+
+  /**
+   * Redeem a code for the real plan it names.
+   *
+   * This is the server-side half of a fix for a code that only ever worked in
+   * the browser (see coupon.catalog.ts). It deliberately goes through
+   * `activate()` rather than writing a subscription row itself, so a redeemed
+   * plan is indistinguishable from a purchased one from here on: the same
+   * status, the same expiry handling, the same grace period, the same
+   * `capabilitiesOf` path. Nothing downstream needs to know a coupon was
+   * involved.
+   *
+   * Idempotent per user. Redeeming twice does not stack two subscriptions and
+   * does not extend the first — it reports what is already there. Without this
+   * the endpoint is a free renewal button, since the catalogue cannot yet
+   * express a per-code redemption limit.
+   */
+  async redeem(userId: string, rawCode: string): Promise<{
+    success: boolean;
+    alreadyActive: boolean;
+    message: string;
+    capabilities: string[];
+    expiresAt: Date | null;
+  }> {
+    const coupon = findCoupon(rawCode);
+    if (!coupon) {
+      throw new BadRequestException('That code is not valid. Check it and try again.');
+    }
+
+    const plan = await this.prisma.plan.findUnique({ where: { code: coupon.planCode } });
+    if (!plan || !plan.active) {
+      // The catalogue names a plan that is not in the database. That is a
+      // deployment mistake, not something the user did, so it must not be
+      // reported to them as an invalid code.
+      throw new NotFoundException(`coupon ${coupon.code} names unknown or inactive plan ${coupon.planCode}`);
+    }
+
+    const now = new Date();
+    const existing = await this.prisma.subscription.findFirst({
+      where: { userId, planId: plan.id, status: { in: LIVE_STATUSES } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (
+      existing &&
+      this.validity(existing.status, existing.expiresAt, existing.trialEndsAt, plan.graceDays, now) !== 'expired'
+    ) {
+      return {
+        success: true,
+        alreadyActive: true,
+        message: `${coupon.label} is already active on your account.`,
+        capabilities: await this.capabilitiesOf(userId),
+        expiresAt: existing.expiresAt,
+      };
+    }
+
+    const expiresAt = new Date(now);
+    expiresAt.setMonth(expiresAt.getMonth() + coupon.months);
+
+    await this.activate(userId, coupon.planCode, { expiresAt });
+
+    return {
+      success: true,
+      alreadyActive: false,
+      message: `${coupon.label} unlocked successfully.`,
+      // Read back rather than assumed: what the user now holds is whatever the
+      // plan actually grants, which is the same list every gate will consult.
+      capabilities: await this.capabilitiesOf(userId),
+      expiresAt,
+    };
   }
 
   /** Increment usage for both day and month windows; check() reads whichever the grant uses. */

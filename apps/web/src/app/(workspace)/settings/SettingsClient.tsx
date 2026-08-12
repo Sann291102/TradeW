@@ -47,11 +47,23 @@ export function SettingsClient() {
   const redeemCoupon = useSessionStore((s) => s.redeemCoupon);
   const [couponCode, setCouponCode] = useState('HashtagTradeWSetup100');
   const [couponMsg, setCouponMsg] = useState<{ success?: boolean; text: string } | null>(null);
+  const [redeeming, setRedeeming] = useState(false);
+
+  const applyCoupon = async (code: string) => {
+    if (redeeming) return;
+    setRedeeming(true);
+    setCouponMsg(null);
+    try {
+      const res = await redeemCoupon(code);
+      setCouponMsg({ success: res.success, text: res.message });
+    } finally {
+      setRedeeming(false);
+    }
+  };
 
   const handleApplyCoupon = (e: React.FormEvent) => {
     e.preventDefault();
-    const res = redeemCoupon(couponCode);
-    setCouponMsg({ success: res.success, text: res.message });
+    void applyCoupon(couponCode);
   };
 
   return (
@@ -92,8 +104,12 @@ export function SettingsClient() {
             placeholder="Enter coupon code"
             className="w-full max-w-sm rounded-lg border border-border2 bg-bg px-3 py-2 text-sm text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus font-mono"
           />
-          <button type="submit" className={buttonClasses({ variant: 'primary', size: 'md' })}>
-            Redeem Coupon
+          <button
+            type="submit"
+            disabled={redeeming}
+            className={buttonClasses({ variant: 'primary', size: 'md' })}
+          >
+            {redeeming ? 'Redeeming…' : 'Redeem Coupon'}
           </button>
         </form>
         {couponMsg && (
@@ -149,8 +165,13 @@ export function SettingsClient() {
                     {t.save > 0 ? `Save ${inr0(t.save)}` : ''}
                   </div>
                   <button
+                    disabled={redeeming}
                     onClick={() => {
-                      redeemCoupon('HashtagTradeWSetup100');
+                      // Shares the handler above, so this path reports failures
+                      // too. It used to call redeemCoupon and discard the
+                      // result, which meant an unusable code looked identical
+                      // to a working one: nothing happened, and nothing said so.
+                      void applyCoupon('HashtagTradeWSetup100');
                     }}
                     className={cn('mt-3', buttonClasses({ variant: t.popular ? 'primary' : 'outline', size: 'sm' }))}
                   >

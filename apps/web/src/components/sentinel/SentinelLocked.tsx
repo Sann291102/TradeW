@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { buttonClasses } from '@tradew/ui';
+import { buttonClasses, cn } from '@tradew/ui';
 import { OBSERVATION_ONLY_DISCLAIMER } from '@/lib/sentinel/types';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { SentinelIcon } from '../shell/icons';
@@ -15,11 +15,22 @@ export function SentinelLocked() {
   const redeemCoupon = useSessionStore((s) => s.redeemCoupon);
   const [couponCode, setCouponCode] = useState('HashtagTradeWSetup100');
   const [couponMsg, setCouponMsg] = useState<{ success?: boolean; text: string } | null>(null);
+  const [redeeming, setRedeeming] = useState(false);
 
-  const handleApplyCoupon = (e: React.FormEvent) => {
+  // Redemption is a server round-trip now, so it can be in flight — and a
+  // double submit would be a second POST for a code that is already being
+  // redeemed.
+  const handleApplyCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = redeemCoupon(couponCode);
-    setCouponMsg({ success: res.success, text: res.message });
+    if (redeeming) return;
+    setRedeeming(true);
+    setCouponMsg(null);
+    try {
+      const res = await redeemCoupon(couponCode);
+      setCouponMsg({ success: res.success, text: res.message });
+    } finally {
+      setRedeeming(false);
+    }
   };
 
   return (
@@ -38,8 +49,12 @@ export function SentinelLocked() {
             placeholder="Enter coupon code"
             className="w-full rounded-lg border border-border2 bg-bg px-3 py-2 text-xs text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus font-mono"
           />
-          <button type="submit" className={buttonClasses({ variant: 'primary', size: 'sm' })}>
-            Redeem 100% Off
+          <button
+            type="submit"
+            disabled={redeeming}
+            className={cn(buttonClasses({ variant: 'primary', size: 'sm' }), redeeming && 'opacity-60')}
+          >
+            {redeeming ? 'Redeeming…' : 'Redeem 100% Off'}
           </button>
         </div>
         {couponMsg && (

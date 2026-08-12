@@ -52,6 +52,9 @@ export default defineConfig({
       // that no route can produce a withdrawn annual Sentinel term.
       'src/pricing/pricing.spec.ts',
       'src/entitlements/entitlements.spec.ts',
+      // Redemption must create a real subscription. It used to happen entirely
+      // in the browser, so the UI unlocked and every premium call still 403'd.
+      'src/entitlements/coupon-redeem.spec.ts',
       // Bearer-token parsing: the gate in front of every authenticated route.
       'src/auth/auth.guard.spec.ts',
       // Boot-time secret policy: no dev-fallback / vendor-key auth secrets
