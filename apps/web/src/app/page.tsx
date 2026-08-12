@@ -68,10 +68,22 @@ export const metadata = {
  * deliberate: this failure mode is invisible in every automated check that
  * does not use a real browser, so it gets belt and braces.
  */
+/**
+ * Reads THIS TAB's session first (sessionStorage), falling back to the
+ * device's most recent one (localStorage) only for a tab that has never held a
+ * session — the same precedence `lib/session-storage.ts` implements for the
+ * app proper, restated here because a pre-paint script cannot import.
+ *
+ * Without the sessionStorage read, a tab signed in as user2 whose device
+ * mirror had been retargeted to user3 would be bounced through the landing
+ * page and re-adopt user3 — reintroducing the cross-tab bug from the one place
+ * that runs before any of the fixed code does.
+ */
 const SESSION_REDIRECT_SCRIPT = `(function(){try{
-var t=localStorage.getItem('tradew_token');
+var t=sessionStorage.getItem('tradew_token');
+if(!t&&!sessionStorage.getItem('tradew_tab_claimed')){t=localStorage.getItem('tradew_token');}
 var c=document.cookie.indexOf('tw_auth=')!==-1;
-if(t&&!c){localStorage.removeItem('tradew_token');localStorage.removeItem('tradew_refresh_token');return;}
+if(t&&!c){sessionStorage.removeItem('tradew_token');sessionStorage.removeItem('tradew_refresh_token');localStorage.removeItem('tradew_token');localStorage.removeItem('tradew_refresh_token');return;}
 if(t&&c&&location.search.indexOf('next=')===-1){location.replace('/dashboard');}
 }catch(e){}})();`;
 

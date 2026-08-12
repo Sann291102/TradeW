@@ -1,13 +1,26 @@
+import {
+  clearSession,
+  getAccessToken,
+  getRefreshTokenValue,
+  writeSession,
+} from './session-storage';
+
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
+/**
+ * The token this TAB is signed in with.
+ *
+ * Reads through `session-storage.ts` rather than localStorage directly. That
+ * indirection is the fix for "every tab shows whoever logged in last" — see
+ * that file for the full reasoning. Nothing else in the app should touch the
+ * storage keys; this module remains the single owner of the credential.
+ */
 export function getToken() {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('tradew_token');
+  return getAccessToken();
 }
 
 export function getRefreshToken() {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('tradew_refresh_token');
+  return getRefreshTokenValue();
 }
 
 /**
@@ -37,23 +50,60 @@ function setAuthHint(present: boolean) {
 }
 
 export function setSession(accessToken: string, refreshToken?: string) {
-  localStorage.setItem('tradew_token', accessToken);
-  if (refreshToken) localStorage.setItem('tradew_refresh_token', refreshToken);
+  writeSession(accessToken, refreshToken);
   setAuthHint(true);
 }
 
 export function setToken(token: string) {
-  localStorage.setItem('tradew_token', token);
+  writeSession(token);
   setAuthHint(true);
 }
 
 export function clearToken() {
-  localStorage.removeItem('tradew_token');
-  localStorage.removeItem('tradew_refresh_token');
+  clearSession();
   setAuthHint(false);
 }
 
-async function refreshAccessToken() {
+/**
+ * Re-assert the routing cookie for a tab that still holds a session.
+ *
+ * The cookie is device-wide and can be cleared by another tab signing out, or
+ * dropped by the browser, while this tab's sessionStorage credential survives.
+ * When that happens the middleware bounces an authenticated tab to `/` on its
+ * next navigation. Calling this on load repairs the mismatch from the side
+ * that actually knows the truth: possession of a token.
+ */
+export function syncAuthHint() {
+  if (getToken()) setAuthHint(true);
+}
+
+/**
+ * The single in-flight refresh, shared by every concurrent caller.
+ *
+ * ── THE RACE THIS PREVENTS ─────────────────────────────────────────────────
+ *
+ * `sessionStore.init()` fires `/auth/me` and `/entitlements/me` together in a
+ * `Promise.all`. On a page load with an expired 15-minute access token, BOTH
+ * come back 401 at essentially the same instant, and each used to call this
+ * function independently — two POSTs to `/auth/refresh` carrying the SAME
+ * refresh token.
+ *
+ * Refresh tokens are single-use and rotated: `auth.service.ts` revokes the row
+ * the moment it is presented (`refreshToken.update({ revokedAt: new Date() })`)
+ * before issuing the replacement. So the first request succeeds and the second
+ * presents an already-revoked token, gets 401 "Invalid refresh token", returns
+ * false — and `init()`'s catch calls `clearToken()`.
+ *
+ * The user is signed out at random, on a page load, having done nothing. It is
+ * a race, so it is intermittent and looks like flakiness rather than a bug.
+ *
+ * Sharing one promise means the second caller awaits the first's result and
+ * both proceed with the same new token. The slot is released in `finally` so a
+ * later expiry can refresh again.
+ */
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function performRefresh(): Promise<boolean> {
   const refreshToken = getRefreshToken();
   if (!refreshToken) return false;
   const res = await fetch(`${API_URL}/auth/refresh`, {
@@ -65,6 +115,17 @@ async function refreshAccessToken() {
   const data = await res.json();
   setSession(data.accessToken, data.refreshToken);
   return true;
+}
+
+function refreshAccessToken(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = performRefresh()
+      .catch(() => false)
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
 }
 
 /**

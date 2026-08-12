@@ -57,6 +57,10 @@ export default defineConfig({
       'src/lib/assistant/voice-output.test.ts',
       // Explain-questions must never resolve to navigation.
       'src/lib/assistant/concepts.test.ts',
+      // Per-tab session isolation. Regression cover for "every tab shows
+      // whoever logged in last" — the credential's storage scope is the fix,
+      // so it is asserted rather than eyeballed.
+      'src/lib/session-storage.test.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,

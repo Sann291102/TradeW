@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { api, getToken, getRefreshToken, clearToken } from '../api';
+import { api, getToken, getRefreshToken, clearToken, syncAuthHint } from '../api';
 
 /**
  * Real authentication/entitlement session state (Phase 2, Milestone 4, Step 1).
@@ -53,13 +53,43 @@ function isOfflineError(err: unknown): boolean {
   return /fetch/i.test(err instanceof Error ? err.message : String(err));
 }
 
-function getLocalUnlockedCaps(): string[] {
-  if (typeof window === 'undefined') return [];
+/**
+ * Locally-redeemed capabilities, PER ACCOUNT.
+ *
+ * ── WHY THIS IS KEYED BY USER (2026-08-12) ────────────────────────────────
+ *
+ * This used to be a flat `string[]` under `tradew_unlocked_caps`, merged into
+ * whichever account happened to sign in next on that browser. So user1
+ * redeeming the testing coupon silently handed user2 a UI that claimed
+ * Sentinel was active on their account. `services/api` still returned 403 to
+ * user2 for every premium route, which makes it the same failure already
+ * documented in `hasCapability` below: a client asserting an entitlement the
+ * server denies, producing a UI that lies about the state of an account.
+ *
+ * The old flat key is deliberately NOT migrated. Migrating would have to guess
+ * which account earned the unlock, and guessing wrong is exactly the bug. It
+ * is left in place rather than deleted (repo rule 1) and simply no longer read.
+ */
+const UNLOCKED_CAPS_KEY = 'tradew_unlocked_caps_by_user';
+
+function readCapMap(): Record<string, string[]> {
+  if (typeof window === 'undefined') return {};
   try {
-    return JSON.parse(localStorage.getItem('tradew_unlocked_caps') || '[]');
+    const raw = JSON.parse(localStorage.getItem(UNLOCKED_CAPS_KEY) || '{}');
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   } catch {
-    return [];
+    return {};
   }
+}
+
+/**
+ * Signed out there is no account to attribute an unlock to, so there are no
+ * local capabilities — returning some would gate UI on behalf of nobody.
+ */
+function getLocalUnlockedCaps(userId: string | null): string[] {
+  if (!userId) return [];
+  const caps = readCapMap()[userId];
+  return Array.isArray(caps) ? caps : [];
 }
 
 export const useSessionStore = create<SessionState>()((set, get) => ({
@@ -69,20 +99,26 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
   offline: false,
 
   init: async () => {
-    const localCaps = getLocalUnlockedCaps();
     if (!getToken()) {
-      set({ status: 'unauthenticated', user: null, capabilities: localCaps, offline: false });
+      set({ status: 'unauthenticated', user: null, capabilities: [], offline: false });
       return;
     }
+    // This tab holds a session but the device-wide routing cookie may have been
+    // cleared by another tab signing out. Re-assert it, or the next navigation
+    // gets bounced to the landing page by middleware.
+    syncAuthHint();
     set({ status: 'loading' });
     try {
       const [user, entitlements] = await Promise.all([api('/auth/me'), api('/entitlements/me')]);
+      // Local unlocks are looked up only once the account is known, so one
+      // user's redeemed coupon can never be merged into another's session.
+      const localCaps = getLocalUnlockedCaps(user?.id ?? null);
       const mergedCaps = Array.from(new Set([...(entitlements.capabilities ?? []), ...localCaps]));
       set({ status: 'authenticated', user, capabilities: mergedCaps, offline: false });
     } catch (err) {
       const offline = isOfflineError(err);
       if (!offline) clearToken();
-      set({ status: 'unauthenticated', user: null, capabilities: localCaps, offline });
+      set({ status: 'unauthenticated', user: null, capabilities: [], offline });
     }
   },
 
@@ -94,7 +130,7 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
       // best-effort
     }
     clearToken();
-    set({ status: 'unauthenticated', user: null, capabilities: getLocalUnlockedCaps(), offline: false });
+    set({ status: 'unauthenticated', user: null, capabilities: [], offline: false });
   },
 
   hasCapability: (capability) => {
@@ -133,12 +169,21 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
 
   grantCapability: (capability) => {
     const current = get().capabilities;
-    if (!current.includes(capability)) {
-      const updated = [...current, capability];
-      set({ capabilities: updated });
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('tradew_unlocked_caps', JSON.stringify(updated));
-      }
+    if (current.includes(capability)) return;
+    const updated = [...current, capability];
+    set({ capabilities: updated });
+
+    // Persist against the signed-in account only. A coupon redeemed while
+    // signed out has nobody to belong to, so it lasts for the session in
+    // memory and is not written anywhere another account could inherit it.
+    const userId = get().user?.id;
+    if (!userId || typeof window === 'undefined') return;
+    try {
+      const map = readCapMap();
+      map[userId] = updated;
+      localStorage.setItem(UNLOCKED_CAPS_KEY, JSON.stringify(map));
+    } catch {
+      /* storage unavailable — the unlock still applies to this session */
     }
   },
 
