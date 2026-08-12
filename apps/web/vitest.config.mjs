@@ -61,6 +61,9 @@ export default defineConfig({
       // whoever logged in last" — the credential's storage scope is the fix,
       // so it is asserted rather than eyeballed.
       'src/lib/session-storage.test.ts',
+      // The forming candle. Regression cover for a chart whose last-price line
+      // sat at yesterday's close while the card beside it showed today's price.
+      'src/lib/hooks/liveCandle.test.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,
