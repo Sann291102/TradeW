@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiExcludeEndpoint, ApiProperty, ApiPropertyOptional, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { IsBoolean, IsEmail, IsIn, IsOptional, IsString } from 'class-validator';
-import { AdminGuard } from './admin.guard';
+import { AdminAccessGuard } from './admin-access.guard';
 import { AdminService } from './admin.service';
 import { CognitionService } from '../cognition/cognition.service';
 import { SECURITY } from '../swagger/swagger.setup';
@@ -76,12 +76,19 @@ class RunPassDto {
 /**
  * Both credentials, both required — a single security requirement naming two
  * schemes rather than two separate requirements, which OpenAPI would read as
- * "either one will do". `AdminGuard` demands both, so the document has to say
- * both, or the reference would advertise a way in that does not exist.
+ * "either one will do". Every path through `AdminAccessGuard` demands the
+ * operator token plus one identity factor, so the document has to say both, or
+ * the reference would advertise a way in that does not exist.
+ *
+ * The guard is `AdminAccessGuard`, not `AdminGuard`. It routes on the presence
+ * of an `x-operator-assertion` header: absent → `apps/web`'s product-admin path
+ * (JWT + `User.isAdmin`), delegated to `AdminGuard` unchanged; present →
+ * `apps/admin`'s operator path (operator assertion + `OperatorAccount`). Both
+ * still require `ADMIN_API_TOKEN`. See admin-access.guard.ts.
  */
 @ApiSecurity({ [SECURITY.bearer]: [], [SECURITY.adminToken]: [] })
 @Controller('admin')
-@UseGuards(AdminGuard)
+@UseGuards(AdminAccessGuard)
 export class AdminController {
   constructor(
     private readonly admin: AdminService,
@@ -124,6 +131,12 @@ export class AdminController {
     return this.admin.routeStats(Number(hours) || 24, Number(limit) || 25);
   }
 
+  /** Per-minute request/error/latency pulse for the System Pulse panel. */
+  @Get('api-calls/pulse')
+  apiPulse(@Query('minutes') minutes?: string) {
+    return this.admin.apiPulse(Number(minutes) || 30);
+  }
+
   // -------------------------------------------------------------------- AI
 
   @Get('ai/calls')
@@ -140,6 +153,12 @@ export class AdminController {
   @Get('ai/by-agent')
   aiByAgent(@Query('hours') hours?: string) {
     return this.admin.aiByAgent(Number(hours) || 24);
+  }
+
+  /** Real per-model roll-up for the Model Usage panel. */
+  @Get('ai/by-model')
+  aiByModel(@Query('hours') hours?: string) {
+    return this.admin.aiByModel(Number(hours) || 24);
   }
 
   @Get('ai/timeseries')
@@ -322,6 +341,12 @@ export class AdminController {
   @Get('cognition/episodes/:episodeId')
   cognitionEpisode(@Param('episodeId') episodeId: string) {
     return this.admin.cognitionEpisode(episodeId);
+  }
+
+  /** Per-domain percept ingestion + derived rate for the Perceptor Domains panel. */
+  @Get('cognition/domains')
+  cognitionDomains(@Query('hours') hours?: string) {
+    return this.admin.cognitionDomains(Number(hours) || 24);
   }
 
   @Get('cognition/percepts')

@@ -62,6 +62,12 @@ export default defineConfig({
       'src/common/secret-validation.spec.ts',
       // AdminTokenGuard fails closed on a weak/vendor operator secret.
       'src/auth/admin-token-guard.spec.ts',
+      // The two-door admin gate: the operator door never weakens the product-
+      // admin door, and the operator token is required-but-never-sufficient.
+      'src/admin/admin-access.guard.spec.ts',
+      // Operator identity: assertion signed with its OWN key (not JWT_SECRET),
+      // revocation as a per-request store read, and login lockout.
+      'src/admin/operator/operator.service.spec.ts',
       // Rate limiting: the global bucket really is global, and probes are exempt.
       'src/common/throttling.spec.ts',
       // Background timers run on exactly one instance (the horizontal-scaling gate).

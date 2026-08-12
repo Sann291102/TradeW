@@ -1751,3 +1751,54 @@ model NeuralSynapse {
   @@index([source])
   @@index([target])
 }
+
+// ---------------------------------------------------------------------------
+// Operator accounts — the standalone admin console's identity store.
+// ---------------------------------------------------------------------------
+//
+// Deliberately NOT the `User` table. `User.isAdmin` answers "this trader may
+// also see the console"; that is the right model for the in-product admin pages
+// in `apps/web`, where the person is already a TradeW customer. The standalone
+// console at `apps/admin` is a control plane, and a control plane whose identity
+// store is the product's customer table inherits every signup, password-reset
+// and OAuth path the product has. An operator should not be reachable through
+// "forgot password" on a trading app.
+//
+// This table exists because the alternative — accepting `ADMIN_API_TOKEN` on its
+// own as proof of an operator — cannot answer *which* operator acted, and two
+// admin routes write that answer into an audit trail: `POST /admin/users/set-
+// admin` (who granted privilege to whom) and `POST /admin/cognition/proposals/
+// :id/resolve` (whose judgement became the cognition network's only negative
+// training label). "Somebody dismissed this finding" is not an audit trail.
+//
+// The operator token is still required on every request. It proves the calling
+// *process* is the admin deployment. This row proves the *person*. Neither is
+// sufficient alone, which is the same two-factor shape `AdminGuard` already
+// enforces for the product-admin path — see AdminAccessGuard.
+model OperatorAccount {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  // Display name for the audit trail and the console header. Not a credential.
+  name         String?
+  // bcrypt, cost 10 — same as `User.passwordHash`. Non-nullable here, unlike on
+  // `User`: there is no OAuth path into this table and there never should be.
+  passwordHash String
+  // Revocation. Checked against the DATABASE on every request rather than being
+  // baked into the assertion, for exactly the reason `User.isAdmin` is: an
+  // assertion outlives a decision to revoke, and a console that keeps working
+  // for hours after access was pulled is not revocation, it is a delay.
+  disabledAt   DateTime?
+  // Online-guessing brake. `lockedUntil` is set once `failedAttempts` crosses
+  // the threshold; both reset on a successful login. The login endpoint is also
+  // behind `AdminTokenGuard`, so reaching it at all already requires the
+  // operator token — this is defence against someone who has that token, not
+  // the first line.
+  failedAttempts Int     @default(0)
+  lockedUntil  DateTime?
+  lastSeenAt   DateTime?
+  lastLoginIp  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([disabledAt])
+}
