@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ADMIN_NAV } from './nav-config';
+import { SCAFFOLDED_NAV, WORKING_NAV } from './nav-config';
 import { SignOutButton } from './SignOutButton';
 import { ViewAsTraderButton } from './ViewAsTrader';
 
@@ -17,9 +17,16 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-3">
-        <NavLink href="/" label="Dashboard" active={pathname === '/'} />
-        {ADMIN_NAV.map((item) => (
+        {/* The wired, working surfaces. */}
+        {WORKING_NAV.map((item) => (
           <NavLink key={item.href} href={item.href} label={item.label} active={pathname === item.href} />
+        ))}
+
+        {/* Planned modules — scaffolded only. Labelled so a placeholder is never
+            mistaken for a shipped feature. */}
+        <p className="px-2.5 pb-1 pt-4 text-[9.5px] font-semibold uppercase tracking-wide text-faint">Planned</p>
+        {SCAFFOLDED_NAV.map((item) => (
+          <NavLink key={item.href} href={item.href} label={item.label} active={pathname === item.href} planned />
         ))}
       </nav>
 
@@ -31,15 +38,18 @@ export function Sidebar() {
   );
 }
 
-function NavLink({ href, label, active }: { href: string; label: string; active: boolean }) {
+function NavLink({ href, label, active, planned }: { href: string; label: string; active: boolean; planned?: boolean }) {
   return (
     <Link
       href={href}
-      className={`block rounded px-2.5 py-1.5 text-[12.5px] transition-colors ${
+      className={`flex items-center justify-between rounded px-2.5 py-1.5 text-[12.5px] transition-colors ${
         active ? 'bg-accent/15 font-semibold text-text' : 'text-muted hover:bg-accent/5 hover:text-text'
       }`}
     >
-      {label}
+      <span>{label}</span>
+      {/* An honest marker that the destination is a "Not built yet" placeholder,
+          so discoverability does not imply the module is functional. */}
+      {planned && <span className="ml-2 shrink-0 rounded bg-border/60 px-1 py-px text-[8.5px] uppercase tracking-wide text-faint">Soon</span>}
     </Link>
   );
 }
