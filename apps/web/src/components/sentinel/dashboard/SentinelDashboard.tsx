@@ -26,6 +26,7 @@ export function SentinelDashboard({
   statusLine,
   controls,
   sessionStats,
+  strategyWorkspace,
 }: {
   model: DashboardModel;
   symbol: string;
@@ -34,6 +35,13 @@ export function SentinelDashboard({
   statusLine: ReactNode;
   controls: ReactNode;
   sessionStats: { signalsTriggered: number; tradesToday: number | null; flaggedEvents: number | null };
+  /**
+   * The user-authored strategy/watch surface (services/sentinel-py). Passed in
+   * rather than imported so this composition stays a pure layout of the
+   * `/observe` model and the two Sentinel services do not become entangled
+   * here — the page owns which surfaces exist.
+   */
+  strategyWorkspace?: ReactNode;
 }) {
   return (
     <div className="space-y-4">
@@ -48,6 +56,10 @@ export function SentinelDashboard({
       </header>
 
       <StatusCards model={model} />
+
+      {/* the user's own strategies and watches — the surface for everything
+          they authored, above the market read Sentinel produces on its own */}
+      {strategyWorkspace}
 
       {/* main band */}
       <div className="grid grid-cols-12 items-start gap-4">

@@ -145,6 +145,7 @@ def build_intrade_payload(
     trading_day: str,
     r_multiple: float | None,
     dedupe_suffix: str,
+    milestone: str | None = None,
 ) -> dict:
     label = instrument_label(watch)
     title = INTRADE_TITLES[event]
@@ -160,6 +161,12 @@ def build_intrade_payload(
         "state": watch["state"],
         "tier": "in_trade",
         "event": event,
+        # Which milestone this announces ("1R"/"2R"/"3R"), for MILESTONE events
+        # only. The body already says it in words; carrying it as a field lets
+        # the notification bell label the alert without parsing prose. Like
+        # rMultiple, it describes something that already happened rather than a
+        # level to act on.
+        "milestone": milestone,
         # Progress as a ratio of the user's own risk. This is a measurement of
         # something that already happened, not a level to act on, which is why
         # it is allowed where entry/stop/target prices are not.
@@ -181,10 +188,11 @@ async def notify_intrade(
     trading_day: str,
     r_multiple: float | None,
     dedupe_suffix: str,
+    milestone: str | None = None,
 ) -> bool:
     try:
         payload = build_intrade_payload(
-            watch, event, detail, strategy_name, trading_day, r_multiple, dedupe_suffix
+            watch, event, detail, strategy_name, trading_day, r_multiple, dedupe_suffix, milestone
         )
     except ComplianceError:
         logger.exception("refusing to send a non-compliant in-trade notification for watch=%s", watch["id"])

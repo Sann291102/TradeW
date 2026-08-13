@@ -236,6 +236,8 @@ export interface NotificationItem {
   body: string;
   time: string;
   read: boolean;
+  /** Producer-specific payload — Sentinel's alert tier rides here. */
+  metadata?: unknown;
 }
 
 /** Badge tone per category — the single mapping shared by NotificationCenter

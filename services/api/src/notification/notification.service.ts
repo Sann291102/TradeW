@@ -14,6 +14,21 @@ export interface NotificationItem {
   body: string;
   time: string;
   read: boolean;
+  /**
+   * The producer's own structured payload, passed through untouched.
+   *
+   * Sentinel writes the alert tier here (`wait_and_watch` / `side_in_focus` /
+   * `in_trade`) along with the watch it came from, and the notification bell
+   * styles by that tier — without it every Sentinel alert renders identically
+   * and "a condition is forming" looks the same as "your position reached the
+   * level you projected".
+   *
+   * What may go in it is constrained at the WRITE side, not here: sentinel-py's
+   * compliance guard rejects entry/stop/target keys outright
+   * (app/notify/compliance.py), because a notification arrives stripped of the
+   * page that explains it.
+   */
+  metadata: unknown;
 }
 
 @Injectable()
@@ -34,6 +49,7 @@ export class NotificationService {
       body: n.body,
       time: this.formatTime(n.createdAt),
       read: n.read,
+      metadata: n.metadata ?? null,
     }));
   }
 
@@ -78,6 +94,7 @@ export class NotificationService {
       body: notification.body,
       time: this.formatTime(notification.createdAt),
       read: false,
+      metadata: notification.metadata ?? null,
     };
   }
 
