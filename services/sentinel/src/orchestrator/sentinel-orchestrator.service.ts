@@ -202,6 +202,30 @@ export class SentinelOrchestratorService {
       () => this.market.snapshot(symbol),
       { detail: `snapshot ${symbol}` },
     );
+
+    // ---- autonomy: an observation is what puts a symbol under watch --------
+    //
+    // Placed after the snapshot on purpose: a symbol whose data could not be
+    // fetched throws above this line, so the watch list only ever contains
+    // symbols Sentinel has actually managed to read.
+    //
+    // Without this, `MarketWatchService`'s only production caller was
+    // `/intelligence/reason` — a route no app calls — so the watch list stayed
+    // empty, every sweep exited at its `no-symbols` guard, and Sentinel noticed
+    // nothing at all unless a browser was polling this endpoint. Registration
+    // is in-memory, synchronous and idempotent (see `register()`), so this
+    // neither slows the response nor waits on the sweep it enables; the sweep
+    // stays on its own 60 s loop inside the service.
+    //
+    // Wrapped because watch bookkeeping must never be able to fail an
+    // observation: Sentinel's read of the market is the product, the watch list
+    // is housekeeping.
+    try {
+      this.sentinelIntelligence.watchSymbol(symbol, at);
+    } catch (err) {
+      this.logger.warn(`could not put ${symbol} under continuous watch (non-fatal): ${(err as Error).message}`);
+    }
+
     const signals: Signal[] = [
       ...(await trackAgent(
         'market-technical',
@@ -750,7 +774,14 @@ export class SentinelOrchestratorService {
       : at;
 
     for (const d of detections) {
+      // `detectedAt` is the bar the rules matched on (see `StrategyEngineService.scan`),
+      // so a timeline entry is placed at the market event rather than at the
+      // poll that happened to notice it. `observedAt` rides along in `data` so
+      // the audit trail can still answer "when did Sentinel look?" — the two
+      // used to be the same value, which is why the narrative bunched every
+      // setup at refresh time.
       const eventTime = d.detectedAt ? new Date(d.detectedAt) : latestBarTime;
+      const provenance = { observedAt: d.observedAt ?? at.toISOString() };
       out.push({
         event: d.validated
           ? `${d.strategyName} confirmed — all ${d.rulesMatched.length} rules met. ${d.rulesMatched.join('; ')}.`
@@ -758,6 +789,7 @@ export class SentinelOrchestratorService {
         level: 'setup',
         confidence: d.confidence,
         at: eventTime,
+        data: provenance,
         dedupeKey: `detect:${d.strategyId}:${d.validated ? 'confirmed' : d.rulesMatched.length}`,
       });
       if (d.invalidationsTriggered.length > 0) {
@@ -765,6 +797,7 @@ export class SentinelOrchestratorService {
           event: `${d.strategyName} invalidated — ${d.invalidationsTriggered.join('; ')}.`,
           level: 'setup',
           at: eventTime,
+          data: provenance,
           dedupeKey: `invalid:${d.strategyId}`,
         });
       }
@@ -922,6 +955,9 @@ function toStrategyMatch(d: StrategyDetection): StrategyMatch {
     rulesUnmet: d.rulesUnmet,
     invalidationsTriggered: d.invalidationsTriggered,
     detectedAt: d.detectedAt,
+    // Market time and execution time both reach the client, so the workspace
+    // can show when the market did this rather than when it last refreshed.
+    observedAt: d.observedAt,
   };
 }
 

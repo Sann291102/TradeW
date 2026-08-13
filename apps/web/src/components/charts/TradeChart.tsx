@@ -15,6 +15,8 @@ import {
 } from 'lightweight-charts';
 import type { Candle } from '@tradew/types';
 import { cn } from '@tradew/ui';
+import { candleTime, type ChartDrawing } from '@/lib/charts/drawings';
+import { ChartDrawingsPrimitive } from './drawingPrimitive';
 
 /** A horizontal marker drawn across the chart — used for strategy strikes. */
 export interface ChartPriceLine {
@@ -58,6 +60,11 @@ export interface TradeChartProps {
    *  the chart's series, so it's meant for a deliberate view toggle
    *  (MarketOverview's Line/Candles switch), not a per-render value. */
   seriesType?: 'candlestick' | 'area';
+  /** Zones and lines painted inside the chart's own render pass — fair value
+   *  gaps, trendlines, order blocks. Rendered by `ChartDrawingsPrimitive`; the
+   *  array is replaced wholesale, and erasure is tag-scoped at the caller (see
+   *  `lib/charts/drawings.ts`) so one producer's redraw can't wipe another's. */
+  drawings?: ChartDrawing[];
 }
 
 function readToken(name: string): string {
@@ -120,6 +127,7 @@ export function TradeChart({
   fitKey,
   priceLines,
   seriesType = 'candlestick',
+  drawings,
   ...aria
 }: TradeChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -136,6 +144,14 @@ export function TradeChart({
    *  read by `applyTheme` on a theme change, when no data update is in
    *  flight. Only meaningful for `seriesType: 'area'`. */
   const lastDirectionRef = useRef<'up' | 'down'>('up');
+  /** The drawing layer. Attached inside the mount effect rather than in an
+   *  effect of its own: the series it hangs off is torn down and rebuilt when
+   *  `seriesType` changes, and a separate effect's cleanup would run against a
+   *  chart `chart.remove()` had already disposed. */
+  const drawingsPrimitiveRef = useRef<ChartDrawingsPrimitive | null>(null);
+  /** Read once at attach time without making `drawings` a mount dependency. */
+  const drawingsRef = useRef<ChartDrawing[] | undefined>(drawings);
+  drawingsRef.current = drawings;
 
   useEffect(() => {
     const el = containerRef.current;
@@ -173,6 +189,9 @@ export function TradeChart({
           lineWidth: 2,
         });
       }
+      // Drawing colours are resolved from tokens at paint time, so a theme
+      // change needs a new frame or zones keep the old palette.
+      drawingsPrimitiveRef.current?.requestRedraw();
     };
 
     const chart = createChart(el, {
@@ -187,6 +206,12 @@ export function TradeChart({
       seriesType === 'candlestick'
         ? chart.addCandlestickSeries()
         : chart.addAreaSeries({ lineWidth: 2, priceLineVisible: true });
+
+    const drawingsPrimitive = new ChartDrawingsPrimitive();
+    seriesRef.current.attachPrimitive(drawingsPrimitive);
+    drawingsPrimitiveRef.current = drawingsPrimitive;
+    drawingsPrimitive.setDrawings(drawingsRef.current ?? []);
+
     applyTheme();
 
     const resizeObserver = new ResizeObserver((entries) => {
@@ -201,9 +226,13 @@ export function TradeChart({
     return () => {
       resizeObserver.disconnect();
       themeObserver.disconnect();
+      // No explicit detachPrimitive: `chart.remove()` disposes the series and
+      // everything attached to it, and calling detach afterwards would touch a
+      // disposed object.
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      drawingsPrimitiveRef.current = null;
     };
     // height intentionally excluded — resized via ResizeObserver, not re-init.
     // seriesType IS a dependency — switching it tears down and recreates the
@@ -257,6 +286,13 @@ export function TradeChart({
     chartRef.current?.applyOptions({ height });
   }, [height]);
 
+  // Drawings are pushed into the primitive rather than passed through a
+  // render: the chart owns its own frame scheduling, so this asks for a
+  // repaint instead of performing one.
+  useEffect(() => {
+    drawingsPrimitiveRef.current?.setDrawings(drawings ?? []);
+  }, [drawings]);
+
   // Full history load — runs only when the candle *series* itself changes
   // (symbol / timeframe), NOT on every live tick, because live ticks no longer
   // reload the series (see useCandles). fitContent here is therefore a
@@ -268,7 +304,7 @@ export function TradeChart({
 
     if (seriesType === 'candlestick') {
       const data = candles.map((c) => ({
-        time: Math.floor(c.timestamp.getTime() / 1000) as UTCTimestamp,
+        time: candleTime(c) as UTCTimestamp,
         open: c.open,
         high: c.high,
         low: c.low,
@@ -287,7 +323,7 @@ export function TradeChart({
       (series as ISeriesApi<'Candlestick'>).setData(data);
     } else {
       const data = candles.map((c) => ({
-        time: Math.floor(c.timestamp.getTime() / 1000) as UTCTimestamp,
+        time: candleTime(c) as UTCTimestamp,
         value: c.close,
       }));
       const live = liveLastRef.current;
@@ -322,7 +358,7 @@ export function TradeChart({
     const series = seriesRef.current;
     if (!series || liveLast == null || candles.length === 0) return;
     const last = candles[candles.length - 1];
-    const time = Math.floor(last.timestamp.getTime() / 1000) as UTCTimestamp;
+    const time = candleTime(last) as UTCTimestamp;
     if (seriesType === 'candlestick') {
       (series as ISeriesApi<'Candlestick'>).update({
         time,

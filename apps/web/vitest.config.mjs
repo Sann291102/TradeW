@@ -64,6 +64,18 @@ export default defineConfig({
       // The forming candle. Regression cover for a chart whose last-price line
       // sat at yesterday's close while the card beside it showed today's price.
       'src/lib/hooks/liveCandle.test.ts',
+      // Chart drawing geometry. Every failure mode here paints a *plausible*
+      // annotation stating a price level that was never detected, so the
+      // placement rules are asserted rather than eyeballed.
+      'src/lib/charts/drawings.test.ts',
+      // Fair value gap detection. Three-bar arithmetic with one right answer,
+      // and the failure modes (a gap mitigated by the candle that created it,
+      // a bearish gap tested with the bullish rule) look correct on screen.
+      'src/lib/charts/fvg.test.ts',
+      // Chart-detection routing. Pins the collision between "mark the fair
+      // value gaps" (draw) and "what is a fair value gap" (explain), which
+      // reach the same matcher with the same words.
+      'src/lib/assistant/detect.test.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,

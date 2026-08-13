@@ -1,6 +1,13 @@
 import { create } from 'zustand';
 import { persist, type StorageValue } from 'zustand/middleware';
+import type { Candle } from '@tradew/types';
 import type { NarrationMode } from '../assistant/narration';
+import {
+  clearDrawingsByTag,
+  replaceDrawingsByTag,
+  type ChartDrawing,
+  type DrawingTag,
+} from '../charts/drawings';
 
 /**
  * TradeW workspace store (Phase 1, Milestone 3).
@@ -317,6 +324,27 @@ interface WorkspaceStore {
   /** Close every overlay — the shared Escape-key target (WORKSPACE-SHELL.md §4). */
   closeAllOverlays: () => void;
 
+  /**
+   * The chart series currently on screen, published by the chart container so
+   * the assistant can run a detector against exactly the bars the user is
+   * looking at.
+   *
+   * `seriesKey` is `SYMBOL|timeframe` and is the whole safety mechanism here:
+   * drawings computed on NIFTY 15m are meaningless on RELIANCE 1D, and
+   * rendering them anyway would state price levels that were never detected on
+   * that instrument. Both the series and its drawings carry the key, and the
+   * chart renders drawings only when the two match.
+   *
+   * Neither field is in `partialize`, so neither is persisted — a few hundred
+   * candles in localStorage on every tick would be a real performance bug.
+   */
+  chartSeries: { seriesKey: string; candles: Candle[]; lastPrice: number | null } | null;
+  publishChartSeries: (seriesKey: string, candles: Candle[], lastPrice: number | null) => void;
+  chartDrawings: { seriesKey: string; drawings: ChartDrawing[] } | null;
+  /** Replace one tag's drawings for a series. Other tags are left untouched. */
+  replaceChartDrawings: (seriesKey: string, tag: DrawingTag, next: ChartDrawing[]) => void;
+  clearChartDrawings: (tag: DrawingTag) => void;
+
   // layouts (built-ins regenerated at load; custom ones would append here in a
   // later milestone — the array shape already supports it)
   layouts: LayoutPreset[];
@@ -395,6 +423,30 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           aiDockOpen: false,
           mobileNavOpen: false,
         }),
+
+      chartSeries: null,
+      chartDrawings: null,
+      publishChartSeries: (seriesKey, candles, lastPrice) =>
+        set((s) => ({
+          chartSeries: { seriesKey, candles, lastPrice },
+          // Changing instrument or timeframe invalidates every drawing derived
+          // from the old bars. Dropping them here rather than letting the chart
+          // filter on mismatch means stale zones cannot survive a round trip
+          // back to the original series.
+          chartDrawings:
+            s.chartDrawings && s.chartDrawings.seriesKey !== seriesKey ? null : s.chartDrawings,
+        })),
+      replaceChartDrawings: (seriesKey, tag, next) =>
+        set((s) => {
+          const existing = s.chartDrawings?.seriesKey === seriesKey ? s.chartDrawings.drawings : [];
+          return { chartDrawings: { seriesKey, drawings: replaceDrawingsByTag(existing, tag, next) } };
+        }),
+      clearChartDrawings: (tag) =>
+        set((s) =>
+          s.chartDrawings
+            ? { chartDrawings: { ...s.chartDrawings, drawings: clearDrawingsByTag(s.chartDrawings.drawings, tag) } }
+            : {},
+        ),
 
       layouts: buildPresets(),
 

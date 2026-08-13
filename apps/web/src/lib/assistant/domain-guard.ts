@@ -50,8 +50,25 @@ const ORDER_INTENT_RE =
  * Imperative "buy…" / "sell…". Deliberately NOT including "long"/"short",
  * which are far more often adjectives ("long-term view", "short covering")
  * than commands. The lookahead keeps "open buy/sell panel" navigable.
+ *
+ * ── WHY THIS IS NOT ANCHORED TO THE START OF THE UTTERANCE ─────────────────
+ *
+ * It was, and that left a hole. The planner's refusal-poisoning rule protects
+ * "open the chart THEN buy 50 lots" — a strong connective splits the utterance
+ * and the fragment "buy 50 lots" is anchored, so the whole plan is refused.
+ * But a bare "and" only splits when a verb the *grammar* knows follows it, and
+ * "buy" is deliberately not one of those verbs. So "show me the fvg and buy 50
+ * lots" never split, never matched, and executed its innocent half while
+ * silently dropping the order — the precise outcome the poisoning rule exists
+ * to prevent, reached by the one phrasing that skipped both mechanisms.
+ *
+ * Found by a test written for the detection commands, which are what made the
+ * innocent half executable in the first place. The fix is to anchor after a
+ * connective as well as at the start; the lookahead is unchanged, so "open
+ * buy/sell panel" still navigates.
  */
-const IMPERATIVE_TRADE_RE = /^\s*(buy|sell)\b(?!\s*(\/|or\s+)?(sell|buy)?\s*(panel|ticket|pad|form|button|side|window|screen))/i;
+const IMPERATIVE_TRADE_RE =
+  /(?:^\s*|[;,]\s*|\b(?:and|then|also|plus)\s+)(buy|sell)\b(?!\s*(\/|or\s+)?(sell|buy)?\s*(panel|ticket|pad|form|button|side|window|screen))/i;
 
 /** Asking for a decision rather than an observation. */
 const ADVICE_RE = new RegExp(

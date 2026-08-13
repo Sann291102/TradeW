@@ -7,6 +7,7 @@ import type { CandleInterval } from '@tradew/types';
 import { INDEX_QUOTES, TOP_GAINERS, TOP_LOSERS, COMMODITIES } from '@/lib/mock/market';
 import { fmt } from '@/lib/format';
 import { useCandles } from '@/lib/hooks/useCandles';
+import { useChartDrawings } from '@/lib/hooks/useChartDrawings';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { useHasOptionChain } from '@/lib/hooks/useHasOptionChain';
 import { useOptionQuote } from '@/lib/hooks/useOptionQuote';
@@ -284,6 +285,11 @@ export default function ChartPanel({
   };
   const { interval, days } = TF_CONFIG[tf];
   const { candles, status: candlesStatus, reason: candlesReason } = useCandles(q.symbol, interval, days);
+  // Publish the underlying series so "FVG" runs against these exact bars, and
+  // take back whatever the detector drew for it. Keyed identically to the
+  // chart's own `fitKey` — the two must not drift, or drawings silently stop
+  // rendering (see useChartDrawings).
+  const drawings = useChartDrawings(`${q.symbol}|${tf}`, candles, liveMatch?.ltp ?? q.ltp);
   const { candles: dailyCandles } = useCandles(q.symbol, '1d', 300);
   const realCandles = candlesStatus === 'live';
 
@@ -535,6 +541,7 @@ export default function ChartPanel({
                 fitKey={`${q.symbol}|${tf}`}
                 intervalMinutes={TF_MINUTES[tf]}
                 priceLines={priceLines}
+                drawings={drawings}
                 aria-label={`${q.symbol} ${tf} chart`}
               />
             ) : candlesStatus === 'loading' ? (
