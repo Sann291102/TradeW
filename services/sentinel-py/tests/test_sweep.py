@@ -54,7 +54,10 @@ def captured(monkeypatch):
 
     monkeypatch.setattr(store, "update_watch_state", fake_update)
     monkeypatch.setattr(store, "record_observation", fake_observe)
-    monkeypatch.setattr(poller, "_emit", lambda w, t: bag["emitted"].append(t))
+    async def fake_emit(watch, transition):
+        bag["emitted"].append(transition)
+
+    monkeypatch.setattr(poller, "_emit", fake_emit)
     return bag
 
 

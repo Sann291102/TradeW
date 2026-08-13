@@ -1,12 +1,9 @@
 """The sweep loop — polls active watches, evaluates rules, advances state.
 
-Runs as an asyncio task inside the FastAPI process (Option A). That is a
-deliberate stage-appropriate choice, not a permanent one: it dies with the
-process and does no work-stealing, so the moment there is more than one
-replica this must become a separate worker with a lease (the `JobLease`
-table already in this schema is the existing pattern for that).
-
-P3 replaces `_emit` with the real notification dispatch. Today it logs.
+Runs as an asyncio task inside the FastAPI process (Option A) and is gated
+on a `JobLease` (app/core/lease.py), so only one instance sweeps even when
+several are running. It still dies with its process — the lease means the
+next instance picks the work up rather than two instances duplicating it.
 """
 
 import asyncio
@@ -14,15 +11,20 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from app.market.clock import is_market_open
+from app.core.lease import JobLease
+from app.market.clock import is_market_open, session_key
 from app.market.feed import MarketDataUnavailableError, fetch_index_candles, fetch_option_candles
+from app.notify.dispatcher import notify
 from app.watch import store
 from app.watch.evaluator import evaluate
 from app.watch.state_machine import Transition, WatchState, advance
 
 logger = logging.getLogger("sentinel.watch")
 
+SWEEP_JOB_NAME = "sentinel-py-watch-sweep"
+
 _task: asyncio.Task | None = None
+_lease: JobLease | None = None
 
 
 def _interval_seconds() -> int:
@@ -48,21 +50,25 @@ async def _candles_for(watch: dict, timeframe: str):
     return await fetch_index_candles(symbol=watch["symbol"], interval=timeframe)
 
 
-def _emit(watch: dict, transition: Transition) -> None:
-    """P3 will dispatch this to services/api -> Notification -> WebSocket.
-    The wording is already the plan's: never 'buy'/'sell'."""
-    label = "Your strategy conditions are met — you may review"
-    if transition.current == WatchState.FORMING:
-        label = "Your strategy is forming — wait and watch"
+async def _emit(watch: dict, transition: Transition) -> None:
+    """Dispatch to services/api, which writes the Notification row the web
+    app's existing 30s poll already picks up."""
+    strategy_name = watch.get("strategyName") or "your strategy"
+    delivered = await notify(
+        watch=watch,
+        transition=transition,
+        strategy_name=strategy_name,
+        trading_day=session_key(datetime.now(timezone.utc)),
+    )
     logger.info(
-        "notify[%s] watch=%s symbol=%s state=%s->%s reason=%s :: %s",
+        "notify[%s] watch=%s symbol=%s state=%s->%s delivered=%s reason=%s",
         transition.tier.value if transition.tier else "none",
         watch["id"],
         watch["symbol"],
         transition.previous.value,
         transition.current.value,
+        delivered,
         transition.reason,
-        label,
     )
 
 
@@ -121,7 +127,7 @@ async def sweep_once() -> int:
             )
 
             if transition.should_notify:
-                _emit(watch, transition)
+                await _emit(watch, transition)
             evaluated += 1
 
         except MarketDataUnavailableError as exc:
@@ -146,12 +152,16 @@ async def sweep_once() -> int:
     return evaluated
 
 
-async def _loop() -> None:
+async def _loop(lease: JobLease) -> None:
     interval = _interval_seconds()
     logger.info("watch sweep loop started (every %ss)", interval)
     while True:
         try:
-            if is_market_open(datetime.now(timezone.utc)):
+            # Singleton: only the lease holder sweeps. Without this, two
+            # replicas would evaluate every watch twice and notify twice.
+            if not await lease.acquire_or_renew():
+                logger.debug("not the sweep leader — standing by")
+            elif is_market_open(datetime.now(timezone.utc)):
                 await sweep_once()
             else:
                 logger.debug("market closed — skipping sweep")
@@ -163,16 +173,17 @@ async def _loop() -> None:
 
 
 def start() -> None:
-    global _task
+    global _task, _lease
     if os.environ.get("SENTINEL_PY_SWEEP_ENABLED", "true").lower() in ("0", "false", "no"):
         logger.info("watch sweep loop disabled by SENTINEL_PY_SWEEP_ENABLED")
         return
     if _task is None or _task.done():
-        _task = asyncio.create_task(_loop())
+        _lease = JobLease(SWEEP_JOB_NAME)
+        _task = asyncio.create_task(_loop(_lease))
 
 
 async def stop() -> None:
-    global _task
+    global _task, _lease
     if _task is not None and not _task.done():
         _task.cancel()
         try:
@@ -180,3 +191,8 @@ async def stop() -> None:
         except asyncio.CancelledError:
             pass
     _task = None
+    if _lease is not None:
+        # Hand the lease over immediately on a clean shutdown rather than
+        # making the next instance wait out the full TTL.
+        await _lease.release()
+        _lease = None

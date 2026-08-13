@@ -1856,15 +1856,21 @@ model WatchSession {
 // Audit trail: every sweep writes what it saw, whether or not it notified.
 // This is what the admin observation viewer reads, and what makes a
 // "why did/didn't Sentinel alert me?" question answerable after the fact.
-model SentinelObservation {
-  id             String   @id @default(uuid())
-  watchSessionId String
-  agent          String
-  candleTime     DateTime?
+//
+// Deliberately NOT the older `SentinelObservation` above: that one is the TS
+// Sentinel's market-wide observation feed (agent/category/pattern/content),
+// keyed by user and symbol. This one is keyed by WATCH and stores per-rule
+// evaluations for one strategy on one instrument. Same word, different thing
+// — folding them together would give both an optional half-empty shape.
+model WatchObservation {
+  id              String    @id @default(uuid())
+  watchSessionId  String
+  agent           String
+  candleTime      DateTime?
   ruleEvaluations Json
-  state          String
-  metadata       Json?
-  createdAt      DateTime @default(now())
+  state           String
+  metadata        Json?
+  createdAt       DateTime  @default(now())
 
   @@index([watchSessionId])
   @@index([createdAt])

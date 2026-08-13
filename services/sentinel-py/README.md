@@ -9,17 +9,16 @@ This is a **new, additive service** (`services/sentinel-py`, default port
 unchanged until an explicit decision is made to retire it — see
 `SENTINEL_MASTER_PLAN.md` / the Sentinel architecture plan for that step.
 
-## Status: P0 — scaffold
+## Status: P0–P3 complete
 
 - [x] FastAPI app with `/health`
 - [x] Service-token auth guard (`app/core/auth.py`), mirroring
-      `services/sentinel`'s `ServiceTokenGuard` — not yet wired to any route
-      since there are no protected routes yet
+- [x] Service-token auth guard (`app/core/auth.py`), mirroring
+      `services/sentinel`'s `ServiceTokenGuard`; guards every route except
+      `/health`.
 - [x] Wired into orchestration: `npm run dev:sentinel-py`, a `sentinel-py`
       block in `infra/docker/docker-compose.prod.yml` (mirrors `sentinel`'s),
-      and `SENTINEL_PY_SERVICE_URL` / `SENTINEL_PY_SERVICE_TOKEN` in the root
-      `.env.example`. `services/api` does not call this service yet — that
-      proxy wiring lands with P3 once there's something worth calling.
+      and the `SENTINEL_PY_*` vars in the root `.env.example`.
 - [x] P1 — deterministic text strategy parser (`app/strategy/parser.py`) +
       strategy CRUD (`POST /strategies/parse`, `POST /strategies`,
       `GET /strategies`, `GET /strategies/{id}`, `PATCH /strategies/{id}`,
@@ -33,7 +32,15 @@ unchanged until an explicit decision is made to retire it — see
       in-process asyncio sweep loop (`app/watch/poller.py`). Watch API:
       `POST /watch`, `GET /watch`, `GET /watch/{id}/observations`,
       `POST /watch/sweep` (run one sweep now).
-- [ ] P3 — notification engine + WebSocket push
+- [x] P3 — notification engine. `app/notify/dispatcher.py` POSTs to
+      services/api's `/internal/sentinel-py/notify`, which writes a
+      `Notification` row (category `sentinel`) with durable per-trading-day
+      dedupe. `app/notify/compliance.py` gates every outgoing string and
+      metadata key against ARCH-4 (no Buy/Sell/Entry/Target/Stop).
+      **No WebSocket was added** — apps/web already polls `/notifications`
+      every 30s and `NotificationSync.tsx` states there is deliberately no
+      second copy of that polling. Sub-30s push is a change to the whole
+      notification system, not a Sentinel feature; see below.
 - [ ] P4 — in-trade monitoring
 - [ ] P5 — image/video strategy extraction
 - [ ] P6 — admin portal endpoints
@@ -69,13 +76,15 @@ Reads the repo-root `.env`. Relevant vars:
 - `SENTINEL_PY_SWEEP_ENABLED` (default `true`) — set false to run the API
   without the background watch loop
 
-## Known limits (P2)
+## Known limits
 
-The sweep loop runs **in-process** (`asyncio.create_task`). It stops with the
-process and does no work-stealing, so running more than one replica would
-evaluate every watch more than once. Before this scales past one instance it
-needs to move to a leased worker — the `JobLease` table already in the schema
-is the existing pattern for that.
+**Latency.** An alert reaches the user within one sweep (15s) plus one web
+poll (30s) — so up to ~45s, not the 5s a socket would give. Adding a push
+channel means adding one to the notification system as a whole; it is
+deliberately not forked here for one category.
 
-Notifications are currently **logged, not delivered** — `poller._emit` is the
-seam P3 replaces with real dispatch to services/api.
+**Single process.** The sweep loop runs in-process (`asyncio.create_task`)
+and dies with its process. It is gated on a `JobLease` (`app/core/lease.py`,
+ported from `services/api/src/common/leader-election.ts`), so extra replicas
+stand by rather than double-notifying, but work does not resume until some
+instance wins the lease on its next tick.

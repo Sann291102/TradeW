@@ -1,4 +1,4 @@
-"""asyncpg CRUD for WatchSession + SentinelObservation.
+"""asyncpg CRUD for WatchSession + WatchObservation.
 
 Shares the pool created in app/strategy/store.py — one service, one pool.
 """
@@ -74,7 +74,7 @@ async def list_active_watches() -> list[dict]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT w.*, s."rules" AS "strategyRules"
+            SELECT w.*, s."rules" AS "strategyRules", s."name" AS "strategyName"
             FROM "WatchSession" w
             JOIN "UserStrategy" s ON s."id" = w."strategyId"
             WHERE w."state" <> 'EXITED' AND s."status" = 'active'
@@ -85,6 +85,7 @@ async def list_active_watches() -> list[dict]:
         watch = _watch_to_dict(row)
         rules = row["strategyRules"]
         watch["strategyRules"] = json.loads(rules) if isinstance(rules, str) else rules
+        watch["strategyName"] = row["strategyName"]
         result.append(watch)
     return result
 
@@ -123,7 +124,7 @@ async def record_observation(
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO "SentinelObservation"
+            INSERT INTO "WatchObservation"
                 ("id", "watchSessionId", "agent", "candleTime", "ruleEvaluations", "state", "metadata", "createdAt")
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             """,
@@ -143,7 +144,7 @@ async def list_observations(watch_session_id: str, limit: int = 50) -> list[dict
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT * FROM "SentinelObservation"
+            SELECT * FROM "WatchObservation"
             WHERE "watchSessionId" = $1 ORDER BY "createdAt" DESC LIMIT $2
             """,
             watch_session_id,

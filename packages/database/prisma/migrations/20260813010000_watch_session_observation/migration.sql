@@ -1,4 +1,4 @@
--- WatchSession + SentinelObservation: Sentinel (Python)'s watch engine state
+-- WatchSession + WatchObservation: Sentinel (Python)'s watch engine state
 -- and audit trail. Owned by services/sentinel-py, migrated here because
 -- Prisma is the monorepo's single migration tool. See the P2 section of
 -- services/sentinel-py/README.md.
@@ -31,7 +31,7 @@ CREATE INDEX "WatchSession_userId_idx" ON "WatchSession"("userId");
 -- The sweep loop selects by state on every tick, so this one is hot.
 CREATE INDEX "WatchSession_state_idx" ON "WatchSession"("state");
 
-CREATE TABLE "SentinelObservation" (
+CREATE TABLE "WatchObservation" (
     "id" TEXT NOT NULL,
     "watchSessionId" TEXT NOT NULL,
     "agent" TEXT NOT NULL,
@@ -41,10 +41,10 @@ CREATE TABLE "SentinelObservation" (
     "metadata" JSONB,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "SentinelObservation_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "WatchObservation_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX "SentinelObservation_watchSessionId_idx" ON "SentinelObservation"("watchSessionId");
+CREATE INDEX "WatchObservation_watchSessionId_idx" ON "WatchObservation"("watchSessionId");
 
 -- Retention sweeps and the admin viewer both order by time.
-CREATE INDEX "SentinelObservation_createdAt_idx" ON "SentinelObservation"("createdAt");
+CREATE INDEX "WatchObservation_createdAt_idx" ON "WatchObservation"("createdAt");
