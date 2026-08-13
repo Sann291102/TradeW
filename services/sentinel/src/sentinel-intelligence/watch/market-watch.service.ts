@@ -3,7 +3,7 @@ import type { Signal } from '../../domain';
 import { MarketIntelligenceService, type MarketSnapshot } from '../../intelligence/market-intelligence.service';
 import { StrategyEngineService, type StrategyDetection } from '../../intelligence/strategy-engine.service';
 import { PatternRecognitionService } from '../../brain/pattern-recognition.service';
-import { isMarketOpen } from '../../market-clock';
+import { MARKET_CLOSE_MIN, isMarketOpen, istMinutesOfDay } from '../../market-clock';
 import { SI_CONFIG, SentinelIntelligenceConfig } from '../si.config';
 
 /**
@@ -54,6 +54,16 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
   private sweeping = false;
   private stopping = false;
   private lastSweepAt: Date | null = null;
+  /**
+   * Every tick, including the ones that did nothing.
+   *
+   * Separate from `lastSweepAt` because they answer different questions, and
+   * conflating them hid a real fault for a whole trading day: `lastSweepAt` was
+   * null and `sweeps` was 0, which reads identically whether the loop is dead
+   * or alive-but-idle. This one is the liveness proof.
+   */
+  private lastTickAt: Date | null = null;
+  private lastSkip: WatchSweepResult['skipped'] = null;
   private sweeps = 0;
   private recorded = 0;
   private reasonedRuns = 0;
@@ -109,24 +119,52 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
   /**
    * Put a symbol under watch, or extend the watch already on it.
    *
-   * Called from the request path, so the watch list is exactly the set of
-   * charts traders actually have on their board — not a sweep of the ~219
-   * selectable symbols, which would spend the Dhan candle budget almost
-   * entirely on instruments nobody is looking at.
+   * Called from the request path — `/observe` and `/intelligence/reason` — so
+   * the watch list is exactly the set of charts traders actually have on their
+   * board, not a sweep of the ~219 selectable symbols, which would spend the
+   * Dhan candle budget almost entirely on instruments nobody is looking at.
    *
-   * The watch lapses `watchTtlMs` after the last request for that symbol, so a
-   * board that is closed stops costing anything without needing an explicit
-   * unregister that a crashed tab would never send.
+   * Idempotent: re-registering an already-watched symbol only moves its expiry,
+   * so the 45 s dashboard poll creates one watcher, not one per request, and
+   * the single sweep loop started in `onModuleInit` remains the only timer in
+   * the service.
    */
   register(symbol: string, at: Date = new Date()): void {
     if (!this.config.watchEnabled || !symbol) return;
     const key = symbol.toUpperCase();
     const wasWatching = this.watched.has(key);
 
-    this.watched.set(key, at.getTime() + this.config.watchTtlMs);
+    this.watched.set(key, this.expiryFor(at));
     if (!wasWatching) this.logger.log(`watching ${key} (${this.watched.size} under watch)`);
 
     this.evictOldest(at);
+  }
+
+  /**
+   * When a watch registered now should lapse.
+   *
+   * The plain TTL made the browser the heartbeat. The dashboard polls
+   * `/observe` every 45 s, so an open tab refreshed the TTL forever and a
+   * closed one retired the symbol `watchTtlMs` later — meaning "continuous
+   * watch" in practice meant "watched while somebody is looking", which is the
+   * precise thing this service exists not to be.
+   *
+   * Holding a watch to the close instead means a chart somebody opened today
+   * keeps being observed for the rest of today's session whether or not their
+   * tab is still open. It stays bounded by the two things that actually cost
+   * money, both unchanged: a sweep is a no-op outside trading hours
+   * (`isTradingTime`), and the symbol cap still applies. Registering outside the
+   * session falls back to the TTL, so a pre-market or after-hours request
+   * cannot pin a symbol overnight, and nothing carries into tomorrow — the next
+   * session starts from an empty list and fills from real observations again.
+   */
+  private expiryFor(at: Date): number {
+    const ttlExpiry = at.getTime() + this.config.watchTtlMs;
+    if (!this.config.watchPersistThroughSession) return ttlExpiry;
+    // Minutes-to-close from the shared IST clock rather than local date maths,
+    // so this cannot disagree with the guard that decides whether to sweep.
+    const msToClose = (MARKET_CLOSE_MIN - istMinutesOfDay(at)) * 60_000;
+    return Math.max(ttlExpiry, at.getTime() + msToClose);
   }
 
   /**
@@ -136,17 +174,22 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
    * exercised by waiting on a timer is a background loop nobody tests.
    */
   async sweep(at: Date = new Date()): Promise<WatchSweepResult> {
+    // Recorded before any guard, so an operator can tell a loop that is idle
+    // from a loop that is dead. Everything below can legitimately decline.
+    this.lastTickAt = at;
+
     // A sweep that overruns its interval must not have a second one stacked on
     // top of it: that is how a slow bridge turns into unbounded concurrency
     // against a rate-limited API.
-    if (this.sweeping || this.stopping) return { skipped: 'in-progress', symbols: 0, detections: 0, recorded: 0, reasoned: 0 };
+    if (this.sweeping || this.stopping) return this.declined('in-progress');
 
     // Expire first, so a sweep is never judged against symbols that have
     // already lapsed, and the skip reason below is the true one.
     this.expire(at);
-    if (this.watched.size === 0) return { skipped: 'no-symbols', symbols: 0, detections: 0, recorded: 0, reasoned: 0 };
-    if (!this.isTradingTime(at)) return { skipped: 'market-closed', symbols: 0, detections: 0, recorded: 0, reasoned: 0 };
+    if (this.watched.size === 0) return this.declined('no-symbols');
+    if (!this.isTradingTime(at)) return this.declined('market-closed');
 
+    this.lastSkip = null;
     this.sweeping = true;
     const symbols = [...this.watched.keys()];
 
@@ -182,6 +225,12 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
       );
     }
     return { skipped: null, symbols: symbols.length, detections, recorded, reasoned };
+  }
+
+  /** A tick that legitimately did no work, remembered so `status()` can say why. */
+  private declined(reason: Exclude<WatchSweepResult['skipped'], null>): WatchSweepResult {
+    this.lastSkip = reason;
+    return { skipped: reason, symbols: 0, detections: 0, recorded: 0, reasoned: 0 };
   }
 
   /**
@@ -338,6 +387,12 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
       recording: this.patterns !== null,
       tradingTime: this.isTradingTime(at),
       watching: [...this.watched.keys()],
+      /** symbol → when its watch lapses, so "watched until the close" is checkable. */
+      watchedUntil: Object.fromEntries(
+        [...this.watched].map(([symbol, expiresAt]) => [symbol, new Date(expiresAt).toISOString()]),
+      ),
+      /** False means a watch retires `watchTtlMs` after the last request instead. */
+      persistsThroughSession: this.config.watchPersistThroughSession,
       maxSymbols: this.config.watchMaxSymbols,
       intervalMs: this.config.watchIntervalMs,
       sweeps: this.sweeps,
@@ -348,6 +403,10 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
       /** Sweeps that found a new setup but had no reasoning budget left. */
       reasoningDeferred: this.reasoningSkipped,
       lastSweepAt: this.lastSweepAt?.toISOString() ?? null,
+      /** The last time the loop ticked at all, whether or not it swept. */
+      lastTickAt: this.lastTickAt?.toISOString() ?? null,
+      /** Why the most recent tick did nothing, or null when it swept. */
+      lastSkipReason: this.lastSkip,
     };
   }
 }

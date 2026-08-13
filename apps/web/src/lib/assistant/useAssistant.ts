@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWorkspaceStore } from '../store/workspaceStore';
+import { DETECTORS } from '../charts/detectors';
 import { fetchQuotes, type LiveQuote } from '../marketData';
 import { fetchDhanQuotes } from '../dhanLiveFeed';
 import { planUtterance, type MultiStepPlan, type PlanStep } from './planner';
@@ -241,6 +242,8 @@ export function useAssistant() {
   const applyLayout = useWorkspaceStore((s) => s.applyLayout);
   const toggleSidebar = useWorkspaceStore((s) => s.toggleSidebar);
   const addWorkspaceTab = useWorkspaceStore((s) => s.addWorkspaceTab);
+  const replaceChartDrawings = useWorkspaceStore((s) => s.replaceChartDrawings);
+  const clearChartDrawings = useWorkspaceStore((s) => s.clearChartDrawings);
 
   const [turns, setTurns] = useState<AssistantTurn[]>([GREETING]);
 
@@ -334,10 +337,57 @@ export function useAssistant() {
             }
           })();
           break;
+        case 'chartDetect': {
+          /**
+           * Detection runs HERE, not in the resolver, because this is the first
+           * point that has the bars. `chartSeries` is whatever the visible
+           * chart last published, so the zones are computed from exactly the
+           * candles on screen rather than from a second fetch that could return
+           * a different window.
+           */
+          const series = useWorkspaceStore.getState().chartSeries;
+          const spec = DETECTORS[action.detector];
+          if (!series || series.candles.length === 0) {
+            // Say so rather than drawing nothing and reporting success — an
+            // empty chart and a detector that found nothing look identical.
+            setTurns((prev) => [
+              ...prev,
+              {
+                id: turnId(),
+                role: 'assistant',
+                intent: 'command',
+                text: "I don't have any chart data loaded yet — open a chart and ask me again.",
+                steps: ['No series published by the chart'],
+              },
+            ]);
+            break;
+          }
+          const result = spec.run(series.candles, series.lastPrice);
+          replaceChartDrawings(series.seriesKey, spec.tag, result.drawings);
+          setTurns((prev) => [
+            ...prev,
+            {
+              id: turnId(),
+              role: 'assistant',
+              intent: 'command',
+              // Observation about structure, not a call — but it is a statement
+              // about the market, so it carries the disclaimer.
+              disclaimer: true,
+              text: result.summary,
+              steps: result.steps,
+            },
+          ]);
+          break;
+        }
+        case 'chartClearDrawings':
+          clearChartDrawings(action.tag);
+          break;
       }
     },
     [
       router,
+      replaceChartDrawings,
+      clearChartDrawings,
       setSelectedSymbol,
       setCommandPaletteOpen,
       setNotificationCenterOpen,

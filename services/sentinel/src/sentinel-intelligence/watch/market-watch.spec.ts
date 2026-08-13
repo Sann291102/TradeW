@@ -143,16 +143,31 @@ describe('watch cost controls', () => {
   });
 
   it('stops watching a symbol once its watch lapses', async () => {
-    const h = harness();
+    // Pure-TTL mode. With session persistence on (the default) a watch runs to
+    // the close instead — see 'the watch does not need a browser' below — so the
+    // TTL path is pinned here with persistence explicitly off.
+    const ttlOnly = loadSentinelIntelligenceConfig({ SI_WATCH_PERSIST_SESSION: 'false' });
+    const h = harness({ config: ttlOnly });
     h.service.register('NIFTY', TRADING);
 
-    const later = new Date(TRADING.getTime() + config.watchTtlMs + 1000);
+    const later = new Date(TRADING.getTime() + ttlOnly.watchTtlMs + 1000);
     const result = await h.service.sweep(later);
 
     expect(h.service.status(later).watching).toEqual([]);
     // Reported as an empty watch list, not as a closed market — the sweep
     // must not misattribute why it did nothing.
     expect(result.skipped).toBe('no-symbols');
+  });
+
+  it('falls back to the TTL for a symbol registered outside the session', () => {
+    // A watch registered after the close must not be pinned to a session that
+    // has already ended, or an after-hours request would hold a symbol
+    // overnight and it would be swept the moment tomorrow's bell rang.
+    const h = harness();
+    h.service.register('NIFTY', AFTER_CLOSE);
+
+    const expiry = new Date(h.service.status(AFTER_CLOSE).watchedUntil.NIFTY).getTime();
+    expect(expiry).toBe(AFTER_CLOSE.getTime() + config.watchTtlMs);
   });
 
   it('never lets a slow sweep stack a second one on top of itself', async () => {
@@ -183,6 +198,96 @@ describe('watch cost controls', () => {
 
     expect(h.snapshot).toHaveBeenCalledTimes(2);
     expect(result.recorded).toBe(0);
+  });
+});
+
+/**
+ * Autonomy. The property that makes this a continuous watch rather than a
+ * server-side echo of whoever has a tab open: the loop's inputs must survive the
+ * requests that created them.
+ */
+describe('the watch does not need a browser', () => {
+  it('keeps watching after the requests stop, for the rest of the session', async () => {
+    // The dashboard polls `/observe` every 45 s, so a plain TTL was refreshed by
+    // the tab and retired the symbol `watchTtlMs` after it closed — the browser
+    // was the heartbeat. One registration must now carry the session.
+    const h = harness();
+    h.service.register('NIFTY', TRADING);
+
+    // Well past the TTL, and with nothing having asked about NIFTY since.
+    const muchLater = new Date(TRADING.getTime() + config.watchTtlMs * 3);
+    const result = await h.service.sweep(muchLater);
+
+    expect(h.service.status(muchLater).watching).toEqual(['NIFTY']);
+    expect(result.skipped).toBeNull();
+    expect(h.snapshot).toHaveBeenCalledWith('NIFTY');
+  });
+
+  it('holds the watch to the close, not beyond it', () => {
+    const h = harness();
+    h.service.register('NIFTY', TRADING);
+
+    // 15:30 IST on the day of TRADING (2026-08-04) — 10:00 UTC.
+    expect(h.service.status(TRADING).watchedUntil.NIFTY).toBe('2026-08-04T10:00:00.000Z');
+    expect(h.service.status(TRADING).persistsThroughSession).toBe(true);
+  });
+
+  it('no longer reports no-symbols once a symbol has been observed', async () => {
+    // The exact production symptom: watching [], sweeps 0, lastSweepAt null all
+    // day, because nothing on the `/observe` path ever registered anything.
+    const h = harness();
+    expect((await h.service.sweep(TRADING)).skipped).toBe('no-symbols');
+
+    h.service.register('NIFTY', TRADING);
+    const result = await h.service.sweep(new Date(TRADING.getTime() + 60_000));
+
+    expect(result.skipped).toBeNull();
+    expect(result.symbols).toBe(1);
+    const status = h.service.status(TRADING);
+    expect(status.sweeps).toBeGreaterThan(0);
+    expect(status.lastSweepAt).not.toBeNull();
+    expect(status.lastSkipReason).toBeNull();
+  });
+
+  it('reports that it ticked even when it had nothing to do', async () => {
+    // `lastSweepAt` alone cannot distinguish a dead loop from an idle one, and
+    // that ambiguity is what let a watch that had never swept look healthy.
+    const h = harness();
+    const result = await h.service.sweep(TRADING);
+
+    expect(result.skipped).toBe('no-symbols');
+    expect(h.service.status(TRADING).lastTickAt).toBe(TRADING.toISOString());
+    expect(h.service.status(TRADING).lastSweepAt).toBeNull();
+    expect(h.service.status(TRADING).lastSkipReason).toBe('no-symbols');
+  });
+
+  it('still refuses to sweep after the close even while a watch is technically live', async () => {
+    // Session persistence must never become a licence to poll a metered API
+    // after hours. A watch registered near the bell keeps its TTL floor, which
+    // outlives the session — so the trading-time guard, not the expiry, has to
+    // be what stops the sweep. Two independent controls, both required.
+    const h = harness();
+    const nearClose = new Date('2026-08-04T09:59:00.000Z'); // 15:29 IST
+    h.service.register('NIFTY', nearClose);
+
+    const afterBell = new Date('2026-08-04T10:05:00.000Z'); // 15:35 IST
+    const result = await h.service.sweep(afterBell);
+
+    expect(h.service.status(afterBell).watching).toEqual(['NIFTY']);
+    expect(result.skipped).toBe('market-closed');
+    expect(h.snapshot).not.toHaveBeenCalled();
+  });
+
+  it('lets a session-held watch lapse at the close rather than carrying it overnight', async () => {
+    const h = harness();
+    h.service.register('NIFTY', TRADING);
+
+    const nextMorning = new Date('2026-08-05T04:00:00.000Z'); // 09:30 IST, Wednesday
+    const result = await h.service.sweep(nextMorning);
+
+    // Tomorrow starts from an empty list and fills from real observations again.
+    expect(h.service.status(nextMorning).watching).toEqual([]);
+    expect(result.skipped).toBe('no-symbols');
   });
 });
 
@@ -245,6 +350,22 @@ describe('watch configuration', () => {
     expect(loadSentinelIntelligenceConfig({}).watchEnabled).toBe(true);
     expect(loadSentinelIntelligenceConfig({ SI_WATCH_ENABLED: 'false' }).watchEnabled).toBe(false);
     expect(loadSentinelIntelligenceConfig({ SI_WATCH_ENABLED: 'nonsense' }).watchEnabled).toBe(true);
+  });
+
+  it('persists a watch through the session by default, and is opt-out too', () => {
+    // A config typo must not quietly hand the heartbeat back to the browser.
+    expect(loadSentinelIntelligenceConfig({}).watchPersistThroughSession).toBe(true);
+    expect(
+      loadSentinelIntelligenceConfig({ SI_WATCH_PERSIST_SESSION: 'false' }).watchPersistThroughSession,
+    ).toBe(false);
+    expect(
+      loadSentinelIntelligenceConfig({ SI_WATCH_PERSIST_SESSION: 'nonsense' }).watchPersistThroughSession,
+    ).toBe(true);
+  });
+
+  it('warms the corpus at boot by default, so background reasoning is not gated on a manual call', () => {
+    expect(loadSentinelIntelligenceConfig({}).indexOnBoot).toBe(true);
+    expect(loadSentinelIntelligenceConfig({ SI_INDEX_ON_BOOT: 'false' }).indexOnBoot).toBe(false);
   });
 
   it('registers nothing while disabled', () => {

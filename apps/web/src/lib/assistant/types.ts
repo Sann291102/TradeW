@@ -1,4 +1,6 @@
 import type { PanelKind, ThemeName } from '../store/workspaceStore';
+import type { DrawingTag } from '../charts/drawings';
+import type { DetectorId } from '../charts/detectors';
 import type { QuoteAsk } from './quotes';
 
 /**
@@ -48,7 +50,18 @@ export type AssistantAction =
   | { type: 'hidePanel'; panel: PanelKind }
   | { type: 'applyLayout'; layoutId: string }
   | { type: 'toggleSidebar' }
-  | { type: 'newWorkspaceTab' };
+  | { type: 'newWorkspaceTab' }
+  /**
+   * Run a deterministic chart detector and replace its tag's drawings.
+   *
+   * Deliberately NOT a `chartDraw` carrying coordinates: this resolver is pure
+   * and has no candles, so it cannot compute a zone's price bounds. It names
+   * the detector to run; the executor, which does have the series, runs it.
+   * Asking the grammar to emit coordinates would mean inventing them.
+   */
+  | { type: 'chartDetect'; detector: DetectorId }
+  /** Erase one producer's drawings. Tag-scoped — there is no "clear the chart". */
+  | { type: 'chartClearDrawings'; tag: DrawingTag };
 
 // ---------------------------------------------------------------------------
 // Intents

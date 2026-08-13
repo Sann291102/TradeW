@@ -238,7 +238,22 @@ export interface StrategyMatch {
   rulesMatched: string[];
   rulesUnmet: string[];
   invalidationsTriggered: string[];
+  /**
+   * MARKET time — the bar the rules were evaluated against, not the clock time
+   * of the scan. See `observedAt` for the difference and why both are kept.
+   */
   detectedAt: string; // ISO
+  /**
+   * EXECUTION time — when the scan that produced this match actually ran.
+   *
+   * Optional because it was added after the shape was in use; every scan
+   * produced by `StrategyEngineService` populates it. Kept alongside
+   * `detectedAt` because collapsing the two is what made a setup formed on an
+   * earlier bar read as if it had appeared at whatever moment the dashboard
+   * last polled — the session narrative orders by market time, while an
+   * auditor needs to know when Sentinel looked.
+   */
+  observedAt?: string; // ISO
 }
 
 // ---------------------------------------------------------------- Module 6
