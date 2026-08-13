@@ -7,7 +7,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from app.strategy.store import _pool_or_raise
+from app.strategy.store import _aware, _naive, _now, _pool_or_raise
 
 
 def _watch_to_dict(row) -> dict:
@@ -27,8 +27,8 @@ def _watch_to_dict(row) -> dict:
         "reachedMilestones": json.loads(row["reachedMilestones"])
         if isinstance(row["reachedMilestones"], str)
         else (row["reachedMilestones"] or []),
-        "lastNotifiedAt": row["lastNotifiedAt"],
-        "cooldownUntil": row["cooldownUntil"],
+        "lastNotifiedAt": _aware(row["lastNotifiedAt"]),
+        "cooldownUntil": _aware(row["cooldownUntil"]),
         "createdAt": row["createdAt"].isoformat(),
         "updatedAt": row["updatedAt"].isoformat(),
     }
@@ -43,7 +43,7 @@ async def create_watch(
     expiry: str | None,
 ) -> dict:
     pool = _pool_or_raise()
-    now = datetime.now(timezone.utc)
+    now = _now()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -113,9 +113,9 @@ async def update_watch_state(
             """,
             watch_id,
             state,
-            last_notified_at,
-            cooldown_until,
-            datetime.now(timezone.utc),
+            _naive(last_notified_at),
+            _naive(cooldown_until),
+            _now(),
         )
 
 
@@ -138,11 +138,11 @@ async def record_observation(
             str(uuid.uuid4()),
             watch_session_id,
             agent,
-            candle_time,
+            _naive(candle_time),
             json.dumps(rule_evaluations),
             state,
             json.dumps(metadata) if metadata is not None else None,
-            datetime.now(timezone.utc),
+            _now(),
         )
 
 
@@ -201,7 +201,7 @@ async def open_position(
             stop_price,
             target_price,
             direction,
-            datetime.now(timezone.utc),
+            _now(),
         )
     return _watch_to_dict(row) if row else None
 
@@ -218,7 +218,7 @@ async def close_position(user_id: str, watch_id: str) -> dict | None:
             """,
             user_id,
             watch_id,
-            datetime.now(timezone.utc),
+            _now(),
         )
     return _watch_to_dict(row) if row else None
 
@@ -230,7 +230,7 @@ async def record_milestones(watch_id: str, milestones: list[str]) -> None:
             'UPDATE "WatchSession" SET "reachedMilestones" = $2, "updatedAt" = $3 WHERE "id" = $1',
             watch_id,
             json.dumps(milestones),
-            datetime.now(timezone.utc),
+            _now(),
         )
 
 
@@ -240,5 +240,5 @@ async def mark_exited(watch_id: str) -> None:
         await conn.execute(
             'UPDATE "WatchSession" SET "state" = \'EXITED\', "updatedAt" = $2 WHERE "id" = $1',
             watch_id,
-            datetime.now(timezone.utc),
+            _now(),
         )

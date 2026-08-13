@@ -18,6 +18,44 @@ from app.strategy.schemas import ParsedStrategy
 _pool: asyncpg.Pool | None = None
 
 
+def _now() -> datetime:
+    """Naive UTC.
+
+    Prisma maps `DateTime` to Postgres `TIMESTAMP(3)`, i.e. *timestamp
+    WITHOUT time zone*. asyncpg refuses a timezone-aware datetime for such a
+    column ("can't subtract offset-naive and offset-aware datetimes"), so
+    every value written from here has to drop the tzinfo. It is still UTC —
+    the instant is unchanged, only the label is removed.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _naive(value: datetime | None) -> datetime | None:
+    """Normalise a caller-supplied datetime for the same reason as `_now`.
+
+    Callers legitimately work in aware UTC — the state machine compares
+    against `datetime.now(timezone.utc)`, and candle timestamps arrive from
+    the feed tagged UTC. Converting here rather than at each call site keeps
+    the "database columns are naive" detail owned by the layer that owns the
+    database, instead of leaking into the sweep loop.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _aware(value: datetime | None) -> datetime | None:
+    """The read side of `_now`. Rows come back naive; the state machine
+    compares them against an aware `datetime.now(timezone.utc)`, and mixing
+    the two raises TypeError. Re-attach UTC on the way out."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+
 async def init_pool() -> None:
     global _pool
     if _pool is not None:
@@ -60,7 +98,7 @@ async def create_strategy(
 ) -> dict:
     pool = _pool_or_raise()
     new_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
+    now = _now()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -108,7 +146,7 @@ async def update_strategy(
     rules: ParsedStrategy | None,
 ) -> dict | None:
     pool = _pool_or_raise()
-    now = datetime.now(timezone.utc)
+    now = _now()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
