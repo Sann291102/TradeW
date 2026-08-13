@@ -20,6 +20,7 @@
     "db:generate": "npm run generate -w @tradew/database",
     "db:migrate": "npm run migrate -w @tradew/database",
     "dev:sentinel": "npm run start:dev -w @tradew/sentinel",
+    "dev:sentinel-py": "cd services/sentinel-py && uvicorn app.main:app --reload --port 4011",
     "dev:ai": "npm run start:dev -w @tradew/tradew-ai",
     "dev:market-data": "npm run live:server -w @tradew/market-data-service",
     "dev:admin": "npm run dev -w @tradew/admin",

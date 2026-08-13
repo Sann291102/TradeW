@@ -15,6 +15,11 @@ unchanged until an explicit decision is made to retire it — see
 - [x] Service-token auth guard (`app/core/auth.py`), mirroring
       `services/sentinel`'s `ServiceTokenGuard` — not yet wired to any route
       since there are no protected routes yet
+- [x] Wired into orchestration: `npm run dev:sentinel-py`, a `sentinel-py`
+      block in `infra/docker/docker-compose.prod.yml` (mirrors `sentinel`'s),
+      and `SENTINEL_PY_SERVICE_URL` / `SENTINEL_PY_SERVICE_TOKEN` in the root
+      `.env.example`. `services/api` does not call this service yet — that
+      proxy wiring lands with P3 once there's something worth calling.
 - [ ] P1 — text strategy parser + strategy CRUD
 - [ ] P2 — watch engine + polling state machine
 - [ ] P3 — notification engine + WebSocket push
