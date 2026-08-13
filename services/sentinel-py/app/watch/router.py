@@ -52,3 +52,41 @@ async def sweep_now() -> dict:
     the normal path."""
     evaluated = await sweep_once()
     return {"evaluated": evaluated}
+
+
+class OpenPositionRequest(BaseModel):
+    """The user's own numbers for a position they have ALREADY taken.
+    Sentinel proposes none of these — see app/intrade/monitor.py."""
+
+    entryPrice: float
+    # The price at which the user considers the idea wrong. Named for what it
+    # means rather than as an order type, matching the vocabulary rules.
+    invalidationPrice: float
+    projectedPrice: float | None = None
+    direction: Literal["LONG", "SHORT"]
+
+
+@router.post("/{watch_id}/position")
+async def open_position(
+    watch_id: str, body: OpenPositionRequest, user_id: str = Query(..., alias="userId")
+) -> dict:
+    """'I have taken this position' — moves the watch to IN_TRADE."""
+    if body.entryPrice == body.invalidationPrice:
+        # Risk of zero has no scale to measure progress against, and every
+        # R-multiple would divide by it.
+        raise HTTPException(status_code=400, detail="entryPrice and invalidationPrice must differ")
+    row = await store.open_position(
+        user_id, watch_id, body.entryPrice, body.invalidationPrice, body.projectedPrice, body.direction
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Watch not found")
+    return row
+
+
+@router.delete("/{watch_id}/position")
+async def close_position(watch_id: str, user_id: str = Query(..., alias="userId")) -> dict:
+    """'I have closed this position' — moves the watch to EXITED."""
+    row = await store.close_position(user_id, watch_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Watch not found")
+    return row

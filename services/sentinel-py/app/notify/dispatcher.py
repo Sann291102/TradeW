@@ -113,3 +113,80 @@ async def notify(watch: dict, transition: Transition, strategy_name: str, tradin
         logger.exception("refusing to send a non-compliant notification for watch=%s", watch["id"])
         return False
     return await dispatch(payload)
+
+
+# ---------------------------------------------------------------------------
+# In-trade notifications (P4)
+#
+# Every string below is fixed, not composed from user input, and every one is
+# run through assert_compliant before it leaves. The wording deliberately
+# avoids "stop"/"target"/"book profits" even though the underlying numbers
+# are the user's own: ARCH-4 binds the surface, not just the intent, and the
+# TS vocabulary layer rewrites exactly these words for exactly this reason.
+#
+# None of these carry an instruction. "Consider moving your stop to
+# breakeven", which the original plan proposed, is advice about what to do
+# with a position — Sentinel reports what happened and stops there.
+# ---------------------------------------------------------------------------
+
+INTRADE_TITLES = {
+    "milestone": "Position Progress",
+    "invalidation_reached": "Invalidation Level Reached",
+    "projected_level_reached": "Projected Level Reached",
+    "structure_break": "Structure Shifting",
+}
+
+
+def build_intrade_payload(
+    watch: dict,
+    event: str,
+    detail: str,
+    strategy_name: str,
+    trading_day: str,
+    r_multiple: float | None,
+    dedupe_suffix: str,
+) -> dict:
+    label = instrument_label(watch)
+    title = INTRADE_TITLES[event]
+    body = f'Your position from strategy "{strategy_name}" on {label}: {detail}.'
+
+    metadata = {
+        "source": "sentinel-py",
+        "watchSessionId": watch["id"],
+        "strategyId": watch["strategyId"],
+        "symbol": watch["symbol"],
+        "strike": watch.get("strike"),
+        "optionType": watch.get("optionType"),
+        "state": watch["state"],
+        "tier": "in_trade",
+        "event": event,
+        # Progress as a ratio of the user's own risk. This is a measurement of
+        # something that already happened, not a level to act on, which is why
+        # it is allowed where entry/stop/target prices are not.
+        "rMultiple": round(r_multiple, 2) if r_multiple is not None else None,
+        "reason": detail,
+        "dedupeKey": f"sentinel-py:{watch['id']}:{dedupe_suffix}",
+        "tradingDate": trading_day,
+    }
+
+    assert_compliant(title, body, metadata)
+    return {"userId": watch["userId"], "category": "sentinel", "title": title, "body": body, "metadata": metadata}
+
+
+async def notify_intrade(
+    watch: dict,
+    event: str,
+    detail: str,
+    strategy_name: str,
+    trading_day: str,
+    r_multiple: float | None,
+    dedupe_suffix: str,
+) -> bool:
+    try:
+        payload = build_intrade_payload(
+            watch, event, detail, strategy_name, trading_day, r_multiple, dedupe_suffix
+        )
+    except ComplianceError:
+        logger.exception("refusing to send a non-compliant in-trade notification for watch=%s", watch["id"])
+        return False
+    return await dispatch(payload)

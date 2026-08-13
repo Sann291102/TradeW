@@ -72,3 +72,49 @@ def test_every_generated_payload_passes_its_own_compliance_gate():
     for met, total in ((1, 2), (2, 2)):
         payload = build_payload(WATCH, transition(met, total), "15-Min ORB", "2026-08-13")
         assert_compliant(payload["title"], payload["body"], payload["metadata"])
+
+
+# --- in-trade templates (P4) ------------------------------------------------
+
+from app.notify.dispatcher import INTRADE_TITLES, build_intrade_payload  # noqa: E402
+
+IN_TRADE_WATCH = {**WATCH, "state": "IN_TRADE"}
+
+
+@pytest.mark.parametrize("event", sorted(INTRADE_TITLES))
+def test_every_intrade_template_passes_its_own_compliance_gate(event):
+    """The in-trade phase is where forbidden wording is most tempting — the
+    underlying numbers really are entries and stops. The surface still must
+    not say so."""
+    payload = build_intrade_payload(
+        watch=IN_TRADE_WATCH,
+        event=event,
+        detail="price reached the invalidation level you set (242.0)",
+        strategy_name="15-Min ORB",
+        trading_day="2026-08-13",
+        r_multiple=1.5,
+        dedupe_suffix=event,
+    )
+    assert_compliant(payload["title"], payload["body"], payload["metadata"])
+    assert payload["metadata"]["rMultiple"] == 1.5
+
+
+def test_no_intrade_title_uses_forbidden_words():
+    for title in INTRADE_TITLES.values():
+        assert_compliant(title, "placeholder body", {})
+
+
+def test_intrade_payload_carries_no_price_levels():
+    """rMultiple is a measurement of what happened; entry/stop/target prices
+    are levels to act on and stay off the notification."""
+    payload = build_intrade_payload(
+        watch=IN_TRADE_WATCH,
+        event="milestone",
+        detail="your position has moved 2:1 relative to the risk you defined",
+        strategy_name="15-Min ORB",
+        trading_day="2026-08-13",
+        r_multiple=2.0,
+        dedupe_suffix="milestone:2R",
+    )
+    keys = {k.lower() for k in payload["metadata"]}
+    assert not keys & {"entryprice", "stoploss", "stopprice", "target", "targetprice"}

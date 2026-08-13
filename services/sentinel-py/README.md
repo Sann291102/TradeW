@@ -9,7 +9,7 @@ This is a **new, additive service** (`services/sentinel-py`, default port
 unchanged until an explicit decision is made to retire it — see
 `SENTINEL_MASTER_PLAN.md` / the Sentinel architecture plan for that step.
 
-## Status: P0–P3 complete
+## Status: P0–P4 complete
 
 - [x] FastAPI app with `/health`
 - [x] Service-token auth guard (`app/core/auth.py`), mirroring
@@ -41,7 +41,18 @@ unchanged until an explicit decision is made to retire it — see
       every 30s and `NotificationSync.tsx` states there is deliberately no
       second copy of that polling. Sub-30s push is a change to the whole
       notification system, not a Sentinel feature; see below.
-- [ ] P4 — in-trade monitoring
+- [x] P4 — in-trade monitoring (`app/intrade/monitor.py`). After the user
+      marks a position taken (`POST /watch/{id}/position` with their own
+      entry, invalidation level, direction and optional projected level), the
+      sweep switches that watch from rule evaluation to measuring movement
+      against those numbers: R-multiple milestones (1R/2R/3R, announced once
+      each), invalidation reached, projected level reached, and structure
+      break. `DELETE /watch/{id}/position` closes it.
+
+      Risk and reward are read from different prices, deliberately: adverse
+      events use the candle's adverse extreme (price genuinely traded there),
+      favourable ones use the close (a wick that tags 2R has not achieved
+      2R). Quick to report risk, slow to claim progress.
 - [ ] P5 — image/video strategy extraction
 - [ ] P6 — admin portal endpoints
 - [ ] P7 — strike price dropdown data

@@ -20,6 +20,13 @@ def _watch_to_dict(row) -> dict:
         "optionType": row["optionType"],
         "expiry": row["expiry"],
         "state": row["state"],
+        "entryPrice": float(row["entryPrice"]) if row["entryPrice"] is not None else None,
+        "stopPrice": float(row["stopPrice"]) if row["stopPrice"] is not None else None,
+        "targetPrice": float(row["targetPrice"]) if row["targetPrice"] is not None else None,
+        "direction": row["direction"],
+        "reachedMilestones": json.loads(row["reachedMilestones"])
+        if isinstance(row["reachedMilestones"], str)
+        else (row["reachedMilestones"] or []),
         "lastNotifiedAt": row["lastNotifiedAt"],
         "cooldownUntil": row["cooldownUntil"],
         "createdAt": row["createdAt"].isoformat(),
@@ -164,3 +171,74 @@ async def list_observations(watch_session_id: str, limit: int = 50) -> list[dict
         }
         for r in rows
     ]
+
+
+async def open_position(
+    user_id: str,
+    watch_id: str,
+    entry_price: float,
+    stop_price: float,
+    target_price: float | None,
+    direction: str,
+) -> dict | None:
+    """The user marks a position taken. Scoped by userId so one user cannot
+    open a position on another's watch. Milestones reset to [] so a second
+    position on the same watch starts its own history."""
+    pool = _pool_or_raise()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE "WatchSession"
+            SET "state" = 'IN_TRADE',
+                "entryPrice" = $3, "stopPrice" = $4, "targetPrice" = $5,
+                "direction" = $6, "reachedMilestones" = '[]', "updatedAt" = $7
+            WHERE "id" = $2 AND "userId" = $1
+            RETURNING *
+            """,
+            user_id,
+            watch_id,
+            entry_price,
+            stop_price,
+            target_price,
+            direction,
+            datetime.now(timezone.utc),
+        )
+    return _watch_to_dict(row) if row else None
+
+
+async def close_position(user_id: str, watch_id: str) -> dict | None:
+    pool = _pool_or_raise()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE "WatchSession"
+            SET "state" = 'EXITED', "updatedAt" = $3
+            WHERE "id" = $2 AND "userId" = $1
+            RETURNING *
+            """,
+            user_id,
+            watch_id,
+            datetime.now(timezone.utc),
+        )
+    return _watch_to_dict(row) if row else None
+
+
+async def record_milestones(watch_id: str, milestones: list[str]) -> None:
+    pool = _pool_or_raise()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            'UPDATE "WatchSession" SET "reachedMilestones" = $2, "updatedAt" = $3 WHERE "id" = $1',
+            watch_id,
+            json.dumps(milestones),
+            datetime.now(timezone.utc),
+        )
+
+
+async def mark_exited(watch_id: str) -> None:
+    pool = _pool_or_raise()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            'UPDATE "WatchSession" SET "state" = \'EXITED\', "updatedAt" = $2 WHERE "id" = $1',
+            watch_id,
+            datetime.now(timezone.utc),
+        )

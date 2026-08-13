@@ -138,3 +138,95 @@ async def test_unavailable_market_data_records_a_skip(monkeypatch, captured):
 
     assert captured["emitted"] == []
     assert captured["observations"][0]["metadata"]["skipped"] == "market_data_unavailable"
+
+
+# --- in-trade routing (P4) --------------------------------------------------
+
+
+def in_trade_watch(**overrides) -> dict:
+    return {
+        **watch_row(parsed_rules(), state="IN_TRADE"),
+        "entryPrice": 100.0,
+        "stopPrice": 90.0,
+        "targetPrice": None,
+        "direction": "LONG",
+        "reachedMilestones": [],
+        "strategyName": "15-Min ORB",
+        **overrides,
+    }
+
+
+@pytest.fixture
+def intrade_captured(monkeypatch, captured):
+    async def fake_notify_intrade(**kwargs):
+        captured["emitted"].append(kwargs)
+        return True
+
+    async def fake_record_milestones(watch_id, milestones):
+        captured.setdefault("milestones", []).append((watch_id, milestones))
+
+    async def fake_mark_exited(watch_id):
+        captured.setdefault("exited", []).append(watch_id)
+
+    monkeypatch.setattr(poller, "notify_intrade", fake_notify_intrade)
+    monkeypatch.setattr(store, "record_milestones", fake_record_milestones)
+    monkeypatch.setattr(store, "mark_exited", fake_mark_exited)
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_in_trade_watch_is_monitored_not_re_evaluated(monkeypatch, intrade_captured):
+    """The rules that got the user in are spent; an open position is measured
+    against the numbers they declared instead."""
+
+    async def fake_list():
+        return [in_trade_watch()]
+
+    async def fake_candles(symbol, interval="15m", days=1):
+        return forming_tail([candle(0, 100, 110, 95, 105), candle(15, 105, 132, 104, 131)])
+
+    monkeypatch.setattr(store, "list_active_watches", fake_list)
+    monkeypatch.setattr(poller, "fetch_index_candles", fake_candles)
+
+    await poller.sweep_once()
+
+    events = [e["event"] for e in intrade_captured["emitted"]]
+    assert "milestone" in events
+    assert intrade_captured["milestones"][0][1] == ["1R", "2R", "3R"]
+    # It must NOT have gone down the pre-entry path.
+    assert intrade_captured["updates"] == []
+
+
+@pytest.mark.asyncio
+async def test_invalidation_exits_the_watch(monkeypatch, intrade_captured):
+    async def fake_list():
+        return [in_trade_watch()]
+
+    async def fake_candles(symbol, interval="15m", days=1):
+        return forming_tail([candle(0, 100, 110, 95, 105), candle(15, 105, 112, 89, 108)])
+
+    monkeypatch.setattr(store, "list_active_watches", fake_list)
+    monkeypatch.setattr(poller, "fetch_index_candles", fake_candles)
+
+    await poller.sweep_once()
+
+    assert [e["event"] for e in intrade_captured["emitted"]] == ["invalidation_reached"]
+    assert intrade_captured["exited"] == ["watch_1"]
+
+
+@pytest.mark.asyncio
+async def test_in_trade_without_declared_numbers_is_skipped(monkeypatch, intrade_captured):
+    """Sentinel never invents an entry or an invalidation level to fill a gap."""
+
+    async def fake_list():
+        return [in_trade_watch(entryPrice=None, stopPrice=None, direction=None)]
+
+    async def fake_candles(symbol, interval="15m", days=1):
+        return CONFIRMING_CANDLES
+
+    monkeypatch.setattr(store, "list_active_watches", fake_list)
+    monkeypatch.setattr(poller, "fetch_index_candles", fake_candles)
+
+    await poller.sweep_once()
+
+    assert intrade_captured["emitted"] == []

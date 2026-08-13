@@ -1838,10 +1838,17 @@ model WatchSession {
   state      String    @default("IDLE") // IDLE | FORMING | CONFIRMED | IN_TRADE | EXITED
   // Set when the user confirms they took the position (P4). Null while the
   // watch is still pre-entry.
+  // The user's OWN declared numbers for a position they have already taken.
+  // Sentinel does not propose any of these — it is told them, and reports
+  // movement relative to them. See app/intrade/monitor.py.
   entryPrice  Decimal? @db.Decimal(12, 2)
   stopPrice   Decimal? @db.Decimal(12, 2)
   targetPrice Decimal? @db.Decimal(12, 2)
   direction   String? // LONG | SHORT
+  // R-multiples already announced for the current position, e.g. ["1R","2R"].
+  // A milestone is a level, not an event, so "already reported" has to
+  // survive a restart or it re-fires on every sweep past it.
+  reachedMilestones Json @default("[]")
   // Notification gating. cooldownUntil suppresses REPEATS of a state the
   // watch is already in; a forward state change notifies regardless.
   lastNotifiedAt DateTime?

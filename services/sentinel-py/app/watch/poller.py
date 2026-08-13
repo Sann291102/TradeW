@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from app.core.lease import JobLease
 from app.market.clock import is_market_open, session_key
 from app.market.feed import MarketDataUnavailableError, fetch_index_candles, fetch_option_candles
-from app.notify.dispatcher import notify
+from app.intrade.monitor import Direction, evaluate_position
+from app.notify.dispatcher import notify, notify_intrade
 from app.watch import store
 from app.watch.evaluator import evaluate
 from app.watch.state_machine import Transition, WatchState, advance
@@ -72,6 +73,61 @@ async def _emit(watch: dict, transition: Transition) -> None:
     )
 
 
+async def _monitor_position(watch: dict, candles) -> None:
+    """One in-trade check. Requires the user's declared entry, invalidation
+    level and direction — without them there is no scale to measure against,
+    so the watch is left alone rather than guessed at."""
+    entry, stop, direction = watch.get("entryPrice"), watch.get("stopPrice"), watch.get("direction")
+    if entry is None or stop is None or direction is None:
+        logger.warning("watch=%s is IN_TRADE without entry/invalidation/direction — skipping", watch["id"])
+        return
+
+    result = evaluate_position(
+        candles=candles,
+        entry=entry,
+        stop=stop,
+        direction=Direction(direction),
+        target=watch.get("targetPrice"),
+        already_reached=watch.get("reachedMilestones") or [],
+    )
+
+    strategy_name = watch.get("strategyName") or "your strategy"
+    trading_day = session_key(datetime.now(timezone.utc))
+
+    for finding in result.findings:
+        # Milestones dedupe on the milestone itself so 2R is announced once
+        # ever; the level-reached events dedupe per trading day like the
+        # pre-entry tiers do.
+        suffix = f"milestone:{finding.milestone}" if finding.milestone else finding.event.value
+        await notify_intrade(
+            watch=watch,
+            event=finding.event.value,
+            detail=finding.detail,
+            strategy_name=strategy_name,
+            trading_day=trading_day,
+            r_multiple=result.r_multiple,
+            dedupe_suffix=suffix,
+        )
+
+    if result.newly_reached:
+        merged = sorted(set((watch.get("reachedMilestones") or []) + result.newly_reached))
+        await store.record_milestones(watch["id"], merged)
+
+    if result.closes_position:
+        await store.mark_exited(watch["id"])
+
+    await store.record_observation(
+        watch_session_id=watch["id"],
+        agent="intrade-monitor",
+        candle_time=candles[-1].timestamp if candles else None,
+        rule_evaluations=[
+            {"event": f.event.value, "detail": f.detail, "milestone": f.milestone} for f in result.findings
+        ],
+        state=WatchState.EXITED.value if result.closes_position else WatchState.IN_TRADE.value,
+        metadata={"rMultiple": result.r_multiple, "newlyReached": result.newly_reached},
+    )
+
+
 async def sweep_once() -> int:
     """One pass over every active watch. Returns how many were evaluated.
     Never raises: one bad watch must not stop the other watches."""
@@ -83,6 +139,15 @@ async def sweep_once() -> int:
             rules_json = watch.get("strategyRules") or {}
             timeframe = _timeframe_of(rules_json)
             candles = await _candles_for(watch, timeframe)
+
+            # A position that is open is no longer a setup being watched for:
+            # the rules that got the user in are spent, and what matters now
+            # is movement relative to the numbers they declared.
+            if watch["state"] == WatchState.IN_TRADE.value:
+                await _monitor_position(watch, candles)
+                evaluated += 1
+                continue
+
             evaluation = evaluate(rules_json.get("rules", []), candles)
 
             current = WatchState(watch["state"])
