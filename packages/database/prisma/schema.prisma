@@ -1802,3 +1802,25 @@ model OperatorAccount {
 
   @@index([disabledAt])
 }
+
+// Owned by services/sentinel-py (Python), not services/api — this table's
+// migration lives here because Prisma is the monorepo's single migration
+// tool, but sentinel-py reads/writes it directly over Postgres (asyncpg),
+// not through this Prisma client. Keep column names in sync with
+// services/sentinel-py/app/strategy/store.py if this model changes.
+model UserStrategy {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String
+  // Structured rules produced by the deterministic text/image/video parser —
+  // see services/sentinel-py/app/strategy/parser.py. Never user-editable raw
+  // SQL/JS, just the plan's rule schema (timeframe, rules[], entry, riskManagement).
+  rules     Json
+  rawInput  String?
+  inputType String   @default("text") // text | image | video
+  status    String   @default("active") // active | paused | archived
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}

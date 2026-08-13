@@ -20,7 +20,12 @@ unchanged until an explicit decision is made to retire it — see
       and `SENTINEL_PY_SERVICE_URL` / `SENTINEL_PY_SERVICE_TOKEN` in the root
       `.env.example`. `services/api` does not call this service yet — that
       proxy wiring lands with P3 once there's something worth calling.
-- [ ] P1 — text strategy parser + strategy CRUD
+- [x] P1 — deterministic text strategy parser (`app/strategy/parser.py`) +
+      strategy CRUD (`POST /strategies/parse`, `POST /strategies`,
+      `GET /strategies`, `GET /strategies/{id}`, `PATCH /strategies/{id}`,
+      `DELETE /strategies/{id}` — soft delete, sets `status=archived`).
+      Backed by `UserStrategy` (Postgres, migrated by Prisma, read/written
+      here directly via `asyncpg`).
 - [ ] P2 — watch engine + polling state machine
 - [ ] P3 — notification engine + WebSocket push
 - [ ] P4 — in-trade monitoring

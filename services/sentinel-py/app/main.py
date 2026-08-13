@@ -7,11 +7,25 @@ from dotenv import load_dotenv
 # from the dev host doesn't shadow the real value.
 load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=True)
 
+from contextlib import asynccontextmanager  # noqa: E402
+
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
 from app.health import router as health_router  # noqa: E402
+from app.strategy import store as strategy_store  # noqa: E402
+from app.strategy.router import router as strategy_router  # noqa: E402
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await strategy_store.init_pool()
+    try:
+        yield
+    finally:
+        await strategy_store.close_pool()
+
 
 app = FastAPI(
     title="Sentinel (Python)",
@@ -21,6 +35,7 @@ app = FastAPI(
         "never suggests trades, never places orders."
     ),
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -31,6 +46,7 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(strategy_router)
 
 
 def run() -> None:
