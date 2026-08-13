@@ -16,14 +16,18 @@ from app.core.config import settings  # noqa: E402
 from app.health import router as health_router  # noqa: E402
 from app.strategy import store as strategy_store  # noqa: E402
 from app.strategy.router import router as strategy_router  # noqa: E402
+from app.watch import poller  # noqa: E402
+from app.watch.router import router as watch_router  # noqa: E402
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await strategy_store.init_pool()
+    poller.start()
     try:
         yield
     finally:
+        await poller.stop()
         await strategy_store.close_pool()
 
 
@@ -47,6 +51,7 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(strategy_router)
+app.include_router(watch_router)
 
 
 def run() -> None:

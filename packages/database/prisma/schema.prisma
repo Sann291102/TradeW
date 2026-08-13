@@ -1824,3 +1824,48 @@ model UserStrategy {
 
   @@index([userId])
 }
+
+// One watch = one (user, strategy, symbol, strike). Owned by
+// services/sentinel-py — see the note on UserStrategy above.
+model WatchSession {
+  id         String    @id @default(uuid())
+  userId     String
+  strategyId String
+  symbol     String
+  strike     String?
+  optionType String? // CE | PE
+  expiry     String? // YYYY-MM-DD, as the Dhan bridge expects it
+  state      String    @default("IDLE") // IDLE | FORMING | CONFIRMED | IN_TRADE | EXITED
+  // Set when the user confirms they took the position (P4). Null while the
+  // watch is still pre-entry.
+  entryPrice  Decimal? @db.Decimal(12, 2)
+  stopPrice   Decimal? @db.Decimal(12, 2)
+  targetPrice Decimal? @db.Decimal(12, 2)
+  direction   String? // LONG | SHORT
+  // Notification gating. cooldownUntil suppresses REPEATS of a state the
+  // watch is already in; a forward state change notifies regardless.
+  lastNotifiedAt DateTime?
+  cooldownUntil  DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([state])
+}
+
+// Audit trail: every sweep writes what it saw, whether or not it notified.
+// This is what the admin observation viewer reads, and what makes a
+// "why did/didn't Sentinel alert me?" question answerable after the fact.
+model SentinelObservation {
+  id             String   @id @default(uuid())
+  watchSessionId String
+  agent          String
+  candleTime     DateTime?
+  ruleEvaluations Json
+  state          String
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  @@index([watchSessionId])
+  @@index([createdAt])
+}

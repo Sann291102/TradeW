@@ -26,7 +26,13 @@ unchanged until an explicit decision is made to retire it — see
       `DELETE /strategies/{id}` — soft delete, sets `status=archived`).
       Backed by `UserStrategy` (Postgres, migrated by Prisma, read/written
       here directly via `asyncpg`).
-- [ ] P2 — watch engine + polling state machine
+- [x] P2 — watch engine: candle fetcher against the Dhan live-feed bridge
+      (`app/market/feed.py`, real data only — never simulates), rule
+      evaluator (`app/watch/evaluator.py`), `IDLE → FORMING → CONFIRMED`
+      state machine with cooldown (`app/watch/state_machine.py`), and an
+      in-process asyncio sweep loop (`app/watch/poller.py`). Watch API:
+      `POST /watch`, `GET /watch`, `GET /watch/{id}/observations`,
+      `POST /watch/sweep` (run one sweep now).
 - [ ] P3 — notification engine + WebSocket push
 - [ ] P4 — in-trade monitoring
 - [ ] P5 — image/video strategy extraction
@@ -56,3 +62,20 @@ Reads the repo-root `.env`. Relevant vars:
 - `SENTINEL_PY_SERVICE_TOKEN` — shared secret `services/api` sends as
   `x-service-token`
 - `CORS_ORIGINS` (default `http://localhost:3000,http://127.0.0.1:3000`)
+- `DATABASE_URL` — same Postgres the rest of the monorepo uses
+- `SENTINEL_LIVE_FEED_URL` (default `http://localhost:4600`) — the Dhan
+  bridge (`services/market-data/scripts/live-feed-server.ts`)
+- `SENTINEL_PY_SWEEP_SECONDS` (default `15`) — sweep cadence
+- `SENTINEL_PY_SWEEP_ENABLED` (default `true`) — set false to run the API
+  without the background watch loop
+
+## Known limits (P2)
+
+The sweep loop runs **in-process** (`asyncio.create_task`). It stops with the
+process and does no work-stealing, so running more than one replica would
+evaluate every watch more than once. Before this scales past one instance it
+needs to move to a leased worker — the `JobLease` table already in the schema
+is the existing pattern for that.
+
+Notifications are currently **logged, not delivered** — `poller._emit` is the
+seam P3 replaces with real dispatch to services/api.
