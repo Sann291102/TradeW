@@ -120,6 +120,14 @@ export class SentinelPyService {
     return this.call(this.scoped('/watch', userId), { method: 'GET' });
   }
 
+  /** The per-watch event stream the workspace feed renders. */
+  timeline(userId: string, watchId: string, limit = 100) {
+    return this.call(
+      this.scoped(`/watch/${encodeURIComponent(watchId)}/timeline?limit=${limit}`, userId),
+      { method: 'GET' },
+    );
+  }
+
   openPosition(userId: string, watchId: string, body: unknown) {
     return this.call(this.scoped(`/watch/${encodeURIComponent(watchId)}/position`, userId), {
       method: 'POST',

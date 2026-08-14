@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/auth.guard';
 import { CapabilityGuard, RequiresCapability } from '../entitlements/capability.guard';
@@ -73,6 +73,11 @@ export class SentinelPyProxyController {
   @Get('watch')
   listWatches(@Req() req: AuthedRequest) {
     return this.sentinelPy.listWatches(req.user.sub);
+  }
+
+  @Get('watch/:id/timeline')
+  timeline(@Req() req: AuthedRequest, @Param('id') id: string, @Query('limit') limit?: string) {
+    return this.sentinelPy.timeline(req.user.sub, id, limit ? Number(limit) : 100);
   }
 
   /** "I have taken this position" — the user's own entry, invalidation level

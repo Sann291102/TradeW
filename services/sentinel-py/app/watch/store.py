@@ -167,6 +167,12 @@ async def list_observations(watch_session_id: str, limit: int = 50) -> list[dict
             if isinstance(r["ruleEvaluations"], str)
             else r["ruleEvaluations"],
             "state": r["state"],
+            # The timeline builder reads mandatoryMet/mandatoryTotal, rMultiple
+            # and the skip marker out of here — omitting it silently produced
+            # a feed with every event at strength 0.
+            "metadata": json.loads(r["metadata"])
+            if isinstance(r["metadata"], str)
+            else r["metadata"],
             "createdAt": r["createdAt"].isoformat(),
         }
         for r in rows
@@ -242,3 +248,14 @@ async def mark_exited(watch_id: str) -> None:
             watch_id,
             _now(),
         )
+
+
+async def get_watch(user_id: str, watch_id: str) -> dict | None:
+    pool = _pool_or_raise()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            'SELECT * FROM "WatchSession" WHERE "userId" = $1 AND "id" = $2',
+            user_id,
+            watch_id,
+        )
+    return _watch_to_dict(row) if row else None
