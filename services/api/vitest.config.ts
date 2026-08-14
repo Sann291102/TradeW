@@ -57,6 +57,15 @@ export default defineConfig({
       'src/entitlements/coupon-redeem.spec.ts',
       // Bearer-token parsing: the gate in front of every authenticated route.
       'src/auth/auth.guard.spec.ts',
+      // When an OTP may appear in its own HTTP response. The rule was "only
+      // when the channel is unconfigured" but the test was `!delivered`, which
+      // is also true of a configured provider that failed — so any provider
+      // outage turned POST /auth/otp/request into an OTP oracle for any
+      // address. Pinned in both directions, for mail and SMS.
+      'src/auth/otp-disclosure.spec.ts',
+      // Mail provider selection, and the `preview`-only-in-console-mode
+      // invariant the disclosure rule above is built on.
+      'src/mail/mail.service.spec.ts',
       // Boot-time secret policy: no dev-fallback / vendor-key auth secrets
       // (2026-08-10 assessment — JWT_SECRET forgery + ADMIN_API_TOKEN reuse).
       'src/common/secret-validation.spec.ts',

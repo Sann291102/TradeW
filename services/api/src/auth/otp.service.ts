@@ -57,8 +57,26 @@ export class OtpService {
    * Mint a code and deliver it over the channel the purpose implies.
    *
    * Returns `devCode` ONLY when that channel is unconfigured, so local flows
-   * are testable end to end. With SMTP/Twilio configured the code never leaves
+   * are testable end to end. With a provider configured the code never leaves
    * the message.
+   *
+   * ── WHY THE DISCLOSURE TEST IS `preview`, NOT `!delivered` ───────────────
+   *
+   * That property was previously claimed here and not enforced. Both senders
+   * return `delivered: false` for TWO different situations — no provider
+   * configured, and a configured provider that refused the message — and this
+   * method used to disclose the code for both. The second is a production
+   * server: a SendGrid 429 at the free-tier cap, a Twilio outage, a rotated
+   * key. In that window `POST /auth/otp/request` with someone else's address
+   * answered with their login code, which is account takeover gated on nothing
+   * but a provider hiccup, on exactly the endpoint that exists to prove
+   * control of an address.
+   *
+   * `preview` is set in console mode and nowhere else, so it is the only
+   * signal that means "this code was never dispatched anywhere". When a
+   * provider was tried and failed, the caller is told the code was sent and
+   * gets nothing: the send may in fact have succeeded, and the operator has
+   * the real reason in the log either way.
    */
   async request(rawDestination: string, purpose: OtpPurpose): Promise<{ devCode?: string }> {
     const destination = this.normalise(rawDestination, purpose);
@@ -94,14 +112,14 @@ export class OtpService {
         destination,
         `Your TradeW code is ${code}. It expires in ${minutes} minutes.`,
       );
-      return result.delivered ? {} : { devCode: code };
+      return result.preview ? { devCode: code } : {};
     }
 
     // `phone_verify` is handled above; everything reaching here is an
     // email purpose the template layer knows how to render.
     const email = buildOtpEmail({ code, purpose: purpose as 'login' | 'password_reset' | 'email_verify', minutes });
     const result = await this.mail.send(destination, email.subject, email.text, email.html);
-    return result.delivered ? {} : { devCode: code };
+    return result.preview ? { devCode: code } : {};
   }
 
   /**
