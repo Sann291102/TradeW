@@ -23,6 +23,7 @@ from app.watch.indicators import (
     ema_of,
     find_bullish_reclaim,
     find_bullish_reclaims,
+    find_pullback,
 )
 
 
@@ -207,6 +208,92 @@ def _reclaim_followed_through(candles: list[Candle], period: int) -> tuple[bool,
     return False, f"waiting for a close above the reclaim candle high {latest:.2f}"
 
 
+# --- 9/21 EMA Pullback -------------------------------------------------------
+#
+# Reuses the SAME ema/slope primitives as EMA-7 rather than a private copy.
+# This is deliberately not a crossover strategy: the cross is the least
+# interesting moment. What it looks for is an established trend, a pullback
+# into the pair, and then continuation.
+
+
+def _ema_pair(candles: list[Candle]) -> tuple[list[float], list[float]]:
+    return ema_of(candles, 9), ema_of(candles, 21)
+
+
+def _ema_9_21_bullish(candles: list[Candle]) -> tuple[bool, str]:
+    """Trend intact: the 9 is above the 21 and the 21 is not rolling over.
+
+    Deliberately NOT "both rising". A pullback is precisely what bends the
+    fast EMA down, so requiring the 9 to be rising at the same moment the
+    strategy requires a retracement is close to self-contradictory — the
+    setup could only ever confirm in the narrow window where the 9 had
+    already turned back up but price had not yet closed above it.
+
+    The slow EMA carries the trend; the fast one dipping IS the pullback, and
+    `pullback_rejection_continuation` is what proves the trend resumed.
+    """
+    fast, slow = _ema_pair(candles)
+    if not fast or not slow:
+        return False, "not enough candles for a 9/21 EMA pair"
+
+    a = atr(candles)
+    fast_slope = classify_slope(fast, atr=a)
+    slow_slope = classify_slope(slow, atr=a)
+    aligned = fast[-1] > slow[-1] and slow_slope is not Slope.FALLING
+    return aligned, (
+        f"9 EMA {fast[-1]:.2f} ({fast_slope.value}) above 21 EMA {slow[-1]:.2f} ({slow_slope.value})"
+        if aligned
+        else f"9 EMA {fast[-1]:.2f} vs 21 EMA {slow[-1]:.2f} — trend not intact ({slow_slope.value} 21)"
+    )
+
+
+def _pullback_into_zone(candles: list[Candle]) -> tuple[bool, str]:
+    fast, slow = _ema_pair(candles)
+    pullback = find_pullback(candles, fast, slow, atr(candles))
+    if pullback is None:
+        return False, "no pullback from a swing high yet"
+    # The retracement has to actually reach the pair — a dip that never
+    # approaches the EMAs is not this setup.
+    low = candles[pullback.low_index].low
+    zone_top = max(fast[-1], slow[-1])
+    if low > zone_top:
+        return False, f"pullback low {low:.2f} never reached the 9/21 zone (top {zone_top:.2f})"
+    return True, pullback.detail
+
+
+def _pullback_continuation(candles: list[Candle]) -> tuple[bool, str]:
+    """Rejection and continuation, not merely a touch: after the pullback low,
+    price must close back above the fast EMA."""
+    fast, slow = _ema_pair(candles)
+    pullback = find_pullback(candles, fast, slow, atr(candles))
+    if pullback is None:
+        return False, "no pullback to continue from"
+
+    offset = len(candles) - len(fast)
+    for i in range(pullback.low_index + 1, len(candles)):
+        if candles[i].close > fast[i - offset]:
+            return True, f"closed {candles[i].close:.2f} back above the 9 EMA {fast[i - offset]:.2f}"
+    return False, "waiting for a close back above the 9 EMA"
+
+
+def measure_pullback(candles: list[Candle]) -> dict | None:
+    """Pullback measurements for the observation record, so the performance
+    engine can eventually split this user's results by shallow/normal/deep.
+    Reported in ATR and spread multiples — a raw point distance would not be
+    comparable across symbols or volatility regimes."""
+    bars = closed_candles(candles)
+    fast, slow = _ema_pair(bars)
+    pullback = find_pullback(bars, fast, slow, atr(bars))
+    if pullback is None:
+        return None
+    return {
+        "depth": round(pullback.depth, 4),
+        "depthAtr": round(pullback.depth_atr, 4) if pullback.depth_atr is not None else None,
+        "depthSpread": round(pullback.depth_spread, 4) if pullback.depth_spread is not None else None,
+        "classification": pullback.classification.value,
+    }
+
+
 def evaluate(rules: list[dict], candles: list[Candle]) -> EvaluationResult:
     bars = closed_candles(candles)
     or_high, or_low = opening_range(bars)
@@ -227,6 +314,12 @@ def evaluate(rules: list[dict], candles: list[Candle]) -> EvaluationResult:
                 met, detail = False, "no opening range yet"
             else:
                 met, detail = _retest(bars, or_high, or_low)
+        elif condition == "ema_9_21_bullish_alignment":
+            met, detail = _ema_9_21_bullish(bars)
+        elif condition == "pullback_into_ema_zone":
+            met, detail = _pullback_into_zone(bars)
+        elif condition == "pullback_rejection_continuation":
+            met, detail = _pullback_continuation(bars)
         elif condition == "ema7_rising":
             met, detail = _ema_rising(bars, 7)
         elif condition == "price_above_ema7":

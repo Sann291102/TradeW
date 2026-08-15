@@ -17,7 +17,7 @@ from app.market.feed import MarketDataUnavailableError, fetch_index_candles, fet
 from app.intrade.monitor import Direction, evaluate_position
 from app.notify.dispatcher import notify, notify_intrade
 from app.watch import store
-from app.watch.evaluator import evaluate
+from app.watch.evaluator import evaluate, measure_pullback
 from app.watch.state_machine import Transition, WatchState, advance
 
 logger = logging.getLogger("sentinel.watch")
@@ -188,6 +188,10 @@ async def sweep_once() -> int:
                     "mandatoryTotal": evaluation.mandatory_total,
                     "notified": transition.should_notify,
                     "reason": transition.reason,
+                    # Normalised so the performance engine can eventually
+                    # compare shallow/normal/deep across symbols. None for
+                    # strategies where a pullback is not a concept.
+                    "pullback": measure_pullback(candles),
                 },
             )
 

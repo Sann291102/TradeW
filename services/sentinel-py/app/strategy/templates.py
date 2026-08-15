@@ -34,6 +34,7 @@ SUPPORTED_PRIMITIVES = {
     "ema_slope",
     "candle_body_vs_level",
     "reclaim",
+    "pullback_depth",
 }
 
 
@@ -209,9 +210,49 @@ CATALOGUE: list[Template] = [
     Template(
         id="ema_9_21_pullback",
         name="9/21 EMA Pullback",
-        summary="Trend with 9 above 21 and both rising, a pullback into the pair, then continuation.",
+        summary=(
+            "Not a crossover. The cross is the least interesting moment: this looks for an "
+            "established trend with 9 above 21 and both rising, a pullback into the pair, and "
+            "then a close back above the 9 that shows the trend resuming."
+        ),
         direction="both",
         requires={"ema", "ema_slope", "pullback_depth"},
+        rules={
+            "timeframe": "5m",
+            "levels": ["ema9", "ema21"],
+            "rules": [
+                {
+                    "id": "rule_alignment",
+                    "name": "ema_9_21_bullish_alignment",
+                    "condition": "ema_9_21_bullish_alignment",
+                    "mandatory": True,
+                    "description": "9 EMA above the 21 and rising — an established trend, not a fresh cross",
+                },
+                {
+                    "id": "rule_pullback",
+                    "name": "pullback_into_ema_zone",
+                    "condition": "pullback_into_ema_zone",
+                    "mandatory": True,
+                    "description": "Price retraces from a swing high far enough to reach the 9/21 zone",
+                },
+                {
+                    "id": "rule_continuation",
+                    "name": "pullback_rejection_continuation",
+                    "condition": "pullback_rejection_continuation",
+                    "mandatory": True,
+                    "description": "After the pullback low, price closes back above the 9 EMA",
+                },
+                {
+                    "id": "rule_volume_confirm",
+                    "name": "volume_confirm",
+                    "condition": "volume_above_20_period_avg",
+                    "mandatory": False,
+                    "description": "The continuation carries above-average volume",
+                },
+            ],
+            "entry": {"long": "after_pullback_continuation", "short": None},
+            "riskManagement": {"stopLoss": None, "targets": []},
+        },
     ),
     Template(
         id="vwap_bounce",

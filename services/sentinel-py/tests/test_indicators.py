@@ -159,3 +159,110 @@ def test_a_falling_ema_never_qualifies_however_the_candles_look():
     by_name = {r.name: r for r in result.rules}
     assert not by_name["ema7_rising"].met
     assert not result.all_mandatory_met
+
+
+# --- 9/21 EMA Pullback -------------------------------------------------------
+
+
+def _trend_then_pullback():
+    """Rising trend, a retracement into the 9/21 zone, then a close back above
+    the 9 EMA."""
+    bars, p = [], 100.0
+    for i in range(30):                       # establish the trend
+        bars.append(candle(i * 5, p, p + 1.4, p - 0.3, p + 1.2, 1000)); p += 1.2
+    top = bars[-1].close
+    for i in range(6):                        # pull back
+        bars.append(candle((30 + i) * 5, top, top + 0.2, top - 2.2, top - 2.0, 900)); top -= 2.0
+    bars.append(candle(36 * 5, top, top + 6.0, top - 0.2, top + 5.5, 1400))  # continuation
+    return bars
+
+
+def test_pullback_reuses_the_shared_ema_layer_not_a_private_copy():
+    """The 9/21 conditions must be computed from the same primitives EMA-7
+    uses — a second implementation would drift."""
+    import app.watch.evaluator as ev
+    from app.strategy.templates import get_template
+
+    calls = {"n": 0}
+    original = ev.ema_of
+
+    def counting(candles, period):
+        calls["n"] += 1
+        return original(candles, period)
+
+    ev.ema_of = counting
+    try:
+        rules = get_template("ema_9_21_pullback").rules["rules"]
+        ev.evaluate(rules, forming_tail(_trend_then_pullback()))
+    finally:
+        ev.ema_of = original
+
+    assert calls["n"] > 0, "9/21 conditions did not go through the shared ema_of primitive"
+
+
+def test_full_9_21_pullback_sequence_confirms():
+    from app.strategy.templates import get_template
+    from app.watch.evaluator import evaluate
+
+    rules = get_template("ema_9_21_pullback").rules["rules"]
+    result = evaluate(rules, forming_tail(_trend_then_pullback()))
+    by_name = {r.name: r for r in result.rules}
+
+    assert by_name["ema_9_21_bullish_alignment"].met, by_name["ema_9_21_bullish_alignment"].detail
+    assert by_name["pullback_into_ema_zone"].met, by_name["pullback_into_ema_zone"].detail
+    assert by_name["pullback_rejection_continuation"].met, by_name["pullback_rejection_continuation"].detail
+    assert result.all_mandatory_met
+
+
+def test_a_steady_trend_with_no_pullback_does_not_confirm():
+    """The condition that must fail when the setup's defining event is absent."""
+    from app.strategy.templates import get_template
+    from app.watch.evaluator import evaluate
+
+    rules = get_template("ema_9_21_pullback").rules["rules"]
+    bars, p = [], 100.0
+    for i in range(30):
+        bars.append(candle(i * 5, p, p + 1.4, p - 0.3, p + 1.2, 1000)); p += 1.2
+
+    result = evaluate(rules, forming_tail(bars))
+    by_name = {r.name: r for r in result.rules}
+    assert by_name["ema_9_21_bullish_alignment"].met      # trend is real
+    assert not by_name["pullback_into_ema_zone"].met      # but nothing pulled back
+    assert not result.all_mandatory_met
+
+
+def test_a_downtrend_never_aligns():
+    from app.strategy.templates import get_template
+    from app.watch.evaluator import evaluate
+
+    rules = get_template("ema_9_21_pullback").rules["rules"]
+    bars, p = [], 140.0
+    for i in range(30):
+        bars.append(candle(i * 5, p, p + 0.3, p - 1.4, p - 1.2, 1000)); p -= 1.2
+
+    result = evaluate(rules, forming_tail(bars))
+    by_name = {r.name: r for r in result.rules}
+    assert not by_name["ema_9_21_bullish_alignment"].met
+    assert not result.all_mandatory_met
+
+
+def test_pullback_depth_is_reported_in_atr_multiples_not_raw_points():
+    """A 30-point pullback means different things on a 200-rupee option and on
+    NIFTY; the raw number alone would make the eventual shallow/normal/deep
+    analysis meaningless across symbols."""
+    from app.watch.evaluator import measure_pullback
+
+    measured = measure_pullback(forming_tail(_trend_then_pullback()))
+    assert measured is not None
+    assert measured["depthAtr"] is not None
+    assert measured["depthSpread"] is not None
+    assert measured["classification"] in {"shallow", "normal", "deep"}
+
+
+def test_depth_classification_boundaries():
+    from app.watch.indicators import PullbackDepth, classify_depth
+
+    assert classify_depth(0.5) is PullbackDepth.SHALLOW
+    assert classify_depth(1.5) is PullbackDepth.NORMAL
+    assert classify_depth(3.0) is PullbackDepth.DEEP
+    assert classify_depth(None) is PullbackDepth.SHALLOW

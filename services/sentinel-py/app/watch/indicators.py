@@ -171,3 +171,93 @@ def find_bullish_reclaim(candles: list[Candle], ema_values: list[float]) -> Recl
     """
     reclaims = find_bullish_reclaims(candles, ema_values)
     return reclaims[-1] if reclaims else None
+
+
+class PullbackDepth(str, Enum):
+    SHALLOW = "shallow"
+    NORMAL = "normal"
+    DEEP = "deep"
+
+
+@dataclass(frozen=True)
+class Pullback:
+    swing_high_index: int
+    low_index: int
+    #: Raw price retracement. Kept, but never the number decisions are made on.
+    depth: float
+    #: Retracement in ATR multiples — the comparable measure across symbols.
+    depth_atr: float | None
+    #: Retracement as a multiple of the fast/slow EMA spread, which scales
+    #: with how stretched the trend already is.
+    depth_spread: float | None
+    classification: PullbackDepth
+    detail: str
+
+
+# Boundaries in ATR multiples. A stated convention so the buckets are
+# comparable across symbols from day one — the point is that the engine can
+# later show how the USER's strategy performed in each bucket, and the
+# boundaries can move once there is data to move them with.
+SHALLOW_MAX_ATR = 1.0
+NORMAL_MAX_ATR = 2.0
+
+
+def classify_depth(depth_atr: float | None) -> PullbackDepth:
+    if depth_atr is None or depth_atr < SHALLOW_MAX_ATR:
+        return PullbackDepth.SHALLOW
+    if depth_atr < NORMAL_MAX_ATR:
+        return PullbackDepth.NORMAL
+    return PullbackDepth.DEEP
+
+
+def find_pullback(
+    candles: list[Candle],
+    fast: list[float],
+    slow: list[float],
+    atr_value: float | None,
+) -> Pullback | None:
+    """The most recent retracement from a swing high back toward the EMA pair.
+
+    Measured from the highest high since the pair became bullish, down to the
+    lowest low after it. Depth is reported in ATR multiples and in multiples
+    of the fast/slow spread rather than in points: a 30-point pullback means
+    something completely different on a 200-rupee option and on NIFTY, and a
+    raw number would make the eventual shallow/normal/deep analysis
+    meaningless across symbols.
+    """
+    if not fast or not slow:
+        return None
+
+    offset = len(candles) - min(len(fast), len(slow))
+    window = candles[offset:]
+    if len(window) < 3:
+        return None
+
+    high_at = max(range(len(window)), key=lambda i: window[i].high)
+    after = window[high_at + 1 :]
+    if not after:
+        return None
+
+    low_at = min(range(len(after)), key=lambda i: after[i].low)
+    depth = window[high_at].high - after[low_at].low
+    if depth <= 0:
+        return None
+
+    depth_atr = (depth / atr_value) if atr_value and atr_value > 0 else None
+    spread = abs(fast[-1] - slow[-1])
+    depth_spread = (depth / spread) if spread > 0 else None
+    classification = classify_depth(depth_atr)
+
+    return Pullback(
+        swing_high_index=offset + high_at,
+        low_index=offset + high_at + 1 + low_at,
+        depth=depth,
+        depth_atr=depth_atr,
+        depth_spread=depth_spread,
+        classification=classification,
+        detail=(
+            f"pulled back {depth:.2f}"
+            + (f" ({depth_atr:.2f} ATR)" if depth_atr is not None else "")
+            + f" — {classification.value}"
+        ),
+    )
