@@ -81,6 +81,35 @@ def _in_trade_events(observation: dict) -> list[dict]:
     return events
 
 
+def _collapse(events: list[dict]) -> list[dict]:
+    """Collapse a run of the same event kind into one entry.
+
+    The sweep re-evaluates every 15 seconds, so a watch sitting in FORMING for
+    ten minutes produced ~40 identical "1 of 2 conditions met" cards. That is
+    a state the user is in, not forty things that happened, and rendering it
+    forty times buries the events that ARE new.
+
+    Each surviving entry keeps the latest reading (`at`, `reason`, `strength`,
+    `rMultiple`) and records how long the run has been going: `firstAt` and
+    `occurrences`. A UI can render "since 09:41 · 40 checks" instead of a
+    wall, and can expand the run if someone wants the detail.
+
+    Only CONSECUTIVE runs collapse. If a watch goes FORMING -> CONFIRMED ->
+    back to FORMING, that is two distinct spells and both stay visible.
+    """
+    collapsed: list[dict] = []
+    for event in events:
+        previous = collapsed[-1] if collapsed else None
+        if previous is not None and previous["kind"] == event["kind"]:
+            # `events` is newest-first, so each later item is OLDER: it moves
+            # the start of the run backwards and adds to the count.
+            previous["firstAt"] = event["at"]
+            previous["occurrences"] += 1
+            continue
+        collapsed.append({**event, "firstAt": event["at"], "occurrences": 1})
+    return collapsed
+
+
 def build_timeline(watch: dict, observations: list[dict]) -> dict[str, Any]:
     """Newest first. `observations` is expected newest-first already (the
     store orders by createdAt DESC); ordering is asserted here rather than
@@ -111,6 +140,7 @@ def build_timeline(watch: dict, observations: list[dict]) -> dict[str, Any]:
             )
 
     events.sort(key=lambda e: e["at"], reverse=True)
+    events = _collapse(events)
 
     return {
         "watch": {

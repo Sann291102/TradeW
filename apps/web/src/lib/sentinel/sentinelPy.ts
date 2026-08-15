@@ -40,6 +40,11 @@ export interface TimelineEvent {
   rMultiple: number | null;
   reason: string;
   notified: boolean;
+  /** Start of this run of the same state, and how many sweeps it spans. The
+   * sweep re-checks every 15s, so a state the watch is sitting in collapses
+   * to one entry rather than one card per check. */
+  firstAt: string;
+  occurrences: number;
 }
 
 export interface TimelineWatch {

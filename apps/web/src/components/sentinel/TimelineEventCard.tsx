@@ -149,9 +149,14 @@ export function TimelineEventCard({ event, watch }: Props) {
           )}
         </p>
         <p className="mt-1 text-[12px] leading-relaxed text-muted">{message}</p>
-        {event.rMultiple != null && (
-          <p className="mt-1 text-[10.5px] text-faint">Progress: {event.rMultiple.toFixed(2)}R</p>
-        )}
+        <p className="mt-1 flex flex-wrap gap-x-3 text-[10.5px] text-faint">
+          {event.rMultiple != null && <span>Progress: {event.rMultiple.toFixed(2)}R</span>}
+          {event.occurrences > 1 && (
+            <span>
+              since {timeLabel(event.firstAt)} · {event.occurrences} checks
+            </span>
+          )}
+        </p>
       </div>
 
       <time className="shrink-0 text-[10.5px] text-faint" dateTime={event.at}>

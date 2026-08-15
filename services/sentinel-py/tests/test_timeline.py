@@ -101,3 +101,47 @@ def test_watch_block_carries_what_the_feed_needs_to_label_direction():
     assert result["watch"]["strike"] == "24350"
     assert result["watch"]["optionType"] == "PE"
     assert result["watch"]["direction"] == "SHORT"
+
+
+# --- run collapsing ---------------------------------------------------------
+
+
+def forming(at, met=1, total=2):
+    return observation(at, metadata={"mandatoryMet": met, "mandatoryTotal": total})
+
+
+def test_a_run_of_identical_states_collapses_to_one_entry():
+    """The sweep re-checks every 15s; forty 'still forming' rows is one state
+    the user is in, not forty things that happened."""
+    obs = [forming(f"2026-08-13T10:{m:02d}:00") for m in range(10, 20)]
+    events = build_timeline(WATCH, obs)["events"]
+    assert len(events) == 1
+    assert events[0]["occurrences"] == 10
+    assert events[0]["at"] == "2026-08-13T10:19:00"       # latest reading
+    assert events[0]["firstAt"] == "2026-08-13T10:10:00"  # run started here
+
+
+def test_distinct_states_are_not_merged():
+    obs = [
+        forming("2026-08-13T10:00:00"),
+        observation("2026-08-13T10:30:00", state="CONFIRMED", metadata={"mandatoryMet": 2, "mandatoryTotal": 2}),
+    ]
+    kinds = [e["kind"] for e in build_timeline(WATCH, obs)["events"]]
+    assert kinds == ["confirmed", "wait_and_watch"]
+
+
+def test_a_state_the_watch_returns_to_stays_a_separate_spell():
+    """FORMING -> CONFIRMED -> FORMING is two spells, not one merged run."""
+    obs = [
+        forming("2026-08-13T10:00:00"),
+        observation("2026-08-13T10:15:00", state="CONFIRMED", metadata={"mandatoryMet": 2, "mandatoryTotal": 2}),
+        forming("2026-08-13T10:30:00"),
+    ]
+    kinds = [e["kind"] for e in build_timeline(WATCH, obs)["events"]]
+    assert kinds == ["wait_and_watch", "confirmed", "wait_and_watch"]
+
+
+def test_single_events_still_report_one_occurrence():
+    events = build_timeline(WATCH, [forming("2026-08-13T10:00:00")])["events"]
+    assert events[0]["occurrences"] == 1
+    assert events[0]["firstAt"] == events[0]["at"]
