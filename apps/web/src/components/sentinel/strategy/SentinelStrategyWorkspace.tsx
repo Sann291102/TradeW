@@ -7,7 +7,9 @@ import { useUserStrategies, useWatchSessions } from '@/lib/sentinel/useStrategyW
 import { useWatchPrices } from '@/lib/sentinel/useWatchPrices';
 import { byUrgency, groupWatches, selectableStrategies } from '@/lib/sentinel/watchModel';
 import type { UserStrategy, WatchSession } from '@/lib/sentinel/strategyApi';
+import { InbuiltStrategyPicker } from './InbuiltStrategyPicker';
 import { PositionEntryForm } from './PositionEntryForm';
+import { SelectedStrategyPanel } from './SelectedStrategyPanel';
 import { StrategyComposer } from './StrategyComposer';
 import { StrategyList } from './StrategyList';
 import { WatchCard } from './WatchCard';
@@ -72,7 +74,7 @@ export function SentinelStrategyWorkspace() {
           Sentinel watches for the conditions you defined — nothing more, nothing else.
         </p>
         {watching.length + grouped.inTrade.length > 0 && (
-          <Badge tone="neutral" className="ml-auto px-2 py-0 text-[10px]">
+          <Badge tone="neutral" className="px-2 py-0 text-[10px]">
             {watching.length} watching · {grouped.inTrade.length} in trade
           </Badge>
         )}
@@ -82,6 +84,23 @@ export function SentinelStrategyWorkspace() {
         {/* author + own */}
         <div className="col-span-12 space-y-4 lg:col-span-5">
           <StrategyComposer onSave={strategiesState.save} onSaved={(s) => setSelectedStrategyId(s.id)} />
+
+          {/* The two ways in, one under the other. Describing a strategy and
+              adopting a definition produce the SAME UserStrategy and continue
+              into the same configure/watch/feed workflow — the divider marks a
+              choice of input, not two different products. */}
+          <div className="flex items-center gap-3" aria-hidden="true">
+            <span className="h-px flex-1 bg-border" />
+            <span className="text-[10.5px] font-bold uppercase tracking-wide text-faint">or</span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
+
+          <InbuiltStrategyPicker
+            onAdopted={async (id) => {
+              await strategiesState.refresh();
+              setSelectedStrategyId(id);
+            }}
+          />
 
           <div className="border-t border-border pt-4">
             <div className="mb-2 flex items-baseline justify-between">
@@ -109,8 +128,22 @@ export function SentinelStrategyWorkspace() {
 
         {/* apply + follow */}
         <div className="col-span-12 space-y-4 lg:col-span-7">
+          {selectedStrategyId && (
+            <div className="rounded-xl border border-border p-3.5">
+              <SelectedStrategyPanel strategyId={selectedStrategyId} />
+            </div>
+          )}
+
+          {/* WHERE the selected strategy is applied — a different question from
+              WHICH strategy, so it is a separate control with its own heading
+              rather than a second thing that looks like a strategy picker. */}
           <div className="rounded-xl border border-border p-3.5">
-            <h3 className="mb-2.5 text-[12px] font-bold uppercase tracking-wide text-faint">Apply a strategy</h3>
+            <h3 className="mb-1 text-[12px] font-bold uppercase tracking-wide text-faint">Watch market</h3>
+            <p className="mb-2.5 text-[11px] text-muted">
+              {selectedStrategy
+                ? `Choose what to run "${selectedStrategy.name}" on.`
+                : 'Pick a strategy first — this chooses where it is applied, not what is watched for.'}
+            </p>
             <WatchCreator strategy={selectedStrategy} onStart={watchesState.start} />
           </div>
 

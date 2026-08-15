@@ -18,11 +18,11 @@ import type { ContractWatch } from '@/lib/sentinel/strategyContract';
  */
 
 const STATE_TONE: Record<string, string> = {
-  IDLE: 'bg-bg2 text-muted',
+  IDLE: 'bg-hover text-muted',
   FORMING: 'bg-amber-bg text-amber',
-  CONFIRMED: 'bg-emerald-500/15 text-emerald-400',
-  IN_TRADE: 'bg-sky-500/15 text-sky-400',
-  EXITED: 'bg-bg2 text-faint',
+  CONFIRMED: 'bg-up-bg text-up',
+  IN_TRADE: 'bg-teal-bg text-teal',
+  EXITED: 'bg-hover text-faint',
 };
 
 interface Props {
@@ -64,13 +64,13 @@ export function ActiveWatchList({
             key={watch.id}
             data-testid={`watch-${watch.id}`}
             className={cn(
-              'rounded-lg border bg-bg1 p-3',
-              watch.id === focusedWatchId ? 'border-fg/30' : 'border-line',
+              'rounded-lg border bg-card p-3',
+              watch.id === focusedWatchId ? 'border-teal' : 'border-border',
             )}
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-fg">{instrument(watch)}</p>
+                <p className="text-sm font-medium text-text">{instrument(watch)}</p>
                 <p className="mt-0.5 text-[11px] uppercase tracking-wide text-faint">
                   {paused ? 'PAUSED' : 'ACTIVE'}
                 </p>
@@ -78,7 +78,7 @@ export function ActiveWatchList({
               <span
                 className={cn(
                   'shrink-0 rounded px-2 py-0.5 text-[11px] font-medium',
-                  STATE_TONE[watch.state ?? 'IDLE'] ?? 'bg-bg2 text-muted',
+                  STATE_TONE[watch.state ?? 'IDLE'] ?? 'bg-hover text-muted',
                 )}
               >
                 {watch.state ?? 'IDLE'}
@@ -92,10 +92,10 @@ export function ActiveWatchList({
               <ul className="space-y-1">
                 {watch.conditions.map((condition) => (
                   <li key={condition.id} className="flex items-center gap-2 text-xs">
-                    <span className={condition.met ? 'text-emerald-400' : 'text-faint'}>
+                    <span className={condition.met ? 'text-up' : 'text-faint'}>
                       {condition.met ? '✓' : '○'}
                     </span>
-                    <span className={condition.met ? 'text-fg' : 'text-muted'}>
+                    <span className={condition.met ? 'text-text' : 'text-muted'}>
                       {condition.name}
                     </span>
                   </li>
@@ -106,21 +106,21 @@ export function ActiveWatchList({
             <div className="mt-3 flex flex-wrap gap-2">
               {paused
                 ? onResume && (
-                    <button type="button" onClick={() => onResume(watch.id)} className="rounded-md border border-line px-2.5 py-1 text-[11px] text-fg hover:bg-bg2">
+                    <button type="button" onClick={() => onResume(watch.id)} className="rounded-md border border-border px-2.5 py-1 text-[11px] text-text hover:bg-hover">
                       Resume
                     </button>
                   )
                 : onPause && (
-                    <button type="button" onClick={() => onPause(watch.id)} className="rounded-md border border-line px-2.5 py-1 text-[11px] text-fg hover:bg-bg2">
+                    <button type="button" onClick={() => onPause(watch.id)} className="rounded-md border border-border px-2.5 py-1 text-[11px] text-text hover:bg-hover">
                       Pause
                     </button>
                   )}
               {onEdit && (
-                <button type="button" onClick={() => onEdit(watch.id)} className="rounded-md border border-line px-2.5 py-1 text-[11px] text-fg hover:bg-bg2">
+                <button type="button" onClick={() => onEdit(watch.id)} className="rounded-md border border-border px-2.5 py-1 text-[11px] text-text hover:bg-hover">
                   Edit
                 </button>
               )}
-              <button type="button" onClick={() => onFocus(watch.id)} className="rounded-md border border-line px-2.5 py-1 text-[11px] text-fg hover:bg-bg2">
+              <button type="button" onClick={() => onFocus(watch.id)} className="rounded-md border border-border px-2.5 py-1 text-[11px] text-text hover:bg-hover">
                 View
               </button>
             </div>

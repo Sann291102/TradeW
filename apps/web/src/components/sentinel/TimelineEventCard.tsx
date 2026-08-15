@@ -34,9 +34,9 @@ type Tone = 'orange' | 'green' | 'yellow' | 'red';
 
 const TONE_CLASS: Record<Tone, string> = {
   orange: 'bg-amber-bg text-amber',
-  green: 'bg-emerald-500/15 text-emerald-400',
-  yellow: 'bg-yellow-500/15 text-yellow-400',
-  red: 'bg-red-500/15 text-red-400',
+  green: 'bg-up-bg text-up',
+  yellow: 'bg-amber-bg text-amber',
+  red: 'bg-down-bg text-down',
 };
 
 /**
@@ -107,7 +107,7 @@ function describe(event: TimelineEvent): { label: string; tone: Tone; message: s
 function DirectionTag({ direction }: { direction: Direction }) {
   const isLong = direction === 'LONG';
   return (
-    <span className={cn('font-semibold', isLong ? 'text-emerald-400' : 'text-red-400')}>
+    <span className={cn('font-semibold', isLong ? 'text-up' : 'text-down')}>
       {isLong ? 'Long' : 'Short'}
     </span>
   );

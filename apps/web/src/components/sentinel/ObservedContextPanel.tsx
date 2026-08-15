@@ -25,7 +25,7 @@ export function ObservedContextPanel({ observation }: { observation: ObservedCon
         {rows.map((row) => (
           <div key={row.label} className="flex items-center justify-between gap-4">
             <dt className="text-xs text-muted">{row.label}</dt>
-            <dd className="text-xs tabular-nums text-fg">{row.value}</dd>
+            <dd className="text-xs tabular-nums text-text">{row.value}</dd>
           </div>
         ))}
       </dl>

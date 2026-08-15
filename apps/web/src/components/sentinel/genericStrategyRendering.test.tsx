@@ -20,7 +20,7 @@ import { ActiveWatchList } from './ActiveWatchList';
 import { ObservedContextPanel } from './ObservedContextPanel';
 import { StrategyConfigureForm } from './StrategyConfigureForm';
 import { StrategyPerformancePanel } from './StrategyPerformancePanel';
-import { contextRows, renderableSegments, splitCatalogue } from '@/lib/sentinel/strategyContract';
+import { contextRows, renderableSegments } from '@/lib/sentinel/strategyContract';
 import type { StrategyContract } from '@/lib/sentinel/strategyContract';
 
 function contract(overrides: Partial<StrategyContract>): StrategyContract {
@@ -161,10 +161,7 @@ const srFlip = contract({
 function renderWorkspacePieces(model: StrategyContract): string {
   return [
     renderToStaticMarkup(
-      <StrategyConfigureForm
-        strategyName={model.name}
-        parameters={model.configuration.parameters}
-      />,
+      <StrategyConfigureForm parameters={model.configuration.parameters} />,
     ),
     renderToStaticMarkup(
       <ActiveWatchList
@@ -187,7 +184,6 @@ describe('two unrelated strategies render through the same components', () => {
   it('renders both without a strategy-specific component', () => {
     for (const model of [ema7, srFlip]) {
       const html = renderWorkspacePieces(model);
-      expect(html).toContain(model.name);
       expect(html).toContain('strategy-configure');
       expect(html).toContain('active-watches');
       expect(html).toContain('strategy-performance');
@@ -266,14 +262,6 @@ describe('no component branches on which strategy it is showing', () => {
     }
   });
 
-  it('keeps the catalogue split factual rather than ranked', () => {
-    const { available, unavailable } = splitCatalogue([
-      { id: 'a', name: 'A', summary: '', available: true },
-      { id: 'b', name: 'B', summary: '', available: false, unavailableReason: 'needs a pipeline' },
-    ]);
-    expect(available.map((t) => t.id)).toEqual(['a']);
-    expect(unavailable[0].unavailableReason).toBe('needs a pipeline');
-  });
 
   it('hides internal bookkeeping from observed context', () => {
     const rows = contextRows({

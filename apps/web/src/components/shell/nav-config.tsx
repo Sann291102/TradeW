@@ -76,6 +76,10 @@ export const NAV_ITEMS: NavItem[] = [
   // page (SentinelIntelligencePanel) — removed 2026-08-05, archived to
   // archive/apps-web-sentinel-intelligence-2026-08-05/ (see archive/README.md).
   { href: '/sentinel', label: 'Sentinel', icon: SentinelIcon, premium: true, group: 'primary' },
+  // There is deliberately no separate strategies route. The whole workflow —
+  // describe or adopt, configure, apply to a market, follow the lifecycle —
+  // lives in the "Your strategies" section of /sentinel, so there is one place
+  // a user manages strategies rather than two that drift apart.
   { href: '/settings', label: 'Settings', icon: SettingsIcon, group: 'secondary' },
   { href: '/profile', label: 'Profile', icon: ProfileIcon, group: 'secondary' },
   { href: '/notifications', label: 'Notifications', icon: BellIcon, group: 'secondary' },
