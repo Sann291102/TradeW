@@ -1,4 +1,11 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+/**
+ * Browser requests must stay same-origin unless an operator explicitly opts
+ * into another public API URL.  In production this is routed by the edge
+ * (`/api` -> services/api); it works behind Caddy today and Azure Front Door
+ * / Container Apps during the migration.  Local development still sets
+ * NEXT_PUBLIC_API_URL in apps/web/.env.local.
+ */
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 
 export function getToken() {
   if (typeof window === 'undefined') return null;

@@ -51,4 +51,8 @@ services/sentinel/data/
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+# Local Azure Bicep parameter files may contain subscription identifiers,
+# resource names and (in a misconfigured deployment) secrets. Keep only the
+# reviewed example in source control.
+infra/azure/*.local.bicepparam
 crash.log
