@@ -134,6 +134,16 @@ export class SentinelPyService {
     });
   }
 
+  /** The generic strategy contract: everything the strategy workspace renders
+   * from, in one shape that does not vary by evaluator. */
+  strategyContract(userId: string, id: string, watchId?: string) {
+    const path = `/strategies/${encodeURIComponent(id)}/contract`;
+    const scoped = this.scoped(path, userId);
+    return this.call(watchId ? `${scoped}&watchId=${encodeURIComponent(watchId)}` : scoped, {
+      method: 'GET',
+    });
+  }
+
   // --- watches ------------------------------------------------------------
 
   createWatch(userId: string, body: unknown) {

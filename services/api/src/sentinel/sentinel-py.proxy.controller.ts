@@ -77,6 +77,15 @@ export class SentinelPyProxyController {
   }
 
   /** Soft delete — archives rather than destroys. */
+  @Get('strategies/:id/contract')
+  strategyContract(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+    @Query('watchId') watchId?: string,
+  ) {
+    return this.sentinelPy.strategyContract(req.user.sub, id, watchId);
+  }
+
   @Delete('strategies/:id')
   archiveStrategy(@Req() req: AuthedRequest, @Param('id') id: string) {
     return this.sentinelPy.archiveStrategy(req.user.sub, id);
