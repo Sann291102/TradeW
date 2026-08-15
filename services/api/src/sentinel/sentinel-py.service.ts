@@ -90,6 +90,22 @@ export class SentinelPyService {
     return this.call('/strategies/parse', { method: 'POST', body: { text } });
   }
 
+  /** The adoptable catalogue — a menu, not a recommendation. */
+  listTemplates() {
+    return this.call('/strategies/templates', { method: 'GET' });
+  }
+
+  /** Adopt a template: it becomes the user's own strategy, editable like one
+   * they typed. sentinel-py refuses (409) any template the watch engine
+   * cannot yet evaluate rather than saving something inert. */
+  adoptTemplate(userId: string, templateId: string, name?: string) {
+    const suffix = name ? `&name=${encodeURIComponent(name)}` : '';
+    return this.call(
+      `${this.scoped(`/strategies/templates/${encodeURIComponent(templateId)}/adopt`, userId)}${suffix}`,
+      { method: 'POST' },
+    );
+  }
+
   createStrategy(userId: string, body: unknown) {
     return this.call(this.scoped('/strategies', userId), { method: 'POST', body });
   }

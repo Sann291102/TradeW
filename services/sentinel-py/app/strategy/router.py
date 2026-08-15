@@ -3,10 +3,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.core.auth import require_service_token
 from app.strategy import store
 from app.strategy.performance import compute_performance
+from app.strategy.templates import get_template, list_templates
 from app.watch import store as watch_store
 from app.strategy.parser import parse_strategy_text
 from app.strategy.schemas import (
     CreateStrategyRequest,
+    ParsedStrategy,
     ParseRequest,
     ParseResponse,
     UpdateStrategyRequest,
@@ -14,6 +16,35 @@ from app.strategy.schemas import (
 )
 
 router = APIRouter(prefix="/strategies", tags=["strategies"], dependencies=[Depends(require_service_token)])
+
+
+@router.get("/templates")
+async def templates() -> list[dict]:
+    """The adoptable catalogue. A menu, not a recommendation: nothing here is
+    ranked, scored against the others, or adopted on the user's behalf."""
+    return list_templates()
+
+
+@router.post("/templates/{template_id}/adopt", response_model=UserStrategyResponse, status_code=status.HTTP_201_CREATED)
+async def adopt(template_id: str, user_id: str = Query(..., alias="userId"), name: str | None = None) -> UserStrategyResponse:
+    """Adopt a template — it becomes the user's own strategy, editable like
+    one they typed. A template whose conditions the watch engine cannot
+    evaluate is refused rather than saved as something that would silently
+    never fire."""
+    template = get_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if not template.available:
+        raise HTTPException(status_code=409, detail=template.to_dict()["unavailableReason"])
+
+    row = await store.create_strategy(
+        user_id,
+        name or template.name,
+        ParsedStrategy(**template.rules),
+        raw_input=f"Adopted template: {template.id}",
+        input_type="template",
+    )
+    return UserStrategyResponse(**row)
 
 
 @router.post("/parse", response_model=ParseResponse)

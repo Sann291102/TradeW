@@ -37,6 +37,20 @@ export class SentinelPyProxyController {
     return this.sentinelPy.parseStrategy(String(body?.text ?? ''));
   }
 
+  @Get('strategies/templates')
+  listTemplates() {
+    return this.sentinelPy.listTemplates();
+  }
+
+  @Post('strategies/templates/:templateId/adopt')
+  adoptTemplate(
+    @Req() req: AuthedRequest,
+    @Param('templateId') templateId: string,
+    @Query('name') name?: string,
+  ) {
+    return this.sentinelPy.adoptTemplate(req.user.sub, templateId, name);
+  }
+
   @Post('strategies')
   createStrategy(@Req() req: AuthedRequest, @Body() body: unknown) {
     return this.sentinelPy.createStrategy(req.user.sub, body);
