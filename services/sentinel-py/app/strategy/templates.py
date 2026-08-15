@@ -40,6 +40,8 @@ SUPPORTED_PRIMITIVES = {
     "vwap_test_count",
     "atr",
     "session_clock",
+    "level_detection",
+    "level_age",
 }
 
 
@@ -367,9 +369,56 @@ CATALOGUE: list[Template] = [
     Template(
         id="sr_flip",
         name="Support / Resistance Flip",
-        summary="A level breaks, is retested from the other side, and holds — resistance becomes support.",
+        summary=(
+            "One level, four stages. A level the market has turned at more than once, and that "
+            "has been around a while, breaks; price comes back to it from the other side; and it "
+            "holds. Resistance becomes support, or support becomes resistance."
+        ),
         direction="both",
         requires={"level_detection", "level_age", "close_beyond_level", "retest", "relative_volume"},
+        rules={
+            "timeframe": "15m",
+            "levels": ["detected"],
+            "rules": [
+                {
+                    "id": "rule_level",
+                    "name": "established_level_present",
+                    "condition": "established_level_present",
+                    "mandatory": True,
+                    "description": "A level with 2+ touches that has been in place at least 10 bars",
+                },
+                {
+                    "id": "rule_break",
+                    "name": "level_break_close",
+                    "condition": "level_break_close",
+                    "mandatory": True,
+                    "description": "Price closes clear of that level",
+                },
+                {
+                    "id": "rule_flip_retest",
+                    "name": "level_flip_retest",
+                    "condition": "level_flip_retest",
+                    "mandatory": True,
+                    "description": "Price returns to the level from the side it broke to",
+                },
+                {
+                    "id": "rule_flip_holds",
+                    "name": "level_flip_holds",
+                    "condition": "level_flip_holds",
+                    "mandatory": True,
+                    "description": "The level holds in its new role instead of failing back through",
+                },
+                {
+                    "id": "rule_volume_confirm",
+                    "name": "volume_confirm",
+                    "condition": "volume_above_20_period_avg",
+                    "mandatory": False,
+                    "description": "The break carried above-average volume",
+                },
+            ],
+            "entry": {"long": "after_flip_holds", "short": "after_flip_holds"},
+            "riskManagement": {"stopLoss": None, "targets": []},
+        },
     ),
     Template(
         id="flag_pennant",

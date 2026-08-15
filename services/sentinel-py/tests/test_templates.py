@@ -21,14 +21,14 @@ def test_available_templates_produce_rules_the_evaluator_understands():
 
 
 def test_unavailable_templates_name_the_missing_primitive():
-    sr_flip = get_template("sr_flip")
-    assert sr_flip is not None
-    assert sr_flip.available is False
-    assert "level_detection" in sr_flip.missing
-    assert "level_detection" in sr_flip.to_dict()["unavailableReason"]
+    flag = get_template("flag_pennant")
+    assert flag is not None
+    assert flag.available is False
+    assert "impulse_detection" in flag.missing
+    assert "impulse_detection" in flag.to_dict()["unavailableReason"]
 
 
-def test_six_of_eleven_are_adoptable_today():
+def test_seven_of_eleven_are_adoptable_today():
     """A count, so a template cannot quietly become adoptable because a
     primitive name was added to the supported set without an evaluator."""
     adoptable = {t.id for t in CATALOGUE if t.available}
@@ -39,6 +39,7 @@ def test_six_of_eleven_are_adoptable_today():
         "ema_9_21_pullback",
         "vwap_bounce",
         "vwap_reversion_eod",
+        "sr_flip",
     }
 
 

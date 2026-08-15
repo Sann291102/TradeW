@@ -18,6 +18,10 @@ from app.market.clock import minutes_to_close, session_key
 from app.market.feed import Candle
 from app.watch.indicators import (
     EXTENSION_MIN_ATR,
+    MIN_LEVEL_AGE_BARS,
+    MIN_LEVEL_TOUCHES,
+    Level,
+    LevelKind,
     Slope,
     atr,
     body_interaction,
@@ -27,8 +31,10 @@ from app.watch.indicators import (
     ema_of,
     find_bullish_reclaim,
     find_bullish_reclaims,
+    find_levels,
     find_pullback,
     find_vwap_extreme,
+    level_tolerance,
     vwap_deviation,
     vwap_series,
     vwap_slope,
@@ -284,6 +290,182 @@ def _pullback_continuation(candles: list[Candle]) -> tuple[bool, str]:
     return False, "waiting for a close back above the 9 EMA"
 
 
+# --- Support / Resistance Flip -----------------------------------------------
+#
+# The whole strategy is ONE ordered story about ONE level: an established
+# level breaks, price comes back to it FROM THE OTHER SIDE, and it holds.
+# Resistance becomes support, or support becomes resistance.
+#
+# So the four conditions are not independent checks that happen to be about
+# levels — they are four stages of the same sequence, and they all read from
+# `_find_flip`. Evaluating them separately would let "a level broke" and "a
+# level held" be true of two different levels on the same chart and call that
+# a flip.
+
+
+@dataclass(frozen=True)
+class Flip:
+    level: Level
+    #: True when the break was upward (resistance -> support).
+    upward: bool
+    break_index: int
+    retest_index: int | None
+    hold_index: int | None
+    detail: str
+
+    @property
+    def stage(self) -> int:
+        return 3 if self.hold_index is not None else 2 if self.retest_index is not None else 1
+
+
+def _find_flip(candles: list[Candle]) -> Flip | None:
+    """The most advanced flip in progress, or None.
+
+    "Most advanced" rather than "most recent": a completed flip on an older
+    level is more informative than a fresh break that has not been retested,
+    and reporting the fresh one would make a finished setup look like it had
+    regressed to waiting.
+    """
+    a = atr(candles)
+    levels = find_levels(candles, a)
+    tolerance = level_tolerance(candles, a)
+    if not levels or tolerance <= 0:
+        return None
+
+    best: Flip | None = None
+    for level in levels:
+        if level.age(len(candles)) < MIN_LEVEL_AGE_BARS:
+            continue
+
+        # The break direction is fixed by what the level IS. Resistance is
+        # broken upward and support downward — price that has been below a
+        # resistance all along has not "broken it downward", it has simply
+        # stayed where it was, and treating that as a break would have every
+        # quiet bar under a level count as one.
+        upward = level.kind is LevelKind.RESISTANCE
+
+        # The break also has to happen AFTER the level was formed. A candle
+        # that helped establish the level cannot be the one that broke it.
+        for i in range(level.last_index + 1, len(candles)):
+            broke = (
+                candles[i].close > level.price + tolerance
+                if upward
+                else candles[i].close < level.price - tolerance
+            )
+            if not broke:
+                continue
+
+            retest_index = None
+            hold_index = None
+            for j in range(i + 1, len(candles)):
+                if retest_index is None:
+                    # Back to the level from the side price broke to.
+                    reached = (
+                        candles[j].low <= level.price + tolerance
+                        if upward
+                        else candles[j].high >= level.price - tolerance
+                    )
+                    if reached:
+                        retest_index = j
+                    continue
+                # It holds when a LATER candle closes away from the level
+                # again in the break direction. A candle that closes through
+                # it is the flip failing, not the flip completing.
+                if upward and candles[j].close > level.price + tolerance:
+                    hold_index = j
+                    break
+                if not upward and candles[j].close < level.price - tolerance:
+                    hold_index = j
+                    break
+
+            became = "support" if upward else "resistance"
+            flip = Flip(
+                level=level,
+                upward=upward,
+                break_index=i,
+                retest_index=retest_index,
+                hold_index=hold_index,
+                detail=(
+                    f"{level.kind.value} {level.price:.2f} "
+                    f"({level.touches} touches, {level.age(len(candles))} bars old) "
+                    f"broke {'above' if upward else 'below'}"
+                    + ("" if retest_index is None else ", retested")
+                    + ("" if hold_index is None else f" and held as {became}")
+                ),
+            )
+            if best is None or flip.stage > best.stage:
+                best = flip
+            break
+
+    return best
+
+
+def _established_level(candles: list[Candle]) -> tuple[bool, str]:
+    """There is a level worth watching at all: touched more than once and old
+    enough to have been respected rather than merely printed."""
+    a = atr(candles)
+    levels = [lvl for lvl in find_levels(candles, a) if lvl.age(len(candles)) >= MIN_LEVEL_AGE_BARS]
+    if not levels:
+        return False, f"no level with {MIN_LEVEL_TOUCHES}+ touches and {MIN_LEVEL_AGE_BARS}+ bars of age"
+    newest = levels[0]
+    return True, (
+        f"{newest.kind.value} at {newest.price:.2f} — {newest.touches} touches, "
+        f"{newest.age(len(candles))} bars old"
+    )
+
+
+def _level_broke(candles: list[Candle]) -> tuple[bool, str]:
+    flip = _find_flip(candles)
+    if flip is None:
+        return False, "no established level has been broken"
+    return True, flip.detail
+
+
+def _flip_retested(candles: list[Candle]) -> tuple[bool, str]:
+    flip = _find_flip(candles)
+    if flip is None:
+        return False, "no break to retest"
+    if flip.retest_index is None:
+        return False, f"waiting for price to return to {flip.level.price:.2f} from the other side"
+    return True, flip.detail
+
+
+def _flip_held(candles: list[Candle]) -> tuple[bool, str]:
+    """The flip completing: the old level did its new job. Until this closes,
+    the level has only been broken and revisited, which is also what a failed
+    break looks like."""
+    flip = _find_flip(candles)
+    if flip is None:
+        return False, "no flip in progress"
+    if flip.retest_index is None:
+        return False, "the break has not been retested yet"
+    if flip.hold_index is None:
+        became = "support" if flip.upward else "resistance"
+        return False, f"waiting for {flip.level.price:.2f} to hold as {became}"
+    return True, flip.detail
+
+
+def measure_flip(candles: list[Candle]) -> dict | None:
+    """Flip measurements for the observation record: which level, how old it
+    was, how many touches it had, and how far the sequence got. Level age and
+    touch count are what the funnel will eventually split on — whether THIS
+    user's flips work better on older, more-tested levels is a question only
+    their own history can answer."""
+    flip = _find_flip(closed_candles(candles))
+    if flip is None:
+        return None
+    return {
+        "price": round(flip.level.price, 4),
+        "kind": flip.level.kind.value,
+        "touches": flip.level.touches,
+        "ageBars": flip.level.age(len(closed_candles(candles))),
+        "direction": "upward" if flip.upward else "downward",
+        "stage": flip.stage,
+        "retested": flip.retest_index is not None,
+        "held": flip.hold_index is not None,
+    }
+
+
 # --- VWAP --------------------------------------------------------------------
 #
 # TWO strategies share these primitives and nothing else. VWAP Bounce is a
@@ -526,6 +708,15 @@ def evaluate(rules: list[dict], candles: list[Candle]) -> EvaluationResult:
             met, detail = _pullback_into_zone(bars)
         elif condition == "pullback_rejection_continuation":
             met, detail = _pullback_continuation(bars)
+        # Support / Resistance Flip — four stages of ONE sequence on ONE level.
+        elif condition == "established_level_present":
+            met, detail = _established_level(bars)
+        elif condition == "level_break_close":
+            met, detail = _level_broke(bars)
+        elif condition == "level_flip_retest":
+            met, detail = _flip_retested(bars)
+        elif condition == "level_flip_holds":
+            met, detail = _flip_held(bars)
         # VWAP Bounce / Rejection — a continuation setup.
         elif condition == "vwap_available":
             met, detail = _vwap_available(bars)

@@ -263,6 +263,129 @@ def find_pullback(
     )
 
 
+# --- Horizontal levels -------------------------------------------------------
+#
+# A "level" here is not a line someone drew. It is a price the market has
+# turned at more than once, discovered from swing pivots, with the evidence
+# for it kept attached: how many times it was touched and how long ago it was
+# first established. Those two numbers are the whole reason this is a
+# primitive rather than a constant — a level formed twenty bars ago and
+# touched twice is a different object from one that has held all session, and
+# the flip strategy is entitled to require the second kind.
+
+
+#: Bars either side of a candle for it to count as a pivot. Two is the common
+#: fractal definition and keeps intraday noise from minting levels.
+PIVOT_WINDOW = 2
+
+#: A single pivot is a swing point, not a level. It takes a second touch at
+#: the same price before the market can be said to have respected it.
+MIN_LEVEL_TOUCHES = 2
+
+#: How old a level must be before the flip strategy will use it. A level that
+#: formed three bars ago has not been established, it has just happened.
+MIN_LEVEL_AGE_BARS = 10
+
+
+class LevelKind(str, Enum):
+    RESISTANCE = "resistance"
+    SUPPORT = "support"
+
+
+@dataclass(frozen=True)
+class Level:
+    price: float
+    kind: LevelKind
+    #: How many distinct pivots formed at this price.
+    touches: int
+    #: Index of the first pivot — where the level was established.
+    first_index: int
+    last_index: int
+
+    def age(self, total_candles: int) -> int:
+        """Bars since the level was established."""
+        return max(0, total_candles - 1 - self.first_index)
+
+
+def find_swing_pivots(candles: list[Candle], window: int = PIVOT_WINDOW) -> tuple[list[int], list[int]]:
+    """Indices of swing highs and swing lows.
+
+    A pivot needs `window` bars on BOTH sides, so the most recent bars can
+    never be pivots — by construction, not by oversight. A "pivot" confirmed
+    by bars that have not printed yet would be a guess.
+
+    The comparison is STRICT. With a non-strict test every bar of a flat tape
+    ties for the maximum and so becomes a pivot, which would mint a level at
+    every price in a market that had not turned anywhere.
+    """
+    highs: list[int] = []
+    lows: list[int] = []
+    for i in range(window, len(candles) - window):
+        neighbours = candles[i - window : i] + candles[i + 1 : i + window + 1]
+        if all(candles[i].high > c.high for c in neighbours):
+            highs.append(i)
+        if all(candles[i].low < c.low for c in neighbours):
+            lows.append(i)
+    return highs, lows
+
+
+def level_tolerance(candles: list[Candle], atr_value: float | None) -> float:
+    """How close two pivots must be to count as the same level. ATR-scaled so
+    "the same price" means the same thing on an index and on an option."""
+    if atr_value and atr_value > 0:
+        return atr_value * 0.25
+    return abs(candles[-1].close) * 0.001 if candles else 0.0
+
+
+def find_levels(
+    candles: list[Candle],
+    atr_value: float | None = None,
+    min_touches: int = MIN_LEVEL_TOUCHES,
+) -> list[Level]:
+    """Horizontal levels the market has actually turned at, newest pivot first.
+
+    Pivots within an ATR-scaled tolerance are clustered into one level and the
+    cluster keeps its touch count and the index of its FIRST pivot, which is
+    what makes `level_age` answerable later.
+    """
+    if not candles:
+        return []
+
+    highs, lows = find_swing_pivots(candles)
+    tolerance = level_tolerance(candles, atr_value)
+    if tolerance <= 0:
+        return []
+
+    levels: list[Level] = []
+    for indices, kind, price_of in (
+        (highs, LevelKind.RESISTANCE, lambda i: candles[i].high),
+        (lows, LevelKind.SUPPORT, lambda i: candles[i].low),
+    ):
+        clusters: list[list[int]] = []
+        for i in indices:
+            for cluster in clusters:
+                if abs(price_of(i) - price_of(cluster[0])) <= tolerance:
+                    cluster.append(i)
+                    break
+            else:
+                clusters.append([i])
+
+        for cluster in clusters:
+            if len(cluster) < min_touches:
+                continue
+            levels.append(
+                Level(
+                    price=sum(price_of(i) for i in cluster) / len(cluster),
+                    kind=kind,
+                    touches=len(cluster),
+                    first_index=min(cluster),
+                    last_index=max(cluster),
+                )
+            )
+
+    return sorted(levels, key=lambda level: level.first_index, reverse=True)
+
+
 # --- VWAP --------------------------------------------------------------------
 
 

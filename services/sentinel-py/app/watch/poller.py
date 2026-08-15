@@ -17,7 +17,7 @@ from app.market.feed import MarketDataUnavailableError, fetch_index_candles, fet
 from app.intrade.monitor import Direction, evaluate_position
 from app.notify.dispatcher import notify, notify_intrade
 from app.watch import store
-from app.watch.evaluator import evaluate, measure_pullback, measure_vwap
+from app.watch.evaluator import evaluate, measure_flip, measure_pullback, measure_vwap
 from app.watch.state_machine import Transition, WatchState, advance
 
 logger = logging.getLogger("sentinel.watch")
@@ -197,6 +197,9 @@ async def sweep_once() -> int:
                     # buckets out of THIS user's history. None when the
                     # instrument reports no volume — there is no VWAP then.
                     "vwap": measure_vwap(candles),
+                    # Level age and touch count, so the funnel can later ask whether
+                    # THIS user's flips work better on older, more-tested levels.
+                    "flip": measure_flip(candles),
                 },
             )
 
