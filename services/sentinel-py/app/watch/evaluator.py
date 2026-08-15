@@ -25,11 +25,14 @@ from app.watch.indicators import (
     MIN_CONSOLIDATION_BARS,
     MIN_LEVEL_AGE_BARS,
     MIN_LEVEL_TOUCHES,
+    ZONE_MIN_DEPARTURE_ATR,
     Contraction,
     Impulse,
     Level,
     LevelKind,
     Slope,
+    Zone,
+    ZoneKind,
     atr,
     body_interaction,
     classify_deviation,
@@ -43,7 +46,10 @@ from app.watch.indicators import (
     find_levels,
     find_pullback,
     find_vwap_extreme,
+    find_zones,
     level_tolerance,
+    resample,
+    score_zone,
     vwap_deviation,
     vwap_series,
     vwap_slope,
@@ -297,6 +303,138 @@ def _pullback_continuation(candles: list[Candle]) -> tuple[bool, str]:
         if candles[i].close > fast[i - offset]:
             return True, f"closed {candles[i].close:.2f} back above the 9 EMA {fast[i - offset]:.2f}"
     return False, "waiting for a close back above the 9 EMA"
+
+
+# --- Supply / Demand Zone ----------------------------------------------------
+#
+# The zone is a place; the strategy is what price does when it comes back to
+# it. As with the flip and the flag, every condition reads one `_find_zone`
+# result, so "there is a zone" and "price reacted at the zone" can never be
+# about different zones.
+#
+# The higher-timeframe check is derived by resampling the SAME candles rather
+# than fetching a second series, so the two timeframes cannot disagree about
+# what happened.
+
+
+#: How much coarser the context timeframe is. 5m x 3 = 15m.
+HTF_FACTOR = 3
+
+
+def _find_zone(candles: list[Candle], timeframe: str = "5m") -> Zone | None:
+    """The zone this strategy is about.
+
+    A zone price has come back to wins over a newer untested one. The move
+    that carries price back into a zone is itself often a hard departure, so
+    it mints a fresh zone behind it — and "newest wins" would hand the
+    strategy that new zone at the exact moment the interesting thing was
+    happening at the old one, silently swapping the subject mid-sequence.
+    """
+    zones = find_zones(candles, atr(candles), timeframe)
+    if not zones:
+        return None
+    revisited = [zone for zone in zones if zone.touches > 0]
+    return revisited[0] if revisited else zones[0]
+
+
+def _zone_present(candles: list[Candle]) -> tuple[bool, str]:
+    zone = _find_zone(candles)
+    if zone is None:
+        return False, f"no base with a {ZONE_MIN_DEPARTURE_ATR} ATR departure"
+    return True, f"{zone.detail} — {score_zone(zone).detail}"
+
+
+def _zone_htf_aligned(candles: list[Candle]) -> tuple[bool, str]:
+    """Context: a demand zone in a higher-timeframe downtrend is a zone the
+    larger flow is working against. The condition does not forbid it — it
+    reports it, and the user's rule decides."""
+    zone = _find_zone(candles)
+    if zone is None:
+        return False, "no zone to place in context"
+
+    htf = resample(candles, HTF_FACTOR)
+    values = ema_of(htf, 9)
+    if not values:
+        return False, "not enough history for a higher-timeframe view"
+
+    slope = classify_slope(values, atr=atr(htf))
+    wants_up = zone.kind is ZoneKind.DEMAND
+    aligned = (slope is Slope.RISING) if wants_up else (slope is Slope.FALLING)
+    return aligned, (
+        f"higher timeframe is {slope.value}, {'with' if aligned else 'against'} "
+        f"this {zone.kind.value} zone"
+    )
+
+
+def _price_returned_to_zone(candles: list[Candle]) -> tuple[bool, str]:
+    zone = _find_zone(candles)
+    if zone is None:
+        return False, "no zone to return to"
+    if zone.touches == 0:
+        return False, f"price has not come back to {zone.bottom:.2f}-{zone.top:.2f} yet"
+    return True, f"price has returned to the zone {zone.touches}x"
+
+
+def _zone_reaction(candles: list[Candle]) -> tuple[bool, str]:
+    """The zone doing its job: after price entered it, a candle closes back out
+    of it in the zone's own direction. Price closing THROUGH the zone is the
+    zone failing, which is the outcome the funnel most needs to be able to
+    count."""
+    zone = _find_zone(candles)
+    if zone is None:
+        return False, "no zone to react at"
+
+    # From the END of the departure, not from the base: the candles that
+    # created the zone by leaving it overlap it on the way out, and reading
+    # that as "entered then closed back above" turns every zone's own
+    # departure into a reaction it never had.
+    entered = False
+    for candle in candles[zone.departure_end_index + 1 :]:
+        if candle.low <= zone.top and candle.high >= zone.bottom:
+            entered = True
+        if not entered:
+            continue
+        # The close is checked on the SAME bar that entered, because the
+        # classic reaction is exactly that: a candle wicks into the zone and
+        # closes back out of it. Skipping every overlapping bar would only
+        # ever see reactions that took two bars.
+        if zone.kind is ZoneKind.DEMAND and candle.close > zone.top:
+            return True, f"closed {candle.close:.2f} back above the demand zone"
+        if zone.kind is ZoneKind.SUPPLY and candle.close < zone.bottom:
+            return True, f"closed {candle.close:.2f} back below the supply zone"
+    return False, "no close back out of the zone yet"
+
+
+def measure_zone(candles: list[Candle]) -> dict | None:
+    """Zone attributes for the observation record, including the STABLE id.
+
+    The id is what makes this worth recording at all: across sweeps the same
+    zone reports the same identity, so touches accumulate and the funnel can
+    ask how this user's results differed on fresh zones versus third visits.
+    """
+    bars = closed_candles(candles)
+    zone = _find_zone(bars)
+    if zone is None:
+        return None
+    score = score_zone(zone)
+    return {
+        "id": zone.id,
+        "kind": zone.kind.value,
+        "top": round(zone.top, 4),
+        "bottom": round(zone.bottom, 4),
+        "departureAtr": round(zone.departure_atr, 4),
+        "widthAtr": round(zone.width_atr, 4),
+        "touches": zone.touches,
+        "fresh": zone.fresh,
+        "ageBars": zone.age,
+        "timeframe": zone.timeframe,
+        "score": score.total,
+        "scoreParts": {
+            "freshness": score.freshness,
+            "departure": score.departure,
+            "tightness": score.tightness,
+        },
+    }
 
 
 # --- Flag / Pennant Continuation ---------------------------------------------
@@ -835,6 +973,15 @@ def evaluate(rules: list[dict], candles: list[Candle]) -> EvaluationResult:
             met, detail = _pullback_into_zone(bars)
         elif condition == "pullback_rejection_continuation":
             met, detail = _pullback_continuation(bars)
+        # Supply / Demand Zone — a place, and what price does on returning.
+        elif condition == "zone_present":
+            met, detail = _zone_present(bars)
+        elif condition == "zone_htf_aligned":
+            met, detail = _zone_htf_aligned(bars)
+        elif condition == "price_returns_to_zone":
+            met, detail = _price_returned_to_zone(bars)
+        elif condition == "zone_reaction":
+            met, detail = _zone_reaction(bars)
         # Flag / Pennant — impulse, pause, resumption on the same leg.
         elif condition == "impulse_leg":
             met, detail = _impulse_leg(bars)

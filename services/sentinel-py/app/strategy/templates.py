@@ -44,6 +44,9 @@ SUPPORTED_PRIMITIVES = {
     "level_age",
     "impulse_detection",
     "volatility_contraction",
+    "zone_detection",
+    "zone_scoring",
+    "htf_alignment",
 }
 
 
@@ -472,9 +475,49 @@ CATALOGUE: list[Template] = [
     Template(
         id="supply_demand_zone",
         name="Supply / Demand Zone",
-        summary="A scored zone — freshness, departure strength, prior tests — reacting on a return.",
+        summary=(
+            "An area price left in a hurry, described by how fresh it is, how hard price departed, "
+            "and how tight it is. The zone keeps its identity across sweeps, so a return to it is "
+            "a second visit rather than a brand-new discovery."
+        ),
         direction="both",
-        requires={"zone_detection", "zone_scoring", "htf_alignment"},
+        requires={"zone_detection", "zone_scoring", "htf_alignment", "atr"},
+        rules={
+            "timeframe": "5m",
+            "levels": ["zone_top", "zone_bottom"],
+            "rules": [
+                {
+                    "id": "rule_zone",
+                    "name": "zone_present",
+                    "condition": "zone_present",
+                    "mandatory": True,
+                    "description": "A base price departed from by at least 1.5 ATR",
+                },
+                {
+                    "id": "rule_htf",
+                    "name": "zone_htf_aligned",
+                    "condition": "zone_htf_aligned",
+                    "mandatory": False,
+                    "description": "The higher timeframe is moving with the zone rather than against it",
+                },
+                {
+                    "id": "rule_return",
+                    "name": "price_returns_to_zone",
+                    "condition": "price_returns_to_zone",
+                    "mandatory": True,
+                    "description": "Price comes back into the zone",
+                },
+                {
+                    "id": "rule_reaction",
+                    "name": "zone_reaction",
+                    "condition": "zone_reaction",
+                    "mandatory": True,
+                    "description": "Price closes back out of the zone in the zone's direction",
+                },
+            ],
+            "entry": {"long": "after_zone_reaction", "short": "after_zone_reaction"},
+            "riskManagement": {"stopLoss": None, "targets": []},
+        },
     ),
     Template(
         id="liquidity_sweep_fvg",

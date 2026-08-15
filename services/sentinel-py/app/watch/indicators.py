@@ -10,7 +10,11 @@ separation is what keeps the evaluator describable to a user as "your rules,
 checked".
 """
 
-from dataclasses import dataclass
+# The zone section references Impulse, which is defined further down; deferred
+# annotations keep the file ordered by concept rather than by definition order.
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
 from enum import Enum
 
 from app.market.feed import Candle
@@ -263,6 +267,262 @@ def find_pullback(
     )
 
 
+# --- Higher-timeframe context ------------------------------------------------
+
+
+def resample(candles: list[Candle], factor: int) -> list[Candle]:
+    """Aggregate candles into a coarser timeframe: 5m x 3 = 15m.
+
+    Derived from the SAME series the watch already reads rather than fetched
+    separately, so the higher timeframe can never disagree with the lower one
+    about what happened — a second request could return a differently-aligned
+    or differently-adjusted series and the two would quietly describe
+    different markets.
+
+    Only whole groups are emitted. A trailing partial group is dropped, for
+    the same reason the evaluator drops the forming candle.
+    """
+    if factor <= 1 or len(candles) < factor:
+        return list(candles) if factor <= 1 else []
+
+    out: list[Candle] = []
+    for start in range(0, len(candles) - factor + 1, factor):
+        group = candles[start : start + factor]
+        out.append(
+            Candle(
+                timestamp=group[0].timestamp,
+                open=group[0].open,
+                high=max(c.high for c in group),
+                low=min(c.low for c in group),
+                close=group[-1].close,
+                volume=sum(c.volume for c in group),
+            )
+        )
+    return out
+
+
+# --- Supply / demand zones ---------------------------------------------------
+#
+# A zone is a PLACE, not an event: an area price left in a hurry, which it may
+# come back to later today, tomorrow, or never. That makes identity the
+# central problem. The sweep runs every fifteen seconds, and a zone model that
+# re-derives fresh objects each pass would report a brand-new zone every time,
+# lose its touch history, and make "this zone has been tested twice" unsayable.
+#
+# So a zone's identity comes from the bar that formed it — the base candle's
+# timestamp and the zone's bounds — and is therefore stable across sweeps for
+# as long as that bar is in the window. Nothing is stored; the same input
+# yields the same id, which is what makes touches and freshness accumulate
+# rather than reset.
+
+
+#: A base is the quiet bit before the departure — the balance price left. More
+#: than a few bars and it is a range, not a zone.
+ZONE_MAX_BASE_BARS = 3
+
+#: How hard price must leave for the area to count as a zone at all.
+ZONE_MIN_DEPARTURE_ATR = 1.5
+
+#: A base is BALANCE — small bodies. Without this the first candle of the
+#: departure gets absorbed into the base and the zone is drawn across the very
+#: range price travelled instead of the area it left.
+BASE_MAX_BODY_ATR = 0.5
+
+
+class ZoneKind(str, Enum):
+    DEMAND = "demand"
+    SUPPLY = "supply"
+
+
+@dataclass(frozen=True)
+class Zone:
+    #: Stable across sweeps: derived from the forming bar, not from when the
+    #: detection ran.
+    id: str
+    kind: ZoneKind
+    top: float
+    bottom: float
+    base_index: int
+    #: Where the departure finished. Touches are counted from here, not from
+    #: the base: the candle that CREATED the zone by leaving it overlaps the
+    #: zone on its way out, and counting that as a test would make every zone
+    #: born already tested.
+    departure_end_index: int
+    #: Strength of the move away, in ATR multiples.
+    departure_atr: float
+    #: Distinct returns into the zone since it formed. 0 means untested.
+    touches: int
+    #: Bars since the zone formed.
+    age: int
+    #: Zone height in ATR multiples. A wide zone is a weaker claim about where
+    #: price will react than a narrow one, and the number says so plainly.
+    width_atr: float
+    #: The timeframe this zone was detected on, carried so a 15m zone is never
+    #: silently compared with a 5m one.
+    timeframe: str
+
+    @property
+    def fresh(self) -> bool:
+        return self.touches == 0
+
+    def contains(self, price: float) -> bool:
+        return self.bottom <= price <= self.top
+
+    @property
+    def detail(self) -> str:
+        return (
+            f"{self.kind.value} zone {self.bottom:.2f}-{self.top:.2f} "
+            f"({self.timeframe}, {self.departure_atr:.2f} ATR departure, "
+            f"{'untested' if self.fresh else f'{self.touches} touches'}, {self.age} bars old)"
+        )
+
+
+def _zone_id(kind: ZoneKind, base: Candle, top: float, bottom: float, timeframe: str) -> str:
+    """Identity from the formation, so re-detection produces the SAME zone."""
+    return f"{kind.value}:{timeframe}:{base.timestamp.isoformat()}:{bottom:.4f}-{top:.4f}"
+
+
+def count_zone_touches(candles: list[Candle], zone: Zone) -> int:
+    """Distinct returns into the zone after it formed.
+
+    Collapsed the same way VWAP tests are: price sitting inside a zone for six
+    bars has tested it once. Counting each bar would make a zone look heavily
+    used purely for having been sat in.
+    """
+    touches = 0
+    inside = False
+    for candle in candles[zone.departure_end_index + 1 :]:
+        overlapping = candle.low <= zone.top and candle.high >= zone.bottom
+        if overlapping and not inside:
+            touches += 1
+        inside = overlapping
+    return touches
+
+
+def measure_departure(candles: list[Candle], atr_value: float | None) -> Impulse | None:
+    """How hard price left, measured FROM the first candle given.
+
+    Deliberately not `find_impulse`: that scans for the best leg anywhere in
+    the window and will happily report one that starts a few bars later. The
+    question a zone asks is narrower — did price leave THIS area immediately
+    and fast — so the window is anchored at index 0 and only its length varies.
+    """
+    if atr_value is None or atr_value <= 0 or len(candles) < 2:
+        return None
+
+    best: Impulse | None = None
+    for length in range(2, min(IMPULSE_MAX_BARS, len(candles)) + 1):
+        leg = candles[:length]
+        displacement = leg[-1].close - leg[0].open
+        if abs(displacement) / atr_value < ZONE_MIN_DEPARTURE_ATR:
+            continue
+        up = displacement > 0
+        candidate = Impulse(
+            start_index=0,
+            end_index=length - 1,
+            up=up,
+            size_atr=abs(displacement) / atr_value,
+            high=max(c.high for c in leg),
+            low=min(c.low for c in leg),
+            detail=f"left {abs(displacement):.2f} ({abs(displacement) / atr_value:.2f} ATR) "
+            f"{'up' if up else 'down'} over {length} bars",
+        )
+        if best is None or candidate.size_atr > best.size_atr:
+            best = candidate
+    return best
+
+
+def find_zones(
+    candles: list[Candle],
+    atr_value: float | None,
+    timeframe: str = "5m",
+) -> list[Zone]:
+    """Zones formed by a base that price departed from hard, newest first.
+
+    Both kinds are detected: demand (base, then away upward) and supply (base,
+    then away downward).
+    """
+    if atr_value is None or atr_value <= 0 or len(candles) < ZONE_MAX_BASE_BARS + 2:
+        return []
+
+    zones: list[Zone] = []
+    for base_end in range(ZONE_MAX_BASE_BARS - 1, len(candles) - 1):
+        departure = measure_departure(candles[base_end + 1 :], atr_value)
+        if departure is None:
+            continue
+
+        base = candles[max(0, base_end - ZONE_MAX_BASE_BARS + 1) : base_end + 1]
+        # The base must be balance, not part of the move. A big-bodied candle
+        # here is the departure starting, and including it draws the zone
+        # across the range price travelled rather than the area it left.
+        if any(abs(c.close - c.open) > BASE_MAX_BODY_ATR * atr_value for c in base):
+            continue
+        top = max(c.high for c in base)
+        bottom = min(c.low for c in base)
+        if top <= bottom:
+            continue
+
+        kind = ZoneKind.DEMAND if departure.up else ZoneKind.SUPPLY
+        zone = Zone(
+            id=_zone_id(kind, base[-1], top, bottom, timeframe),
+            kind=kind,
+            top=top,
+            bottom=bottom,
+            base_index=base_end,
+            departure_end_index=base_end + 1 + departure.end_index,
+            departure_atr=departure.size_atr,
+            touches=0,
+            age=len(candles) - 1 - base_end,
+            width_atr=(top - bottom) / atr_value,
+            timeframe=timeframe,
+        )
+        zones.append(replace(zone, touches=count_zone_touches(candles, zone)))
+
+    # Newest first, and only one zone per identity: overlapping bases can
+    # otherwise produce several descriptions of the same area.
+    unique: dict[str, Zone] = {}
+    for zone in sorted(zones, key=lambda z: z.base_index, reverse=True):
+        unique.setdefault(zone.id, zone)
+    return list(unique.values())
+
+
+@dataclass(frozen=True)
+class ZoneScore:
+    """A DESCRIPTION of a zone's attributes, not a prediction and not a rank.
+
+    Nothing here compares one strategy with another or nominates a zone to
+    trade. It reports how fresh the zone is, how hard price left it, and how
+    tight it is, because those are facts about the zone the user can see for
+    themselves on the chart. The weights are stated conventions so that the
+    number means the same thing every time it is shown — and the funnel will
+    later report how the USER's own results actually varied across them.
+    """
+
+    freshness: float
+    departure: float
+    tightness: float
+    total: float
+    detail: str
+
+
+def score_zone(zone: Zone) -> ZoneScore:
+    # Each component is clamped to 0..1 so no single attribute can dominate
+    # by being extreme.
+    freshness = 1.0 if zone.fresh else max(0.0, 1.0 - 0.34 * zone.touches)
+    departure = min(1.0, zone.departure_atr / 3.0)
+    tightness = min(1.0, 1.0 / zone.width_atr) if zone.width_atr > 0 else 0.0
+    total = round((freshness + departure + tightness) / 3, 4)
+    return ZoneScore(
+        freshness=round(freshness, 4),
+        departure=round(departure, 4),
+        tightness=round(tightness, 4),
+        total=total,
+        detail=(
+            f"freshness {freshness:.2f}, departure {departure:.2f}, tightness {tightness:.2f}"
+        ),
+    )
+
+
 # --- Impulse and contraction -------------------------------------------------
 #
 # The flag/pennant shape is three things in order: a move that goes somewhere
@@ -348,8 +608,11 @@ def find_impulse(
                 if up
                 else min(range(len(leg)), key=lambda i: leg[i].close)
             )
+            # Note the separate name: assigning back to `end` here mutates the
+            # loop variable and the NEXT candidate length is then measured
+            # against a window that no longer exists.
             leg = leg[: extreme_at + 1]
-            end = start + extreme_at
+            leg_end = start + extreme_at
             if len(leg) < 2:
                 continue
 
@@ -363,7 +626,7 @@ def find_impulse(
 
             return Impulse(
                 start_index=start,
-                end_index=end,
+                end_index=leg_end,
                 up=up,
                 size_atr=abs(displacement) / atr_value,
                 high=max(c.high for c in leg),

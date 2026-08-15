@@ -21,14 +21,14 @@ def test_available_templates_produce_rules_the_evaluator_understands():
 
 
 def test_unavailable_templates_name_the_missing_primitive():
-    zone = get_template("supply_demand_zone")
-    assert zone is not None
-    assert zone.available is False
-    assert "zone_detection" in zone.missing
-    assert "zone_detection" in zone.to_dict()["unavailableReason"]
+    news = get_template("news_momentum")
+    assert news is not None
+    assert news.available is False
+    assert "news_feed" in news.missing
+    assert "news_feed" in news.to_dict()["unavailableReason"]
 
 
-def test_eight_of_eleven_are_adoptable_today():
+def test_nine_of_eleven_are_adoptable_today():
     """A count, so a template cannot quietly become adoptable because a
     primitive name was added to the supported set without an evaluator."""
     adoptable = {t.id for t in CATALOGUE if t.available}
@@ -41,6 +41,7 @@ def test_eight_of_eleven_are_adoptable_today():
         "vwap_reversion_eod",
         "sr_flip",
         "flag_pennant",
+        "supply_demand_zone",
     }
 
 
