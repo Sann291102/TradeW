@@ -32,20 +32,20 @@ export function StrategyConfigureForm({ strategyName, parameters, onChange }: Pr
     <section data-testid="strategy-configure" className="space-y-5">
       <header>
         <p className="text-xs uppercase tracking-wide text-muted">My strategy</p>
-        <h2 className="text-base font-medium text-fg">{strategyName}</h2>
+        <h2 className="text-base font-medium text-text">{strategyName}</h2>
       </header>
 
       <dl className="space-y-2">
         {settings.map((parameter) => (
           <div key={parameter.key} className="flex items-center justify-between gap-4">
             <dt className="text-xs text-muted">{parameter.label}</dt>
-            <dd className="text-xs text-fg">
+            <dd className="text-xs text-text">
               {parameter.type === 'choice' ? (
                 <select
                   aria-label={parameter.label}
                   value={String(parameter.value)}
                   onChange={(event) => onChange?.(parameter.key, event.target.value)}
-                  className="rounded-md border border-line bg-bg1 px-2 py-1 text-xs text-fg"
+                  className="rounded-md border border-border bg-card px-2 py-1 text-xs text-text"
                 >
                   {(parameter.options ?? []).map((option) => (
                     <option key={option} value={option}>
@@ -76,9 +76,9 @@ export function StrategyConfigureForm({ strategyName, parameters, onChange }: Pr
                 <li
                   key={parameter.key}
                   data-testid={`param-${parameter.key}`}
-                  className="flex items-start justify-between gap-3 rounded-md border border-line bg-bg1 px-3 py-2"
+                  className="flex items-start justify-between gap-3 rounded-md border border-border bg-card px-3 py-2"
                 >
-                  <span className="text-xs leading-relaxed text-fg">{parameter.label}</span>
+                  <span className="text-xs leading-relaxed text-text">{parameter.label}</span>
                   {parameter.locked ? (
                     <span className="shrink-0 text-[11px] uppercase tracking-wide text-faint">
                       Required

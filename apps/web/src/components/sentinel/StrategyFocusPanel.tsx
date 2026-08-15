@@ -24,17 +24,17 @@ interface Props {
 }
 
 const STATE_LABEL: Record<string, { text: string; tone: string }> = {
-  IDLE: { text: 'WATCHING', tone: 'bg-bg2 text-muted' },
+  IDLE: { text: 'WATCHING', tone: 'bg-hover text-muted' },
   FORMING: { text: 'FORMING', tone: 'bg-amber-bg text-amber' },
-  CONFIRMED: { text: 'CONFIRMED', tone: 'bg-emerald-500/15 text-emerald-400' },
-  IN_TRADE: { text: 'POSITION OPEN', tone: 'bg-sky-500/15 text-sky-400' },
-  EXITED: { text: 'CLOSED', tone: 'bg-bg2 text-faint' },
+  CONFIRMED: { text: 'CONFIRMED', tone: 'bg-up-bg text-up' },
+  IN_TRADE: { text: 'POSITION OPEN', tone: 'bg-teal-bg text-teal' },
+  EXITED: { text: 'CLOSED', tone: 'bg-hover text-faint' },
 };
 
 function R({ value }: { value: number | null }) {
   if (value == null) return <span className="text-faint">—</span>;
   return (
-    <span className={value >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+    <span className={value >= 0 ? 'text-up' : 'text-down'}>
       {value >= 0 ? '+' : ''}
       {value.toFixed(2)}R
     </span>
@@ -97,7 +97,7 @@ export function StrategyFocusPanel({ timeline }: Props) {
           <ul className="flex flex-col gap-1.5">
             {conditions.map((condition) => (
               <li key={condition.id} className="flex items-start gap-2 text-[12px]">
-                <span className={cn('mt-px shrink-0', condition.met ? 'text-emerald-400' : 'text-faint')}>
+                <span className={cn('mt-px shrink-0', condition.met ? 'text-up' : 'text-faint')}>
                   {condition.met ? '✓' : '○'}
                 </span>
                 <span className="min-w-0">

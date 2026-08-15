@@ -28,7 +28,7 @@ function Stage({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-center justify-between gap-4 py-1">
       <span className="text-xs text-muted">{label}</span>
-      <span className="text-xs tabular-nums text-fg">{value}</span>
+      <span className="text-xs tabular-nums text-text">{value}</span>
     </div>
   );
 }
@@ -37,7 +37,7 @@ function R({ label, value }: { label: string; value: number | null }) {
   return (
     <div className="flex items-center justify-between gap-4 py-1">
       <span className="text-xs text-muted">{label}</span>
-      <span className="text-xs tabular-nums text-fg">
+      <span className="text-xs tabular-nums text-text">
         {value == null ? '—' : `${value >= 0 ? '+' : ''}${value.toFixed(2)}R`}
       </span>
     </div>
@@ -94,13 +94,13 @@ export function StrategyPerformancePanel({ performance, segments }: Props) {
               {segment.buckets.map((bucket) => (
                 <li key={bucket.label} className="flex items-center gap-2">
                   <span className="w-28 shrink-0 text-xs text-muted">{bucket.label}</span>
-                  <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg2">
+                  <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-hover">
                     <span
-                      className="block h-full rounded-full bg-fg/40"
+                      className="block h-full rounded-full bg-teal"
                       style={{ width: `${(bucket.observations / largest) * 100}%` }}
                     />
                   </span>
-                  <span className="w-8 shrink-0 text-right text-xs tabular-nums text-fg">
+                  <span className="w-8 shrink-0 text-right text-xs tabular-nums text-text">
                     {bucket.observations}
                   </span>
                 </li>

@@ -51,7 +51,7 @@ export function StrategyCatalogue({ onAdopted }: Props) {
   }
 
   if (error && !templates) {
-    return <p className="text-sm text-red-400">{error}</p>;
+    return <p className="text-sm text-down">{error}</p>;
   }
   if (!templates) {
     return <p className="text-sm text-muted">Loading strategies…</p>;
@@ -68,11 +68,11 @@ export function StrategyCatalogue({ onAdopted }: Props) {
             <li
               key={template.id}
               data-testid={`template-${template.id}`}
-              className="rounded-lg border border-line bg-bg1 p-3"
+              className="rounded-lg border border-border bg-card p-3"
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium text-fg">{template.name}</p>
+                  <p className="text-sm font-medium text-text">{template.name}</p>
                   <p className="mt-1 text-xs leading-relaxed text-muted">{template.summary}</p>
                   {template.direction === 'long_only' && (
                     <p className="mt-1 text-[11px] text-faint">Long only</p>
@@ -82,7 +82,7 @@ export function StrategyCatalogue({ onAdopted }: Props) {
                   type="button"
                   onClick={() => adopt(template)}
                   disabled={adopting === template.id}
-                  className="shrink-0 rounded-md border border-line px-3 py-1.5 text-xs text-fg hover:bg-bg2 disabled:opacity-50"
+                  className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs text-text hover:bg-hover disabled:opacity-50"
                 >
                   {adopting === template.id ? 'Adopting…' : 'Adopt'}
                 </button>
@@ -102,7 +102,7 @@ export function StrategyCatalogue({ onAdopted }: Props) {
               <li
                 key={template.id}
                 data-testid={`template-${template.id}`}
-                className="rounded-lg border border-line bg-bg2/40 p-3 opacity-80"
+                className="rounded-lg border border-border bg-hover p-3 opacity-80"
               >
                 <p className="text-sm font-medium text-muted">{template.name}</p>
                 <p className="mt-1 text-xs leading-relaxed text-faint">{template.summary}</p>
@@ -115,7 +115,7 @@ export function StrategyCatalogue({ onAdopted }: Props) {
         </div>
       )}
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-sm text-down">{error}</p>}
     </section>
   );
 }

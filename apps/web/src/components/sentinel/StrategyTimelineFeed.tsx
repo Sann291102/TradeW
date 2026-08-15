@@ -138,7 +138,7 @@ export function StrategyTimelineFeed() {
       }
     >
       {isClosed && timeline && (
-        <div className="mb-3 rounded-xl border border-border bg-bg2 p-3.5">
+        <div className="mb-3 rounded-xl border border-border bg-hover p-3.5">
           <p className="text-[12px] font-bold text-text">Trade Complete</p>
           <p className="mt-1 text-[11.5px] text-muted">
             {[timeline.watch.symbol, timeline.watch.strike, timeline.watch.optionType].filter(Boolean).join(' ')} —

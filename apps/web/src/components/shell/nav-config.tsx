@@ -76,6 +76,12 @@ export const NAV_ITEMS: NavItem[] = [
   // page (SentinelIntelligencePanel) — removed 2026-08-05, archived to
   // archive/apps-web-sentinel-intelligence-2026-08-05/ (see archive/README.md).
   { href: '/sentinel', label: 'Sentinel', icon: SentinelIcon, premium: true, group: 'primary' },
+  // The user-authored strategy workflow (services/sentinel-py): adopt a
+  // definition, configure it, watch it, read how it has behaved. It shipped as
+  // a route with no way to reach it, which made a working feature invisible —
+  // the page existed, the components existed, and no user could get there.
+  // Same `premium` gate as Sentinel itself: it is the same product.
+  { href: '/sentinel/strategies', label: 'Strategy Watches', icon: SentinelIcon, premium: true, group: 'primary' },
   { href: '/settings', label: 'Settings', icon: SettingsIcon, group: 'secondary' },
   { href: '/profile', label: 'Profile', icon: ProfileIcon, group: 'secondary' },
   { href: '/notifications', label: 'Notifications', icon: BellIcon, group: 'secondary' },

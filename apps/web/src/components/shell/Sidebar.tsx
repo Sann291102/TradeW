@@ -76,7 +76,13 @@ export function Sidebar() {
 
   const primary = NAV_ITEMS.filter((i) => i.group === 'primary');
   const secondary = NAV_ITEMS.filter((i) => i.group === 'secondary');
-  const isActive = (href: string) => pathname === href || pathname.startsWith(href + '/');
+  // Longest match wins, so a nested route highlights only its own entry.
+  // Prefix matching alone lit up both "Sentinel" and "Strategy Watches" on
+  // /sentinel/strategies, which reads as two places at once.
+  const activeHref = NAV_ITEMS.map((i) => i.href)
+    .filter((href) => pathname === href || pathname.startsWith(href + '/'))
+    .sort((a, b) => b.length - a.length)[0];
+  const isActive = (href: string) => href === activeHref;
 
   return (
     <motion.aside

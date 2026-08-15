@@ -60,7 +60,7 @@ export function StrategyWorkspace({ strategyId }: Props) {
     return () => clearInterval(timer);
   }, [load]);
 
-  if (error && !contract) return <p className="text-sm text-red-400">{error}</p>;
+  if (error && !contract) return <p className="text-sm text-down">{error}</p>;
   if (!contract) return <p className="text-sm text-muted">Loading your strategy…</p>;
 
   const focused = contract.watches.find((w) => w.id === contract.focusedWatchId) ?? null;
@@ -88,7 +88,7 @@ export function StrategyWorkspace({ strategyId }: Props) {
       <div className="space-y-6">
         <section data-testid="strategy-focus">
           <p className="text-xs uppercase tracking-wide text-muted">My strategy</p>
-          <h2 className="text-base font-medium text-fg">{contract.name}</h2>
+          <h2 className="text-base font-medium text-text">{contract.name}</h2>
           <p className="mt-1 text-[11px] uppercase tracking-wide text-faint">
             {focused ? `${focused.symbol ?? ''} · ${contract.currentState ?? 'IDLE'}` : 'No watch selected'}
           </p>
@@ -97,11 +97,11 @@ export function StrategyWorkspace({ strategyId }: Props) {
             <ul className="mt-3 space-y-1">
               {contract.conditions.map((condition) => (
                 <li key={condition.id} className="flex items-start gap-2 text-xs">
-                  <span className={condition.met ? 'text-emerald-400' : 'text-faint'}>
+                  <span className={condition.met ? 'text-up' : 'text-faint'}>
                     {condition.met ? '✓' : '○'}
                   </span>
                   <span className="flex-1">
-                    <span className={condition.met ? 'text-fg' : 'text-muted'}>{condition.name}</span>
+                    <span className={condition.met ? 'text-text' : 'text-muted'}>{condition.name}</span>
                     {condition.detail && (
                       <span className="block text-[11px] leading-relaxed text-faint">
                         {condition.detail}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Badge, Button } from '@tradew/ui';
 import { faultMessage } from '@/lib/sentinel/faults';
 import { useUserStrategies, useWatchSessions } from '@/lib/sentinel/useStrategyWorkspace';
@@ -72,10 +73,19 @@ export function SentinelStrategyWorkspace() {
           Sentinel watches for the conditions you defined — nothing more, nothing else.
         </p>
         {watching.length + grouped.inTrade.length > 0 && (
-          <Badge tone="neutral" className="ml-auto px-2 py-0 text-[10px]">
+          <Badge tone="neutral" className="px-2 py-0 text-[10px]">
             {watching.length} watching · {grouped.inTrade.length} in trade
           </Badge>
         )}
+        {/* The adopt/configure/performance half of the same feature. It lives
+            on its own route because it is a workflow rather than a panel, so
+            the entry point belongs here, where the user already is. */}
+        <Link
+          href="/sentinel/strategies"
+          className="ml-auto rounded-lg border border-border px-2.5 py-1 text-[11.5px] text-muted hover:bg-hover hover:text-text"
+        >
+          Adopt a strategy · performance →
+        </Link>
       </header>
 
       <div className="grid grid-cols-12 items-start gap-5">

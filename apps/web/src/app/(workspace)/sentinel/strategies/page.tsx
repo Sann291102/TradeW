@@ -1,22 +1,26 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { Skeleton } from '@tradew/ui';
 import { api } from '@/lib/api';
+import { useSessionStore } from '@/lib/store/sessionStore';
 import { StrategyCatalogue } from '@/components/sentinel/StrategyCatalogue';
 import { StrategyWorkspace } from '@/components/sentinel/StrategyWorkspace';
 
 /**
- * The strategy workspace page: Catalogue → Adopt → Configure → Watch → Focus
- * → Feed → Performance.
+ * `/sentinel/strategies` — Catalogue → Adopt → Configure → Watch → Focus →
+ * Feed → Performance.
  *
- * The whole workflow in one place, and every panel below the catalogue is
- * rendered from a single strategy contract. Nothing on this page knows which
- * strategy is selected beyond its id — the components are identical for an
- * EMA reclaim and a liquidity sweep.
+ * Reached from the sidebar ("Strategy Watches") and from the Sentinel
+ * workspace. It previously had neither: the route existed, the components
+ * existed, and there was no way for a user to arrive here, which is a
+ * different thing from the feature not working.
  *
- * Sentinel's boundary is unchanged here: the user adopts, the user configures,
- * the user owns the strategy. Sentinel observes it and explains what state it
- * is in. Nothing on this page ranks strategies or tells anyone to trade.
+ * Entitlement is handled the same way `/sentinel` handles it, including the
+ * third state: until the session resolves, `hasCapability` is false for
+ * everyone, so branching on it alone would flash "subscription required" at
+ * paying subscribers on every load.
  */
 
 interface StrategyRow {
@@ -26,28 +30,77 @@ interface StrategyRow {
 }
 
 export default function StrategiesPage() {
+  const status = useSessionStore((s) => s.status);
+  const hasSentinel = useSessionStore((s) => s.hasCapability('sentinel'));
+
   const [strategies, setStrategies] = useState<StrategyRow[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  async function refresh(selectId?: string) {
-    const rows = (await api('/sentinel-py/strategies')) as StrategyRow[];
-    const active = rows.filter((row) => row.status !== 'archived');
-    setStrategies(active);
-    setSelected((current) => selectId ?? current ?? active[0]?.id ?? null);
-  }
-
-  useEffect(() => {
-    refresh().catch(() => setStrategies([]));
+  const refresh = useCallback(async (selectId?: string) => {
+    try {
+      const rows = (await api('/sentinel-py/strategies')) as StrategyRow[];
+      const active = rows.filter((row) => row.status !== 'archived');
+      setStrategies(active);
+      setSelected((current) => selectId ?? current ?? active[0]?.id ?? null);
+      setError(null);
+    } catch (err) {
+      setStrategies([]);
+      // Named rather than swallowed: "no strategies yet" and "the service is
+      // not reachable" look identical on screen otherwise, and only one of
+      // them is the user's problem to solve.
+      setError(err instanceof Error ? err.message : 'Could not reach the strategy service');
+    }
   }, []);
 
+  useEffect(() => {
+    if (status === 'authenticated' && hasSentinel) void refresh();
+  }, [status, hasSentinel, refresh]);
+
+  if (status === 'idle' || status === 'loading') {
+    return (
+      <Shell>
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-64 w-full rounded-2xl" />
+      </Shell>
+    );
+  }
+
+  if (!hasSentinel) {
+    return (
+      <Shell>
+        <Card>
+          <h1 className="text-[15px] font-bold text-text">Sentinel Pro required</h1>
+          <p className="mt-1 text-[12.5px] text-muted">
+            Strategy watching is part of Sentinel. Open Sentinel to see what it includes.
+          </p>
+          <Link
+            href="/sentinel"
+            className="mt-3 inline-block rounded-lg border border-border px-3 py-1.5 text-[12px] text-text hover:bg-hover"
+          >
+            Go to Sentinel
+          </Link>
+        </Card>
+      </Shell>
+    );
+  }
+
   return (
-    <div className="space-y-6 p-6">
+    <Shell>
       <header>
-        <h1 className="text-[22px] font-extrabold tracking-tightTrack text-text">My strategies</h1>
+        <h1 className="text-[22px] font-extrabold tracking-tightTrack text-text sm:text-[26px]">
+          Strategy Watches
+        </h1>
         <p className="mt-1 text-[12.5px] text-muted">
           Adopt a definition, make it yours, and Sentinel will watch it and explain what it sees.
         </p>
       </header>
+
+      {error && (
+        <Card>
+          <p className="text-[12.5px] text-amber">{error}</p>
+        </Card>
+      )}
 
       {(strategies?.length ?? 0) > 0 && (
         <nav className="flex flex-wrap gap-2">
@@ -58,8 +111,8 @@ export default function StrategiesPage() {
               onClick={() => setSelected(strategy.id)}
               className={
                 strategy.id === selected
-                  ? 'rounded-md border border-fg/30 bg-bg2 px-3 py-1.5 text-xs text-fg'
-                  : 'rounded-md border border-line px-3 py-1.5 text-xs text-muted hover:bg-bg2'
+                  ? 'rounded-lg border border-teal bg-teal-bg px-3 py-1.5 text-[12px] text-text'
+                  : 'rounded-lg border border-border px-3 py-1.5 text-[12px] text-muted hover:bg-hover'
               }
             >
               {strategy.name}
@@ -68,12 +121,29 @@ export default function StrategiesPage() {
         </nav>
       )}
 
-      {selected && <StrategyWorkspace strategyId={selected} />}
+      {selected && (
+        <Card>
+          <StrategyWorkspace strategyId={selected} />
+        </Card>
+      )}
 
-      <section>
-        <h2 className="mb-3 text-sm font-medium text-fg">Strategy catalogue</h2>
-        <StrategyCatalogue onAdopted={(id) => refresh(id)} />
-      </section>
+      <Card>
+        <h2 className="mb-3 text-[13px] font-bold text-text">Strategy catalogue</h2>
+        <StrategyCatalogue onAdopted={(id) => void refresh(id)} />
+      </Card>
+    </Shell>
+  );
+}
+
+/** The same page shell every workspace route uses. */
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="bg-bg">
+      <main className="mx-auto max-w-[1600px] space-y-4 px-4 py-5 sm:px-6">{children}</main>
     </div>
   );
+}
+
+function Card({ children }: { children: React.ReactNode }) {
+  return <section className="rounded-2xl border border-border bg-card p-5 shadow-elev2">{children}</section>;
 }
