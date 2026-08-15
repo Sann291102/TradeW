@@ -134,14 +134,45 @@ function refreshAccessToken(): Promise<boolean> {
  * this route is down" (5xx) — a distinction the UI must surface accurately
  * rather than collapsing every failure into one message. A thrown TypeError
  * (rather than this) means the API itself was unreachable.
+ *
+ * `retryAfterSeconds` is the server's own instruction for when to come back,
+ * read off the `Retry-After` response header. `@nestjs/throttler` sets it on
+ * every 429 with the exact number of seconds left in the bucket's window, so a
+ * client that honours it stops guessing: retrying earlier can only produce
+ * another 429 and burn the budget the retry is waiting for. Null when the
+ * header is absent or unparseable — callers fall back to their own backoff.
  */
 export class ApiError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  readonly retryAfterSeconds: number | null;
+  constructor(message: string, status: number, retryAfterSeconds: number | null = null) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
+}
+
+/**
+ * `Retry-After` in seconds, per RFC 9110 §10.2.3: either delta-seconds or an
+ * HTTP-date. Returns null for anything else, and clamps out negatives so a
+ * clock skew on a date-form header cannot produce an instant retry.
+ */
+export function parseRetryAfter(header: string | null, now: number = Date.now()): number | null {
+  if (!header) return null;
+  const trimmed = header.trim();
+  if (/^\d+$/.test(trimmed)) return Number(trimmed);
+  const at = Date.parse(trimmed);
+  if (Number.isNaN(at)) return null;
+  return Math.max(0, Math.ceil((at - now) / 1000));
+}
+
+function apiError(res: Response, data: { message?: string }): ApiError {
+  return new ApiError(
+    data.message || 'API request failed',
+    res.status,
+    parseRetryAfter(res.headers?.get?.('Retry-After') ?? null),
+  );
 }
 
 export async function api(path: string, options: RequestInit = {}) {
@@ -166,11 +197,11 @@ export async function api(path: string, options: RequestInit = {}) {
       },
     });
     const retryData = await retry.json().catch(() => ({}));
-    if (!retry.ok) throw new ApiError(retryData.message || 'API request failed', retry.status);
+    if (!retry.ok) throw apiError(retry, retryData);
     return retryData;
   }
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(data.message || 'API request failed', res.status);
+  if (!res.ok) throw apiError(res, data);
   return data;
 }

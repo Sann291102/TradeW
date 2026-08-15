@@ -1,12 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ApiError, fetchTimeline, listWatches } from '@/lib/sentinel/sentinelPy';
-import type { Timeline, TimelineEvent, WatchSummary } from '@/lib/sentinel/sentinelPy';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { ApiError, fetchTimeline } from '@/lib/sentinel/sentinelPy';
+import type { Timeline, TimelineEvent } from '@/lib/sentinel/sentinelPy';
+import { sentinelKeys } from '@/lib/sentinel/queryKeys';
+import { pollIntervalMs } from '@/lib/sentinel/retryPolicy';
+import { useWatchSessions } from '@/lib/sentinel/useStrategyWorkspace';
+import { useSessionStore } from '@/lib/store/sessionStore';
 import { StrategyFocusPanel } from './StrategyFocusPanel';
 import { TimelineEventCard } from './TimelineEventCard';
-
-const POLL_MS = 10_000;
 
 /**
  * Minimum `strength` an event needs before the user sees it.
@@ -27,56 +30,61 @@ const MIN_STRENGTH = 0.6;
  * whether THIS strategy was working.
  */
 export function StrategyTimelineFeed() {
-  const [watches, setWatches] = useState<WatchSummary[] | null>(null);
+  const userId = useSessionStore((s) => s.user?.id ?? null);
+
+  /**
+   * The watch list comes from the SHARED hook, not from its own fetch.
+   *
+   * This component used to call `listWatches()` on mount. It renders inside
+   * `SentinelDashboard`, which renders inside `SentinelWorkspace`, which also
+   * renders `SentinelStrategyWorkspace` — and that was polling the very same
+   * `/sentinel-py/watch` route on its own timer. Two components, two timers,
+   * one endpoint, one per-IP rate-limit bucket, each one making the other more
+   * likely to be the request that got refused.
+   *
+   * Reading through `useWatchSessions` puts both on one query key, and one key
+   * is one in-flight request however many components ask for it. It adds no
+   * traffic here: on `/sentinel` that entry is already warm and already
+   * polling.
+   */
+  const { watches, loading } = useWatchSessions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [timeline, setTimeline] = useState<Timeline | null>(null);
-  const [error, setError] = useState<'none' | 'notFound' | 'failed'>('none');
-  const [loading, setLoading] = useState(true);
 
-  // Guards against a slow response for watch A landing after the user has
-  // already switched to watch B and overwriting the newer feed.
-  const requestRef = useRef(0);
-
+  // Default the selection to a live watch, and keep it pointing at something
+  // that still exists. The user's own choice outranks every poll after it.
   useEffect(() => {
-    let cancelled = false;
-    listWatches()
-      .then((rows) => {
-        if (cancelled) return;
-        setWatches(rows);
-        setSelectedId((current) => current ?? rows.find((w) => w.state !== 'EXITED')?.id ?? rows[0]?.id ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) setWatches([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (watches.length === 0) return;
+    setSelectedId((current) =>
+      current !== null && watches.some((w) => w.id === current)
+        ? current
+        : (watches.find((w) => w.state !== 'EXITED')?.id ?? watches[0]?.id ?? null),
+    );
+  }, [watches]);
 
-  const load = useCallback(async (watchId: string) => {
-    const ticket = ++requestRef.current;
-    try {
-      const next = await fetchTimeline(watchId);
-      if (ticket !== requestRef.current) return;
-      setTimeline(next);
-      setError('none');
-    } catch (err) {
-      if (ticket !== requestRef.current) return;
-      // A 404 is "this watch has no timeline yet", which is a normal empty
-      // state rather than a failure worth alarming anyone about.
-      setError(err instanceof ApiError && err.status === 404 ? 'notFound' : 'failed');
-    }
-  }, []);
+  const timelineQuery = useQuery({
+    queryKey: sentinelKeys.timeline(userId, selectedId ?? ''),
+    queryFn: () => fetchTimeline(selectedId as string),
+    enabled: selectedId !== null,
+    // Caching per watch id is what replaced the manual request-ticket guard: a
+    // slow response for watch A is written to watch A's cache entry, so it
+    // cannot land on top of the feed for watch B after the user switches.
+    refetchInterval: (q) =>
+      pollIntervalMs({
+        failing: q.state.status === 'error',
+        hasActiveWatches: watches.some((w) => w.state !== 'EXITED'),
+      }),
+    refetchIntervalInBackground: false,
+    // A 404 is "this watch has no timeline yet" — a normal empty state, and
+    // retrying it would only delay saying so.
+    retry: (failureCount, err) => !(err instanceof ApiError && err.status === 404) && failureCount < 2,
+  });
 
-  useEffect(() => {
-    if (!selectedId) return;
-    void load(selectedId);
-    const timer = setInterval(() => void load(selectedId), POLL_MS);
-    return () => clearInterval(timer);
-  }, [selectedId, load]);
+  const timeline: Timeline | null = timelineQuery.data ?? null;
+  const error: 'none' | 'notFound' | 'failed' = !timelineQuery.error
+    ? 'none'
+    : timelineQuery.error instanceof ApiError && timelineQuery.error.status === 404
+      ? 'notFound'
+      : 'failed';
 
   const visible = useMemo(() => {
     if (!timeline) return [] as TimelineEvent[];
@@ -99,12 +107,12 @@ export function StrategyTimelineFeed() {
     return finalIndex === -1 ? withoutStaleForming : withoutStaleForming.slice(finalIndex);
   }, [timeline]);
 
-  const selected = watches?.find((w) => w.id === selectedId) ?? null;
+  const selected = watches.find((w) => w.id === selectedId) ?? null;
   const isClosed = timeline?.watch.state === 'EXITED';
 
   if (loading) return null;
 
-  if (!watches || watches.length === 0) {
+  if (watches.length === 0) {
     return (
       <Shell>
         <Empty>Start watching a strategy to see live updates.</Empty>
@@ -117,13 +125,13 @@ export function StrategyTimelineFeed() {
       {timeline && <StrategyFocusPanel timeline={timeline} />}
       <Shell
       selector={
+        // Changing the selection needs no manual clear: each watch's feed is
+        // its own cache entry, so switching renders that watch's data (or its
+        // loading state) rather than leaving the previous watch's events up.
         watches.length > 1 ? (
           <select
             value={selectedId ?? ''}
-            onChange={(e) => {
-              setSelectedId(e.target.value);
-              setTimeline(null);
-            }}
+            onChange={(e) => setSelectedId(e.target.value)}
             className="rounded-lg border border-border bg-bg px-2 py-1 text-[11px] text-text"
             aria-label="Select which watch to display"
           >

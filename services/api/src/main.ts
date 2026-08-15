@@ -136,6 +136,14 @@ async function bootstrap() {
     // X-Request-Id lets the web app correlate a browser-side action with the
     // server row the admin portal shows for it.
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Token', 'X-Request-Id'],
+    // A response header the browser cannot read might as well not have been
+    // sent: `fetch` hides everything not on this list when the response is
+    // cross-origin, which every call from apps/web is. `Retry-After` is the
+    // one the rate limiter emits on a 429 (see common/throttling.ts) and the
+    // one the web client waits on before retrying — without it exposed, that
+    // client falls back to guessing and retries into a window it was told the
+    // exact length of.
+    exposedHeaders: ['Retry-After'],
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
