@@ -31,6 +31,12 @@ export interface TemplateSummary {
   name: string;
   summary: string;
   direction?: 'both' | 'long_only';
+  /** What the strategy does, in order, in the definition's own words. Supplied
+   * by the backend and derived from the rules the engine will evaluate, so a
+   * preview cannot drift from the strategy it previews. */
+  steps?: string[];
+  /** "Long only" / "Both directions", already phrased for a reader. */
+  mode?: string;
   available: boolean;
   requires?: string[];
   missing?: string[];

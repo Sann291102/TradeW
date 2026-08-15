@@ -76,12 +76,36 @@ class Template:
     def available(self) -> bool:
         return not self.missing
 
+    @property
+    def steps(self) -> list[str]:
+        """What the strategy does, in order, in the definition's own words.
+
+        Derived from the rules themselves rather than written separately, so a
+        preview can never drift from what the engine will actually evaluate —
+        a description maintained beside the rules eventually describes an
+        older version of them. The frontend renders this list; it does not
+        compose one, which is what keeps strategy knowledge out of React.
+        """
+        return [
+            str(rule.get("description") or rule.get("name") or "")
+            for rule in (self.rules.get("rules") or [])
+        ]
+
+    @property
+    def mode(self) -> str:
+        """How the setup may be applied, in words a user reads."""
+        return "Long only" if self.direction == "long_only" else "Both directions"
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "name": self.name,
             "summary": self.summary,
             "direction": self.direction,
+            # The preview the user reads before adopting. Empty for a template
+            # that cannot be adopted, because there are no rules to describe.
+            "steps": self.steps if self.available else [],
+            "mode": self.mode,
             "available": self.available,
             "requires": sorted(self.requires),
             "missing": self.missing,

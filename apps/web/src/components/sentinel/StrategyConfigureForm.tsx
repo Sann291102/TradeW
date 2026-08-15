@@ -18,22 +18,21 @@ import type { ConfigParameter } from '@/lib/sentinel/strategyContract';
  */
 
 interface Props {
-  strategyName: string;
   parameters: ConfigParameter[];
   onChange?: (key: string, value: string | boolean) => void;
 }
 
-export function StrategyConfigureForm({ strategyName, parameters, onChange }: Props) {
+export function StrategyConfigureForm({ parameters, onChange }: Props) {
   const mandatory = parameters.filter((p) => p.group === 'mandatory');
   const optional = parameters.filter((p) => p.group === 'optional');
   const settings = parameters.filter((p) => !p.group);
 
   return (
     <section data-testid="strategy-configure" className="space-y-5">
-      <header>
-        <p className="text-xs uppercase tracking-wide text-muted">My strategy</p>
-        <h2 className="text-base font-medium text-text">{strategyName}</h2>
-      </header>
+      {/* No strategy name here: whatever renders this already says which
+          strategy the user is looking at, and repeating it reads as two
+          strategies stacked on top of each other. */}
+      <h4 className="text-[12px] font-bold uppercase tracking-wide text-faint">Configure your strategy</h4>
 
       <dl className="space-y-2">
         {settings.map((parameter) => (
