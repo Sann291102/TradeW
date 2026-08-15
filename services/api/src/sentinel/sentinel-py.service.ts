@@ -90,6 +90,22 @@ export class SentinelPyService {
     return this.call('/strategies/parse', { method: 'POST', body: { text } });
   }
 
+  /** The adoptable catalogue — a menu, not a recommendation. */
+  listTemplates() {
+    return this.call('/strategies/templates', { method: 'GET' });
+  }
+
+  /** Adopt a template: it becomes the user's own strategy, editable like one
+   * they typed. sentinel-py refuses (409) any template the watch engine
+   * cannot yet evaluate rather than saving something inert. */
+  adoptTemplate(userId: string, templateId: string, name?: string) {
+    const suffix = name ? `&name=${encodeURIComponent(name)}` : '';
+    return this.call(
+      `${this.scoped(`/strategies/templates/${encodeURIComponent(templateId)}/adopt`, userId)}${suffix}`,
+      { method: 'POST' },
+    );
+  }
+
   createStrategy(userId: string, body: unknown) {
     return this.call(this.scoped('/strategies', userId), { method: 'POST', body });
   }
@@ -110,6 +126,24 @@ export class SentinelPyService {
     return this.call(this.scoped(`/strategies/${encodeURIComponent(id)}`, userId), { method: 'DELETE' });
   }
 
+  /** How the user's OWN strategy has behaved: funnel, outcomes, R stats.
+   * Describes history; never ranks strategies or proposes a trade. */
+  strategyPerformance(userId: string, id: string) {
+    return this.call(this.scoped(`/strategies/${encodeURIComponent(id)}/performance`, userId), {
+      method: 'GET',
+    });
+  }
+
+  /** The generic strategy contract: everything the strategy workspace renders
+   * from, in one shape that does not vary by evaluator. */
+  strategyContract(userId: string, id: string, watchId?: string) {
+    const path = `/strategies/${encodeURIComponent(id)}/contract`;
+    const scoped = this.scoped(path, userId);
+    return this.call(watchId ? `${scoped}&watchId=${encodeURIComponent(watchId)}` : scoped, {
+      method: 'GET',
+    });
+  }
+
   // --- watches ------------------------------------------------------------
 
   createWatch(userId: string, body: unknown) {
@@ -118,6 +152,14 @@ export class SentinelPyService {
 
   listWatches(userId: string) {
     return this.call(this.scoped('/watch', userId), { method: 'GET' });
+  }
+
+  /** The per-watch event stream the workspace feed renders. */
+  timeline(userId: string, watchId: string, limit = 100) {
+    return this.call(
+      this.scoped(`/watch/${encodeURIComponent(watchId)}/timeline?limit=${limit}`, userId),
+      { method: 'GET' },
+    );
   }
 
   openPosition(userId: string, watchId: string, body: unknown) {

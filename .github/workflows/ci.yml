@@ -39,6 +39,26 @@ jobs:
       # services/api, services/sentinel, packages/market-data.
       - run: npm test
 
+  sentinel-py:
+    name: Sentinel (Python) tests
+    runs-on: ubuntu-latest
+    # services/sentinel-py had NO CI coverage: `npm test` runs workspace test
+    # scripts, and a Python service has none, so its whole suite could break
+    # while every check stayed green. Everything the watch engine decides —
+    # rule evaluation, state transitions, the compliance gate on outgoing
+    # copy — is tested here and nowhere else.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        working-directory: services/sentinel-py
+        run: pip install -e ".[dev]"
+      - name: pytest
+        working-directory: services/sentinel-py
+        run: python -m pytest -q
+
   typecheck:
     name: Typecheck (api, sentinel, market-data)
     runs-on: ubuntu-latest
@@ -157,6 +177,7 @@ jobs:
           - { name: api, file: services/api/Dockerfile }
           - { name: sentinel, file: services/sentinel/Dockerfile }
           - { name: market-data, file: services/market-data/Dockerfile }
+          - { name: sentinel-py, file: services/sentinel-py/Dockerfile }
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

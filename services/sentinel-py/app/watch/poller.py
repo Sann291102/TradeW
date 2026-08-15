@@ -17,7 +17,7 @@ from app.market.feed import MarketDataUnavailableError, fetch_index_candles, fet
 from app.intrade.monitor import Direction, evaluate_position
 from app.notify.dispatcher import notify, notify_intrade
 from app.watch import store
-from app.watch.evaluator import evaluate
+from app.watch.evaluator import evaluate, measure_flag, measure_zone, measure_liquidity, measure_flip, measure_pullback, measure_vwap
 from app.watch.state_machine import Transition, WatchState, advance
 
 logger = logging.getLogger("sentinel.watch")
@@ -189,6 +189,26 @@ async def sweep_once() -> int:
                     "mandatoryTotal": evaluation.mandatory_total,
                     "notified": transition.should_notify,
                     "reason": transition.reason,
+                    # Normalised so the performance engine can eventually
+                    # compare shallow/normal/deep across symbols. None for
+                    # strategies where a pullback is not a concept.
+                    "pullback": measure_pullback(candles),
+                    # Test ordinal and ATR-normalised deviation, so the funnel
+                    # can later split 1st/2nd/repeated tests and deviation
+                    # buckets out of THIS user's history. None when the
+                    # instrument reports no volume — there is no VWAP then.
+                    "vwap": measure_vwap(candles),
+                    # Level age and touch count, so the funnel can later ask whether
+                    # THIS user's flips work better on older, more-tested levels.
+                    "flip": measure_flip(candles),
+                    "flag": measure_flag(candles),
+                    # Carries the STABLE zone id, so touches accumulate across
+                    # sweeps instead of resetting every fifteen seconds.
+                    "zone": measure_zone(candles),
+                    # Records the STAGE the sequence reached, so the funnel can
+                    # see where this user's sweeps stopped progressing rather
+                    # than only that they did.
+                    "liquidity": measure_liquidity(candles),
                 },
             )
 

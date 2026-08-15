@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
  * `npm test -w @tradew/web` works without adding a second copy.
  */
 export default defineConfig({
+  esbuild: { jsx: 'automatic' },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -64,6 +65,10 @@ export default defineConfig({
       // The forming candle. Regression cover for a chart whose last-price line
       // sat at yesterday's close while the card beside it showed today's price.
       'src/lib/hooks/liveCandle.test.ts',
+      // The strategy-contract leak test. Renders two unrelated strategies
+      // through the same components and fails if any of them names a template
+      // id — the guard that keeps P7 from becoming ten dashboards.
+      'src/components/sentinel/genericStrategyRendering.test.tsx',
       // Chart drawing geometry. Every failure mode here paints a *plausible*
       // annotation stating a price level that was never detected, so the
       // placement rules are asserted rather than eyeballed.
@@ -78,6 +83,9 @@ export default defineConfig({
       'src/lib/assistant/detect.test.ts',
     ],
     environment: 'node',
+    // The strategy components are rendered with renderToStaticMarkup, which
+    // needs the automatic JSX runtime — esbuild otherwise emits React.createElement
+    // calls into files that never import React.
     testTimeout: 5_000,
   },
 });

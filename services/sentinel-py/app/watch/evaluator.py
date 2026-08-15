@@ -14,8 +14,52 @@ Sentinel exactly the noisy signal generator it is not supposed to be.
 
 from dataclasses import dataclass
 
-from app.market.clock import session_key
+from app.market.clock import minutes_to_close, session_key
 from app.market.feed import Candle
+from app.watch.indicators import (
+    CONTRACTION_MAX,
+    EXTENSION_MIN_ATR,
+    IMPULSE_MAX_BARS,
+    IMPULSE_MIN_ATR,
+    MAX_RETRACEMENT,
+    MIN_CONSOLIDATION_BARS,
+    MIN_LEVEL_AGE_BARS,
+    MIN_LEVEL_TOUCHES,
+    ZONE_MIN_DEPARTURE_ATR,
+    Contraction,
+    FairValueGap,
+    Impulse,
+    Level,
+    LevelKind,
+    Slope,
+    Sweep,
+    Zone,
+    ZoneKind,
+    atr,
+    body_interaction,
+    classify_deviation,
+    classify_slope,
+    count_vwap_tests,
+    ema_of,
+    find_bullish_reclaim,
+    find_bullish_reclaims,
+    find_contraction,
+    find_impulse,
+    find_levels,
+    find_fair_value_gaps,
+    find_pullback,
+    find_structure_shift,
+    find_sweeps,
+    find_vwap_extreme,
+    find_zones,
+    level_tolerance,
+    measure_departure,
+    resample,
+    score_zone,
+    vwap_deviation,
+    vwap_series,
+    vwap_slope,
+)
 
 
 @dataclass(frozen=True)
@@ -138,6 +182,962 @@ def _volume_above_average(candles: list[Candle], period: int = 20) -> tuple[bool
     return latest > average, f"volume {latest} vs {period}-period avg {average:.0f}"
 
 
+# --- EMA-7 Bullish Reclaim ---------------------------------------------------
+#
+# Long only, by construction. There is no bearish mirror of these functions:
+# the setup the user adopted is a bullish reclaim, and a condition set that
+# could be read either way would let the same template justify a short.
+
+
+def _ema_rising(candles: list[Candle], period: int) -> tuple[bool, str]:
+    values = ema_of(candles, period)
+    if not values:
+        return False, f"not enough candles for an EMA-{period}"
+    slope = classify_slope(values, atr=atr(candles))
+    return slope is Slope.RISING, f"EMA-{period} is {slope.value} ({values[-1]:.2f})"
+
+
+def _price_above_ema(candles: list[Candle], period: int) -> tuple[bool, str]:
+    values = ema_of(candles, period)
+    if not values:
+        return False, f"not enough candles for an EMA-{period}"
+    close = candles[-1].close
+    return close > values[-1], f"close {close:.2f} vs EMA-{period} {values[-1]:.2f}"
+
+
+def _ema_body_reclaim(candles: list[Candle], period: int) -> tuple[bool, str]:
+    values = ema_of(candles, period)
+    if not values:
+        return False, f"not enough candles for an EMA-{period}"
+    reclaim = find_bullish_reclaim(candles, values)
+    if reclaim is None:
+        return False, f"no candle body has reached EMA-{period} and closed back above it"
+    return True, reclaim.detail
+
+
+def _reclaim_followed_through(candles: list[Candle], period: int) -> tuple[bool, str]:
+    """The patience requirement: the reclaim alone is not the setup.
+
+    After the reclaim candle, price must either take out that candle's high
+    (a continuation/consolidation break) or come back toward the EMA and hold
+    before pushing through it. Until one of those happens the setup is still
+    developing, which is exactly the state the user said they wait through.
+    """
+    values = ema_of(candles, period)
+    if not values:
+        return False, f"not enough candles for an EMA-{period}"
+    reclaims = find_bullish_reclaims(candles, values)
+    if not reclaims:
+        return False, "no reclaim to follow through from"
+
+    # ANY reclaim that a later candle closed above counts. Checking only the
+    # newest would mean a candle that both confirmed an earlier reclaim and
+    # touched the EMA itself reset the setup to "waiting" forever.
+    for reclaim in reclaims:
+        trigger = candles[reclaim.index].high
+        for bar in candles[reclaim.index + 1 :]:
+            if bar.close > trigger:
+                return True, f"closed {bar.close:.2f} above the reclaim candle high {trigger:.2f}"
+
+    latest = candles[reclaims[-1].index].high
+    return False, f"waiting for a close above the reclaim candle high {latest:.2f}"
+
+
+# --- 9/21 EMA Pullback -------------------------------------------------------
+#
+# Reuses the SAME ema/slope primitives as EMA-7 rather than a private copy.
+# This is deliberately not a crossover strategy: the cross is the least
+# interesting moment. What it looks for is an established trend, a pullback
+# into the pair, and then continuation.
+
+
+def _ema_pair(candles: list[Candle]) -> tuple[list[float], list[float]]:
+    return ema_of(candles, 9), ema_of(candles, 21)
+
+
+def _ema_9_21_bullish(candles: list[Candle]) -> tuple[bool, str]:
+    """Trend intact: the 9 is above the 21 and the 21 is not rolling over.
+
+    Deliberately NOT "both rising". A pullback is precisely what bends the
+    fast EMA down, so requiring the 9 to be rising at the same moment the
+    strategy requires a retracement is close to self-contradictory — the
+    setup could only ever confirm in the narrow window where the 9 had
+    already turned back up but price had not yet closed above it.
+
+    The slow EMA carries the trend; the fast one dipping IS the pullback, and
+    `pullback_rejection_continuation` is what proves the trend resumed.
+    """
+    fast, slow = _ema_pair(candles)
+    if not fast or not slow:
+        return False, "not enough candles for a 9/21 EMA pair"
+
+    a = atr(candles)
+    fast_slope = classify_slope(fast, atr=a)
+    slow_slope = classify_slope(slow, atr=a)
+    aligned = fast[-1] > slow[-1] and slow_slope is not Slope.FALLING
+    return aligned, (
+        f"9 EMA {fast[-1]:.2f} ({fast_slope.value}) above 21 EMA {slow[-1]:.2f} ({slow_slope.value})"
+        if aligned
+        else f"9 EMA {fast[-1]:.2f} vs 21 EMA {slow[-1]:.2f} — trend not intact ({slow_slope.value} 21)"
+    )
+
+
+def _pullback_into_zone(candles: list[Candle]) -> tuple[bool, str]:
+    fast, slow = _ema_pair(candles)
+    pullback = find_pullback(candles, fast, slow, atr(candles))
+    if pullback is None:
+        return False, "no pullback from a swing high yet"
+    # The retracement has to actually reach the pair — a dip that never
+    # approaches the EMAs is not this setup.
+    low = candles[pullback.low_index].low
+    zone_top = max(fast[-1], slow[-1])
+    if low > zone_top:
+        return False, f"pullback low {low:.2f} never reached the 9/21 zone (top {zone_top:.2f})"
+    return True, pullback.detail
+
+
+def _pullback_continuation(candles: list[Candle]) -> tuple[bool, str]:
+    """Rejection and continuation, not merely a touch: after the pullback low,
+    price must close back above the fast EMA."""
+    fast, slow = _ema_pair(candles)
+    pullback = find_pullback(candles, fast, slow, atr(candles))
+    if pullback is None:
+        return False, "no pullback to continue from"
+
+    offset = len(candles) - len(fast)
+    for i in range(pullback.low_index + 1, len(candles)):
+        if candles[i].close > fast[i - offset]:
+            return True, f"closed {candles[i].close:.2f} back above the 9 EMA {fast[i - offset]:.2f}"
+    return False, "waiting for a close back above the 9 EMA"
+
+
+# --- Liquidity Sweep + Fair Value Gap ----------------------------------------
+#
+# Seven stages, one event:
+#
+#   liquidity pool -> sweep -> displacement -> structure shift -> FVG
+#   -> retrace/interaction -> continuation
+#
+# `_find_liquidity_event` computes the whole lifecycle once and every
+# condition reads it. That is not tidiness — it is the correctness property.
+# Detected independently, "a pool was swept" could be about this morning's
+# low, "displacement" about an unrelated afternoon move, and "an FVG exists"
+# about a gap on the other side of the chart, and the strategy would confirm
+# on a chart where none of it happened together.
+
+
+#: The move away from the sweep. Weaker than this and the level was taken
+#: without consequence, which is a very common and very different event.
+DISPLACEMENT_MIN_ATR = 1.5
+
+
+@dataclass(frozen=True)
+class LiquidityEvent:
+    sweep: Sweep
+    displacement: Impulse | None
+    structure_shift_index: int | None
+    fvg: FairValueGap | None
+    retrace_index: int | None
+    continuation_index: int | None
+
+    @property
+    def stage(self) -> int:
+        if self.continuation_index is not None:
+            return 7
+        if self.retrace_index is not None:
+            return 6
+        if self.fvg is not None:
+            return 5
+        if self.structure_shift_index is not None:
+            return 4
+        if self.displacement is not None:
+            return 3
+        return 2
+
+
+def _find_liquidity_event(candles: list[Candle]) -> LiquidityEvent | None:
+    """The most advanced sweep-driven sequence on the chart.
+
+    Most advanced rather than most recent, for the same reason as the flip: a
+    completed sequence on an earlier sweep is more informative than a fresh
+    sweep that has gone nowhere, and preferring the fresh one would make a
+    finished setup appear to regress to waiting.
+    """
+    a = atr(candles)
+    sweeps = find_sweeps(candles, a)
+    if not sweeps:
+        return None
+
+    best: LiquidityEvent | None = None
+    for sweep in sweeps:
+        # Displacement is measured FROM the sweep candle, anchored, so a
+        # strong move elsewhere on the chart cannot stand in for this one.
+        displacement = measure_departure(candles[sweep.index :], a)
+        if displacement is not None and (
+            displacement.size_atr < DISPLACEMENT_MIN_ATR or displacement.up is not sweep.bullish
+        ):
+            displacement = None
+
+        shift = fvg = retrace = continuation = None
+        if displacement is not None:
+            end = sweep.index + displacement.end_index
+            shift = find_structure_shift(candles, sweep.index, sweep.bullish)
+            # Only gaps left BY THIS MOVE. A gap from an hour earlier is not
+            # the imbalance this displacement created.
+            gaps = find_fair_value_gaps(candles, sweep.bullish, start=sweep.index, end=end)
+            fvg = gaps[-1] if gaps else None
+
+            if fvg is not None:
+                for i in range(end + 1, len(candles)):
+                    if candles[i].low <= fvg.top and candles[i].high >= fvg.bottom:
+                        retrace = i
+                        break
+
+            if retrace is not None:
+                extreme = displacement.high if sweep.bullish else displacement.low
+                for i in range(retrace + 1, len(candles)):
+                    if sweep.bullish and candles[i].close > extreme:
+                        continuation = i
+                        break
+                    if not sweep.bullish and candles[i].close < extreme:
+                        continuation = i
+                        break
+
+        event = LiquidityEvent(
+            sweep=sweep,
+            displacement=displacement,
+            structure_shift_index=shift,
+            fvg=fvg,
+            retrace_index=retrace,
+            continuation_index=continuation,
+        )
+        if best is None or event.stage > best.stage:
+            best = event
+    return best
+
+
+def _liquidity_swept(candles: list[Candle]) -> tuple[bool, str]:
+    event = _find_liquidity_event(candles)
+    if event is None:
+        return False, "no liquidity pool has been swept"
+    return True, event.sweep.detail
+
+
+def _displacement(candles: list[Candle]) -> tuple[bool, str]:
+    event = _find_liquidity_event(candles)
+    if event is None:
+        return False, "no sweep to displace from"
+    if event.displacement is None:
+        return False, f"the sweep produced no {DISPLACEMENT_MIN_ATR} ATR move away"
+    return True, event.displacement.detail
+
+
+def _structure_shift(candles: list[Candle]) -> tuple[bool, str]:
+    event = _find_liquidity_event(candles)
+    if event is None or event.displacement is None:
+        return False, "no displacement to shift structure with"
+    if event.structure_shift_index is None:
+        return False, "the last opposing swing has not been taken out"
+    close = candles[event.structure_shift_index].close
+    return True, f"closed {close:.2f} beyond the prior swing — structure shifted"
+
+
+def _fair_value_gap(candles: list[Candle]) -> tuple[bool, str]:
+    event = _find_liquidity_event(candles)
+    if event is None or event.displacement is None:
+        return False, "no displacement to leave a gap"
+    if event.fvg is None:
+        return False, "the move left no unfilled imbalance"
+    return True, event.fvg.detail
+
+
+def _fvg_retrace(candles: list[Candle]) -> tuple[bool, str]:
+    event = _find_liquidity_event(candles)
+    if event is None or event.fvg is None:
+        return False, "no gap to retrace into"
+    if event.retrace_index is None:
+        return False, f"waiting for price to trade back into {event.fvg.detail}"
+    return True, f"price returned into the {event.fvg.detail}"
+
+
+def _liquidity_continuation(candles: list[Candle]) -> tuple[bool, str]:
+    event = _find_liquidity_event(candles)
+    if event is None or event.retrace_index is None:
+        return False, "no retrace to continue from"
+    if event.continuation_index is None:
+        return False, "waiting for a close beyond the displacement extreme"
+    close = candles[event.continuation_index].close
+    return True, f"closed {close:.2f} beyond the displacement extreme"
+
+
+def measure_liquidity(candles: list[Candle]) -> dict | None:
+    """The whole lifecycle in one record, so the funnel can see exactly where
+    this user's sweeps stopped progressing rather than only that they did."""
+    event = _find_liquidity_event(closed_candles(candles))
+    if event is None:
+        return None
+    return {
+        "poolPrice": round(event.sweep.pool.price, 4),
+        "poolTouches": event.sweep.pool.touches,
+        "bullish": event.sweep.bullish,
+        "penetrationAtr": round(event.sweep.penetration_atr, 4),
+        "displacementAtr": (
+            round(event.displacement.size_atr, 4) if event.displacement else None
+        ),
+        "structureShifted": event.structure_shift_index is not None,
+        "fvg": (
+            {"top": round(event.fvg.top, 4), "bottom": round(event.fvg.bottom, 4)}
+            if event.fvg
+            else None
+        ),
+        "retraced": event.retrace_index is not None,
+        "continued": event.continuation_index is not None,
+        "stage": event.stage,
+    }
+
+
+# --- Supply / Demand Zone ----------------------------------------------------
+#
+# The zone is a place; the strategy is what price does when it comes back to
+# it. As with the flip and the flag, every condition reads one `_find_zone`
+# result, so "there is a zone" and "price reacted at the zone" can never be
+# about different zones.
+#
+# The higher-timeframe check is derived by resampling the SAME candles rather
+# than fetching a second series, so the two timeframes cannot disagree about
+# what happened.
+
+
+#: How much coarser the context timeframe is. 5m x 3 = 15m.
+HTF_FACTOR = 3
+
+
+def _find_zone(candles: list[Candle], timeframe: str = "5m") -> Zone | None:
+    """The zone this strategy is about.
+
+    A zone price has come back to wins over a newer untested one. The move
+    that carries price back into a zone is itself often a hard departure, so
+    it mints a fresh zone behind it — and "newest wins" would hand the
+    strategy that new zone at the exact moment the interesting thing was
+    happening at the old one, silently swapping the subject mid-sequence.
+    """
+    zones = find_zones(candles, atr(candles), timeframe)
+    if not zones:
+        return None
+    revisited = [zone for zone in zones if zone.touches > 0]
+    return revisited[0] if revisited else zones[0]
+
+
+def _zone_present(candles: list[Candle]) -> tuple[bool, str]:
+    zone = _find_zone(candles)
+    if zone is None:
+        return False, f"no base with a {ZONE_MIN_DEPARTURE_ATR} ATR departure"
+    return True, f"{zone.detail} — {score_zone(zone).detail}"
+
+
+def _zone_htf_aligned(candles: list[Candle]) -> tuple[bool, str]:
+    """Context: a demand zone in a higher-timeframe downtrend is a zone the
+    larger flow is working against. The condition does not forbid it — it
+    reports it, and the user's rule decides."""
+    zone = _find_zone(candles)
+    if zone is None:
+        return False, "no zone to place in context"
+
+    htf = resample(candles, HTF_FACTOR)
+    values = ema_of(htf, 9)
+    if not values:
+        return False, "not enough history for a higher-timeframe view"
+
+    slope = classify_slope(values, atr=atr(htf))
+    wants_up = zone.kind is ZoneKind.DEMAND
+    aligned = (slope is Slope.RISING) if wants_up else (slope is Slope.FALLING)
+    return aligned, (
+        f"higher timeframe is {slope.value}, {'with' if aligned else 'against'} "
+        f"this {zone.kind.value} zone"
+    )
+
+
+def _price_returned_to_zone(candles: list[Candle]) -> tuple[bool, str]:
+    zone = _find_zone(candles)
+    if zone is None:
+        return False, "no zone to return to"
+    if zone.touches == 0:
+        return False, f"price has not come back to {zone.bottom:.2f}-{zone.top:.2f} yet"
+    return True, f"price has returned to the zone {zone.touches}x"
+
+
+def _zone_reaction(candles: list[Candle]) -> tuple[bool, str]:
+    """The zone doing its job: after price entered it, a candle closes back out
+    of it in the zone's own direction. Price closing THROUGH the zone is the
+    zone failing, which is the outcome the funnel most needs to be able to
+    count."""
+    zone = _find_zone(candles)
+    if zone is None:
+        return False, "no zone to react at"
+
+    # From the END of the departure, not from the base: the candles that
+    # created the zone by leaving it overlap it on the way out, and reading
+    # that as "entered then closed back above" turns every zone's own
+    # departure into a reaction it never had.
+    entered = False
+    for candle in candles[zone.departure_end_index + 1 :]:
+        if candle.low <= zone.top and candle.high >= zone.bottom:
+            entered = True
+        if not entered:
+            continue
+        # The close is checked on the SAME bar that entered, because the
+        # classic reaction is exactly that: a candle wicks into the zone and
+        # closes back out of it. Skipping every overlapping bar would only
+        # ever see reactions that took two bars.
+        if zone.kind is ZoneKind.DEMAND and candle.close > zone.top:
+            return True, f"closed {candle.close:.2f} back above the demand zone"
+        if zone.kind is ZoneKind.SUPPLY and candle.close < zone.bottom:
+            return True, f"closed {candle.close:.2f} back below the supply zone"
+    return False, "no close back out of the zone yet"
+
+
+def measure_zone(candles: list[Candle]) -> dict | None:
+    """Zone attributes for the observation record, including the STABLE id.
+
+    The id is what makes this worth recording at all: across sweeps the same
+    zone reports the same identity, so touches accumulate and the funnel can
+    ask how this user's results differed on fresh zones versus third visits.
+    """
+    bars = closed_candles(candles)
+    zone = _find_zone(bars)
+    if zone is None:
+        return None
+    score = score_zone(zone)
+    return {
+        "id": zone.id,
+        "kind": zone.kind.value,
+        "top": round(zone.top, 4),
+        "bottom": round(zone.bottom, 4),
+        "departureAtr": round(zone.departure_atr, 4),
+        "widthAtr": round(zone.width_atr, 4),
+        "touches": zone.touches,
+        "fresh": zone.fresh,
+        "ageBars": zone.age,
+        "timeframe": zone.timeframe,
+        "score": score.total,
+        "scoreParts": {
+            "freshness": score.freshness,
+            "departure": score.departure,
+            "tightness": score.tightness,
+        },
+    }
+
+
+# --- Flag / Pennant Continuation ---------------------------------------------
+#
+# Impulse, pause, resumption — in that order, on the same leg. Like the flip,
+# the conditions all read from one `_find_flag` result, so the strategy can
+# never confirm by pairing this morning's impulse with this afternoon's
+# unrelated quiet patch.
+
+
+@dataclass(frozen=True)
+class Flag:
+    impulse: Impulse
+    contraction: Contraction | None
+    breakout_index: int | None
+
+
+def _find_flag(candles: list[Candle]) -> Flag | None:
+    a = atr(candles)
+    impulse = find_impulse(candles, a)
+    if impulse is None:
+        return None
+
+    # Walk back through earlier legs until one has room for a pause behind it.
+    # Without this the newest impulse is always the one ending at the latest
+    # bar, which leaves zero bars to be the flag and makes the strategy
+    # permanently "waiting" no matter what the market did.
+    parts = _pause_and_break(candles, impulse)
+    cursor = impulse
+    while parts["contraction"] is None and cursor.start_index > 0:
+        cursor = find_impulse(candles, a, end_before=cursor.start_index - 1)
+        if cursor is None:
+            break
+        earlier = _pause_and_break(candles, cursor)
+        if earlier["contraction"] is not None:
+            parts = earlier
+            break
+
+    return Flag(**parts)
+
+
+def _pause_and_break(candles: list[Candle], impulse: Impulse) -> dict:
+    """Split what followed the impulse into the pause and the break out of it.
+
+    The breakout bar must NOT be inside the pause it is breaking. Measuring
+    the contraction over a window that includes the escaping candle makes
+    every flag that actually worked look like it never contracted.
+    """
+    rest = candles[impulse.end_index + 1 :]
+    breakout_offset = None
+    for b in range(MIN_CONSOLIDATION_BARS, len(rest)):
+        pause = rest[:b]
+        # The break has to clear the pause, in the direction the impulse was
+        # already going. A close out the other side is the flag failing.
+        if impulse.up and rest[b].close > max(c.high for c in pause):
+            breakout_offset = b
+            break
+        if not impulse.up and rest[b].close < min(c.low for c in pause):
+            breakout_offset = b
+            break
+
+    upto = len(candles) if breakout_offset is None else impulse.end_index + 1 + breakout_offset
+    return {
+        "impulse": impulse,
+        "contraction": find_contraction(candles[:upto], impulse),
+        "breakout_index": None if breakout_offset is None else upto,
+    }
+
+
+def _impulse_leg(candles: list[Candle]) -> tuple[bool, str]:
+    flag = _find_flag(candles)
+    if flag is None:
+        return False, f"no move of {IMPULSE_MIN_ATR} ATR within {IMPULSE_MAX_BARS} bars"
+    return True, flag.impulse.detail
+
+
+def _volatility_contraction(candles: list[Candle]) -> tuple[bool, str]:
+    """The pause. Tight RELATIVE to the impulse, and shallow enough that the
+    move is resting rather than being unwound."""
+    flag = _find_flag(candles)
+    if flag is None:
+        return False, "no impulse to contract after"
+    contraction = flag.contraction
+    if contraction is None:
+        return False, f"fewer than {MIN_CONSOLIDATION_BARS} bars since the impulse"
+    if contraction.ratio > CONTRACTION_MAX:
+        return False, f"range has not contracted — {contraction.detail}"
+    if contraction.retracement > MAX_RETRACEMENT:
+        return False, f"too much of the impulse given back — {contraction.detail}"
+    return True, contraction.detail
+
+
+def _flag_breakout(candles: list[Candle]) -> tuple[bool, str]:
+    flag = _find_flag(candles)
+    if flag is None or flag.contraction is None:
+        return False, "no flag to break out of"
+    if flag.breakout_index is None:
+        edge = flag.contraction.high if flag.impulse.up else flag.contraction.low
+        return False, f"waiting for a close beyond {edge:.2f}"
+    close = candles[flag.breakout_index].close
+    return True, f"closed {close:.2f} out of the flag in the impulse direction"
+
+
+def measure_flag(candles: list[Candle]) -> dict | None:
+    """Impulse size and contraction tightness for the observation record —
+    the two numbers a funnel would need to ask whether this user's flags work
+    better after bigger impulses or tighter pauses."""
+    flag = _find_flag(closed_candles(candles))
+    if flag is None:
+        return None
+    return {
+        "impulseAtr": round(flag.impulse.size_atr, 4),
+        "direction": "up" if flag.impulse.up else "down",
+        "contractionRatio": round(flag.contraction.ratio, 4) if flag.contraction else None,
+        "retracement": round(flag.contraction.retracement, 4) if flag.contraction else None,
+        "bars": flag.contraction.bars if flag.contraction else 0,
+        "brokeOut": flag.breakout_index is not None,
+    }
+
+
+# --- Support / Resistance Flip -----------------------------------------------
+#
+# The whole strategy is ONE ordered story about ONE level: an established
+# level breaks, price comes back to it FROM THE OTHER SIDE, and it holds.
+# Resistance becomes support, or support becomes resistance.
+#
+# So the four conditions are not independent checks that happen to be about
+# levels — they are four stages of the same sequence, and they all read from
+# `_find_flip`. Evaluating them separately would let "a level broke" and "a
+# level held" be true of two different levels on the same chart and call that
+# a flip.
+
+
+@dataclass(frozen=True)
+class Flip:
+    level: Level
+    #: True when the break was upward (resistance -> support).
+    upward: bool
+    break_index: int
+    retest_index: int | None
+    hold_index: int | None
+    detail: str
+
+    @property
+    def stage(self) -> int:
+        return 3 if self.hold_index is not None else 2 if self.retest_index is not None else 1
+
+
+def _find_flip(candles: list[Candle]) -> Flip | None:
+    """The most advanced flip in progress, or None.
+
+    "Most advanced" rather than "most recent": a completed flip on an older
+    level is more informative than a fresh break that has not been retested,
+    and reporting the fresh one would make a finished setup look like it had
+    regressed to waiting.
+    """
+    a = atr(candles)
+    levels = find_levels(candles, a)
+    tolerance = level_tolerance(candles, a)
+    if not levels or tolerance <= 0:
+        return None
+
+    best: Flip | None = None
+    for level in levels:
+        if level.age(len(candles)) < MIN_LEVEL_AGE_BARS:
+            continue
+
+        # The break direction is fixed by what the level IS. Resistance is
+        # broken upward and support downward — price that has been below a
+        # resistance all along has not "broken it downward", it has simply
+        # stayed where it was, and treating that as a break would have every
+        # quiet bar under a level count as one.
+        upward = level.kind is LevelKind.RESISTANCE
+
+        # The break also has to happen AFTER the level was formed. A candle
+        # that helped establish the level cannot be the one that broke it.
+        for i in range(level.last_index + 1, len(candles)):
+            broke = (
+                candles[i].close > level.price + tolerance
+                if upward
+                else candles[i].close < level.price - tolerance
+            )
+            if not broke:
+                continue
+
+            retest_index = None
+            hold_index = None
+            for j in range(i + 1, len(candles)):
+                if retest_index is None:
+                    # Back to the level from the side price broke to.
+                    reached = (
+                        candles[j].low <= level.price + tolerance
+                        if upward
+                        else candles[j].high >= level.price - tolerance
+                    )
+                    if reached:
+                        retest_index = j
+                    continue
+                # It holds when a LATER candle closes away from the level
+                # again in the break direction. A candle that closes through
+                # it is the flip failing, not the flip completing.
+                if upward and candles[j].close > level.price + tolerance:
+                    hold_index = j
+                    break
+                if not upward and candles[j].close < level.price - tolerance:
+                    hold_index = j
+                    break
+
+            became = "support" if upward else "resistance"
+            flip = Flip(
+                level=level,
+                upward=upward,
+                break_index=i,
+                retest_index=retest_index,
+                hold_index=hold_index,
+                detail=(
+                    f"{level.kind.value} {level.price:.2f} "
+                    f"({level.touches} touches, {level.age(len(candles))} bars old) "
+                    f"broke {'above' if upward else 'below'}"
+                    + ("" if retest_index is None else ", retested")
+                    + ("" if hold_index is None else f" and held as {became}")
+                ),
+            )
+            if best is None or flip.stage > best.stage:
+                best = flip
+            break
+
+    return best
+
+
+def _established_level(candles: list[Candle]) -> tuple[bool, str]:
+    """There is a level worth watching at all: touched more than once and old
+    enough to have been respected rather than merely printed."""
+    a = atr(candles)
+    levels = [lvl for lvl in find_levels(candles, a) if lvl.age(len(candles)) >= MIN_LEVEL_AGE_BARS]
+    if not levels:
+        return False, f"no level with {MIN_LEVEL_TOUCHES}+ touches and {MIN_LEVEL_AGE_BARS}+ bars of age"
+    newest = levels[0]
+    return True, (
+        f"{newest.kind.value} at {newest.price:.2f} — {newest.touches} touches, "
+        f"{newest.age(len(candles))} bars old"
+    )
+
+
+def _level_broke(candles: list[Candle]) -> tuple[bool, str]:
+    flip = _find_flip(candles)
+    if flip is None:
+        return False, "no established level has been broken"
+    return True, flip.detail
+
+
+def _flip_retested(candles: list[Candle]) -> tuple[bool, str]:
+    flip = _find_flip(candles)
+    if flip is None:
+        return False, "no break to retest"
+    if flip.retest_index is None:
+        return False, f"waiting for price to return to {flip.level.price:.2f} from the other side"
+    return True, flip.detail
+
+
+def _flip_held(candles: list[Candle]) -> tuple[bool, str]:
+    """The flip completing: the old level did its new job. Until this closes,
+    the level has only been broken and revisited, which is also what a failed
+    break looks like."""
+    flip = _find_flip(candles)
+    if flip is None:
+        return False, "no flip in progress"
+    if flip.retest_index is None:
+        return False, "the break has not been retested yet"
+    if flip.hold_index is None:
+        became = "support" if flip.upward else "resistance"
+        return False, f"waiting for {flip.level.price:.2f} to hold as {became}"
+    return True, flip.detail
+
+
+def measure_flip(candles: list[Candle]) -> dict | None:
+    """Flip measurements for the observation record: which level, how old it
+    was, how many touches it had, and how far the sequence got. Level age and
+    touch count are what the funnel will eventually split on — whether THIS
+    user's flips work better on older, more-tested levels is a question only
+    their own history can answer."""
+    flip = _find_flip(closed_candles(candles))
+    if flip is None:
+        return None
+    return {
+        "price": round(flip.level.price, 4),
+        "kind": flip.level.kind.value,
+        "touches": flip.level.touches,
+        "ageBars": flip.level.age(len(closed_candles(candles))),
+        "direction": "upward" if flip.upward else "downward",
+        "stage": flip.stage,
+        "retested": flip.retest_index is not None,
+        "held": flip.hold_index is not None,
+    }
+
+
+# --- VWAP --------------------------------------------------------------------
+#
+# TWO strategies share these primitives and nothing else. VWAP Bounce is a
+# CONTINUATION setup: the trend is intact, price comes back to VWAP, rejects
+# it, and carries on. EOD Mean Reversion is the opposite claim: price is
+# stretched away from VWAP late in the day and returns to it. Merging them
+# into one "VWAP strategy" would produce a funnel that averaged a
+# trend-following setup with a fade, and the resulting number would describe
+# neither. They stay separate all the way down to their conditions.
+#
+# Every VWAP condition below fails CLOSED when the instrument reports no
+# volume (vwap_series returns []), because a VWAP without volume is not a VWAP.
+
+
+def _vwap_context(candles: list[Candle]) -> tuple[list[float], float | None]:
+    return vwap_series(candles), atr(candles)
+
+
+def _vwap_available(candles: list[Candle]) -> tuple[bool, str]:
+    values, _ = _vwap_context(candles)
+    if not values:
+        return False, "no VWAP: this instrument reports no volume for the session"
+    return True, f"VWAP {values[-1]:.2f}"
+
+
+def _vwap_trend_established(candles: list[Candle]) -> tuple[bool, str]:
+    """Context for the BOUNCE only: VWAP has a direction, so a return to it is
+    a pullback within a trend rather than a drift inside a range."""
+    values, a = _vwap_context(candles)
+    if not values:
+        return False, "no VWAP: this instrument reports no volume for the session"
+    slope = vwap_slope(values, atr_value=a)
+    if slope is Slope.FLAT:
+        return False, f"VWAP {values[-1]:.2f} is flat — no trend to continue"
+    above = candles[-1].close > values[-1]
+    agrees = (slope is Slope.RISING and above) or (slope is Slope.FALLING and not above)
+    return agrees, (
+        f"VWAP {slope.value} at {values[-1]:.2f}, price {'above' if above else 'below'} it"
+        if agrees
+        else f"VWAP {slope.value} at {values[-1]:.2f} but price is on the other side"
+    )
+
+
+def _vwap_interaction(candles: list[Candle]) -> tuple[bool, str]:
+    """Approach and interaction: a candle BODY has reached VWAP this session.
+    Body, not wick — the same distinction the EMA-7 reclaim rests on."""
+    values, _ = _vwap_context(candles)
+    if not values:
+        return False, "no VWAP: this instrument reports no volume for the session"
+    offset = len(candles) - len(values)
+    for i in range(len(candles) - 1, offset - 1, -1):
+        if body_interaction(candles[i], values[i - offset]).touched_body:
+            tests = count_vwap_tests(candles, values)
+            return True, f"body reached VWAP {values[i - offset]:.2f} — {tests.detail}"
+    return False, "price has not traded back into VWAP"
+
+
+def _vwap_rejection(candles: list[Candle]) -> tuple[bool, str]:
+    """Rejection / reclaim: after touching VWAP, a candle closed back onto the
+    side price came from. A touch that closes through is the opposite event."""
+    values, _ = _vwap_context(candles)
+    if not values:
+        return False, "no VWAP: this instrument reports no volume for the session"
+    offset = len(candles) - len(values)
+    for i in range(offset, len(candles)):
+        level = values[i - offset]
+        interaction = body_interaction(candles[i], level)
+        if not interaction.touched_body:
+            continue
+        for j in range(i + 1, len(candles)):
+            later, later_vwap = candles[j], values[j - offset]
+            if later.close > later_vwap and candles[i].open > level:
+                return True, f"closed {later.close:.2f} back above VWAP {later_vwap:.2f}"
+            if later.close < later_vwap and candles[i].open < level:
+                return True, f"closed {later.close:.2f} back below VWAP {later_vwap:.2f}"
+    return False, "waiting for a close back onto the side price approached from"
+
+
+def _vwap_continuation(candles: list[Candle]) -> tuple[bool, str]:
+    """Confirmation that the bounce carried: price closed beyond the extreme of
+    the candle that interacted with VWAP, in the direction it rejected."""
+    values, _ = _vwap_context(candles)
+    if not values:
+        return False, "no VWAP: this instrument reports no volume for the session"
+    offset = len(candles) - len(values)
+    for i in range(offset, len(candles)):
+        level = values[i - offset]
+        if not body_interaction(candles[i], level).touched_body:
+            continue
+        upward = candles[i].open > level
+        trigger = candles[i].high if upward else candles[i].low
+        for later in candles[i + 1 :]:
+            if upward and later.close > trigger:
+                return True, f"closed {later.close:.2f} above the VWAP-test high {trigger:.2f}"
+            if not upward and later.close < trigger:
+                return True, f"closed {later.close:.2f} below the VWAP-test low {trigger:.2f}"
+    return False, "no close beyond the VWAP-test candle yet"
+
+
+# --- EOD VWAP Mean Reversion -------------------------------------------------
+
+
+#: How late "late in the session" is. 90 minutes puts the window at 14:00 IST.
+LATE_SESSION_MINUTES = 90
+
+
+def _late_in_session(candles: list[Candle]) -> tuple[bool, str]:
+    """Session clock. Read off the last CLOSED candle rather than wall-clock
+    time so a replay of yesterday's candles evaluates the same way it did
+    live — the condition describes the data, not when it was looked at."""
+    if not candles:
+        return False, "no candles"
+    remaining = minutes_to_close(candles[-1].timestamp)
+    if remaining < 0:
+        return False, "session already closed"
+    inside = remaining <= LATE_SESSION_MINUTES
+    return inside, f"{remaining} minutes to the close"
+
+
+def _vwap_extended(candles: list[Candle]) -> tuple[bool, str]:
+    values, a = _vwap_context(candles)
+    if not values:
+        return False, "no VWAP: this instrument reports no volume for the session"
+    if a is None:
+        return False, "not enough candles for an ATR, so deviation is not comparable"
+    extreme = find_vwap_extreme(candles, values, a)
+    if extreme is None:
+        return False, "no measurable deviation from VWAP"
+    met = abs(extreme.deviation_atr) >= EXTENSION_MIN_ATR
+    return met, (
+        extreme.detail if met else f"only {extreme.detail} (needs {EXTENSION_MIN_ATR} ATR)"
+    )
+
+
+def _vwap_exhaustion(candles: list[Candle]) -> tuple[bool, str]:
+    """After the stretch, a candle closes back TOWARD VWAP — the extension
+    stopped extending. Not yet the return; this is the turn."""
+    values, a = _vwap_context(candles)
+    if not values or a is None:
+        return False, "no VWAP/ATR available for this instrument"
+    extreme = find_vwap_extreme(candles, values, a)
+    if extreme is None or abs(extreme.deviation_atr) < EXTENSION_MIN_ATR:
+        return False, "no qualifying extension to reverse from"
+
+    offset = len(candles) - len(values)
+    for i in range(extreme.index + 1, len(candles)):
+        level = values[i - offset]
+        moved_back = vwap_deviation(candles[i].close, level, a)
+        if moved_back is None:
+            continue
+        if abs(moved_back) < abs(extreme.deviation_atr):
+            return True, f"closed back to {abs(moved_back):.2f} ATR from {extreme.detail}"
+    return False, "price has not closed back toward VWAP yet"
+
+
+def _vwap_return(candles: list[Candle]) -> tuple[bool, str]:
+    """The reversion completing: price trades back to VWAP itself."""
+    values, a = _vwap_context(candles)
+    if not values or a is None:
+        return False, "no VWAP/ATR available for this instrument"
+    extreme = find_vwap_extreme(candles, values, a)
+    if extreme is None or abs(extreme.deviation_atr) < EXTENSION_MIN_ATR:
+        return False, "no qualifying extension to revert from"
+    offset = len(candles) - len(values)
+    for i in range(extreme.index + 1, len(candles)):
+        if body_interaction(candles[i], values[i - offset]).touched_wick:
+            return True, f"returned to VWAP {values[i - offset]:.2f}"
+    return False, "price has not reached VWAP again"
+
+
+def measure_vwap(candles: list[Candle]) -> dict | None:
+    """VWAP measurements for the observation record.
+
+    Recorded so the funnel can later split THIS user's results by test ordinal
+    (1st / 2nd / repeated) and by deviation bucket. The buckets are stated
+    conventions; the expectancy, MAE and MFE inside them come from the user's
+    own watch history and nowhere else.
+    """
+    bars = closed_candles(candles)
+    values = vwap_series(bars)
+    if not values:
+        return None
+    a = atr(bars)
+    tests = count_vwap_tests(bars, values)
+    extreme = find_vwap_extreme(bars, values, a)
+    deviation = vwap_deviation(bars[-1].close, values[-1], a)
+    return {
+        "vwap": round(values[-1], 4),
+        "slope": vwap_slope(values, atr_value=a).value,
+        "testCount": tests.count,
+        "testOrdinal": tests.ordinal.value,
+        "deviationAtr": round(deviation, 4) if deviation is not None else None,
+        "deviationBucket": classify_deviation(deviation),
+        "maxDeviationAtr": round(extreme.deviation_atr, 4) if extreme else None,
+        "maxDeviationBucket": classify_deviation(extreme.deviation_atr) if extreme else None,
+    }
+
+
+def measure_pullback(candles: list[Candle]) -> dict | None:
+    """Pullback measurements for the observation record, so the performance
+    engine can eventually split this user's results by shallow/normal/deep.
+    Reported in ATR and spread multiples — a raw point distance would not be
+    comparable across symbols or volatility regimes."""
+    bars = closed_candles(candles)
+    fast, slow = _ema_pair(bars)
+    pullback = find_pullback(bars, fast, slow, atr(bars))
+    if pullback is None:
+        return None
+    return {
+        "depth": round(pullback.depth, 4),
+        "depthAtr": round(pullback.depth_atr, 4) if pullback.depth_atr is not None else None,
+        "depthSpread": round(pullback.depth_spread, 4) if pullback.depth_spread is not None else None,
+        "classification": pullback.classification.value,
+    }
+
+
 def evaluate(rules: list[dict], candles: list[Candle]) -> EvaluationResult:
     bars = closed_candles(candles)
     or_high, or_low = opening_range(bars)
@@ -158,6 +1158,78 @@ def evaluate(rules: list[dict], candles: list[Candle]) -> EvaluationResult:
                 met, detail = False, "no opening range yet"
             else:
                 met, detail = _retest(bars, or_high, or_low)
+        elif condition == "ema_9_21_bullish_alignment":
+            met, detail = _ema_9_21_bullish(bars)
+        elif condition == "pullback_into_ema_zone":
+            met, detail = _pullback_into_zone(bars)
+        elif condition == "pullback_rejection_continuation":
+            met, detail = _pullback_continuation(bars)
+        # Liquidity Sweep + FVG — seven stages of one event.
+        elif condition == "liquidity_pool_swept":
+            met, detail = _liquidity_swept(bars)
+        elif condition == "displacement_from_sweep":
+            met, detail = _displacement(bars)
+        elif condition == "structure_shift":
+            met, detail = _structure_shift(bars)
+        elif condition == "fair_value_gap_left":
+            met, detail = _fair_value_gap(bars)
+        elif condition == "fvg_retrace":
+            met, detail = _fvg_retrace(bars)
+        elif condition == "liquidity_continuation":
+            met, detail = _liquidity_continuation(bars)
+        # Supply / Demand Zone — a place, and what price does on returning.
+        elif condition == "zone_present":
+            met, detail = _zone_present(bars)
+        elif condition == "zone_htf_aligned":
+            met, detail = _zone_htf_aligned(bars)
+        elif condition == "price_returns_to_zone":
+            met, detail = _price_returned_to_zone(bars)
+        elif condition == "zone_reaction":
+            met, detail = _zone_reaction(bars)
+        # Flag / Pennant — impulse, pause, resumption on the same leg.
+        elif condition == "impulse_leg":
+            met, detail = _impulse_leg(bars)
+        elif condition == "volatility_contraction":
+            met, detail = _volatility_contraction(bars)
+        elif condition == "flag_breakout_continuation":
+            met, detail = _flag_breakout(bars)
+        # Support / Resistance Flip — four stages of ONE sequence on ONE level.
+        elif condition == "established_level_present":
+            met, detail = _established_level(bars)
+        elif condition == "level_break_close":
+            met, detail = _level_broke(bars)
+        elif condition == "level_flip_retest":
+            met, detail = _flip_retested(bars)
+        elif condition == "level_flip_holds":
+            met, detail = _flip_held(bars)
+        # VWAP Bounce / Rejection — a continuation setup.
+        elif condition == "vwap_available":
+            met, detail = _vwap_available(bars)
+        elif condition == "vwap_trend_established":
+            met, detail = _vwap_trend_established(bars)
+        elif condition == "vwap_body_interaction":
+            met, detail = _vwap_interaction(bars)
+        elif condition == "vwap_rejection_reclaim":
+            met, detail = _vwap_rejection(bars)
+        elif condition == "vwap_continuation":
+            met, detail = _vwap_continuation(bars)
+        # EOD VWAP Mean Reversion — a different strategy, not a mode of the above.
+        elif condition == "late_session_window":
+            met, detail = _late_in_session(bars)
+        elif condition == "vwap_extension_beyond_atr":
+            met, detail = _vwap_extended(bars)
+        elif condition == "vwap_exhaustion_reversal":
+            met, detail = _vwap_exhaustion(bars)
+        elif condition == "vwap_return_to_level":
+            met, detail = _vwap_return(bars)
+        elif condition == "ema7_rising":
+            met, detail = _ema_rising(bars, 7)
+        elif condition == "price_above_ema7":
+            met, detail = _price_above_ema(bars, 7)
+        elif condition == "ema7_body_reclaim":
+            met, detail = _ema_body_reclaim(bars, 7)
+        elif condition == "reclaim_retest_or_consolidation":
+            met, detail = _reclaim_followed_through(bars, 7)
         elif condition == "volume_above_20_period_avg":
             met, detail = _volume_above_average(bars)
         else:

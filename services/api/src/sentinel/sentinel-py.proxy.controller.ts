@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/auth.guard';
 import { CapabilityGuard, RequiresCapability } from '../entitlements/capability.guard';
@@ -37,6 +37,20 @@ export class SentinelPyProxyController {
     return this.sentinelPy.parseStrategy(String(body?.text ?? ''));
   }
 
+  @Get('strategies/templates')
+  listTemplates() {
+    return this.sentinelPy.listTemplates();
+  }
+
+  @Post('strategies/templates/:templateId/adopt')
+  adoptTemplate(
+    @Req() req: AuthedRequest,
+    @Param('templateId') templateId: string,
+    @Query('name') name?: string,
+  ) {
+    return this.sentinelPy.adoptTemplate(req.user.sub, templateId, name);
+  }
+
   @Post('strategies')
   createStrategy(@Req() req: AuthedRequest, @Body() body: unknown) {
     return this.sentinelPy.createStrategy(req.user.sub, body);
@@ -57,7 +71,21 @@ export class SentinelPyProxyController {
     return this.sentinelPy.updateStrategy(req.user.sub, id, body);
   }
 
+  @Get('strategies/:id/performance')
+  strategyPerformance(@Req() req: AuthedRequest, @Param('id') id: string) {
+    return this.sentinelPy.strategyPerformance(req.user.sub, id);
+  }
+
   /** Soft delete — archives rather than destroys. */
+  @Get('strategies/:id/contract')
+  strategyContract(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+    @Query('watchId') watchId?: string,
+  ) {
+    return this.sentinelPy.strategyContract(req.user.sub, id, watchId);
+  }
+
   @Delete('strategies/:id')
   archiveStrategy(@Req() req: AuthedRequest, @Param('id') id: string) {
     return this.sentinelPy.archiveStrategy(req.user.sub, id);
@@ -73,6 +101,11 @@ export class SentinelPyProxyController {
   @Get('watch')
   listWatches(@Req() req: AuthedRequest) {
     return this.sentinelPy.listWatches(req.user.sub);
+  }
+
+  @Get('watch/:id/timeline')
+  timeline(@Req() req: AuthedRequest, @Param('id') id: string, @Query('limit') limit?: string) {
+    return this.sentinelPy.timeline(req.user.sub, id, limit ? Number(limit) : 100);
   }
 
   /** "I have taken this position" — the user's own entry, invalidation level
