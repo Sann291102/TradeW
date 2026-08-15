@@ -7,4 +7,4 @@ Declarative AI agent definitions — system prompts, allowed tools, guardrail/di
 
 **Hard rule every definition in either subfolder must encode:** no agent output converts into a real order without an explicit, separate user action, and no agent calls `services/trading-engine`. This is a product/compliance boundary, not just a technical one.
 
-**Status:** no definitions exist yet. Write the first ones once their backing data services (`services/market-data`, `services/analytics`) exist — an agent explaining a feature that isn't built yet has nothing to read.
+**Status:** each subfolder now has a `definitions.json`. The Sentinel agents' actual logic already runs inside `services/sentinel/src/{intelligence,compliance,orchestrator}/` (the declarative files here are the reviewed config, not the runtime); the TradeW AI roster is still being fleshed out and is not yet wired through `services/tradew-ai`. See each subfolder's README.

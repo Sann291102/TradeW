@@ -137,7 +137,7 @@ The checklist from Chapter 5 §5.14, run in this sequence because the early ques
              + a link from _INDEX.md
 ```
 
-This practice is already working. `ARCHITECTURE.md` opens with *"approved design, not yet implemented"* — and that is the method, not an apology. Twenty-one product-architecture documents exist for a platform where much is unbuilt, and the boundaries have held.
+This practice is already working. `ARCHITECTURE.md` was written up-front as *"approved design, not yet implemented"* — that was the method, not an apology, and it now reads *"approved design, now substantially implemented"* because the code caught up to the boundaries it set. The product-architecture documents were written for a platform where much was still unbuilt, and the boundaries have held as the code landed.
 
 **The cost is real** and should be named: an engineer can waste a day reading a design for something that does not exist. The mitigations are the status legend in this handbook and the reconciliation note (`knowledge/Plans/2026-07-21 - Full platform and product audit.md`) that maps docs against a ground-truth code pass. **Read the audit note before the blueprints.**
 

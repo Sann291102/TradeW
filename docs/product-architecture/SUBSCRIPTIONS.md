@@ -1,6 +1,6 @@
 # Subscriptions & Monetization — Product Blueprint
 
-Status: design, pre-implementation. Covers Demo Trading limits, Learning Hub, and Sentinel pricing, per the Genesis v2 brief. Billing provider is an open decision (§6) — everything else here is specified regardless of which provider is chosen.
+Status: **substantially implemented.** Entitlements/quotas/plan-grants/trial-and-grace and capability gating are built in `services/api` (Plan/PlanGrant/Subscription/EntitlementOverride/UsageCounter models), and the **billing provider is decided and wired — Razorpay** (`services/api/src/payments/`, `apps/web/.../checkout/`), fulfilling idempotently through `EntitlementsService.activate`. The one operational gap is **plan seed data** (a fresh DB grants nothing until rows are inserted). Covers Demo Trading limits, Learning Hub, and Sentinel pricing, per the Genesis v2 brief. (§6's "billing provider is an open decision" is now resolved to Razorpay.)
 
 ## 1. Demo (paper) trading
 

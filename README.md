@@ -74,7 +74,7 @@
                     │ services│   │ services │   │  services │
                     │   /api  │   │/tradew-ai│   │ /sentinel │
                     │ NestJS  │   │  LLM     │   │  LLM      │
-                    │ GraphQL │   │ Agents   │   │ Agents    │
+                    │REST/OAPI│   │ Agents   │   │ Agents    │
                     └────┬────┘   └──────┬───┘   └─────┬──────┘
                          │               │             │
         ┌────────────────┼───────────────┼─────────────┤
@@ -93,28 +93,31 @@
           └─────────────────────────────┘
 ```
 
+> Also under the Sentinel umbrella: **`services/sentinel-py`** (Python/FastAPI, port 4011) — the personal strategy watcher, called only by `services/api`, reading the same Postgres. And **`apps/admin`** (Next.js, port 3001) — the standalone operator console, which talks to `services/api` through an authenticated proxy. Both are omitted from the diagram above for space.
+
 ### Monorepo Structure
 
 ```
 TradeW/
 ├── apps/
 │   ├── web/           🟢 Next.js — Core Platform, Research, Sentinel, Learning workspaces + in-app AI assistant
-│   ├── terminal/      🟢 Static full-screen trading terminal shell
-│   ├── admin/         🟡 Internal ops console — KYC, audit logs, DLQ, user mgmt
+│   ├── admin/         🟢 Standalone Next.js operator console (port 3001) — command centers + cognition graph
 │   └── mobile/        🟡 React Native — roadmap v0.9
+│                      (apps/terminal was retired → archive/apps-terminal-legacy-prototype)
 │
 ├── services/
-│   ├── api/           🟢 NestJS — single public ingress, auth, OMS, aggregation (14 modules)
+│   ├── api/           🟢 NestJS — single public ingress, auth, OMS, entitlements, payments, aggregation
 │   ├── market-data/   🟢 NestJS ingestor + standalone live Dhan feed bridge (port 4600)
-│   ├── sentinel/      🟢 Safety-net service — backtest engine, brain, orchestrator, ontology (44 TS files)
-│   ├── trading-engine/🟡 Python/Flask — order execution, webhook intake (README only; OMS lives in services/api/sim)
-│   ├── tradew-ai/     🟡 Research backend service (README only; foundation in packages/ai-core)
+│   ├── sentinel/      🟢 Safety-net service — backtest engine, brain, orchestrator, ontology (port 4010)
+│   ├── sentinel-py/   🟢 Python/FastAPI personal strategy watcher (port 4011) — parse → watch → alert, never auto-trades
+│   ├── trading-engine/🟡 Python/Dhan — order execution, webhook intake (README only; OMS lives in services/api/sim)
+│   ├── tradew-ai/     🟡 Research backend service (thin scaffold; foundation in packages/ai-core)
 │   ├── notification/  🟡 Alert fanout (in-app notifications live in services/api)
 │   ├── auth/          🟡 JWT/refresh tokens (auth currently lives in services/api)
 │   └── analytics/     ⚪ Portfolio/PnL analytics, eventual ClickHouse aggregation
 │
 ├── packages/
-│   ├── database/      🟢 Prisma schema (36 models), migrations (centralized)
+│   ├── database/      🟢 Prisma schema (53 models), migrations (centralized)
 │   ├── ai-core/       🟢 AI foundation — providers, memory, RAG, agents, news classifier
 │   ├── market-data/   🟢 Shared instrument/quote helpers
 │   ├── types/         🟡 Shared TypeScript interfaces/DTOs
@@ -160,9 +163,10 @@ TradeW/
 | **services/api** | NestJS aggregator — the single public API gateway. Handles auth, OMS, entitlements, market data, broker OAuth, discipline, news, notifications, and calls internal services. | 🟢 Running, 14 modules mapped |
 | **services/market-data** | NestJS quote ingestor **plus** a standalone live Dhan feed bridge (port 4600) serving real quotes, charts and option chains to the app. | 🟢 Live feed bridge in use; NestJS ingestor writes Postgres `Quote` |
 | **services/sentinel** | Safety-net service — EMA-cross backtest engine on real Dhan candles, persistent knowledge brain, orchestrator, state machine, compliance, ontology. Internal-only (service token). | 🟢 Running as its own service (port 4010) |
-| **services/trading-engine** | Python/Flask engine for webhook-driven strategy execution. | 🟡 README only; the paper-trading OMS is implemented in `services/api/src/sim` |
+| **services/sentinel-py** | Python/FastAPI **personal strategy watcher** — parses the user's own text strategy into rules, watches live candles (`IDLE→FORMING→CONFIRMED`), in-trade R-multiple monitoring, alerts via `services/api`. Internal-only (service token); never proposes/auto-trades. | 🟢 Running (port 4011); P0–P4 complete |
+| **services/trading-engine** | Python/Dhan engine for webhook-driven strategy execution. | 🟡 README only; the paper-trading OMS is implemented in `services/api/src/sim` |
 | **services/tradew-ai** | LLM-powered Research *backend* agents (Company Analysis, News, Technical, Strategy Builder). | 🟡 README only; the AI foundation is in `packages/ai-core` and the in-app assistant in `apps/web` |
-| **packages/database** | Centralized Prisma schema (36 models) and migration history. Single source of truth for schema. | 🟢 17 migrations applied, 100% synced |
+| **packages/database** | Centralized Prisma schema (53 models) and migration history. Single source of truth for schema. | 🟢 28 migrations applied, 100% synced |
 | **packages/ai-core** | AI foundation: provider abstraction (Anthropic, OpenAI-compatible, Voyage, research), memory, RAG, prompts, tools, news classifier. | 🟢 Built; consumed by services |
 | **packages/types** | Shared TypeScript DTOs/interfaces — source of truth for all API contracts. | 🟡 Framework exists; incomplete |
 | **packages/ui** | Design-system React components extracted from Emergent mockups. Binding for all apps. | 🟡 Design spec in `docs/design-reference/DESIGN-SYSTEM.md`; components still being extracted |
@@ -267,6 +271,16 @@ TradeW/
   - Trap detection concept catalog (built-in patterns: bull_trap, fake_breakout, etc.)
   - Internal-only: gated by a shared service token, never publicly exposed
 
+- **Sentinel-py — Personal Strategy Watcher (`services/sentinel-py`, Python/FastAPI)**
+  - Deterministic text-strategy parser → rules; live-candle sweep loop with an `IDLE → FORMING → CONFIRMED` state machine and cooldown
+  - In-trade monitoring after the user marks a position taken: R-multiple milestones (1R/2R/3R), invalidation, projected-level and structure-break (risk read from the adverse extreme, reward from the close)
+  - Confirmations/milestones pushed as `Notification` rows via `services/api` with per-trading-day dedupe; a compliance gate blocks any Buy/Sell/Entry/Target/Stop string
+  - Backed by `UserStrategy` / `WatchSession` / `WatchObservation`; sweep gated on a `JobLease`; internal-only (service token); the Sentinel strategy workspace ("write, watch, follow") in `apps/web` drives it
+
+- **Cognition Network (`packages/ai-core/src/cognition`)**
+  - Four-layer perceptor network (17 perceptors), event dispatcher, online Hebbian weights; `/admin/cognition` neural-layers console
+  - Off by default; proposals never self-execute. Backed by `Percept` / `PerceptorState` / `CognitiveEpisode` / `CognitiveProposal` / `NeuralSynapse`
+
 - **Discipline & Guardrails**
   - `DisciplineSession` / `DisciplineOverride` with per-session trade & loss limits and cooldowns
   - Market-calendar awareness (holiday/weekend logic, unit-tested)
@@ -299,7 +313,7 @@ TradeW/
   - Trial periods, grace periods, cancellation tracking
 
 - **Database**
-  - 36 models across the trading, market-data, AI, ontology, subscription, discipline, broker and news domains
+  - 53 models across the trading, market-data, AI, ontology, cognition, subscription, discipline, broker, strategy-watch and news domains
   - Full referential integrity with foreign keys; indexes on all hot paths
   - Partial unique index enforcing a single broker feed-default row
   - Soft-delete pattern for instruments (deactivate, never remove)
@@ -435,6 +449,7 @@ Expected output:
 
 ```bash
 npm run dev:sentinel        # Sentinel safety-net service (port 4010)
+npm run dev:sentinel-py     # Sentinel-py personal strategy watcher (port 4011, Python/FastAPI)
 npm run live:server -w @tradew/market-data-service   # live Dhan feed bridge (port 4600)
 ```
 

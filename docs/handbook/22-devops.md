@@ -584,7 +584,7 @@ Nothing goes to production until every box is ticked.
 | **OPS-5** | **Never deployed** | **critical** | 2 days |
 | **OPS-6** | **No staging environment** | **critical** | 1 day |
 | **OPS-7** | **Backup never restored** (DB-4) | **critical** | 4 hours |
-| OPS-8 | CI runs no tests (TEST-3) | critical | Chapter 21 |
+| ~~OPS-8~~ | ~~CI runs no tests (TEST-3)~~ — **resolved**: `ci.yml` runs typecheck + tests | ✅ |
 | OPS-9 | No monitoring or alerting | **high** | 3 days |
 | OPS-1 | No matching-engine leader lock | high | 2 hours |
 | OPS-10 | No WAL archiving — RPO is 24 h | high | 4 hours |

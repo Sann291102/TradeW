@@ -1,6 +1,6 @@
 # TradeW AI (Research) — Product Blueprint
 
-Status: design, pre-implementation. Grounded in the Emergent mockups (`docs/design-reference/DESIGN-SYSTEM.md`) and the PRD's explicit non-goal: **no discretionary advice**. Every feature below explains and analyzes; none of them tell the user what to buy or sell, and none place an order.
+Status: **partially implemented.** The ambient **app-control / voice assistant** (§2.1) is live in `apps/web` (`src/lib/assistant/` — intent detection, planner, narration, voice output, domain guard; unit-tested) and drives navigation/panels/theme with a hard boundary against order-placement and trade calls. The **Research** agent roster below (Company/News/Option-Chain/Technical analysis, Strategy Builder, Portfolio Insights) is **not yet wired** — `services/tradew-ai` is a thin scaffold and the primitives live in `packages/ai-core`. Grounded in the Emergent mockups (`docs/design-reference/DESIGN-SYSTEM.md`) and the PRD's explicit non-goal: **no discretionary advice**. Every feature below explains and analyzes; none of them tell the user what to buy or sell, and none place an order.
 
 ## 1. What it is, in one line
 

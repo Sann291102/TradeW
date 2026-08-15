@@ -1,6 +1,6 @@
 # Sentinel Concept Knowledge Graph — Reasoning Ontology
 
-Status: **Phase 1 + 2 implemented and verified** (2026-07-21). Schema, ontology, loader, reasoning layer, reinforcement loop and seeding are live against Postgres. Read API and UI are not built — see §10.
+Status: **Phase 1 + 2 implemented and verified** (2026-07-21); a read/reasoning surface has since landed (2026-08). Schema, ontology, loader, reasoning layer, reinforcement loop and seeding are live against Postgres. The concept graph is now reachable at runtime via `services/sentinel`'s `reasoning.controller.ts` and is surfaced in the `apps/admin` reasoning/knowledge consoles — so §10's "Read API and UI are not built" is now largely closed (a trader-facing UI in `apps/web` is still the open piece).
 
 Governed by [`TRADEW-OS.md`](TRADEW-OS.md) §4 (knowledge lifecycle). This is the structured market knowledge Sentinel reasons over to *explain* what it observes. It is a core product capability, not an internal tool.
 

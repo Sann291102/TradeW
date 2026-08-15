@@ -491,7 +491,7 @@ A new engineer should have the product running locally within fifteen minutes of
 Honesty over comfort:
 
 - **No ESLint config exists anywhere in the repository.** Standards are enforced by human review, which is slower and less consistent than a linter. Chapter 23 §23.11 has the remediation plan.
-- **No test suite**, so the feedback loop on a change is "run it and look." Chapter 21.
+- ~~**No test suite**~~ — **a unit-test suite + CI gate now exists** (updated 2026-08-15; ~70 TS/JS specs + 9 pytest files, `ci.yml`). The remaining gap is integration/E2E, not "run it and look." Chapter 21.
 - **No pre-commit hooks**, so formatting churn shows up in diffs.
 - **`seed.ts` is broken** (`bcrypt.hash is not a function`, a `ts-node` ESM/CJS interop issue), so demo-account seeding requires a workaround.
 
