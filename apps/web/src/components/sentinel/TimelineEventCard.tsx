@@ -39,24 +39,25 @@ const TONE_CLASS: Record<Tone, string> = {
   red: 'bg-red-500/15 text-red-400',
 };
 
+/**
+ * The feed says what CHANGED. The per-condition breakdown and the running
+ * "x of y met" count live in StrategyFocusPanel, so they are deliberately
+ * not repeated here — a user reading both should not read the same sentence
+ * twice.
+ */
 function describe(event: TimelineEvent): { label: string; tone: Tone; message: string } {
-  const met = event.conditionsMet ?? 0;
-  const total = event.conditionsTotal ?? 0;
-
   switch (event.kind) {
     case 'wait_and_watch':
       return {
         label: 'WAIT AND WATCH',
         tone: 'orange',
-        message: `Strategy is forming. ${met} of ${total} conditions met${
-          event.reason ? `. ${event.reason}` : ''
-        }.`,
+        message: 'Your strategy started forming. Nothing is confirmed yet.',
       };
     case 'confirmed':
       return {
         label: 'SIDE IN FOCUS — CONFIRMED',
         tone: 'green',
-        message: `All ${total} conditions you defined are met${event.reason ? `. ${event.reason}` : ''}.`,
+        message: 'Every condition you defined is now met.',
       };
     case 'rejected':
       return {

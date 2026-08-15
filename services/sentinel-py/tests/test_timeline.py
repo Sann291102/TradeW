@@ -231,3 +231,44 @@ def test_losing_several_conditions_names_them_all():
     ]
     rejection = next(e for e in build_timeline(WATCH, obs)["events"] if e["kind"] == "rejected")
     assert rejection["lostConditions"] == ["breakout_high", "retest"]
+
+
+# --- current conditions (focus panel) ---------------------------------------
+
+
+def test_conditions_report_each_rule_and_whether_it_is_met_now():
+    obs = [with_rules("2026-08-13T10:15:00", [BREAKOUT_MET, RETEST_MET], met=2)]
+    conditions = build_timeline(WATCH, obs)["conditions"]
+    assert [c["name"] for c in conditions] == ["breakout_high", "retest"]
+    assert all(c["met"] for c in conditions)
+    assert all(c["mandatory"] for c in conditions)
+
+
+def test_conditions_come_from_the_newest_readable_pre_entry_sweep():
+    obs = [
+        with_rules("2026-08-13T10:15:00", [BREAKOUT_LOST], met=0),
+        with_rules("2026-08-13T10:00:00", [BREAKOUT_MET], met=1),
+    ]
+    conditions = build_timeline(WATCH, obs)["conditions"]
+    assert conditions[0]["met"] is False
+    assert conditions[0]["detail"] == "no close above 110"
+
+
+def test_conditions_ignore_in_trade_sweeps():
+    """Once a position is open the entry rules are spent; the last pre-entry
+    pass is the honest answer to what the conditions looked like."""
+    obs = [
+        observation(
+            "2026-08-13T11:00:00",
+            agent="intrade-monitor",
+            state="IN_TRADE",
+            findings=[{"event": "milestone", "milestone": "1R", "detail": "moved 1:1"}],
+        ),
+        with_rules("2026-08-13T10:00:00", [BREAKOUT_MET, RETEST_MET], met=2),
+    ]
+    conditions = build_timeline(WATCH, obs)["conditions"]
+    assert [c["name"] for c in conditions] == ["breakout_high", "retest"]
+
+
+def test_conditions_are_empty_when_nothing_has_been_evaluated():
+    assert build_timeline(WATCH, [])["conditions"] == []

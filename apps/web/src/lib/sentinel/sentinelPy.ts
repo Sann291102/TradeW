@@ -62,9 +62,49 @@ export interface TimelineWatch {
   strategyId: string;
 }
 
+export interface TimelineCondition {
+  id: string;
+  name: string;
+  mandatory: boolean;
+  met: boolean;
+  detail: string;
+}
+
 export interface Timeline {
   watch: TimelineWatch;
+  /** Per-condition state as of the latest readable sweep. The focus panel
+   * renders this; the feed deliberately does not repeat it. */
+  conditions: TimelineCondition[];
   events: TimelineEvent[];
+}
+
+export interface StrategyPerformance {
+  strategyId: string;
+  funnel: {
+    watches: number;
+    interactions: number;
+    confirmations: number;
+    entries: number;
+    outcomes: number;
+    rejections: number;
+  };
+  outcomes: { reachedProjected: number; reachedInvalidation: number; stillOpen: number };
+  r: {
+    completed: number;
+    expectancy: number | null;
+    best: number | null;
+    worst: number | null;
+    avgMfe: number | null;
+    avgMae: number | null;
+  };
+  sufficient: boolean;
+  note: string;
+}
+
+export function fetchStrategyPerformance(strategyId: string): Promise<StrategyPerformance> {
+  return api(
+    `/sentinel-py/strategies/${encodeURIComponent(strategyId)}/performance`,
+  ) as Promise<StrategyPerformance>;
 }
 
 export interface WatchSummary {

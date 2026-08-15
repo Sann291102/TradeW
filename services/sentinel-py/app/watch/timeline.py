@@ -136,6 +136,34 @@ def _in_trade_events(observation: dict) -> list[dict]:
     return events
 
 
+def _current_conditions(usable_newest_first: list[dict]) -> list[dict]:
+    """Each rule the user defined, and whether it is met right now.
+
+    Read from the newest PRE-ENTRY observation. Once a position is open the
+    entry rules are spent — they got the user in — so an in-trade sweep
+    records findings rather than rule results, and the last pre-entry pass is
+    the honest answer to "what did my conditions look like when this
+    qualified?".
+    """
+    for observation in usable_newest_first:
+        if observation.get("agent") == "intrade-monitor":
+            continue
+        rules = observation.get("ruleEvaluations") or []
+        if not rules:
+            continue
+        return [
+            {
+                "id": rule.get("ruleId") or rule.get("name") or "",
+                "name": rule.get("name") or "",
+                "mandatory": bool(rule.get("mandatory")),
+                "met": bool(rule.get("met")),
+                "detail": rule.get("detail") or "",
+            }
+            for rule in rules
+        ]
+    return []
+
+
 def _collapse(events: list[dict]) -> list[dict]:
     """Collapse a run of the same event kind into one entry.
 
@@ -206,6 +234,11 @@ def build_timeline(watch: dict, observations: list[dict]) -> dict[str, Any]:
     events = _collapse(events)
 
     return {
+        # The per-condition state as of the most recent readable sweep. This
+        # is what the focus panel answers "why is this happening?" with, and
+        # it is deliberately NOT repeated into the feed: the feed says what
+        # changed, the panel says what the current state is.
+        "conditions": _current_conditions(usable),
         "watch": {
             "id": watch["id"],
             "symbol": watch["symbol"],

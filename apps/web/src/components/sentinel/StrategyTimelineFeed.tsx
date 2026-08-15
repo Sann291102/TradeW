@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, fetchTimeline, listWatches } from '@/lib/sentinel/sentinelPy';
 import type { Timeline, TimelineEvent, WatchSummary } from '@/lib/sentinel/sentinelPy';
+import { StrategyFocusPanel } from './StrategyFocusPanel';
 import { TimelineEventCard } from './TimelineEventCard';
 
 const POLL_MS = 10_000;
@@ -112,7 +113,9 @@ export function StrategyTimelineFeed() {
   }
 
   return (
-    <Shell
+    <div className="flex flex-col gap-4">
+      {timeline && <StrategyFocusPanel timeline={timeline} />}
+      <Shell
       selector={
         watches.length > 1 ? (
           <select
@@ -163,7 +166,8 @@ export function StrategyTimelineFeed() {
           ))}
         </div>
       )}
-    </Shell>
+      </Shell>
+    </div>
   );
 }
 
