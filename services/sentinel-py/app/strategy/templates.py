@@ -30,6 +30,10 @@ SUPPORTED_PRIMITIVES = {
     "close_beyond_level",
     "retest",
     "relative_volume",
+    "ema",
+    "ema_slope",
+    "candle_body_vs_level",
+    "reclaim",
 }
 
 
@@ -156,7 +160,51 @@ CATALOGUE: list[Template] = [
             "the setup then waits for a retest or a consolidation breakout."
         ),
         direction="long_only",
-        requires={"ema", "ema_slope", "candle_body_vs_level", "reclaim", "retest", "relative_volume"},
+        requires={"ema", "ema_slope", "candle_body_vs_level", "reclaim", "relative_volume"},
+        rules={
+            "timeframe": "5m",
+            "levels": ["ema7"],
+            "rules": [
+                {
+                    "id": "rule_trend",
+                    "name": "price_above_ema7",
+                    "condition": "price_above_ema7",
+                    "mandatory": True,
+                    "description": "Price is trading above the 7 EMA",
+                },
+                {
+                    "id": "rule_ema_slope",
+                    "name": "ema7_rising",
+                    "condition": "ema7_rising",
+                    "mandatory": True,
+                    "description": "The 7 EMA is rising, so it can act as dynamic support",
+                },
+                {
+                    "id": "rule_reclaim",
+                    "name": "ema7_body_reclaim",
+                    "condition": "ema7_body_reclaim",
+                    "mandatory": True,
+                    "description": "A candle BODY reaches the 7 EMA and closes back above it",
+                },
+                {
+                    "id": "rule_follow_through",
+                    "name": "reclaim_follow_through",
+                    "condition": "reclaim_retest_or_consolidation",
+                    "mandatory": True,
+                    "description": "After the reclaim, price closes above the reclaim candle high",
+                },
+                {
+                    "id": "rule_volume_confirm",
+                    "name": "volume_confirm",
+                    "condition": "volume_above_20_period_avg",
+                    "mandatory": False,
+                    "description": "The reclaim carries above-average volume",
+                },
+            ],
+            # Long only: no short side is offered, because the setup has none.
+            "entry": {"long": "after_reclaim_follow_through", "short": None},
+            "riskManagement": {"stopLoss": None, "targets": []},
+        },
     ),
     Template(
         id="ema_9_21_pullback",

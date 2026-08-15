@@ -21,11 +21,25 @@ def test_available_templates_produce_rules_the_evaluator_understands():
 
 
 def test_unavailable_templates_name_the_missing_primitive():
+    vwap = get_template("vwap_bounce")
+    assert vwap is not None
+    assert vwap.available is False
+    assert "vwap" in vwap.missing
+    assert "vwap" in vwap.to_dict()["unavailableReason"]
+
+
+def test_ema7_is_adoptable_now_that_its_primitives_exist():
     ema7 = get_template("ema7_bullish_reclaim")
-    assert ema7 is not None
-    assert ema7.available is False
-    assert "ema" in ema7.missing
-    assert "ema" in ema7.to_dict()["unavailableReason"]
+    assert ema7.available is True
+    assert ema7.missing == []
+
+
+def test_ema7_offers_no_short_side():
+    """It is a bullish reclaim. A short entry would misrepresent the setup
+    the user adopted."""
+    ema7 = get_template("ema7_bullish_reclaim")
+    assert ema7.rules["entry"]["short"] is None
+    assert ema7.rules["entry"]["long"]
 
 
 def test_unavailable_templates_expose_no_rules_to_adopt():

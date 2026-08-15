@@ -16,6 +16,14 @@ from dataclasses import dataclass
 
 from app.market.clock import session_key
 from app.market.feed import Candle
+from app.watch.indicators import (
+    Slope,
+    atr,
+    classify_slope,
+    ema_of,
+    find_bullish_reclaim,
+    find_bullish_reclaims,
+)
 
 
 @dataclass(frozen=True)
@@ -138,6 +146,67 @@ def _volume_above_average(candles: list[Candle], period: int = 20) -> tuple[bool
     return latest > average, f"volume {latest} vs {period}-period avg {average:.0f}"
 
 
+# --- EMA-7 Bullish Reclaim ---------------------------------------------------
+#
+# Long only, by construction. There is no bearish mirror of these functions:
+# the setup the user adopted is a bullish reclaim, and a condition set that
+# could be read either way would let the same template justify a short.
+
+
+def _ema_rising(candles: list[Candle], period: int) -> tuple[bool, str]:
+    values = ema_of(candles, period)
+    if not values:
+        return False, f"not enough candles for an EMA-{period}"
+    slope = classify_slope(values, atr=atr(candles))
+    return slope is Slope.RISING, f"EMA-{period} is {slope.value} ({values[-1]:.2f})"
+
+
+def _price_above_ema(candles: list[Candle], period: int) -> tuple[bool, str]:
+    values = ema_of(candles, period)
+    if not values:
+        return False, f"not enough candles for an EMA-{period}"
+    close = candles[-1].close
+    return close > values[-1], f"close {close:.2f} vs EMA-{period} {values[-1]:.2f}"
+
+
+def _ema_body_reclaim(candles: list[Candle], period: int) -> tuple[bool, str]:
+    values = ema_of(candles, period)
+    if not values:
+        return False, f"not enough candles for an EMA-{period}"
+    reclaim = find_bullish_reclaim(candles, values)
+    if reclaim is None:
+        return False, f"no candle body has reached EMA-{period} and closed back above it"
+    return True, reclaim.detail
+
+
+def _reclaim_followed_through(candles: list[Candle], period: int) -> tuple[bool, str]:
+    """The patience requirement: the reclaim alone is not the setup.
+
+    After the reclaim candle, price must either take out that candle's high
+    (a continuation/consolidation break) or come back toward the EMA and hold
+    before pushing through it. Until one of those happens the setup is still
+    developing, which is exactly the state the user said they wait through.
+    """
+    values = ema_of(candles, period)
+    if not values:
+        return False, f"not enough candles for an EMA-{period}"
+    reclaims = find_bullish_reclaims(candles, values)
+    if not reclaims:
+        return False, "no reclaim to follow through from"
+
+    # ANY reclaim that a later candle closed above counts. Checking only the
+    # newest would mean a candle that both confirmed an earlier reclaim and
+    # touched the EMA itself reset the setup to "waiting" forever.
+    for reclaim in reclaims:
+        trigger = candles[reclaim.index].high
+        for bar in candles[reclaim.index + 1 :]:
+            if bar.close > trigger:
+                return True, f"closed {bar.close:.2f} above the reclaim candle high {trigger:.2f}"
+
+    latest = candles[reclaims[-1].index].high
+    return False, f"waiting for a close above the reclaim candle high {latest:.2f}"
+
+
 def evaluate(rules: list[dict], candles: list[Candle]) -> EvaluationResult:
     bars = closed_candles(candles)
     or_high, or_low = opening_range(bars)
@@ -158,6 +227,14 @@ def evaluate(rules: list[dict], candles: list[Candle]) -> EvaluationResult:
                 met, detail = False, "no opening range yet"
             else:
                 met, detail = _retest(bars, or_high, or_low)
+        elif condition == "ema7_rising":
+            met, detail = _ema_rising(bars, 7)
+        elif condition == "price_above_ema7":
+            met, detail = _price_above_ema(bars, 7)
+        elif condition == "ema7_body_reclaim":
+            met, detail = _ema_body_reclaim(bars, 7)
+        elif condition == "reclaim_retest_or_consolidation":
+            met, detail = _reclaim_followed_through(bars, 7)
         elif condition == "volume_above_20_period_avg":
             met, detail = _volume_above_average(bars)
         else:
