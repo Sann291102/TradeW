@@ -22,6 +22,7 @@ export function SentinelPanel({ className, actions, collapsed }: DockPanelConten
   const redeemCoupon = useSessionStore((s) => s.redeemCoupon);
   const [couponCode, setCouponCode] = useState('HashtagTradeWSetup100');
   const [couponMsg, setCouponMsg] = useState<{ success?: boolean; text: string } | null>(null);
+  const [redeeming, setRedeeming] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -34,10 +35,17 @@ export function SentinelPanel({ className, actions, collapsed }: DockPanelConten
   const safetyCards = extractSafetyFeed(observations, data?.synthesis ?? null, data?.sideInFocus ?? null);
   const feedCards = pushworthyCards(safetyCards);
 
-  const handleApplyCoupon = (e: React.FormEvent) => {
+  const handleApplyCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = redeemCoupon(couponCode);
-    setCouponMsg({ success: res.success, text: res.message });
+    if (redeeming) return;
+    setRedeeming(true);
+    setCouponMsg(null);
+    try {
+      const res = await redeemCoupon(couponCode);
+      setCouponMsg({ success: res.success, text: res.message });
+    } finally {
+      setRedeeming(false);
+    }
   };
 
   return (
@@ -101,8 +109,12 @@ export function SentinelPanel({ className, actions, collapsed }: DockPanelConten
                 placeholder="Enter coupon code"
                 className="w-full rounded-lg border border-border2 bg-bg px-2.5 py-1.5 text-xs text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus font-mono"
               />
-              <button type="submit" className={buttonClasses({ variant: 'primary', size: 'sm' })}>
-                Redeem
+              <button
+                type="submit"
+                disabled={redeeming}
+                className={buttonClasses({ variant: 'primary', size: 'sm' })}
+              >
+                {redeeming ? 'Redeeming…' : 'Redeem'}
               </button>
             </div>
             {couponMsg && (

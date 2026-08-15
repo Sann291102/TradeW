@@ -14,6 +14,7 @@
  *   rag/        Retrieval + chunking
  *   research/   Research Engine (validate → summarize → embed → connect → store)
  *   brain/      Neural Brain pipeline + Learning Engine
+ *   cognition/  Perceptors + the four-layer network (L1..L4) and its weights
  *   context/    Context Manager (token-budgeted prompt assembly)
  *   prompts/    Prompt Library + CORE_GUARDRAILS (never-advise contract)
  *   tools/      Tool Registry (no order-placement tools, by design)
@@ -38,6 +39,7 @@ export * from './research/interfaces';
 export * from './research/impl';
 export * from './brain/interfaces';
 export * from './brain/impl';
+export * from './cognition';
 export * from './context/interfaces';
 export * from './context/impl';
 export * from './prompts/interfaces';

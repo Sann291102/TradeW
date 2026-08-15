@@ -1,6 +1,6 @@
 # Chapter 21 — Testing
 
-**Status: 🔴.** There is no meaningful automated test coverage anywhere in the repository. This is the single largest engineering risk in the platform, and this chapter is therefore a remediation plan rather than a description of practice.
+**Status: 🟡 (updated 2026-08-15).** The "zero coverage" starting position this chapter was written against **no longer holds.** A real unit-test suite now exists — ~70 TypeScript/JS `.spec`/`.test` files (across `services/api`, `services/sentinel`, `apps/web`, `apps/admin`, `packages/ai-core`) plus 9 `pytest` files in `services/sentinel-py` — run behind a CI typecheck+test gate (`.github/workflows/ci.yml`, per-workspace `vitest.config.*`). What remains unbuilt is the *higher tiers*: no integration harness across the running services, no E2E/Playwright, no coverage measurement or compliance-language gate in CI. Read the sections below as the plan for those tiers; the "everything is 0" framing is historical. The per-tier targets and philosophy still stand.
 
 ---
 
@@ -602,9 +602,9 @@ The IST rollforward bug (an order placed Friday 16:00 expiring within three seco
 
 | ID | Item | Severity |
 |---|---|---|
-| **TEST-1** | **No tests at all** | **critical** |
-| TEST-2 | No test runner configured | critical |
-| TEST-3 | No CI test step | critical |
+| ~~TEST-1~~ | ~~No tests at all~~ — **resolved**: ~70 TS/JS specs + 9 pytest files exist | ✅ |
+| ~~TEST-2~~ | ~~No test runner configured~~ — **resolved**: vitest per workspace + pytest | ✅ |
+| ~~TEST-3~~ | ~~No CI test step~~ — **resolved**: `.github/workflows/ci.yml` runs typecheck + tests | ✅ |
 | TEST-4 | ⚖️ No compliance-language gate | critical |
 | TEST-5 | No coverage measurement | high |
 | TEST-6 | No integration harness | high |

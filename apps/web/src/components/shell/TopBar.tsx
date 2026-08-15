@@ -10,7 +10,9 @@ import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { initials } from '@/lib/format';
 import { NAV_ITEMS } from './nav-config';
 import { ThemeMenu } from './ThemeMenu';
-import { MenuIcon, SearchIcon, BellIcon, SparkleIcon, SentinelIcon, CommandIcon } from './icons';
+import { MenuIcon, SearchIcon, BellIcon, SentinelIcon, CommandIcon } from './icons';
+import { MascotMark } from '@/components/brand/MascotMark';
+import { ASSISTANT_TRIGGER_LABEL } from '@/lib/assistant/identity';
 
 function pageTitle(pathname: string): string {
   const match = NAV_ITEMS.find((i) => pathname === i.href || pathname.startsWith(i.href + '/'));
@@ -134,8 +136,10 @@ export function TopBar() {
 
         {/* Placeholder entrypoints (Step 3): TradeW AI, Sentinel, Subscriptions.
             Visually present; wired in later milestones. */}
-        <IconButton aria-label="Ask TradeW AI" onClick={() => setAiDockOpen(true)} className="text-teal">
-          <SparkleIcon />
+        {/* Same assistant, same mascot as the floating trigger — this opens the
+            identical dock, so it must not wear a different icon. */}
+        <IconButton aria-label={ASSISTANT_TRIGGER_LABEL} onClick={() => setAiDockOpen(true)} className="text-teal">
+          <MascotMark size={20} />
         </IconButton>
         <Link
           href="/sentinel"

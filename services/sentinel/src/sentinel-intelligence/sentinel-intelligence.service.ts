@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { RiskAssessment, Signal, TradeSummary } from '../domain';
 import { EmotionIntelligenceService } from '../intelligence/emotion-intelligence.service';
 import { MarketIntelligenceService, type MarketSnapshot } from '../intelligence/market-intelligence.service';
@@ -60,11 +60,14 @@ import type {
  * cross-checker cannot distinguish from a real one.
  */
 @Injectable()
-export class SentinelIntelligenceService implements OnModuleInit {
+export class SentinelIntelligenceService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SentinelIntelligenceService.name);
 
   /** Newest background reasoning run per symbol. See `rememberRun`. */
   private readonly latestRuns = new Map<string, ReasoningRun>();
+
+  /** Deferred boot warm-up. See `scheduleCorpusWarmup`. */
+  private warmupTimer: NodeJS.Timeout | null = null;
 
   constructor(
     @Inject(SI_CONFIG) private readonly config: SentinelIntelligenceConfig,
@@ -170,6 +173,83 @@ export class SentinelIntelligenceService implements OnModuleInit {
    */
   onModuleInit(): void {
     this.watch.setReasoner((symbol, snapshot, at) => this.reasonInBackground(symbol, snapshot, at));
+    this.scheduleCorpusWarmup();
+  }
+
+  onModuleDestroy(): void {
+    if (this.warmupTimer) clearTimeout(this.warmupTimer);
+    this.warmupTimer = null;
+  }
+
+  /**
+   * Put a symbol under continuous watch for an observation that did not come
+   * through `reason()`.
+   *
+   * `/observe` is the path apps actually call, and it never touched the watch
+   * list. The only production caller of `register()` was `reason()`, reachable
+   * solely via `POST /intelligence/reason` — a route no app calls — so the
+   * watch list stayed empty all day, every tick exited at the `no-symbols`
+   * guard, and the ten agents never ran on their own. This is the connection.
+   *
+   * A thin delegation on purpose: reusing `MarketWatchService.register` keeps
+   * one registration mechanism with one idempotency rule, one expiry policy and
+   * one symbol cap. A second mechanism here would be a second set of all three.
+   */
+  watchSymbol(symbol: string, at: Date = new Date()): void {
+    this.watch.register(symbol, at);
+  }
+
+  /**
+   * Build the corpus shortly after boot, off the boot path.
+   *
+   * Deferred rather than awaited inside the lifecycle hook: parsing the book
+   * corpus is heavy disk I/O, and blocking `onModuleInit` on it delays the
+   * service's `/health` past most orchestrators' patience. That is the real
+   * concern behind `indexOnBoot` having shipped disabled — but the flag was also
+   * never read by any code, so "disabled" in practice meant the corpus stayed at
+   * zero documents until a human called `/intelligence/reason`, and
+   * `reasonInBackground` declined every sweep for as long as that was true. The
+   * fix is to run it, just not on the boot path.
+   *
+   * Idempotent at three levels, so neither a restart nor a concurrent request
+   * re-does or double-counts the work: `ensureCorpus()` returns immediately once
+   * the index and graph are populated; `CorpusIngestionService.ingest()` shares
+   * one in-flight run between concurrent callers; and it skips every document
+   * whose checksum is already indexed, including the ones restored from the
+   * persisted index on disk.
+   */
+  private scheduleCorpusWarmup(): void {
+    if (!this.config.indexOnBoot) {
+      this.logger.log(
+        'corpus warm-up disabled (SI_INDEX_ON_BOOT=false) — the corpus will be built by the first /intelligence/reason, ' +
+          'and background reasoning stays declined until then',
+      );
+      return;
+    }
+
+    // One pending warm-up at a time. Nest calls `onModuleInit` once, but a
+    // second scheduling would leave an orphaned timer that `onModuleDestroy`
+    // could no longer cancel — a warm-up that outlives the shutdown asking it
+    // to stop.
+    if (this.warmupTimer) return;
+
+    this.warmupTimer = setTimeout(() => {
+      this.warmupTimer = null;
+      void this.ensureCorpus().then(
+        () =>
+          this.logger.log(
+            `corpus warm-up complete — ${this.index.size} chunks indexed, ${this.graph.size} concepts grounded`,
+          ),
+        (err: unknown) =>
+          this.logger.warn(
+            `corpus warm-up failed; reasoning will rebuild it on demand: ${(err as Error).message}`,
+          ),
+      );
+    }, CORPUS_WARMUP_DELAY_MS);
+
+    // Never hold the process open for a warm-up nobody is waiting on: a service
+    // asked to shut down must not first finish indexing.
+    this.warmupTimer.unref?.();
   }
 
   /**
@@ -184,8 +264,10 @@ export class SentinelIntelligenceService implements OnModuleInit {
    *
    * Returns null rather than reasoning when the corpus is not yet indexed.
    * `reason()` would otherwise trigger a 194-document ingest from inside a
-   * timer callback, stalling the sweep behind heavy disk I/O. A real request
-   * warms the corpus; the background path never pays that cost.
+   * timer callback, stalling the sweep behind heavy disk I/O. The corpus is
+   * warmed at boot instead (`scheduleCorpusWarmup`), so this declines only
+   * during the first seconds of a cold start or when warm-up is switched off —
+   * it is no longer the permanent state it was while nothing indexed at all.
    */
   private async reasonInBackground(
     symbol: string,
@@ -414,6 +496,15 @@ export class SentinelIntelligenceService implements OnModuleInit {
 
 /** Attribution for runs the watch initiates, which have no trader behind them. */
 export const WATCH_USER_ID = 'sentinel-watch';
+
+/**
+ * How long after boot the corpus warm-up starts.
+ *
+ * Long enough that the service has finished wiring and answered its first
+ * health check before heavy disk I/O begins, short enough that the first watch
+ * sweep a minute later already has a corpus to reason against.
+ */
+const CORPUS_WARMUP_DELAY_MS = 5_000;
 
 export interface ReasonOptions {
   /**

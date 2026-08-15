@@ -76,6 +76,10 @@ export const NAV_ITEMS: NavItem[] = [
   // page (SentinelIntelligencePanel) — removed 2026-08-05, archived to
   // archive/apps-web-sentinel-intelligence-2026-08-05/ (see archive/README.md).
   { href: '/sentinel', label: 'Sentinel', icon: SentinelIcon, premium: true, group: 'primary' },
+  // There is deliberately no separate strategies route. The whole workflow —
+  // describe or adopt, configure, apply to a market, follow the lifecycle —
+  // lives in the "Your strategies" section of /sentinel, so there is one place
+  // a user manages strategies rather than two that drift apart.
   { href: '/settings', label: 'Settings', icon: SettingsIcon, group: 'secondary' },
   { href: '/profile', label: 'Profile', icon: ProfileIcon, group: 'secondary' },
   { href: '/notifications', label: 'Notifications', icon: BellIcon, group: 'secondary' },
@@ -99,14 +103,11 @@ export function isBareRoute(pathname: string): boolean {
  * Left this mechanism in place, empty, in case a real standalone-shell need
  * comes up again.
  */
-export const STANDALONE_ROUTES: string[] = [
-  // The admin portal. It renders its own shell (AdminFrame) and must NOT get
-  // the trader chrome: no Sidebar linking back into the workspace, no Ticker,
-  // no FloatingAI, no discipline panel. Mixing the two would make the operator
-  // surface look like a page of the product, which is precisely the confusion
-  // to avoid when one of them can read every user's activity.
-  '/admin',
-];
+// Admin has been migrated to apps/admin (port 3001) — a fully separate Next.js
+// app with its own server, session cookie, and no dependency on the web shell.
+// STANDALONE_ROUTES is kept for any future routes that need to opt out of the
+// trader chrome without being a full separate app.
+export const STANDALONE_ROUTES: string[] = [];
 
 export function isStandaloneRoute(pathname: string): boolean {
   return STANDALONE_ROUTES.some((r) => pathname === r || pathname.startsWith(r + '/'));

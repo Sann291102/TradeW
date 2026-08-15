@@ -8,6 +8,7 @@ import { TopBar } from './TopBar';
 import { Ticker } from './Ticker';
 import { FloatingAI } from './FloatingAI';
 import { NotificationCenter } from './NotificationCenter';
+import { NotificationSync } from './NotificationSync';
 import { useWorkspaceStore } from '@/lib/store/workspaceStore';
 import { useHydrateWorkspaceStore } from '@/lib/store/useHydrated';
 import { useKeyboardShortcuts } from '@/lib/store/useKeyboardShortcuts';
@@ -117,6 +118,7 @@ export function AppFrame({ children }: { children: ReactNode }) {
       </div>
 
       <FloatingAI />
+      <NotificationSync />
       <NotificationCenter />
       <CommandPalette />
       <ShortcutsHelp />

@@ -1,8 +1,10 @@
 # TradeW — Application Status & Roadmap
 
-**Last updated:** 2026-07-25
-**Branch at time of writing:** `feat/notifications` (latest commit `2302a7a`)
+**Last updated:** 2026-08-15
+**Branch at time of writing:** `main` (latest commit `e3189de`)
 **Purpose:** One place a new developer or planner can read to know, right now — what's built, what's actually working, and what's left. This is a living status doc, not a spec. For architecture rules see [`ARCHITECTURE.md`](../ARCHITECTURE.md); for the full file-by-file audit see [`REPOSITORY_INVENTORY.md`](../REPOSITORY_INVENTORY.md).
+
+> **Since the 2026-07-25 revision** the following landed on `main` and are reflected below: a real **automated test suite + CI gate** (the "zero test coverage" gap is closed — see [that section](#automated-test-coverage)), **Razorpay payments/checkout**, the standalone **`apps/admin` operator console**, the **`services/sentinel-py` personal strategy watcher** (Python/FastAPI), the **four-layer cognition network** (`packages/ai-core` + `/admin/cognition`), broker **OAuth/credential** storage, and the **chart drawing layer + FVG detectors** in the trade workspace.
 
 ## How to read this
 
@@ -17,7 +19,7 @@
 
 ## One-paragraph snapshot
 
-TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market data (live feed + historical + option chain), a working paper-trading order engine, and Sentinel — an observation-only AI safety layer with a persistent knowledge brain and a 66-concept market ontology. All of that runs today, but the highest-priority gap is that **there are zero automated tests anywhere in the repository**, and the piece that actually supplies real market data to production (the live Dhan bridge) isn't in the deploy pipeline yet.
+TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market data (live feed + historical + option chain), a working paper-trading order engine, and Sentinel — an observation-only AI safety layer with a persistent knowledge brain and a 66-concept market ontology. All of that runs today. The old "zero automated tests" gap is closed — there is now a real unit-test suite (~70 TS/JS `.spec`/`.test` files across `services/api`, `services/sentinel`, `apps/web`, `apps/admin`, `packages/ai-core`, plus 9 `pytest` files in `services/sentinel-py`) with a CI typecheck+test gate. The remaining highest-priority gap is that the piece that actually supplies real market data (the live Dhan bridge, `live-feed-server.ts`) is still a standalone script rather than a first-class deployed service.
 
 ---
 
@@ -31,7 +33,15 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 ### Subscriptions & entitlements
 - Plan/grant/subscription model, trial + grace period handling, quota metering (day + month), admin override API.
 - Capability gating drives the real Sentinel lock screen and the Settings upgrade CTA.
+- Server-side coupon/code redemption is a real entitlement grant (not a client toggle).
 - ⚠️ **Gap:** no plan seed data — a fresh database grants nobody anything until rows are inserted by hand.
+
+### Payments & checkout
+- Razorpay integration in `services/api` (`payments/` module — `razorpay.client.ts`, `payment.controller.ts`, `payment.service.ts`, `payment.catalog.ts`) and a real checkout flow in `apps/web` (`(workspace)/checkout/CheckoutClient.tsx`, `lib/payments.ts`). Turns an entitlement grant into a paid transaction rather than display-only pricing.
+
+### Admin operator console (`apps/admin`)
+- Standalone Next.js app on port 3001 with its own operator-account auth (`OperatorAccount`, composed `AdminAccessGuard`), a proxy to `services/api`, and a live knowledge SSE stream.
+- Command centers: agents, ai, audit, orders, rules, system, health, observability, learning-platform, reasoning, plus a **cognition** graph console. Read-only aggregations over the api.
 
 ### Market data (real)
 - Dhan WebSocket live feed with a hand-written binary parser (verified by `packages/market-data/scripts/verify-parser.ts` — the one real test-like artifact in the repo).
@@ -41,8 +51,9 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 - ⚠️ **Gap:** this real path is served by a *standalone script* (`services/market-data/scripts/live-feed-server.ts`, port 4600, no auth, no DB) — not the NestJS ingestor that's actually documented as the architecture. See [Known critical gaps](#known-critical-gaps) below.
 
 ### Charts
-- Real candlestick charts (lightweight-charts) with IST time axis, live last-bar patching, interval switching.
+- Real candlestick charts (lightweight-charts) with IST time axis, live last-bar patching (the live tick is merged into the candle series), interval switching.
 - Technicals / Markets / Depth / Option-Chain tabs.
+- Chart drawing layer (`lib/charts/drawings.ts`, `drawingPrimitive.ts`) and automatic detectors — Fair Value Gaps (`lib/charts/fvg.ts`) and structure detectors (`lib/charts/detectors.ts`), all unit-tested.
 
 ### Paper trading OMS
 - MARKET / LIMIT / SL / SL_M order placement, a real 3-second matching engine for resting orders.
@@ -59,9 +70,18 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 - Sentinel workspace UI: market selector (~220 markets), day classification, market context panel, live safety feed, contextual training, timeline.
 - ⚠️ **Gap:** "Continuous Learning from Outcomes" and "Strategy Intelligence" are first-pass only (directional labels / cross-symbol only, self-documented in `SENTINEL_BRAIN_PROGRESS.md`).
 
+### Sentinel-py — personal strategy watcher (`services/sentinel-py`)
+- New Python/FastAPI service (port 4011, additive to the TS `services/sentinel`). The user writes their own strategy in plain text; a **deterministic parser** turns it into rules; an in-process asyncio sweep loop polls live Dhan candles and runs an `IDLE → FORMING → CONFIRMED` state machine with cooldown.
+- **In-trade monitoring:** once the user marks a position taken, the sweep measures R-multiple milestones (1R/2R/3R), invalidation, projected-level and structure-break — risk read from the adverse extreme, reward from the close.
+- Confirmations/milestones are pushed as `Notification` rows via `services/api` (`/internal/sentinel-py/notify`) with per-trading-day dedupe; a compliance gate blocks any Buy/Sell/Entry/Target/Stop string. Backed by `UserStrategy`/`WatchSession`/`WatchObservation`, sweep gated on a `JobLease`. P0–P4 done; P5–P7 (image/video extraction, admin endpoints, strike dropdown) pending. See `services/sentinel-py/README.md`.
+- Frontend: the Sentinel strategy workspace ("write, watch, follow") in `apps/web`.
+
+### Cognition network
+- Four-layer perceptor network in `packages/ai-core` (`src/cognition/`) with 17 perceptors, an event dispatcher, online Hebbian weights, and an `/admin/cognition` neural-layers console. Off by default; proposals never self-execute. Backed by `Percept`/`PerceptorState`/`CognitiveEpisode`/`CognitiveProposal`/`NeuralSynapse`.
+
 ### Concept Knowledge Graph
 - 66 market concepts across 15 domains (market structure, price action, options, psychology, risk management, etc.), a 13-relation reasoning engine with weighted/decayed path explanation, and reinforcement learning that never overwrites the reviewed authored weights.
-- 🧱 **Built, not wired up** — real and correct, but no controller exposes it and nothing in the running service injects it. Only reachable via CLI scripts (`ontology:validate`, `ontology:seed`, `smoke-concept-graph`).
+- Now exposed at runtime via `services/sentinel`'s `reasoning.controller.ts` (and the CLI scripts `ontology:validate`, `ontology:seed`, `smoke-concept-graph`), and surfaced in the `apps/admin` reasoning/knowledge consoles — no longer a stranded module.
 
 ### Backtesting
 - Real EMA-cross walk-forward backtest engine against actual Dhan candle history (no look-ahead, session-aware, cost-adjusted). CLI only, no UI yet.
@@ -78,7 +98,7 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 | Dashboard | 5 of 14 widgets are live; the other 9 (global markets, news, risk alerts, economic calendar, etc.) render mock data |
 | Portfolio page | Real stat-card numbers are mock; Holdings/Positions/Performance/Journal tabs are all empty states |
 | Notifications | Two sources of truth — the bell drawer reads a store-seeded mock list, the `/notifications` page reads the real API; marking read in one doesn't affect the other |
-| Settings & Plans | Real entitlement state, but no checkout/payment provider exists — pricing is display-only |
+| Settings & Plans | Real entitlement state and a real Razorpay checkout now exist (see Payments above); remaining gap is plan **seed data** so a fresh env has plans to buy |
 | Watchlist | UI renders mock rows; **no `Watchlist` database model exists at all** — flagged as needed since the project started |
 | Learning Hub | UI shell with mock paths/categories; no lesson content |
 | Floating AI assistant | Visual dock only — no routing/answering logic behind it |
@@ -86,9 +106,9 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 ## ❌ Not built
 
 - **TradeW AI (Research pillar)** — the whole runtime. `packages/ai-core` has the primitives; nothing invokes them for research. The `/research` page is a deliberate "coming soon" placeholder.
-- **`services/trading-engine`** (Python, real-money execution), **`services/auth`**, **`services/analytics`**, **`services/notification`** as standalone services, **`apps/admin`**, **`apps/mobile`** — all README-only.
-- **`packages/shared`** (fail-fast config/logger — its absence is why `JWT_SECRET` can silently default to a known dev value) and **`packages/sdk`** (typed client — hand-written clients are used instead).
-- **Billing/checkout**, **email delivery** (no password reset, no verification), **push notifications**.
+- **`services/trading-engine`** (Python, real-money execution), **`services/auth`**, **`services/analytics`**, **`services/notification`** as standalone services, **`apps/mobile`** — all README-only. (`apps/admin` is now built — see the Admin operator console section above.)
+- **`packages/shared`** (fail-fast config/logger) and **`packages/sdk`** (typed client — hand-written clients are used instead). Note: `JWT_SECRET` and the two service tokens now fail-fast at boot via dedicated secret guards (`services/api/src/common/secret-validation`), so the silent-dev-default risk is closed even though `packages/shared` itself is still a placeholder.
+- **Push notifications** (sub-30s socket delivery). Email delivery templates and in-app notifications with sound have since landed; **billing/checkout has landed** (Razorpay).
 - **Portfolio Intelligence** (the one Sentinel Brain subsystem never started).
 - **Risk engine** — no position limits, exposure caps, daily loss limits, or kill switches. Only pre-trade margin checks exist.
 - **Holiday calendar** — every weekday is treated as a trading day.
@@ -98,8 +118,14 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 
 ## Known critical gaps
 
-### Zero automated test coverage
-No `*.spec.ts`, `*.test.ts`, no jest/vitest/playwright config anywhere in the repo, and no test/lint/typecheck gate in CI. For a system computing margin, P&L, and order fills, this is the single biggest risk. **First priority for anyone picking this up:** a test suite starting with `OrderService`'s fill/margin math and `EntitlementsService.check()`.
+### Automated test coverage
+**Closed (was the #1 gap).** There is now a real unit-test suite and a CI gate (`.github/workflows/ci.yml`, typecheck + test jobs):
+- `services/api` — order fill math, settlement, position-convert, performance, entitlements/coupon redemption, discipline limits, market calendar, auth/admin/broker guards, secret validation, sentinel-py notify, leader election.
+- `services/sentinel` — sentinel-intelligence, orchestrator cross-validation, publication gate, market structure, strategy engine/lifecycle, visual geometry/drawing-spec, watch.
+- `apps/web` — assistant (detect/planner/brain/quotes/voice), chart drawings/FVG, sentinel models (dashboard/watch/indicators/option-chain), pricing, session storage.
+- `apps/admin`, `packages/ai-core` (cognition), and `services/sentinel-py` (9 `pytest` files: parser, evaluator, state machine, sweep, intrade, notify, strategies API).
+
+Coverage is unit-level; there is still no end-to-end/integration harness across the running services, and no Playwright UI tests. Broadening from unit tests to a thin integration layer around the order → fill → notification path is the natural next step.
 
 ### The real market-data path isn't deployed
 The live Dhan bridge (`live-feed-server.ts`) that both the paper OMS and Sentinel depend on for real prices has no Dockerfile and is in neither Docker Compose file. In the current production stack as configured, it doesn't run — so order placement would have no price source. Either containerize and secure it, or finish the documented NestJS ingestor path and cut over.
@@ -111,9 +137,9 @@ The NestJS ingestor (writes `Quote` to Postgres) defaults to a **simulated** mar
 
 ## Recommended next steps, in priority order
 
-1. **Add tests** for `OrderService` (fill math, margin, position flip/close) and `EntitlementsService.check()` — the two places a silent bug costs real correctness.
+1. ~~Add tests for `OrderService` and `EntitlementsService.check()`~~ **Done** — both are unit-tested (`sim/order-fill.spec.ts`, `entitlements/*.spec.ts`). Next test priority: a thin **integration** harness across the running services (order → fill → notification), which unit tests don't cover.
 2. **Decide the market-data architecture**: promote the live bridge to a real, secured, deployed service, or finish cutting the ingestor over to real Dhan data and retire the bridge. Don't leave both running as-is.
-3. **Build `packages/shared`'s config loader** so `JWT_SECRET` and the two service tokens can never silently default — this is a small, contained fix with outsized safety value.
+3. ~~Build `packages/shared`'s config loader so secrets can't silently default~~ **Addressed** — boot-time secret guards (`services/api/src/common/secret-validation`) now fail-fast on weak/missing `JWT_SECRET` and service tokens; `packages/shared` itself can still be built to centralize this.
 4. **Seed `Plan`/`PlanGrant` data** so a fresh environment isn't permanently locked out of Sentinel.
 5. **Unify the notification store** onto the real API so the bell drawer and the notifications page agree.
 6. **Add the `Watchlist`/`WatchlistItem` Prisma models** — the most-referenced missing piece across READMEs.

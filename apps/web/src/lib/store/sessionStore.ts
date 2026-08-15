@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { api, getToken, getRefreshToken, clearToken } from '../api';
+import { api, ApiError, getToken, getRefreshToken, clearToken, syncAuthHint } from '../api';
 
 /**
  * Real authentication/entitlement session state (Phase 2, Milestone 4, Step 1).
@@ -45,22 +45,41 @@ interface SessionState {
   init: () => Promise<void>;
   logout: () => Promise<void>;
   hasCapability: (capability: string) => boolean;
-  grantCapability: (capability: string) => void;
-  redeemCoupon: (code: string) => { success: boolean; message: string };
+  /**
+   * Async because redemption is a server call now, not a string comparison in
+   * the browser. Every caller must await it and render from the result.
+   */
+  redeemCoupon: (code: string) => Promise<{ success: boolean; message: string }>;
 }
 
 function isOfflineError(err: unknown): boolean {
   return /fetch/i.test(err instanceof Error ? err.message : String(err));
 }
 
-function getLocalUnlockedCaps(): string[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    return JSON.parse(localStorage.getItem('tradew_unlocked_caps') || '[]');
-  } catch {
-    return [];
-  }
-}
+/**
+ * ── LOCALLY-GRANTED CAPABILITIES ARE GONE (2026-08-12) ────────────────────
+ *
+ * There used to be a `tradew_unlocked_caps` array in localStorage, merged into
+ * `capabilities` on every load. `redeemCoupon` compared the code in the
+ * browser, pushed `'sentinel'` into that array, and told the user their plan
+ * was active. Nothing was ever sent to the server.
+ *
+ * So the unlock was a decoration. Settings said Sentinel was active, the
+ * Sentinel panel rendered its live state, and `services/api` returned 403 to
+ * every premium call because it had never heard of the redemption. Reported as
+ * "purchased using redeem code but it failed to load the premium feature" —
+ * and that is exactly what it was: a client that granted itself an entitlement
+ * the server does not recognise. It also died with the browser profile and did
+ * not follow the account to another device.
+ *
+ * Redemption is now a real server call — `POST /entitlements/redeem` creates a
+ * genuine subscription (see coupon.catalog.ts) — so `capabilities` is once
+ * again exactly what `GET /entitlements/me` returned and nothing else. There is
+ * no local override path left to disagree with the server.
+ *
+ * The old localStorage keys are left in place rather than deleted (repo rule 1)
+ * and are simply never read again.
+ */
 
 export const useSessionStore = create<SessionState>()((set, get) => ({
   status: 'idle',
@@ -69,20 +88,29 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
   offline: false,
 
   init: async () => {
-    const localCaps = getLocalUnlockedCaps();
     if (!getToken()) {
-      set({ status: 'unauthenticated', user: null, capabilities: localCaps, offline: false });
+      set({ status: 'unauthenticated', user: null, capabilities: [], offline: false });
       return;
     }
+    // This tab holds a session but the device-wide routing cookie may have been
+    // cleared by another tab signing out. Re-assert it, or the next navigation
+    // gets bounced to the landing page by middleware.
+    syncAuthHint();
     set({ status: 'loading' });
     try {
       const [user, entitlements] = await Promise.all([api('/auth/me'), api('/entitlements/me')]);
-      const mergedCaps = Array.from(new Set([...(entitlements.capabilities ?? []), ...localCaps]));
-      set({ status: 'authenticated', user, capabilities: mergedCaps, offline: false });
+      // Server truth, unmodified. Nothing is merged in on top — see the note
+      // above about why a locally-granted capability is worse than none.
+      set({
+        status: 'authenticated',
+        user,
+        capabilities: entitlements.capabilities ?? [],
+        offline: false,
+      });
     } catch (err) {
       const offline = isOfflineError(err);
       if (!offline) clearToken();
-      set({ status: 'unauthenticated', user: null, capabilities: localCaps, offline });
+      set({ status: 'unauthenticated', user: null, capabilities: [], offline });
     }
   },
 
@@ -94,31 +122,83 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
       // best-effort
     }
     clearToken();
-    set({ status: 'unauthenticated', user: null, capabilities: getLocalUnlockedCaps(), offline: false });
+    set({ status: 'unauthenticated', user: null, capabilities: [], offline: false });
   },
 
   hasCapability: (capability) => {
-    if (capability === 'sentinel') return true;
+    /**
+     * Reads the real entitlement list. Nothing is unconditionally granted.
+     *
+     * ── WHAT WAS HERE, AND WHY IT WAS REMOVED (2026-08-11) ────────────────
+     *
+     * This began with `if (capability === 'sentinel') return true;` — an
+     * unconditional, uncommented unlock introduced in bf8944b ("Made changes
+     * from antigravity"). Its effects, all observed in the browser on a
+     * freshly-created account whose `/entitlements/me` returned an empty
+     * capability list:
+     *
+     *   - Settings told the user "Sentinel is active on your account", which
+     *     was simply untrue.
+     *   - Because that branch renders instead of the tier grid, the Sentinel
+     *     pricing and upgrade UI was unreachable for EVERY user — the plans
+     *     could not be seen, let alone bought.
+     *   - The `/trade` Sentinel panel showed "ACTIVE PRO · observing" while
+     *     `/api/sentinel/observe` returned 403 to the same session.
+     *
+     * It was never a security hole: `services/api` enforces entitlement on
+     * every premium route and did so throughout (SUBSCRIPTIONS.md §4). But a
+     * client that asserts an entitlement the server denies produces a UI that
+     * lies to the user and hides the product's own pricing.
+     *
+     * A demo unlock is granted the same way a purchase is: redeem a code, which
+     * creates a real subscription server-side (`POST /entitlements/redeem`), or
+     * have an operator issue an EntitlementOverride. Both are inspectable, both
+     * are enforced by the API, and neither can tell a user something about
+     * their account that the server would deny.
+     */
     return get().capabilities.includes(capability);
   },
 
-  grantCapability: (capability) => {
-    const current = get().capabilities;
-    if (!current.includes(capability)) {
-      const updated = [...current, capability];
-      set({ capabilities: updated });
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('tradew_unlocked_caps', JSON.stringify(updated));
+  /**
+   * Redeem an access code.
+   *
+   * The whole of the decision happens on the server: it validates the code,
+   * creates the subscription, and answers with the capabilities the account now
+   * genuinely holds. This client does not decide anything and does not write a
+   * capability anywhere — it stores what it was told.
+   *
+   * That is the difference between this and what it replaced. Before, the code
+   * was compared here and `'sentinel'` was pushed into local state, so the UI
+   * unlocked while every premium API call kept returning 403. Redeeming now
+   * either works everywhere or reports why it did not.
+   */
+  redeemCoupon: async (code) => {
+    if (!code.trim()) return { success: false, message: 'Enter a code to redeem.' };
+    if (get().status !== 'authenticated') {
+      return { success: false, message: 'Sign in first — a code is redeemed against your account.' };
+    }
+    try {
+      const res = await api('/entitlements/redeem', {
+        method: 'POST',
+        body: JSON.stringify({ code }),
+      });
+      // Trust the server's list over any local guess about what the plan grants.
+      set({ capabilities: res.capabilities ?? get().capabilities });
+      return { success: true, message: res.message ?? 'Code redeemed.' };
+    } catch (err) {
+      // A 400 carries the real reason ("that code is not valid"); anything else
+      // is an outage and must not be reported as a bad code, or the user
+      // retypes a perfectly good one until they give up.
+      if (err instanceof ApiError && err.status === 400) {
+        return { success: false, message: err.message };
       }
+      if (err instanceof ApiError && err.status === 429) {
+        return { success: false, message: 'Too many attempts. Wait a minute and try again.' };
+      }
+      return {
+        success: false,
+        message: "Couldn't reach the server to redeem that code. Check your connection and try again.",
+      };
     }
-  },
-
-  redeemCoupon: (code) => {
-    const clean = code.trim().replace(/^#/, '').toLowerCase();
-    if (clean === 'hashtagtradewsetup100' || clean === 'tradewsetup100') {
-      get().grantCapability('sentinel');
-      return { success: true, message: '1 Month Sentinel PRO Access Unlocked successfully!' };
-    }
-    return { success: false, message: 'Invalid coupon code. Please try HashtagTradeWSetup100.' };
   },
 }));

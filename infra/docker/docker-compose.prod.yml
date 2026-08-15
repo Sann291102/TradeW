@@ -111,6 +111,28 @@ services:
       retries: 5
     networks: [tradew]
 
+  # New Python rebuild of Sentinel (see SENTINEL_MASTER_PLAN.md) — additive
+  # alongside the TS `sentinel` service above, not yet a replacement.
+  sentinel-py:
+    image: ${IMAGE_SENTINEL_PY:-tradew-sentinel-py:local}
+    build:
+      context: ../..
+      dockerfile: services/sentinel-py/Dockerfile
+    <<: *restart
+    env_file: [../../.env.prod]
+    environment:
+      SENTINEL_PY_PORT: '4011'
+      HOST: 0.0.0.0
+    expose: ['4011']
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4011/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [tradew]
+
   # Added 2026-08-04 — previously built (real NestJS service, port 4020) but
   # absent from this file entirely. SINGLETON: never set replicas > 1 — the
   # Dhan feed connection set is a per-account resource (see src/main.ts).

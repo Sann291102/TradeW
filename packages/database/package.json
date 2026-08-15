@@ -8,7 +8,8 @@
     "migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
     "seed": "ts-node prisma/seed.ts",
-    "admin:grant": "ts-node scripts/grant-admin.ts"
+    "admin:grant": "ts-node scripts/grant-admin.ts",
+    "operator:create": "ts-node scripts/create-operator.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

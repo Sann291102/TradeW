@@ -69,7 +69,10 @@ export type StrategyMatch = {
   rulesMatched: string[];
   rulesUnmet: string[];
   invalidationsTriggered: string[];
+  /** market time — the bar the rules matched on, not when the poll ran */
   detectedAt: string;
+  /** execution time — when Sentinel's scan ran. Optional; older payloads omit it. */
+  observedAt?: string;
 };
 
 export type RiskFactor = { name: string; score: number; weight: number; evidence: string[] };

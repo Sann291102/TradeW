@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { cn, Badge } from '@tradew/ui';
 import type { BadgeTone } from '@tradew/ui';
-import type { SafetyCardData } from '@/lib/sentinel/deriveContext';
+import { contractBadge, type SafetyCardData } from '@/lib/sentinel/deriveContext';
 import { ChevronDownIcon } from '../shell/icons';
 
 const SEVERITY_TONE: Record<SafetyCardData['severity'], BadgeTone> = {
@@ -28,15 +28,19 @@ function formatTime(iso: string | null): string {
  */
 export function SafetyCard({ card }: { card: SafetyCardData }) {
   const [open, setOpen] = useState(false);
-  const isSideInFocus = card.action === 'Side in Focus';
-  const isPe = isSideInFocus && card.explanation.includes('PE');
-  const isCe = isSideInFocus && card.explanation.includes('CE');
+  // Only the directional read from `sideInFocus` carries a side; a card that
+  // reached the "Side in Focus" label through ACTION_MAP (a bare pattern
+  // detection) has none, and must render none. The rule itself lives in
+  // `contractBadge` so it is covered by tests.
+  const badge = contractBadge(card);
+  const isPe = badge?.side === 'PE';
+  const hasSide = badge !== null;
 
   return (
     <li
       className={cn(
         'overflow-hidden rounded-xl border bg-bg transition-colors duration-micro',
-        isSideInFocus
+        hasSide
           ? isPe
             ? 'border-down bg-down-bg/50 shadow-elev2 ring-1 ring-down/30'
             : 'border-up bg-up-bg/50 shadow-elev2 ring-1 ring-up/30'
@@ -56,19 +60,19 @@ export function SafetyCard({ card }: { card: SafetyCardData }) {
             <span className="rounded-md bg-hover px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums text-faint">
               {formatTime(card.timestamp)}
             </span>
-            <span className={cn('text-[13.5px] font-bold', isSideInFocus ? (isPe ? 'text-down' : 'text-up') : 'text-text')}>
+            <span className={cn('text-[13.5px] font-bold', hasSide ? (isPe ? 'text-down' : 'text-up') : 'text-text')}>
               {card.action}
             </span>
-            {isSideInFocus && (
-              <span className={cn('rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase', isPe ? 'bg-down/20 text-down' : 'bg-up/20 text-up')}>
-                {isPe ? 'PE PUT' : 'CE CALL'}
+            {badge && (
+              <span className={cn('rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase', badge.tone === 'down' ? 'bg-down/20 text-down' : 'bg-up/20 text-up')}>
+                {badge.label}
               </span>
             )}
-            <Badge tone={isSideInFocus ? (isPe ? 'negative' : 'positive') : SEVERITY_TONE[card.severity]} className="text-[10px]">
+            <Badge tone={hasSide ? (isPe ? 'negative' : 'positive') : SEVERITY_TONE[card.severity]} className="text-[10px]">
               {(card.confidence * 100).toFixed(0)}%
             </Badge>
           </div>
-          <p className={cn('mt-1.5 text-[12.5px] leading-snug', isSideInFocus ? 'font-semibold text-text' : 'text-muted')}>
+          <p className={cn('mt-1.5 text-[12.5px] leading-snug', hasSide ? 'font-semibold text-text' : 'text-muted')}>
             {card.explanation}
           </p>
         </div>

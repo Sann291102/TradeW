@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
  * `npm test -w @tradew/web` works without adding a second copy.
  */
 export default defineConfig({
+  esbuild: { jsx: 'automatic' },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -42,8 +43,49 @@ export default defineConfig({
       'feed-proxy-routes.spec.mjs',
       // Option-chain strike selection and formatting: pure, no DOM.
       'src/lib/sentinel/**/*.test.ts',
+      // The assistant's utterance resolver. Belongs under the "a mistake here is
+      // an exposure, not a rendering bug" rule above: this grammar decides
+      // whether "should I buy NIFTY at this price" is answered with a number or
+      // refused, and it is pure and framework-free by design (types.ts).
+      'src/lib/assistant/**/*.test.ts',
+      // Active pricing — a drifted price is a billing incident with a UI in
+      // front of it, and the withdrawn annual term must stay withdrawn.
+      'src/lib/pricing.test.ts',
+      // The pre-paint session decision. Regression cover for the middleware
+      // redirect loop that rendered a blank page after every server start.
+      'src/lib/session-redirect.test.ts',
+      // Voice selection and speech text — the parts testable without audio.
+      'src/lib/assistant/voice-output.test.ts',
+      // Explain-questions must never resolve to navigation.
+      'src/lib/assistant/concepts.test.ts',
+      // Per-tab session isolation. Regression cover for "every tab shows
+      // whoever logged in last" — the credential's storage scope is the fix,
+      // so it is asserted rather than eyeballed.
+      'src/lib/session-storage.test.ts',
+      // The forming candle. Regression cover for a chart whose last-price line
+      // sat at yesterday's close while the card beside it showed today's price.
+      'src/lib/hooks/liveCandle.test.ts',
+      // The strategy-contract leak test. Renders two unrelated strategies
+      // through the same components and fails if any of them names a template
+      // id — the guard that keeps P7 from becoming ten dashboards.
+      'src/components/sentinel/genericStrategyRendering.test.tsx',
+      // Chart drawing geometry. Every failure mode here paints a *plausible*
+      // annotation stating a price level that was never detected, so the
+      // placement rules are asserted rather than eyeballed.
+      'src/lib/charts/drawings.test.ts',
+      // Fair value gap detection. Three-bar arithmetic with one right answer,
+      // and the failure modes (a gap mitigated by the candle that created it,
+      // a bearish gap tested with the bullish rule) look correct on screen.
+      'src/lib/charts/fvg.test.ts',
+      // Chart-detection routing. Pins the collision between "mark the fair
+      // value gaps" (draw) and "what is a fair value gap" (explain), which
+      // reach the same matcher with the same words.
+      'src/lib/assistant/detect.test.ts',
     ],
     environment: 'node',
+    // The strategy components are rendered with renderToStaticMarkup, which
+    // needs the automatic JSX runtime — esbuild otherwise emits React.createElement
+    // calls into files that never import React.
     testTimeout: 5_000,
   },
 });

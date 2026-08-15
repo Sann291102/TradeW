@@ -1514,3 +1514,371 @@ model JobLease {
 
   @@index([expiresAt])
 }
+
+// ===========================================================================
+// Cognition — the four-layer perceptor network.
+//
+// WHY THESE TABLES EXIST
+//
+// The platform had four disconnected ways of noticing things: Sentinel watched
+// the market, the admin telemetry tables watched the API, the learning pipeline
+// watched ingestion, and the assistant watched nothing at all beyond the
+// current conversation. Each answered "is this behaving?" for its own surface,
+// and none of them answered "is this getting better?" — because nothing kept a
+// scored record of whether what the system noticed turned out to matter.
+//
+// These five tables are that record. The split follows the layer boundaries in
+// `packages/ai-core/src/cognition/`, and each is written by a different part of
+// the loop, which is what makes a broken stage diagnosable:
+//
+//   Percept           L1 wrote it   — what was sensed
+//   PerceptorState    L1 owns it    — is each sensor alive, and is it enabled
+//   CognitiveEpisode  the pass      — one L1..L4 traversal and its outcome
+//   CognitiveProposal L4 wrote it   — work for a human, never self-executing
+//   NeuralSynapse     L4 updates it — the learned weights
+//
+// RETENTION IS NOT UNIFORM, AND THAT IS THE POINT
+//
+// `Percept` and `CognitiveEpisode` are high-volume and disposable — they can be
+// pruned to a rolling window without losing anything the system knows.
+// `NeuralSynapse` is the opposite: it is the only genuinely irreplaceable state
+// here, because a weight represents weeks of accumulated outcomes and cannot be
+// recomputed from any other table. Truncating it is data loss in the ordinary
+// sense, and a retention job that treats these tables alike would quietly
+// delete everything the network has learned.
+// ===========================================================================
+
+// One observation, after L1's salience gate and burst collapsing.
+//
+// Gated percepts are NOT stored — only counted on the episode. Persisting what
+// the network deliberately ignored would multiply this table by an order of
+// magnitude to answer a question ("what did we drop?") that the episode's
+// `gatedCount` already answers.
+model Percept {
+  id          String   @id @default(uuid())
+  // `PerceptorDefinition.id`, e.g. `application.error-rate`. Never renamed —
+  // NeuralSynapse.source is derived from it, so a rename orphans every weight
+  // that sensor ever earned.
+  perceptorId String
+  // `market` | `application` | `assistant` | `learning` | `platform`
+  domain      String
+  // Perceptor-specific event name, e.g. `error_rate_spike`, `structure_break`.
+  kind        String
+  // What the percept is about — an EntityRef split into two columns so it can
+  // be indexed: `route`/`POST /orders`, `symbol`/`NSE:RELIANCE`.
+  subjectType String
+  subjectId   String
+  // When the world did the thing. Deliberately distinct from `createdAt` (when
+  // we noticed), so replayed and backfilled percepts are not lies.
+  observedAt  DateTime
+  // 0..1 — how much attention this deserves.
+  salience    Float
+  // 0..1 — how much we believe it. Kept separate from salience because
+  // "important and uncertain" and "unimportant and certain" need different
+  // handling, and one merged score cannot express the difference.
+  confidence  Float
+  // Named numeric features for L2. Keys are stable per `kind`.
+  features    Json
+  summary     String
+  payload     Json?
+  tags        String[]
+  // >1 when this row is a collapsed burst. Without it the network mistakes
+  // repetition for corroboration.
+  occurrences Int      @default(1)
+  // The episode whose pass produced it.
+  episodeId   String
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([episodeId])
+  @@index([domain, createdAt])
+  @@index([perceptorId, createdAt])
+  @@index([subjectType, subjectId, createdAt])
+}
+
+// Per-sensor health and configuration.
+//
+// Exists so `enabled` and quarantine state survive a restart. Holding them only
+// in memory means an operator who disables a runaway perceptor watches it come
+// back on the next deploy — during the incident that made them disable it.
+model PerceptorState {
+  // Matches PerceptorDefinition.id.
+  perceptorId         String    @id
+  domain              String
+  enabled             Boolean   @default(true)
+  // `healthy` | `stale` | `failing` | `quarantined` | `disabled`
+  status              String    @default("healthy")
+  // Last time `sense()` ran, whatever it returned. Silence here on an interval
+  // perceptor is the staleness signal.
+  lastSensedAt        DateTime?
+  // Last time it returned anything. A sensor that runs and never produces is a
+  // different fault from one that has stopped running, and the console has to
+  // be able to tell them apart.
+  lastPerceptAt       DateTime?
+  consecutiveFailures Int       @default(0)
+  lastError           String?
+  totalPercepts       Int       @default(0)
+  // Rolling mean salience. A sensor whose salience collapses toward zero has
+  // become noise and should be retuned or turned off.
+  meanSalience        Float     @default(0)
+  updatedAt           DateTime  @updatedAt
+
+  @@index([domain])
+  @@index([status])
+}
+
+// One full L1..L4 traversal.
+//
+// A pass that produced nothing is still recorded. That is what makes "the
+// network is quiet" distinguishable from "the network has not run" — identical
+// states in any view assembled only from things that did happen, and the two an
+// operator most needs to tell apart.
+model CognitiveEpisode {
+  id              String    @id @default(uuid())
+  episodeId       String    @unique
+  // Null when the pass sensed every domain.
+  domain          String?
+  // `scheduled` | `conversation` | `manual` | `ingest`
+  trigger         String
+  // `running` | `ok` | `degraded` | `error`. `degraded` means the reasoning
+  // completed but a side effect (the memory write) did not — worth keeping
+  // distinct, because the reasoning is still valid and still worth reading.
+  status          String    @default("running")
+  perceptCount    Int       @default(0)
+  // Percepts dropped below the salience floor. The tuning read-out: a gated
+  // count that is always zero means the floor is too low to be doing anything.
+  gatedCount      Int       @default(0)
+  collapsedCount  Int       @default(0)
+  hypothesisCount Int       @default(0)
+  promotedCount   Int       @default(0)
+  proposalCount   Int       @default(0)
+  // Per-layer milliseconds, keyed by layer id. Json rather than four columns so
+  // adding a layer is not a migration.
+  layerTimings    Json?
+  error           String?
+  // --- outcome, written later, when ground truth arrives ------------------
+  // 0..1, with 0.5 meaning neutral. Null means unscored — the normal state for
+  // a recent episode, and it must never be read as zero.
+  reward          Float?
+  rewardReason    String?
+  scoredAt        DateTime?
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+
+  @@index([startedAt])
+  @@index([domain, startedAt])
+  @@index([status, startedAt])
+  // Supports "which episodes are still waiting to be scored" — the query that
+  // reveals a stalled feedback loop, which otherwise stops learning silently.
+  @@index([scoredAt])
+}
+
+// Something the network thinks a human should decide.
+//
+// THERE IS DELIBERATELY NO `execute` KIND, AND NO EXECUTION PATH.
+//
+// ARCHITECTURE Rule 2 keeps AI services out of the order flow entirely, and the
+// same reasoning applies to the rest of the platform: a system that learns from
+// outcomes and also causes them has closed a loop with nobody supervising it.
+// So the most consequential thing L4 can do is insert a row here with status
+// `pending`. An operator is the actuator.
+model CognitiveProposal {
+  id         String    @id @default(uuid())
+  episodeId  String
+  domain     String
+  // `investigate` | `tune` | `learn` | `notify`
+  kind       String
+  title      String
+  rationale  String
+  confidence Float
+  // Percept ids that led here, so a proposal can always be traced back to the
+  // observations that produced it.
+  perceptIds String[]
+  // `pending` | `accepted` | `dismissed` | `done`
+  status     String    @default("pending")
+  // Who acted, and what they concluded. `dismissed` with a reason is the single
+  // most valuable signal this table produces — a human labelling the network
+  // wrong, which is exactly what the weights need and cannot get anywhere else.
+  resolvedBy String?
+  resolution String?
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([status, createdAt])
+  @@index([domain, createdAt])
+  @@index([episodeId])
+}
+
+// A learned association between two things the network can name.
+//
+// The only irreplaceable table in this group — see the block comment above.
+//
+// `weight` is stored as last written, NOT as last read: idle decay is computed
+// on read from `lastActivatedAt`, so a process that has been down for a week
+// resumes with the correctly decayed value rather than one frozen at shutdown.
+// A decay sweep job would give a different answer depending on when it last ran.
+model NeuralSynapse {
+  id               String    @id @default(uuid())
+  // `L1_PERCEPTION` | `L2_ENCODING` | `L3_ASSOCIATION` | `L4_CONSOLIDATION`.
+  // Part of the identity: L2's "this feature predicts this concept" and L3's
+  // "this concept predicts this outcome" are different claims and must never be
+  // averaged together.
+  layer            String
+  // e.g. `percept:application.error-rate/error_rate_spike`
+  source           String
+  // e.g. `concept:deploy-regression`, `agent:trap-safety`
+  target           String
+  // 0..1. The default matches WEIGHT_INITIAL in ai-core's weights.ts — an
+  // unknown association is weakly plausible, not impossible, or the network
+  // could never learn anything it was not already looking for.
+  weight           Float     @default(0.35)
+  // How often it fired. Firing alone never moves the weight — if it did, the
+  // loudest sensor would win regardless of ever having been right.
+  activations      Int       @default(0)
+  // How often an outcome scored it. Zero means this weight is a guess, and the
+  // console says so rather than presenting it as a finding.
+  reinforcements   Int       @default(0)
+  meanReward       Float     @default(0.5)
+  lastActivatedAt  DateTime?
+  lastReinforcedAt DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // The natural key. Flushes upsert through it, so it must be unique rather
+  // than merely indexed.
+  @@unique([layer, source, target])
+  @@index([layer, weight])
+  @@index([source])
+  @@index([target])
+}
+
+// ---------------------------------------------------------------------------
+// Operator accounts — the standalone admin console's identity store.
+// ---------------------------------------------------------------------------
+//
+// Deliberately NOT the `User` table. `User.isAdmin` answers "this trader may
+// also see the console"; that is the right model for the in-product admin pages
+// in `apps/web`, where the person is already a TradeW customer. The standalone
+// console at `apps/admin` is a control plane, and a control plane whose identity
+// store is the product's customer table inherits every signup, password-reset
+// and OAuth path the product has. An operator should not be reachable through
+// "forgot password" on a trading app.
+//
+// This table exists because the alternative — accepting `ADMIN_API_TOKEN` on its
+// own as proof of an operator — cannot answer *which* operator acted, and two
+// admin routes write that answer into an audit trail: `POST /admin/users/set-
+// admin` (who granted privilege to whom) and `POST /admin/cognition/proposals/
+// :id/resolve` (whose judgement became the cognition network's only negative
+// training label). "Somebody dismissed this finding" is not an audit trail.
+//
+// The operator token is still required on every request. It proves the calling
+// *process* is the admin deployment. This row proves the *person*. Neither is
+// sufficient alone, which is the same two-factor shape `AdminGuard` already
+// enforces for the product-admin path — see AdminAccessGuard.
+model OperatorAccount {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  // Display name for the audit trail and the console header. Not a credential.
+  name         String?
+  // bcrypt, cost 10 — same as `User.passwordHash`. Non-nullable here, unlike on
+  // `User`: there is no OAuth path into this table and there never should be.
+  passwordHash String
+  // Revocation. Checked against the DATABASE on every request rather than being
+  // baked into the assertion, for exactly the reason `User.isAdmin` is: an
+  // assertion outlives a decision to revoke, and a console that keeps working
+  // for hours after access was pulled is not revocation, it is a delay.
+  disabledAt   DateTime?
+  // Online-guessing brake. `lockedUntil` is set once `failedAttempts` crosses
+  // the threshold; both reset on a successful login. The login endpoint is also
+  // behind `AdminTokenGuard`, so reaching it at all already requires the
+  // operator token — this is defence against someone who has that token, not
+  // the first line.
+  failedAttempts Int     @default(0)
+  lockedUntil  DateTime?
+  lastSeenAt   DateTime?
+  lastLoginIp  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([disabledAt])
+}
+
+// Owned by services/sentinel-py (Python), not services/api — this table's
+// migration lives here because Prisma is the monorepo's single migration
+// tool, but sentinel-py reads/writes it directly over Postgres (asyncpg),
+// not through this Prisma client. Keep column names in sync with
+// services/sentinel-py/app/strategy/store.py if this model changes.
+model UserStrategy {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String
+  // Structured rules produced by the deterministic text/image/video parser —
+  // see services/sentinel-py/app/strategy/parser.py. Never user-editable raw
+  // SQL/JS, just the plan's rule schema (timeframe, rules[], entry, riskManagement).
+  rules     Json
+  rawInput  String?
+  inputType String   @default("text") // text | image | video
+  status    String   @default("active") // active | paused | archived
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// One watch = one (user, strategy, symbol, strike). Owned by
+// services/sentinel-py — see the note on UserStrategy above.
+model WatchSession {
+  id         String    @id @default(uuid())
+  userId     String
+  strategyId String
+  symbol     String
+  strike     String?
+  optionType String? // CE | PE
+  expiry     String? // YYYY-MM-DD, as the Dhan bridge expects it
+  state      String    @default("IDLE") // IDLE | FORMING | CONFIRMED | IN_TRADE | EXITED
+  // Set when the user confirms they took the position (P4). Null while the
+  // watch is still pre-entry.
+  // The user's OWN declared numbers for a position they have already taken.
+  // Sentinel does not propose any of these — it is told them, and reports
+  // movement relative to them. See app/intrade/monitor.py.
+  entryPrice  Decimal? @db.Decimal(12, 2)
+  stopPrice   Decimal? @db.Decimal(12, 2)
+  targetPrice Decimal? @db.Decimal(12, 2)
+  direction   String? // LONG | SHORT
+  // R-multiples already announced for the current position, e.g. ["1R","2R"].
+  // A milestone is a level, not an event, so "already reported" has to
+  // survive a restart or it re-fires on every sweep past it.
+  reachedMilestones Json @default("[]")
+  // Notification gating. cooldownUntil suppresses REPEATS of a state the
+  // watch is already in; a forward state change notifies regardless.
+  lastNotifiedAt DateTime?
+  cooldownUntil  DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([state])
+}
+
+// Audit trail: every sweep writes what it saw, whether or not it notified.
+// This is what the admin observation viewer reads, and what makes a
+// "why did/didn't Sentinel alert me?" question answerable after the fact.
+//
+// Deliberately NOT the older `SentinelObservation` above: that one is the TS
+// Sentinel's market-wide observation feed (agent/category/pattern/content),
+// keyed by user and symbol. This one is keyed by WATCH and stores per-rule
+// evaluations for one strategy on one instrument. Same word, different thing
+// — folding them together would give both an optional half-empty shape.
+model WatchObservation {
+  id              String    @id @default(uuid())
+  watchSessionId  String
+  agent           String
+  candleTime      DateTime?
+  ruleEvaluations Json
+  state           String
+  metadata        Json?
+  createdAt       DateTime  @default(now())
+
+  @@index([watchSessionId])
+  @@index([createdAt])
+}

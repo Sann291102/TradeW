@@ -378,6 +378,126 @@ section('Advisor — Side in Focus');
     assertEq(sif, null);
   });
 
+  // ---- progress tracking ------------------------------------------------
+  // The quantity reported here used to be spot minus the nearest ATM strike,
+  // which is a rounding artifact bounded by half a strike step — on NIFTY it
+  // could never leave ±25 however far the market moved, so "invalidated"
+  // (≤ −25) was unreachable and "developing" tracked where spot sat relative
+  // to a round number. It is now movement from the spot price at the moment
+  // the side was surfaced, measured in that side's favour.
+
+  test('PROGRESS: first sight anchors at spot and reports zero movement', () => {
+    const { advisor } = newAdvisor();
+    const sif = advisor.sideInFocus({
+      symbol: 'NIFTY',
+      detections: [makeDetection({ bias: 'bullish' })],
+      confidence: makeConfidence(84),
+      snapshot: makeSnapshot({ lastPrice: 24337 }),
+      state: GUIDANCE_STATE,
+      publication: makePublication(true),
+    });
+    assert(sif !== null);
+    assertEq(sif!.liveValidation!.pnlPoints, 0);
+    assertEq(sif!.liveValidation!.entryPrice, 24337, 'anchor must be spot, not the ATM strike');
+    assertEq(sif!.liveValidation!.status, 'observing');
+  });
+
+  test('PROGRESS: CE gains as spot rises, and crosses the 5-point step', () => {
+    const { advisor } = newAdvisor();
+    const at = (lastPrice: number) =>
+      advisor.sideInFocus({
+        symbol: 'NIFTY',
+        detections: [makeDetection({ bias: 'bullish' })],
+        confidence: makeConfidence(84),
+        snapshot: makeSnapshot({ lastPrice }),
+        state: GUIDANCE_STATE,
+        publication: makePublication(true),
+      });
+    at(24300); // anchor
+    const moved = at(24306);
+    assertEq(moved!.liveValidation!.pnlPoints, 6);
+    assertEq(moved!.liveValidation!.status, 'developing');
+    assert(moved!.liveValidation!.label.includes('5 points in favour'), `got: ${moved!.liveValidation!.label}`);
+    assert(moved!.liveValidation!.label.includes('discipline choice'), 'expected the discipline framing');
+  });
+
+  test('PROGRESS: PE gains as spot FALLS — a falling market is in a put read’s favour', () => {
+    const { advisor } = newAdvisor();
+    const bearish = (lastPrice: number) =>
+      advisor.sideInFocus({
+        symbol: 'NIFTY',
+        detections: [makeDetection({ bias: 'bearish', strategyName: 'Fake Breakout' })],
+        confidence: makeConfidence(84),
+        snapshot: makeSnapshot({
+          lastPrice,
+          trendAnalysis: { direction: 'bearish', momentumScore: 0.6, sessionChangePct: -0.7 },
+        } as Partial<MarketSnapshot>),
+        state: GUIDANCE_STATE,
+        publication: makePublication(true),
+      });
+    bearish(24300); // anchor
+    const moved = bearish(24289);
+    assertEq(moved!.side, 'PE');
+    // Spot fell 11 points: that is +11 IN FAVOUR of the PE, never "down 11".
+    assertEq(moved!.liveValidation!.pnlPoints, 11);
+    assert(moved!.liveValidation!.label.includes('10 points in favour'), `got: ${moved!.liveValidation!.label}`);
+  });
+
+  test('PROGRESS: an adverse move past the top step invalidates (reachable, unlike before)', () => {
+    const { advisor } = newAdvisor();
+    const at = (lastPrice: number) =>
+      advisor.sideInFocus({
+        symbol: 'NIFTY',
+        detections: [makeDetection({ bias: 'bullish' })],
+        confidence: makeConfidence(84),
+        snapshot: makeSnapshot({ lastPrice }),
+        state: GUIDANCE_STATE,
+        publication: makePublication(true),
+      });
+    at(24300);
+    const against = at(24284); // 16 points against, past the 15 top step
+    assertEq(against!.liveValidation!.status, 'invalidated');
+  });
+
+  test('PROGRESS: BANKNIFTY uses its own steps — 6 points is noise, not progress', () => {
+    const { advisor } = newAdvisor();
+    const at = (lastPrice: number) =>
+      advisor.sideInFocus({
+        symbol: 'BANKNIFTY',
+        detections: [makeDetection({ bias: 'bullish' })],
+        confidence: makeConfidence(84),
+        snapshot: makeSnapshot({ lastPrice }),
+        state: GUIDANCE_STATE,
+        publication: makePublication(true),
+      });
+    at(51200);
+    assertEq(at(51206)!.liveValidation!.status, 'observing', '6 points on BANKNIFTY must not read as progress');
+    assertEq(at(51226)!.liveValidation!.status, 'developing', '26 points clears the 25 step');
+  });
+
+  test('PROGRESS: a side flip re-anchors rather than carrying the old run forward', () => {
+    const { advisor } = newAdvisor();
+    const side = (bias: 'bullish' | 'bearish', lastPrice: number) =>
+      advisor.sideInFocus({
+        symbol: 'NIFTY',
+        detections: [makeDetection({ bias })],
+        confidence: makeConfidence(84),
+        snapshot: makeSnapshot({
+          lastPrice,
+          trendAnalysis: { direction: bias, momentumScore: 0.6, sessionChangePct: 0 },
+        } as Partial<MarketSnapshot>),
+        state: GUIDANCE_STATE,
+        publication: makePublication(true),
+      });
+    side('bullish', 24300);
+    assertEq(side('bullish', 24320)!.liveValidation!.pnlPoints, 20);
+    // Flipping to PE must start a fresh run, not inherit the CE's 20 points.
+    const flipped = side('bearish', 24320);
+    assertEq(flipped!.side, 'PE');
+    assertEq(flipped!.liveValidation!.pnlPoints, 0);
+    assertEq(flipped!.liveValidation!.entryPrice, 24320);
+  });
+
   test('rationale cites the leading detection and option chain', () => {
     const sif = advisor.sideInFocus({
       symbol: 'NIFTY',

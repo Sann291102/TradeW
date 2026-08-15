@@ -1,0 +1,44 @@
+# Operator console — OPTIONAL override, layered on top of the prod stack:
+#
+#   docker compose -f infra/docker/docker-compose.prod.yml \
+#                  -f infra/docker/docker-compose.admin.yml \
+#                  --env-file .env.prod up -d
+#
+# WHY A SEPARATE FILE, AND WHY LOOPBACK-BOUND
+# The admin console exposes every user's activity and can grant/revoke
+# privileges. It must never be reachable from the public internet, so it is
+# deliberately NOT added to the main compose and NOT routed by Caddy. This
+# override publishes it on 127.0.0.1 only — you reach it by opening an SSH
+# tunnel to the VM:
+#
+#   ssh -L 3001:127.0.0.1:3001 user@YOUR_VM   # then browse http://localhost:3001
+#
+# So the console is available to whoever can SSH to the box (the operators) and
+# to no one else, on top of its own two-factor gate (a signed session cookie +
+# the ADMIN_API_TOKEN the API enforces).
+
+name: tradew
+
+services:
+  admin:
+    image: ${IMAGE_ADMIN:-tradew-admin:local}
+    build:
+      context: ../..
+      dockerfile: apps/admin/Dockerfile
+      args:
+        # Link target for "View as Trader" — the public web origin.
+        NEXT_PUBLIC_TRADEW_WEB_URL: ${FRONTEND_URL}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # Server-side only: the console reaches the API over the internal network.
+      ADMIN_API_URL: http://api:4000
+      # The SAME shared secret the API's AdminTokenGuard enforces. Set in .env.prod.
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
+    # Loopback only — reachable through an SSH tunnel, never published to the
+    # internet. Host 3001 -> container 3000 (Next's default listen port).
+    ports:
+      - '127.0.0.1:3001:3000'
+    depends_on:
+      api: { condition: service_started }
+    networks: [tradew]

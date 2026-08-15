@@ -27,7 +27,7 @@ Sentinel operates under seven strict product rules that govern every calculation
 
 1. **Never Force a Trade:** If market conditions are choppy, noisy, or low-confidence, Sentinel remains silent. Silence is a valid and high-value feature.
 2. **Never Predict:** Sentinel does not forecast where the market will be in 30 minutes. It evaluates *present evidence* against historical patterns and statistical probabilities.
-3. **Confidence First:** No message, signal, or guidance is ever surfaced to the user unless the aggregate confidence score crosses the configured threshold (e.g. ≥ 85%). Low-confidence noise is discarded.
+3. **Confidence First:** No message, signal, or guidance is ever surfaced to the user unless it clears the publication gate. **As implemented** (`services/sentinel/src/orchestrator/publication-gate.ts`) this is no longer a single fixed threshold: the old ≥85% number was replaced by a four-condition gate — (1) adaptive confidence ≥ `PUBLICATION_CONFIDENCE_THRESHOLD` (**70**), (2) every mandatory confirmation the strategy defines has validated, (3) no conflicting evidence is present, and (4) corroboration across reasoning modules is satisfied (`MIN_CORROBORATING_SOURCES = 2`). Confidence alone was letting a corroborated safety signal be trapped behind, or a lone high-confidence read published without support. Low-confidence noise is still discarded.
 4. **Every Message Must Explain WHY:** Sentinel never outputs unbacked assertions like "Bullish". Every message must present structured, verifiable evidence (strategy match, volume confirmation, VWAP hold, historical success rate, news alignment).
 5. **Continuous Observation:** Sentinel observes tick-by-tick and bar-by-bar throughout the entire trading session (09:15 to 15:30 IST), building a continuous session narrative rather than emitting isolated spikes.
 6. **Non-Directive Output:** Sentinel strictly complies with the TradeW Constitution (`TRADEW-OS.md` §1). It never emits direct financial directives (`BUY`, `SELL`, `EXIT`, `TARGET`). Guidance is strictly phrased as market state observations (`"Bullish side in focus"`, `"Structure developing"`, `"Momentum weakening"`).
@@ -206,7 +206,7 @@ Instead of only teaching users, **the Learning Hub teaches Sentinel**.
 └───────────────────────────────────┴─────────────────────────┘
 ```
 
-**Threshold Rule:** Guidance is surfaced ONLY if aggregate confidence is ≥ **85%** (configurable by trader). Below 85%, Sentinel remains in *"Wait and Watch"* mode.
+**Threshold Rule:** Guidance is surfaced ONLY when it clears the publication gate — **as built**, adaptive confidence ≥ **70** *and* mandatory confirmations validated *and* no conflicting evidence *and* corroboration satisfied (see Principle #3 and `publication-gate.ts`). A trader-requested threshold can only *raise* the floor, never lower it below 70. Otherwise Sentinel remains in *"Wait and Watch"* mode. *(This section's earlier "≥ 85%, configurable" rule was the original single-number design, since superseded.)*
 
 ---
 

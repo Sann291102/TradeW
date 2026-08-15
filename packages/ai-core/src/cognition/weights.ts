@@ -1,0 +1,365 @@
+/**
+ * The learned parameters — what makes this a *network* rather than a pipeline.
+ *
+ * WHAT KIND OF LEARNING THIS IS, STATED PLAINLY
+ *
+ * This is **online, reward-modulated Hebbian learning over a sparse association
+ * graph**. It is not backpropagation, and there is no deep network here. Calling
+ * it one would be a lie that costs real money the first time someone tries to
+ * tune it like a neural net.
+ *
+ * The reason it is the right choice is the shape of the data. Backprop needs a
+ * large, stationary, labelled dataset. TradeW has the opposite: a slow trickle
+ * of weakly-labelled outcomes (did the observation Sentinel published actually
+ * play out? did the bug the network flagged turn out to be real?), arriving over
+ * days, from a distribution that changes with the market regime. Under those
+ * conditions an online associative rule with explicit decay is both learnable
+ * from the first ten examples and — critically — *inspectable*: every weight is
+ * a named pair with a visible history, so an operator can look at the console
+ * and see exactly why the network started paying attention to something.
+ *
+ * A dense model trained on this data would be unauditable and, at TradeW's
+ * volumes, worse.
+ *
+ * THE RULE
+ *
+ *   Δw = η · (r − w) · coactivation · eligibility
+ *   w  ← clamp(w + Δw, WEIGHT_MIN, WEIGHT_MAX)
+ *
+ * · `r` is the reward in [0,1] from the outcome. 0.5 is neutral — an outcome
+ *   that neither confirmed nor refuted leaves the weight alone.
+ * · `(r − w)` is a delta rule, so a weight converges to the observed reward rate
+ *   instead of saturating at the ceiling the way plain Hebbian co-occurrence
+ *   counting does. This is the single most important term: without it, anything
+ *   that fires often becomes maximally important regardless of whether it was
+ *   ever right.
+ * · `coactivation` scales by how strongly both ends actually fired, so a
+ *   barely-active association learns slowly.
+ * · `eligibility` decays with the delay between the association firing and the
+ *   outcome landing, so credit goes to what plausibly caused the result rather
+ *   than to whatever happened to be active when it arrived.
+ *
+ * Weights also decay toward `WEIGHT_INITIAL` with age. A market pattern that
+ * worked in 2024 and has not fired since is not knowledge, it is a fossil, and
+ * a network with no forgetting is one that gets steadily more confident about
+ * a world that no longer exists.
+ */
+
+/** A directed association between two things the network can name. */
+export interface SynapseKey {
+  /** e.g. `percept:application.error-rate/error_rate_spike` */
+  source: string;
+  /** e.g. `concept:deploy-regression` or `agent:trap-safety` */
+  target: string;
+  /**
+   * Which layer owns this edge. Weights are never shared across layers — L2's
+   * "this feature predicts this concept" and L3's "this concept predicts this
+   * outcome" are different claims and must not be averaged together.
+   */
+  layer: NeuralLayerId;
+}
+
+export type NeuralLayerId = 'L1_PERCEPTION' | 'L2_ENCODING' | 'L3_ASSOCIATION' | 'L4_CONSOLIDATION';
+
+export interface Synapse extends SynapseKey {
+  /** 0..1. The learned strength. */
+  weight: number;
+  /** How many times this association has fired. Confidence in the weight itself. */
+  activations: number;
+  /** How many times an outcome scored it. A weight with 0 is a guess, not a finding. */
+  reinforcements: number;
+  /** Mean reward observed. Diverging from `weight` means it is still converging. */
+  meanReward: number;
+  lastActivatedAt: Date | null;
+  lastReinforcedAt: Date | null;
+  createdAt: Date;
+}
+
+/** One firing, held until an outcome arrives to score it. */
+export interface EligibilityTrace {
+  key: SynapseKey;
+  /** Product of the two ends' activation strengths, 0..1. */
+  coactivation: number;
+  firedAt: Date;
+  /** Ties the trace to the episode whose outcome will score it. */
+  episodeId: string;
+}
+
+export interface OutcomeSignal {
+  episodeId: string;
+  /** 0..1. 0 = refuted, 0.5 = neutral/unknown, 1 = confirmed. */
+  reward: number;
+  /** Why, in one line — rendered next to the weight change in the console. */
+  reason: string;
+  observedAt: Date;
+}
+
+export const WEIGHT_MIN = 0.01;
+export const WEIGHT_MAX = 0.99;
+/** New associations start slightly below neutral: unproven, but not ignored. */
+export const WEIGHT_INITIAL = 0.35;
+
+/** Learning rate. Deliberately small — TradeW sees a handful of scored outcomes
+ *  a day, and a rate that lets one bad day rewrite the network is not learning. */
+export const LEARNING_RATE = 0.12;
+
+/** Half-life of an eligibility trace. 30 minutes covers a Sentinel observation
+ *  through to its market resolution and an error spike through to its fix,
+ *  without letting this morning's percepts take credit for this evening's. */
+export const ELIGIBILITY_HALF_LIFE_MS = 30 * 60_000;
+
+/** Traces older than this are dropped unscored. Bounds memory and stops a
+ *  never-resolved episode from pinning a trace forever. */
+export const ELIGIBILITY_MAX_AGE_MS = 6 * 3_600_000;
+
+/** Weights decay back toward `WEIGHT_INITIAL` with this half-life when idle. */
+export const WEIGHT_DECAY_HALF_LIFE_MS = 30 * 24 * 3_600_000;
+
+/**
+ * The in-memory Map key for a synapse.
+ *
+ * NUL as the separator, written as an ESCAPE SEQUENCE and never as a literal
+ * byte. Both halves of that matter:
+ *
+ * · **Why NUL.** The parts are free-form ids — `percept:<perceptorId>/<kind>`,
+ *   `concept:<slug>`, `agent:<name>`. Any printable separator can also occur
+ *   *inside* one of them, and two different associations colliding onto one key
+ *   would silently share a weight. That surfaces as a network having learned
+ *   something nobody can account for, which is close to undebuggable. NUL
+ *   cannot appear in these ids.
+ *
+ * · **Why the escape.** A literal NUL in the source makes git classify this
+ *   file as binary — no diff, no line-level merge, no blame, on the one file
+ *   that defines the learning rule. It was committed that way in dc2960b
+ *   (`Bin 0 -> 13658 bytes`) and corrected here. The escape compiles to the
+ *   identical runtime string from a file that stays plain text.
+ *
+ * Purely in-memory: the database keys on the composite unique
+ * `(layer, source, target)`, so this format can change without a migration.
+ */
+export function synapseId(key: SynapseKey): string {
+  return `${key.layer}\u0000${key.source}\u0000${key.target}`;
+}
+
+/**
+ * In-memory synapse store with a persistence seam.
+ *
+ * The seam matters: weights are the only genuinely irreplaceable state in this
+ * system. Percepts regenerate, episodes are history, but a weight represents
+ * weeks of accumulated outcomes and cannot be recomputed from anything. So the
+ * store loads a snapshot at boot and hands back dirty rows to be flushed —
+ * rather than writing through on every activation, which would put a database
+ * round-trip inside the hot path of every percept.
+ */
+export class SynapseStore {
+  private readonly synapses = new Map<string, Synapse>();
+  private readonly traces: EligibilityTrace[] = [];
+  private readonly dirty = new Set<string>();
+
+  /** Cap on live traces. Bounded so a stuck outcome pipeline degrades learning
+   *  rather than the process — oldest first, matching what decay would do anyway. */
+  private static readonly MAX_TRACES = 20_000;
+
+  /** Seed from persistence at boot. Replaces whatever is held. */
+  load(synapses: Synapse[]): void {
+    this.synapses.clear();
+    this.dirty.clear();
+    for (const s of synapses) this.synapses.set(synapseId(s), s);
+  }
+
+  get(key: SynapseKey): Synapse | undefined {
+    return this.synapses.get(synapseId(key));
+  }
+
+  /**
+   * The learned strength of an association, decayed for idleness.
+   *
+   * Returns `WEIGHT_INITIAL` for an association never seen. That is a choice:
+   * an unknown link is treated as weakly plausible rather than impossible, so a
+   * genuinely new pattern can get enough activation to earn a real weight. The
+   * alternative — starting at zero — makes the network unable to learn anything
+   * it was not already looking for.
+   */
+  weightOf(key: SynapseKey, now = new Date()): number {
+    const synapse = this.synapses.get(synapseId(key));
+    if (!synapse) return WEIGHT_INITIAL;
+    return decayedWeight(synapse, now);
+  }
+
+  /**
+   * Record that an association fired, and leave a trace for the outcome to score.
+   *
+   * Firing alone never changes a weight. That is the guard against the failure
+   * mode this design exists to avoid: if activation raised weights on its own,
+   * the loudest sensor would win regardless of whether it was ever correct, and
+   * a flapping health check would end up dominating the network.
+   */
+  activate(key: SynapseKey, coactivation: number, episodeId: string, now = new Date()): void {
+    const id = synapseId(key);
+    let synapse = this.synapses.get(id);
+    if (!synapse) {
+      synapse = {
+        ...key,
+        weight: WEIGHT_INITIAL,
+        activations: 0,
+        reinforcements: 0,
+        meanReward: 0.5,
+        lastActivatedAt: null,
+        lastReinforcedAt: null,
+        createdAt: now,
+      };
+      this.synapses.set(id, synapse);
+    }
+    synapse.activations += 1;
+    synapse.lastActivatedAt = now;
+    this.dirty.add(id);
+
+    if (this.traces.length >= SynapseStore.MAX_TRACES) this.traces.shift();
+    this.traces.push({ key, coactivation: clamp01(coactivation), firedAt: now, episodeId });
+  }
+
+  /**
+   * Apply an outcome to every association that plausibly contributed.
+   *
+   * Returns the changes so the caller can persist them and the console can show
+   * "this outcome moved these six weights, by this much" — the explanation is
+   * the deliverable, not a debugging aid. A learning system whose updates cannot
+   * be read back is one nobody will be willing to leave running.
+   */
+  reinforce(signal: OutcomeSignal): SynapseChange[] {
+    const now = signal.observedAt;
+    const changes: SynapseChange[] = [];
+    const remaining: EligibilityTrace[] = [];
+
+    for (const trace of this.traces) {
+      const age = now.getTime() - trace.firedAt.getTime();
+      if (age > ELIGIBILITY_MAX_AGE_MS) continue; // expired: dropped, not scored
+      if (trace.episodeId !== signal.episodeId) {
+        remaining.push(trace);
+        continue;
+      }
+
+      const eligibility = Math.pow(0.5, age / ELIGIBILITY_HALF_LIFE_MS);
+      const id = synapseId(trace.key);
+      const synapse = this.synapses.get(id);
+      if (!synapse) continue;
+
+      const before = decayedWeight(synapse, now);
+      const delta = LEARNING_RATE * (signal.reward - before) * trace.coactivation * eligibility;
+      const after = clamp(before + delta, WEIGHT_MIN, WEIGHT_MAX);
+
+      synapse.weight = after;
+      synapse.reinforcements += 1;
+      // Running mean, so `meanReward` stays comparable across synapses with very
+      // different reinforcement counts.
+      synapse.meanReward += (signal.reward - synapse.meanReward) / synapse.reinforcements;
+      synapse.lastReinforcedAt = now;
+      this.dirty.add(id);
+
+      changes.push({ key: trace.key, before, after, delta: after - before, reward: signal.reward, reason: signal.reason });
+    }
+
+    // Traces for this episode are consumed; one outcome scores a firing once.
+    this.traces.length = 0;
+    this.traces.push(...remaining);
+    return changes;
+  }
+
+  /** Every synapse, decayed to `now`. The console's weight table. */
+  all(now = new Date()): Synapse[] {
+    return [...this.synapses.values()].map((s) => ({ ...s, weight: decayedWeight(s, now) }));
+  }
+
+  /** The strongest outgoing associations from a source. L3's lookup. */
+  from(source: string, layer: NeuralLayerId, limit = 20, now = new Date()): Synapse[] {
+    return this.all(now)
+      .filter((s) => s.source === source && s.layer === layer)
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, limit);
+  }
+
+  /** Rows changed since the last flush, then cleared. Caller persists them. */
+  drainDirty(): Synapse[] {
+    const out: Synapse[] = [];
+    for (const id of this.dirty) {
+      const synapse = this.synapses.get(id);
+      if (synapse) out.push(synapse);
+    }
+    this.dirty.clear();
+    return out;
+  }
+
+  /** Live trace count — the console shows it because a trace count that only
+   *  grows means outcomes are never arriving, which silently stops all learning. */
+  pendingTraces(): number {
+    return this.traces.length;
+  }
+
+  /** Drop traces past the scoring horizon. Called on the pass tick. */
+  expireTraces(now = new Date()): number {
+    const before = this.traces.length;
+    const kept = this.traces.filter((t) => now.getTime() - t.firedAt.getTime() <= ELIGIBILITY_MAX_AGE_MS);
+    this.traces.length = 0;
+    this.traces.push(...kept);
+    return before - kept.length;
+  }
+
+  stats(now = new Date()): SynapseStats {
+    const all = this.all(now);
+    const proven = all.filter((s) => s.reinforcements > 0);
+    return {
+      total: all.length,
+      proven: proven.length,
+      // "Unproven" is surfaced separately because it is the number that tells an
+      // operator the network is guessing: many synapses, few scored outcomes.
+      unproven: all.length - proven.length,
+      meanWeight: all.length ? all.reduce((sum, s) => sum + s.weight, 0) / all.length : 0,
+      totalActivations: all.reduce((sum, s) => sum + s.activations, 0),
+      totalReinforcements: all.reduce((sum, s) => sum + s.reinforcements, 0),
+      pendingTraces: this.traces.length,
+    };
+  }
+}
+
+export interface SynapseChange {
+  key: SynapseKey;
+  before: number;
+  after: number;
+  delta: number;
+  reward: number;
+  reason: string;
+}
+
+export interface SynapseStats {
+  total: number;
+  proven: number;
+  unproven: number;
+  meanWeight: number;
+  totalActivations: number;
+  totalReinforcements: number;
+  pendingTraces: number;
+}
+
+/**
+ * A weight, pulled toward `WEIGHT_INITIAL` by how long it has sat idle.
+ *
+ * Decay is applied on read rather than by a sweep job. A sweep would need to
+ * touch every synapse on a timer and would produce a different answer depending
+ * on when it last ran; computing it from `lastActivatedAt` is deterministic and
+ * costs nothing when nobody is looking.
+ */
+export function decayedWeight(synapse: Synapse, now: Date): number {
+  const last = synapse.lastActivatedAt ?? synapse.createdAt;
+  const idleMs = now.getTime() - last.getTime();
+  if (idleMs <= 0) return synapse.weight;
+  const retained = Math.pow(0.5, idleMs / WEIGHT_DECAY_HALF_LIFE_MS);
+  return clamp(WEIGHT_INITIAL + (synapse.weight - WEIGHT_INITIAL) * retained, WEIGHT_MIN, WEIGHT_MAX);
+}
+
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v));
+}
+
+function clamp01(v: number): number {
+  return clamp(Number.isFinite(v) ? v : 0, 0, 1);
+}

@@ -1,8 +1,22 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Candle, CandleInterval } from '@tradew/types';
 import { fetchDhanCandles } from '../dhanLiveFeed';
+import { useDhanLiveFeed } from './useDhanLiveFeed';
+import { mergeLiveCandle } from './liveCandle';
+
+/**
+ * How often the closed-bar history is refetched while a chart is mounted.
+ *
+ * The live tick keeps the FORMING bar current between these, so this is only
+ * about a bucket closing and the next one being confirmed by the exchange —
+ * a minute of lag on a settled bar is invisible, whereas polling `/candles`
+ * aggressively is not: Dhan's historical API is rate-limited, and exhausting it
+ * makes the endpoint return empty, which this hook can only honestly report as
+ * "no history".
+ */
+const REFRESH_MS = 60_000;
 
 export type CandlesStatus = 'loading' | 'live' | 'unavailable';
 
@@ -73,10 +87,42 @@ export function useCandles(
     }
 
     void load();
+    // Refetch on a timer so a bar that closes while the chart is open is
+    // eventually confirmed by the exchange rather than left as the merged
+    // forming bar forever. Paused while the tab is hidden — a background tab
+    // spending Dhan's rate limit is how the endpoint starts returning empty.
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void load();
+    }, REFRESH_MS);
+
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
   }, [symbol, interval, days]);
 
-  return { candles, status, reason };
+  /**
+   * The live tick, from the same shared feed the price cards read.
+   *
+   * This is what closes the gap in the bug report: the historical series ends
+   * at the last CLOSED bar, so without merging, the chart's right edge sits at
+   * yesterday's close while the card beside it shows today's price.
+   */
+  const { quotes, stocks, etfs, commodities } = useDhanLiveFeed();
+  const quote = useMemo(() => {
+    if (!symbol) return null;
+    return (
+      [...(quotes ?? []), ...(stocks ?? []), ...(etfs ?? []), ...(commodities ?? [])].find(
+        (q) => q.symbol === symbol,
+      ) ?? null
+    );
+  }, [symbol, quotes, stocks, etfs, commodities]);
+
+  const merged = useMemo(
+    () => mergeLiveCandle(candles, quote, interval),
+    [candles, quote, interval],
+  );
+
+  return { candles: merged, status, reason };
 }

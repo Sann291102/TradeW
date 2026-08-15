@@ -1,3 +1,4 @@
+import { ASSISTANT_NAME } from '../assistant/identity';
 import type { ComponentType, SVGProps } from 'react';
 import { NAV_ITEMS } from '@/components/shell/nav-config';
 import {
@@ -175,7 +176,7 @@ export const SEARCH_PROVIDERS: SearchProvider[] = [
   // 'knowledge' removed 2026-08-03 — the route moved to /admin/knowledge and
   // the public command palette must not advertise a surface its user cannot
   // reach. Searching "knowledge" now falls through to the other providers.
-  stubProvider('tradew-ai', 'TradeW AI', SparkleIcon, ['ai', 'assistant', 'chat', 'ask']),
+  stubProvider('tradew-ai', ASSISTANT_NAME, SparkleIcon, ['ai', 'assistant', 'chat', 'ask']),
 ];
 
 export function runSearch(query: string, ctx: SearchContext): Array<{ provider: SearchProvider; results: SearchResult[] }> {

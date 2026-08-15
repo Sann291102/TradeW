@@ -1,8 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '@/lib/api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api } from '@/lib/api';
+import { playNotificationSound } from '@/lib/notificationSound';
+import { useWorkspaceStore } from '@/lib/store/workspaceStore';
+import { classifyFault, type SentinelUnavailable } from './faults';
 import type { JournalEntry, ObserveResponse, SessionSummaryData, StrategyMode } from './types';
+
+export type { SentinelUnavailable };
 
 /**
  * Sentinel's default confidence gate for the workspace (Phase 3). Insights and
@@ -19,29 +24,6 @@ export interface SentinelFocus {
 }
 
 /**
- * Why the workspace has no observation to show.
- *
- * There is deliberately no demo/sample fallback. Rendering canned DEMO data
- * on failure meant an expired session, an API outage and a dead Sentinel
- * service all looked like a working product — and the banner told every one
- * of them "sign in for live analysis", which was wrong in two cases out of
- * three. Sentinel now shows nothing and names the actual fault.
- */
-export type SentinelUnavailable =
-  | { kind: 'unauthenticated' }
-  | { kind: 'api-unreachable' }
-  | { kind: 'service-error'; status: number; message: string };
-
-function classify(err: unknown): SentinelUnavailable {
-  if (err instanceof ApiError) {
-    if (err.status === 401 || err.status === 403) return { kind: 'unauthenticated' };
-    return { kind: 'service-error', status: err.status, message: err.message };
-  }
-  // fetch itself threw — services/api is not reachable at NEXT_PUBLIC_API_URL.
-  return { kind: 'api-unreachable' };
-}
-
-/**
  * Sentinel data/logic for the `/sentinel` workspace.
  * See docs/product-architecture/SENTINEL.md §5.
  *
@@ -55,6 +37,14 @@ export function useSentinel(symbol: string = 'NIFTY', focus: SentinelFocus = {})
   const [journal, setJournal] = useState<JournalEntry[]>([]);
   const [unavailable, setUnavailable] = useState<SentinelUnavailable | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Signature of the last observation set we've already surfaced. The live feed
+  // is a poll, so "new text arrived" means: this poll's observations differ from
+  // the previous one. A ref (not state) so updating it never re-renders, and it
+  // survives across polls. `feedPrimed` suppresses the chime on the very first
+  // load — the initial batch is not "new", it's just what was already there.
+  const feedSignature = useRef<string>('');
+  const feedPrimed = useRef(false);
 
   const strategyMode = focus.strategyMode ?? 'auto';
   const selectedStrategyIds = focus.selectedStrategyIds ?? [];
@@ -76,6 +66,17 @@ export function useSentinel(symbol: string = 'NIFTY', focus: SentinelFocus = {})
       })) as ObserveResponse;
       setData(observe);
       setUnavailable(null);
+
+      // Live-feed sound: ring the TradeW mark when the observation feed gains
+      // genuinely new text. Signature = the synthesis narrative + each
+      // observation's content, so a re-poll that returns the same read stays
+      // silent. Skipped on the first primed load and when the operator has muted.
+      const signature = `${observe.synthesis?.content ?? ''}||${(observe.observations ?? []).map((o) => `${o.createdAt ?? ''}:${o.content}`).join('|')}`;
+      if (feedPrimed.current && signature !== feedSignature.current && (observe.observations?.length ?? 0) > 0) {
+        if (!useWorkspaceStore.getState().notificationsMuted) playNotificationSound();
+      }
+      feedSignature.current = signature;
+      feedPrimed.current = true;
       try {
         setSummary((await api('/sentinel/session-summary')) as SessionSummaryData);
         setJournal((await api('/sentinel/journal?limit=10')) as JournalEntry[]);
@@ -88,7 +89,7 @@ export function useSentinel(symbol: string = 'NIFTY', focus: SentinelFocus = {})
       setData(null);
       setSummary(null);
       setJournal([]);
-      setUnavailable(classify(err));
+      setUnavailable(classifyFault(err));
     } finally {
       setLoading(false);
     }
@@ -96,6 +97,37 @@ export function useSentinel(symbol: string = 'NIFTY', focus: SentinelFocus = {})
 
   useEffect(() => {
     void refresh();
+    // Live feed: re-run the observation on a cadence so the dashboard tracks
+    // the market as it moves (the agents run server-side; this pulls their
+    // latest read). /observe is cached server-side on an unchanged-market
+    // draft, so a 45s poll is cheap. Paused when the tab is hidden to avoid
+    // needless work, and the backend still returns the honest pre-market /
+    // closed state outside session hours rather than stale "live" numbers.
+    const POLL_MS = 45_000;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer || typeof document === 'undefined' || document.hidden) return;
+      timer = setInterval(() => void refresh(), POLL_MS);
+    };
+    const stop = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.hidden) stop();
+      else {
+        void refresh();
+        start();
+      }
+    };
+    start();
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      stop();
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [refresh]);
 
   /**

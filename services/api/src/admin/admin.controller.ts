@@ -1,11 +1,23 @@
 import { Body, Controller, Get, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
-import { ApiExcludeEndpoint, ApiProperty, ApiSecurity, ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsEmail } from 'class-validator';
-import { AdminGuard } from './admin.guard';
+import { ApiExcludeEndpoint, ApiProperty, ApiPropertyOptional, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { IsBoolean, IsEmail, IsIn, IsOptional, IsString } from 'class-validator';
+import { AdminAccessGuard } from './admin-access.guard';
 import { AdminService } from './admin.service';
+import { CognitionService } from '../cognition/cognition.service';
 import { SECURITY } from '../swagger/swagger.setup';
 import { TelemetryService } from '../telemetry/telemetry.service';
 
+/**
+ * Request bodies.
+ *
+ * All of them are declared ABOVE the controller, and that placement is load
+ * bearing rather than stylistic. `emitDecoratorMetadata` resolves a handler's
+ * parameter types at the moment the controller class is *defined*, so a DTO
+ * declared further down the file is still in its temporal dead zone and the
+ * module throws `ReferenceError: Cannot access 'X' before initialization` at
+ * import time. TypeScript does not flag it and no unit test catches it — the
+ * whole API simply fails to boot. Add new DTOs here, never below.
+ */
 class SetAdminDto {
   @ApiProperty({ format: 'email', description: 'The user whose privilege is changing.' })
   @IsEmail()
@@ -14,6 +26,37 @@ class SetAdminDto {
   @ApiProperty({ description: 'True grants admin, false revokes it.' })
   @IsBoolean()
   isAdmin!: boolean;
+}
+
+class SetPerceptorEnabledDto {
+  @ApiProperty({ description: 'True runs this sensor on the next pass, false skips it.' })
+  @IsBoolean()
+  enabled!: boolean;
+}
+
+class ResolveProposalDto {
+  @ApiProperty({
+    enum: ['accepted', 'dismissed', 'done'],
+    description:
+      'How it was resolved. `dismissed` teaches the network the finding was wrong and is the only negative signal it ever receives.',
+  })
+  @IsIn(['accepted', 'dismissed', 'done'])
+  status!: 'accepted' | 'dismissed' | 'done';
+
+  @ApiPropertyOptional({ description: 'Free-text note recorded against the proposal.' })
+  @IsOptional()
+  @IsString()
+  resolution?: string;
+}
+
+class RunPassDto {
+  @ApiPropertyOptional({
+    enum: ['market', 'application', 'assistant', 'learning', 'platform'],
+    description: 'Restrict the pass to one domain. Omit to sense everything.',
+  })
+  @IsOptional()
+  @IsIn(['market', 'application', 'assistant', 'learning', 'platform'])
+  domain?: 'market' | 'application' | 'assistant' | 'learning' | 'platform';
 }
 
 /**
@@ -33,16 +76,24 @@ class SetAdminDto {
 /**
  * Both credentials, both required — a single security requirement naming two
  * schemes rather than two separate requirements, which OpenAPI would read as
- * "either one will do". `AdminGuard` demands both, so the document has to say
- * both, or the reference would advertise a way in that does not exist.
+ * "either one will do". Every path through `AdminAccessGuard` demands the
+ * operator token plus one identity factor, so the document has to say both, or
+ * the reference would advertise a way in that does not exist.
+ *
+ * The guard is `AdminAccessGuard`, not `AdminGuard`. It routes on the presence
+ * of an `x-operator-assertion` header: absent → `apps/web`'s product-admin path
+ * (JWT + `User.isAdmin`), delegated to `AdminGuard` unchanged; present →
+ * `apps/admin`'s operator path (operator assertion + `OperatorAccount`). Both
+ * still require `ADMIN_API_TOKEN`. See admin-access.guard.ts.
  */
 @ApiSecurity({ [SECURITY.bearer]: [], [SECURITY.adminToken]: [] })
 @Controller('admin')
-@UseGuards(AdminGuard)
+@UseGuards(AdminAccessGuard)
 export class AdminController {
   constructor(
     private readonly admin: AdminService,
     private readonly telemetry: TelemetryService,
+    private readonly cognition: CognitionService,
   ) {}
 
   // -------------------------------------------------------------- overview
@@ -80,6 +131,12 @@ export class AdminController {
     return this.admin.routeStats(Number(hours) || 24, Number(limit) || 25);
   }
 
+  /** Per-minute request/error/latency pulse for the System Pulse panel. */
+  @Get('api-calls/pulse')
+  apiPulse(@Query('minutes') minutes?: string) {
+    return this.admin.apiPulse(Number(minutes) || 30);
+  }
+
   // -------------------------------------------------------------------- AI
 
   @Get('ai/calls')
@@ -96,6 +153,12 @@ export class AdminController {
   @Get('ai/by-agent')
   aiByAgent(@Query('hours') hours?: string) {
     return this.admin.aiByAgent(Number(hours) || 24);
+  }
+
+  /** Real per-model roll-up for the Model Usage panel. */
+  @Get('ai/by-model')
+  aiByModel(@Query('hours') hours?: string) {
+    return this.admin.aiByModel(Number(hours) || 24);
   }
 
   @Get('ai/timeseries')
@@ -234,6 +297,131 @@ export class AdminController {
   @Post('users/set-admin')
   setAdmin(@Body() body: SetAdminDto, @Req() req: { user?: { sub?: string } }) {
     return this.admin.setAdmin(body.email, body.isAdmin, req.user?.sub ?? 'unknown');
+  }
+
+  // ------------------------------------------------------------- cognition
+
+  /**
+   * Layer stack, sensor roster and weight statistics. The page's first paint.
+   *
+   * Served off `CognitionService` rather than `AdminService` because this is the
+   * network's *live* state, not a Prisma read — and because `AdminService` is
+   * also provided standalone inside `ControlModule`, which does not import
+   * `CognitionModule`. A dependency added there takes the control plane down at
+   * boot. Live state goes on the controller; queries go in the service.
+   */
+  @Get('cognition/overview')
+  cognitionOverview() {
+    return this.cognition.snapshot();
+  }
+
+  /** Sensor definitions joined to live health. Same reasoning as above. */
+  @Get('cognition/perceptors')
+  cognitionPerceptors() {
+    return this.cognition.perceptors();
+  }
+
+  @Get('cognition/episodes')
+  cognitionEpisodes(
+    @Query('limit') limit?: string,
+    @Query('domain') domain?: string,
+    @Query('status') status?: string,
+    @Query('hours') hours?: string,
+    @Query('unscoredOnly') unscoredOnly?: string,
+  ) {
+    return this.admin.cognitionEpisodes({
+      limit: Number(limit),
+      domain,
+      status,
+      hours: Number(hours),
+      unscoredOnly: unscoredOnly === 'true',
+    });
+  }
+
+  @Get('cognition/episodes/:episodeId')
+  cognitionEpisode(@Param('episodeId') episodeId: string) {
+    return this.admin.cognitionEpisode(episodeId);
+  }
+
+  /** Per-domain percept ingestion + derived rate for the Perceptor Domains panel. */
+  @Get('cognition/domains')
+  cognitionDomains(@Query('hours') hours?: string) {
+    return this.admin.cognitionDomains(Number(hours) || 24);
+  }
+
+  @Get('cognition/percepts')
+  cognitionPercepts(
+    @Query('limit') limit?: string,
+    @Query('domain') domain?: string,
+    @Query('perceptorId') perceptorId?: string,
+    @Query('hours') hours?: string,
+  ) {
+    return this.admin.cognitionPercepts({ limit: Number(limit), domain, perceptorId, hours: Number(hours) });
+  }
+
+  @Get('cognition/synapses')
+  cognitionSynapses(
+    @Query('limit') limit?: string,
+    @Query('layer') layer?: string,
+    @Query('provenOnly') provenOnly?: string,
+  ) {
+    return this.admin.cognitionSynapses({ limit: Number(limit), layer, provenOnly: provenOnly === 'true' });
+  }
+
+  @Get('cognition/proposals')
+  cognitionProposals(
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+    @Query('domain') domain?: string,
+    @Query('hours') hours?: string,
+  ) {
+    return this.admin.cognitionProposals({ limit: Number(limit), status, domain, hours: Number(hours) });
+  }
+
+  /**
+   * Turn a sensor on or off.
+   *
+   * One of only three writes this controller offers, and the reason it exists
+   * is operational: a perceptor that has started flooding must be stoppable
+   * without a deploy, during the incident it is making worse. The decision is
+   * persisted, so it survives the restart that follows.
+   */
+  @Post('cognition/perceptors/:id/enabled')
+  setPerceptorEnabled(@Param('id') id: string, @Body() body: SetPerceptorEnabledDto) {
+    return this.cognition.setPerceptorEnabled(id, body.enabled).then(() => ({ ok: true }));
+  }
+
+  /**
+   * Resolve a proposal, which is also how the network gets told it was wrong.
+   *
+   * This is the platform's only source of a negative training label. Every other
+   * signal available to the network is "something happened"; a dismissal is a
+   * human saying "and it did not matter", attached to a specific chain of
+   * activations while the eligibility traces are still live. Without this
+   * endpoint the weights only ever move in one direction.
+   */
+  @Post('cognition/proposals/:id/resolve')
+  resolveProposal(
+    @Param('id') id: string,
+    @Body() body: ResolveProposalDto,
+    @Req() req: { user?: { sub?: string } },
+  ) {
+    return this.cognition
+      .resolveProposal(id, body.status, req.user?.sub ?? 'unknown', body.resolution)
+      .then(() => ({ ok: true }));
+  }
+
+  /**
+   * Run a pass now, rather than waiting for the tick.
+   *
+   * Deliberately not a way to inject percepts — it senses the same sources the
+   * scheduled pass does. An operator endpoint that could fabricate observations
+   * would put arbitrary content into the network's permanent memory through the
+   * one door that skips every producer's own validation.
+   */
+  @Post('cognition/run')
+  runPass(@Body() body: RunPassDto) {
+    return this.cognition.runPass({ trigger: 'manual', domain: body.domain });
   }
 }
 

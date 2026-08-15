@@ -5,6 +5,8 @@ import { randomBytes, createHash } from 'crypto';
 import { OtpPurpose } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from './otp.service';
+import { MailService } from '../mail/mail.service';
+import { loginAlert, passwordChanged } from '../mail/templates';
 
 type RequestMeta = { ip?: string; userAgent?: string };
 
@@ -16,7 +18,28 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly otp: OtpService,
+    private readonly mail: MailService,
   ) {}
+
+  /** Human-readable IST timestamp for security emails — the audience is Indian
+   *  retail traders, so local time is what "was this me?" is judged against. */
+  private nowLabel(): string {
+    return new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) + ' IST';
+  }
+
+  /**
+   * Fire-and-forget security email on a successful sign-in.
+   *
+   * Modelled on `audit()` below: it must NEVER make a login slower or turn a
+   * transient SMTP hiccup into a failed sign-in, so it is not awaited by the
+   * caller and swallows its own errors. A synthetic phone placeholder address
+   * (`…@phone.tradew.local`) is skipped — nobody reads that mailbox.
+   */
+  private notifyLogin(email: string, method: 'password' | 'google' | 'phone', meta: RequestMeta): void {
+    if (!email || email.endsWith('@phone.tradew.local')) return;
+    const mail = loginAlert({ email, method, when: this.nowLabel(), ip: meta.ip, userAgent: meta.userAgent });
+    void this.mail.send(email, mail.subject, mail.text, mail.html).catch(() => undefined);
+  }
 
   /**
    * Password reset — step 1: email a one-time code.
@@ -63,6 +86,11 @@ export class AuthService {
       data: { revokedAt: new Date() },
     });
     await this.audit('user.password_reset.success', user.id, meta);
+    // Security email, fire-and-forget (same discipline as notifyLogin): the
+    // password change has already been committed; email delivery must not be
+    // able to roll it back or slow it down.
+    const changed = passwordChanged({ email: user.email, when: this.nowLabel(), ip: meta.ip });
+    void this.mail.send(user.email, changed.subject, changed.text, changed.html).catch(() => undefined);
     return { ok: true };
   }
 
@@ -96,6 +124,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
     await this.audit('user.login.success', user.id, meta);
+    this.notifyLogin(user.email, 'password', meta);
     return this.issue(user.id, user.email);
   }
 
@@ -125,6 +154,7 @@ export class AuthService {
     const linked = await this.prisma.user.findUnique({ where: { googleId: profile.googleId } });
     if (linked) {
       await this.audit('user.login.success', linked.id, meta, { method: 'google' });
+      this.notifyLogin(linked.email, 'google', meta);
       return this.issue(linked.id, linked.email);
     }
 
@@ -185,6 +215,7 @@ export class AuthService {
         data: { phoneVerifiedAt: new Date() },
       });
       await this.audit('user.login.success', existing.id, meta, { method: 'phone' });
+      this.notifyLogin(existing.email, 'phone', meta);
       return this.issue(existing.id, existing.email);
     }
 

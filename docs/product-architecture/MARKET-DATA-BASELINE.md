@@ -12,6 +12,10 @@
 > - **§5 / §7** — the two divergent simulators are gone. One engine now lives in
 >   `@tradew/market-data`; both originals are preserved under `archive/`. The
 >   High-severity duplicate-simulator debt is resolved.
+> - **§8+ (`Candle`)** — the `Candle` model now **exists** (Migration 2 shipped) and
+>   real historical/intraday candles are served; the "does not exist yet" notes
+>   below are historical. `OptionMetrics` is still not a persisted model — option
+>   OI/IV/Greeks are served live via the Dhan bridge rather than stored.
 > - **§6** — "no live provider" still holds, but the *architecture* for one is
 >   in place: `services/market-data` is now a real ingestion runtime.
 >

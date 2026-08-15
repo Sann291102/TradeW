@@ -376,6 +376,25 @@ export interface SafetyCardData {
   source: string;
   pinned?: boolean;
   /**
+   * The contract side this card is actually about, or absent when it is about
+   * no side at all.
+   *
+   * Load-bearing: the "Side in Focus" ActionLabel is reached by two unrelated
+   * routes. One is the genuine directional read from `sideInFocus` (which
+   * resolves CE/PE from its own bias and is the only thing that ever knows a
+   * side). The other is a bare pattern detection — `cpr_breakout_bounce`,
+   * `orb_retest`, `vwap_pullback`, `ema_cross_bounce` all map to the same
+   * label via ACTION_MAP and carry **no side whatsoever**.
+   *
+   * This used to be recovered in the view by substring-matching the
+   * explanation for 'CE'/'PE', which failed both ways: a bearish CPR
+   * breakdown matched neither and fell through to a bullish "CE CALL" badge,
+   * while any incidental uppercase 'PE' (as in "OPEN range") forced "PE PUT".
+   * Carrying the side as data means a card that has no side renders no side.
+   */
+  side?: 'CE' | 'PE';
+  bias?: 'bullish' | 'bearish';
+  /**
    * Whether this warrants *pushing* to the Live Safety Feed right now, vs. only
    * living in the timeline/history. The feed is meant to fire when a genuine
    * setup or behavior is experienced — not to echo every routine market reading
@@ -485,11 +504,24 @@ export function extractSafetyFeed(
       ],
       source: 'Strategy Engine',
       pinned: true,
+      // The one card that genuinely knows a side.
+      side: sideInFocus.side,
+      bias: sideInFocus.bias,
       pushworthy: true,
     });
   }
 
-  if (synthesis) {
+  // The synthesis is an LLM rewrite of evidence the observations already
+  // carry, so when it restates a pattern that is itself in the feed the user
+  // reads the same signal twice — once as the terse evidence line and once as
+  // a padded "evidence -> pattern -> soft suggestion" paragraph. The
+  // observation is the one that survives: it is the measurement, and the
+  // rewrite is where the tutor voice enters.
+  const observedPatterns = new Set(
+    observations.filter((o) => o.agent !== 'compliance-audit').map((o) => o.pattern).filter(Boolean),
+  );
+
+  if (synthesis && !observedPatterns.has(synthesis.pattern)) {
     cards.push({
       id: 'synthesis',
       action: ACTION_MAP[synthesis.pattern] ?? 'Wait & Watch',
@@ -532,6 +564,25 @@ export function extractSafetyFeed(
  *  genuine setups/behaviors only. The full list still feeds the timeline. */
 export function pushworthyCards(cards: SafetyCardData[]): SafetyCardData[] {
   return cards.filter((c) => c.pushworthy);
+}
+
+/**
+ * The CE/PE badge a card is entitled to show, or null for no badge.
+ *
+ * Deliberately a pure function here rather than a few ternaries inside
+ * `SafetyCard`. Whether a card may claim a direction is a data question, and
+ * keeping it in the view is what allowed the original defect: the badge was
+ * derived by `explanation.includes('PE')`, so a card with no side at all still
+ * rendered one — always "CE CALL", because that was the fallback branch — and
+ * a bearish detection therefore displayed a bullish badge over bullish
+ * styling. Expressed here it is testable in the node-environment suite,
+ * without pulling component rendering into a config that documents that it
+ * must not collect component tests.
+ */
+export function contractBadge(card: SafetyCardData): { side: 'CE' | 'PE'; label: string; tone: 'up' | 'down' } | null {
+  if (card.side === 'CE') return { side: 'CE', label: 'CE CALL', tone: 'up' };
+  if (card.side === 'PE') return { side: 'PE', label: 'PE PUT', tone: 'down' };
+  return null;
 }
 
 const LESSON_MAP: Record<ActionLabel, { title: string; blurb: string }> = {

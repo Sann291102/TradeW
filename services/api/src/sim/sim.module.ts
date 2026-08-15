@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { DisciplineModule } from '../discipline/discipline.module';
+import { NotificationModule } from '../notification/notification.module';
 import { SimController } from './sim.controller';
 import { HoldingsController } from './holdings.controller';
 import { TradeHistoryController } from './trade-history.controller';
@@ -13,6 +14,7 @@ import { SettlementService } from './settlement.service';
 import { HoldingsService } from './holdings.service';
 import { TradeHistoryService } from './trade-history.service';
 import { PerformanceService } from './performance.service';
+import { EodSummaryService } from './eod-summary.service';
 
 /**
  * Paper Trading OMS. `MarketDataModule` is no longer imported here — the OMS
@@ -25,7 +27,7 @@ import { PerformanceService } from './performance.service';
  * UI — so they bind any client that reaches `/sim/orders`, not just the web app.
  */
 @Module({
-  imports: [DisciplineModule],
+  imports: [DisciplineModule, NotificationModule],
   controllers: [SimController, HoldingsController, TradeHistoryController, PerformanceController],
   providers: [
     MarketPriceService,
@@ -37,6 +39,7 @@ import { PerformanceService } from './performance.service';
     HoldingsService,
     TradeHistoryService,
     PerformanceService,
+    EodSummaryService,
   ],
 })
 export class SimModule {}

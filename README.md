@@ -74,7 +74,7 @@
                     │ services│   │ services │   │  services │
                     │   /api  │   │/tradew-ai│   │ /sentinel │
                     │ NestJS  │   │  LLM     │   │  LLM      │
-                    │ GraphQL │   │ Agents   │   │ Agents    │
+                    │REST/OAPI│   │ Agents   │   │ Agents    │
                     └────┬────┘   └──────┬───┘   └─────┬──────┘
                          │               │             │
         ┌────────────────┼───────────────┼─────────────┤
@@ -93,28 +93,31 @@
           └─────────────────────────────┘
 ```
 
+> Also under the Sentinel umbrella: **`services/sentinel-py`** (Python/FastAPI, port 4011) — the personal strategy watcher, called only by `services/api`, reading the same Postgres. And **`apps/admin`** (Next.js, port 3001) — the standalone operator console, which talks to `services/api` through an authenticated proxy. Both are omitted from the diagram above for space.
+
 ### Monorepo Structure
 
 ```
 TradeW/
 ├── apps/
 │   ├── web/           🟢 Next.js — Core Platform, Research, Sentinel, Learning workspaces + in-app AI assistant
-│   ├── terminal/      🟢 Static full-screen trading terminal shell
-│   ├── admin/         🟡 Internal ops console — KYC, audit logs, DLQ, user mgmt
+│   ├── admin/         🟢 Standalone Next.js operator console (port 3001) — command centers + cognition graph
 │   └── mobile/        🟡 React Native — roadmap v0.9
+│                      (apps/terminal was retired → archive/apps-terminal-legacy-prototype)
 │
 ├── services/
-│   ├── api/           🟢 NestJS — single public ingress, auth, OMS, aggregation (14 modules)
+│   ├── api/           🟢 NestJS — single public ingress, auth, OMS, entitlements, payments, aggregation
 │   ├── market-data/   🟢 NestJS ingestor + standalone live Dhan feed bridge (port 4600)
-│   ├── sentinel/      🟢 Safety-net service — backtest engine, brain, orchestrator, ontology (44 TS files)
-│   ├── trading-engine/🟡 Python/Flask — order execution, webhook intake (README only; OMS lives in services/api/sim)
-│   ├── tradew-ai/     🟡 Research backend service (README only; foundation in packages/ai-core)
+│   ├── sentinel/      🟢 Safety-net service — backtest engine, brain, orchestrator, ontology (port 4010)
+│   ├── sentinel-py/   🟢 Python/FastAPI personal strategy watcher (port 4011) — parse → watch → alert, never auto-trades
+│   ├── trading-engine/🟡 Python/Dhan — order execution, webhook intake (README only; OMS lives in services/api/sim)
+│   ├── tradew-ai/     🟡 Research backend service (thin scaffold; foundation in packages/ai-core)
 │   ├── notification/  🟡 Alert fanout (in-app notifications live in services/api)
 │   ├── auth/          🟡 JWT/refresh tokens (auth currently lives in services/api)
 │   └── analytics/     ⚪ Portfolio/PnL analytics, eventual ClickHouse aggregation
 │
 ├── packages/
-│   ├── database/      🟢 Prisma schema (36 models), migrations (centralized)
+│   ├── database/      🟢 Prisma schema (53 models), migrations (centralized)
 │   ├── ai-core/       🟢 AI foundation — providers, memory, RAG, agents, news classifier
 │   ├── market-data/   🟢 Shared instrument/quote helpers
 │   ├── types/         🟡 Shared TypeScript interfaces/DTOs
@@ -160,9 +163,10 @@ TradeW/
 | **services/api** | NestJS aggregator — the single public API gateway. Handles auth, OMS, entitlements, market data, broker OAuth, discipline, news, notifications, and calls internal services. | 🟢 Running, 14 modules mapped |
 | **services/market-data** | NestJS quote ingestor **plus** a standalone live Dhan feed bridge (port 4600) serving real quotes, charts and option chains to the app. | 🟢 Live feed bridge in use; NestJS ingestor writes Postgres `Quote` |
 | **services/sentinel** | Safety-net service — EMA-cross backtest engine on real Dhan candles, persistent knowledge brain, orchestrator, state machine, compliance, ontology. Internal-only (service token). | 🟢 Running as its own service (port 4010) |
-| **services/trading-engine** | Python/Flask engine for webhook-driven strategy execution. | 🟡 README only; the paper-trading OMS is implemented in `services/api/src/sim` |
+| **services/sentinel-py** | Python/FastAPI **personal strategy watcher** — parses the user's own text strategy into rules, watches live candles (`IDLE→FORMING→CONFIRMED`), in-trade R-multiple monitoring, alerts via `services/api`. Internal-only (service token); never proposes/auto-trades. | 🟢 Running (port 4011); P0–P4 complete |
+| **services/trading-engine** | Python/Dhan engine for webhook-driven strategy execution. | 🟡 README only; the paper-trading OMS is implemented in `services/api/src/sim` |
 | **services/tradew-ai** | LLM-powered Research *backend* agents (Company Analysis, News, Technical, Strategy Builder). | 🟡 README only; the AI foundation is in `packages/ai-core` and the in-app assistant in `apps/web` |
-| **packages/database** | Centralized Prisma schema (36 models) and migration history. Single source of truth for schema. | 🟢 17 migrations applied, 100% synced |
+| **packages/database** | Centralized Prisma schema (53 models) and migration history. Single source of truth for schema. | 🟢 28 migrations applied, 100% synced |
 | **packages/ai-core** | AI foundation: provider abstraction (Anthropic, OpenAI-compatible, Voyage, research), memory, RAG, prompts, tools, news classifier. | 🟢 Built; consumed by services |
 | **packages/types** | Shared TypeScript DTOs/interfaces — source of truth for all API contracts. | 🟡 Framework exists; incomplete |
 | **packages/ui** | Design-system React components extracted from Emergent mockups. Binding for all apps. | 🟡 Design spec in `docs/design-reference/DESIGN-SYSTEM.md`; components still being extracted |
@@ -234,7 +238,9 @@ TradeW/
 - **Authentication & Authorization**
   - JWT-based sign-up/login/refresh with bcrypt password hashing
   - Rotating refresh tokens (stored hashed; revoked-on-use)
-  - Email one-time-code foundation (`EmailOtp` model, `OtpService`, SMTP mailer) — enumeration-safe, brute-force-throttled
+  - Email one-time-code foundation (`Otp` model, `OtpService`, SMTP mailer) — enumeration-safe, brute-force-throttled
+  - Branded transactional emails (`mail/templates.ts`): HTML+text templates for OTP, **login-alert on every sign-in**, password-changed, payment receipts and the EOD summary — one template layer, sent as `admin@tradew-setup.com`
+  - Google sign-in (OAuth 2.0) — wired end-to-end; enabled by setting `GOOGLE_CLIENT_ID/SECRET`
   - User profile + preferences (persistent settings)
   - Audit logging (all events tracked with IP, user agent, metadata)
 
@@ -265,13 +271,31 @@ TradeW/
   - Trap detection concept catalog (built-in patterns: bull_trap, fake_breakout, etc.)
   - Internal-only: gated by a shared service token, never publicly exposed
 
+- **Sentinel-py — Personal Strategy Watcher (`services/sentinel-py`, Python/FastAPI)**
+  - Deterministic text-strategy parser → rules; live-candle sweep loop with an `IDLE → FORMING → CONFIRMED` state machine and cooldown
+  - In-trade monitoring after the user marks a position taken: R-multiple milestones (1R/2R/3R), invalidation, projected-level and structure-break (risk read from the adverse extreme, reward from the close)
+  - Confirmations/milestones pushed as `Notification` rows via `services/api` with per-trading-day dedupe; a compliance gate blocks any Buy/Sell/Entry/Target/Stop string
+  - Backed by `UserStrategy` / `WatchSession` / `WatchObservation`; sweep gated on a `JobLease`; internal-only (service token); the Sentinel strategy workspace ("write, watch, follow") in `apps/web` drives it
+
+- **Cognition Network (`packages/ai-core/src/cognition`)**
+  - Four-layer perceptor network (17 perceptors), event dispatcher, online Hebbian weights; `/admin/cognition` neural-layers console
+  - Off by default; proposals never self-execute. Backed by `Percept` / `PerceptorState` / `CognitiveEpisode` / `CognitiveProposal` / `NeuralSynapse`
+
 - **Discipline & Guardrails**
   - `DisciplineSession` / `DisciplineOverride` with per-session trade & loss limits and cooldowns
   - Market-calendar awareness (holiday/weekend logic, unit-tested)
 
 - **Market News & Notifications**
   - Real financial newswires (Economic Times, Moneycontrol RSS) on a public Market News route, de-duplicated, cached, newest-first
-  - Persistent notifications with a typed `NotificationCategory` enum
+  - Persistent notifications with a typed `NotificationCategory` enum, backed end-to-end: bell badge, drawer and `/notifications` page all read the real `/notifications` API via a 30s live sync, with a synthesized "TradeW mark" chime on new arrivals (and on new Sentinel live-feed observations) — mutable per user
+
+- **Payments (Razorpay, seam)**
+  - `services/api/src/payments/` — order creation, signature-verified checkout callback, and an authoritative webhook, all fulfilling through `EntitlementsService.activate` (idempotent on the Razorpay payment id — never double-grants)
+  - Premium checkout page (`apps/web/.../checkout`) for Sentinel Pro terms; honestly reports `billingEnabled:false` until `RAZORPAY_KEY_ID/SECRET` are set — no account can be charged out of the box
+  - Payment receipt / processing / failed email templates
+
+- **End-of-Day Summary Email**
+  - Daily portfolio value + P&L + orders wrap-up, gated by leader-election, trading-day, after-close-hour and once-per-user-per-day — off by default (`EOD_EMAIL_ENABLED=true` to turn on)
 
 - **Broker Integration (Dhan OAuth "consent" flow)**
   - Per-user broker credential ownership; CSRF/replay-protected OAuth state; single feed-default row for the shared bridge
@@ -289,7 +313,7 @@ TradeW/
   - Trial periods, grace periods, cancellation tracking
 
 - **Database**
-  - 36 models across the trading, market-data, AI, ontology, subscription, discipline, broker and news domains
+  - 53 models across the trading, market-data, AI, ontology, cognition, subscription, discipline, broker, strategy-watch and news domains
   - Full referential integrity with foreign keys; indexes on all hot paths
   - Partial unique index enforcing a single broker feed-default row
   - Soft-delete pattern for instruments (deactivate, never remove)
@@ -310,17 +334,24 @@ TradeW/
   - The *research* backend (`services/tradew-ai`) is a README only; the reasoning agents (chart read, support/resistance, option-chain interpretation) are parked for Phase 2
   - `packages/ai-core` provides the foundation (providers, memory, RAG) they will build on
 
-- **Email one-time codes**
-  - `EmailOtp` model, `OtpService` and SMTP mailer are built and unit-testable
-  - Not yet surfaced as public `/auth` OTP endpoints (foundation only)
-
 - **News intelligence**
   - Real headlines are served; a 13-category LLM classifier exists in `packages/ai-core` and a `NewsEvent` model exists
   - Classification is intentionally NOT wired to user-facing output pending compliance review
 
 - **Notifications**
-  - Persisted with categories and exposed via API
-  - Multi-channel fanout (email/Slack/push) not built
+  - Persisted with categories, exposed via API, live-synced in-app with sound (see Implemented)
+  - Slack/push channels not built; email is covered separately (login-alert, payment, EOD — see Implemented) rather than as generic per-notification fanout
+
+- **Admin Dashboard (`apps/admin`)**
+  - Operator-only Next.js console: token-gated session, Engine Health / Knowledge / Agents / Reasoning / Rules / Learning Platform / Observability / Audit modules, "View as Trader" passthrough
+  - Backed by real `services/api` `/admin/*` endpoints, double-gated (`isAdmin` JWT + shared `ADMIN_API_TOKEN`)
+  - Deliberately never public — see [`infra/docker/DEPLOY-DEV.md`](infra/docker/DEPLOY-DEV.md): loopback-bound + SSH tunnel only, no Caddy route
+  - Roadmap items still open: KYC review UI, DLQ retry worker UI
+
+- **Payments (Razorpay)**
+  - Order/checkout/webhook flow and entitlement fulfillment are implemented and idempotent
+  - `billingEnabled:false` until `RAZORPAY_KEY_ID/SECRET` are configured — no live gateway credentials wired yet, so nothing can be charged today
+  - Sells Sentinel Pro terms only; Learning Hub/demo-pass checkout not yet mapped to a plan
 
 ### 📅 Not Yet Implemented
 
@@ -338,11 +369,6 @@ TradeW/
 
 - **Public SDK/API**
   - OpenAPI spec generation and SDK codegen not configured (Phase 3)
-
-- **Admin Dashboard**
-  - `apps/admin` folder exists; no implementation yet
-  - Operator actions currently exposed as `ADMIN_API_TOKEN`-guarded routes in `services/api`
-  - Roadmap: KYC review, audit log viewer, DLQ retry, user mgmt
 
 - **Mobile App**
   - `apps/mobile` folder exists; no implementation yet (roadmap v0.9)
@@ -423,6 +449,7 @@ Expected output:
 
 ```bash
 npm run dev:sentinel        # Sentinel safety-net service (port 4010)
+npm run dev:sentinel-py     # Sentinel-py personal strategy watcher (port 4011, Python/FastAPI)
 npm run live:server -w @tradew/market-data-service   # live Dhan feed bridge (port 4600)
 ```
 
@@ -471,20 +498,54 @@ DHAN_ACCESS_TOKEN=                          # optional fallback for the feed bri
 SENTINEL_SERVICE_URL=http://localhost:4010
 SENTINEL_SERVICE_TOKEN=dev-sentinel-token-change-me-in-prod
 
-# Operator / admin API (guards /entitlements/admin/* and /broker/dhan/admin/*)
+# Operator / admin API (guards /entitlements/admin/*, /broker/dhan/admin/*,
+# and the whole apps/admin console via AdminGuard)
 ADMIN_API_TOKEN=            # leave empty to disable the admin surface (fails closed)
 
-# Outbound email (OTP). Leave blank in dev — the mailer logs the message and
-# OTP endpoints return the code as `devCode` so flows stay testable.
+# Outbound email (OTP, login alerts, password-changed, payment receipts, EOD
+# summary — see mail/templates.ts). Leave SMTP_* blank in dev — the mailer logs
+# the message and OTP endpoints return the code as `devCode` so flows stay
+# testable without credentials.
 SMTP_HOST=
 SMTP_PORT=587
 SMTP_USER=
 SMTP_PASS=
-MAIL_FROM=TradeW <no-reply@tradew.local>
+MAIL_FROM=TradeW · Setup <admin@tradew-setup.com>
+SUPPORT_EMAIL=admin@tradew-setup.com   # reply-to shown in email footers
+
+# Google Sign-In (services/api/src/auth/google-oauth.service.ts). Leave blank
+# to disable — /auth/google returns 503 and the button reports "not available".
+# Redirect URI registered in Google Cloud must equal GOOGLE_REDIRECT_URI exactly.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=http://localhost:4000/auth/google/callback
+API_PUBLIC_URL=http://localhost:4000
+
+# Payments — Razorpay (services/api/src/payments). Leave blank to keep billing
+# disabled (GET /payments/catalog reports billingEnabled:false).
+RAZORPAY_KEY_ID=
+RAZORPAY_KEY_SECRET=
+RAZORPAY_WEBHOOK_SECRET=       # from the Razorpay dashboard webhook config
+
+# End-of-day summary email. Off by default; requires SMTP configured above.
+EOD_EMAIL_ENABLED=false
+EOD_EMAIL_HOUR_IST=16
 
 # Knowledge Workspace (internal developer tool; reads TradeW/knowledge/)
 KNOWLEDGE_WORKSPACE_ENABLED=  # true=on, false=off, unset=on outside production
 KNOWLEDGE_ROOT=               # defaults to ../../knowledge relative to service
+```
+
+#### Admin Console (`apps/admin/.env`)
+
+```bash
+# services/api base URL this console talks to (server-side only, never sent to
+# the browser).
+ADMIN_API_URL=http://localhost:4000
+# The SAME shared secret as ADMIN_API_TOKEN above — must match exactly.
+ADMIN_API_TOKEN=
+# apps/web's URL, for the "View as Trader" passthrough.
+NEXT_PUBLIC_TRADEW_WEB_URL=http://localhost:3000
 ```
 
 #### Web App (`apps/web/.env.local`)
@@ -1161,9 +1222,10 @@ These are known, deliberately-deferred items — each documented in code where i
 
 **For Deployment/DevOps:**
 1. Read [`ARCHITECTURE.md`](ARCHITECTURE.md) §7 (Deployment)
-2. Review [`infra/docker/docker-compose.yml`](infra/docker/docker-compose.yml) (local dev) and [`docker-compose.prod.yml`](infra/docker/docker-compose.prod.yml) + [`Caddyfile`](infra/docker/Caddyfile) (production)
-3. Review [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) (CI/CD → ghcr.io → Oracle Cloud over SSH)
-4. `infra/k8s/` and `infra/terraform/` are notes only (future scaling)
+2. For a single-VPS dev/staging deploy, follow [`infra/docker/DEPLOY-DEV.md`](infra/docker/DEPLOY-DEV.md) end to end (provisioning → DNS → secrets → bring-up → optional operator console)
+3. Review [`infra/docker/docker-compose.yml`](infra/docker/docker-compose.yml) (local dev) and [`docker-compose.prod.yml`](infra/docker/docker-compose.prod.yml) + [`docker-compose.admin.yml`](infra/docker/docker-compose.admin.yml) (loopback-only operator console) + [`Caddyfile`](infra/docker/Caddyfile) (production)
+4. Review [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) (CI/CD → ghcr.io → Oracle Cloud over SSH)
+5. `infra/k8s/` and `infra/terraform/` are notes only (future scaling)
 
 ---
 

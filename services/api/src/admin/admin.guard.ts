@@ -29,6 +29,13 @@ import { PrismaService } from '../prisma/prisma.service';
  *
  * Fails closed on an unset `ADMIN_API_TOKEN` — an unconfigured deployment has
  * no admin API at all, rather than an open one.
+ *
+ * This is the PRODUCT-ADMIN path: a signed-in TradeW user who is also an
+ * operator, which is how `apps/web`'s in-product console authenticates. It is
+ * no longer wired to `AdminController` directly — `AdminAccessGuard` is, and it
+ * delegates here unchanged whenever no operator assertion is presented. Keep
+ * this class free of standalone-console concerns: the whole point of the split
+ * is that adding a second way in cannot alter the first one.
  */
 @Injectable()
 export class AdminGuard implements CanActivate {
@@ -80,6 +87,13 @@ export class AdminGuard implements CanActivate {
       : streamRoute && typeof req.query?.access_token === 'string'
         ? req.query.access_token
         : null;
+
+    // No second factor, no access. The standalone `apps/admin` console reaches
+    // this API through `AdminAccessGuard`'s operator path, which presents a
+    // signed operator assertion naming a real `OperatorAccount` — NOT the
+    // operator token on its own. A shared secret proves a process is trusted;
+    // it never proves which person is driving it, and `setAdmin` /
+    // `resolveProposal` both write that person into an audit trail.
     if (!token) {
       deny('admin.portal.no_session');
       throw new UnauthorizedException('Missing bearer token');
@@ -98,9 +112,6 @@ export class AdminGuard implements CanActivate {
       : null;
 
     if (!user?.isAdmin) {
-      // Logged at a distinct event from the token failures above: this is a
-      // real, authenticated user reaching for a surface they do not have, which
-      // is a materially different thing from an anonymous prober.
       deny('admin.portal.not_admin', { userId: claims.sub ?? null });
       throw new ForbiddenException('Not an admin');
     }

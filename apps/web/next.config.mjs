@@ -79,15 +79,26 @@ const connectSources = [
  *
  * Tightening `script-src` to nonces is worth doing and is not done here.
  */
+// Razorpay Checkout (services/api/src/payments). The widget is an external
+// script that opens payment frames and phones home to *.razorpay.com. These
+// origins are only ever contacted once a signed-in user opens checkout with
+// billing enabled; listing them here does not weaken the default-deny posture
+// for every other route. Kept as a named constant so the payment surface's CSP
+// footprint is auditable in one place rather than smeared across directives.
+const RAZORPAY_SCRIPT = 'https://checkout.razorpay.com';
+const RAZORPAY_FRAME = 'https://api.razorpay.com https://checkout.razorpay.com';
+const RAZORPAY_CONNECT = 'https://*.razorpay.com https://lumberjack.razorpay.com';
+
 const csp = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isProd ? '' : " 'unsafe-eval'"}`,
+  `script-src 'self' 'unsafe-inline' ${RAZORPAY_SCRIPT}${isProd ? '' : " 'unsafe-eval'"}`,
   // Tailwind and the design system inject style tags; inline styles are not a
   // script-execution vector.
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
-  `connect-src ${connectSources}`,
+  `connect-src ${connectSources} ${RAZORPAY_CONNECT}`,
+  `frame-src 'self' ${RAZORPAY_FRAME}`,
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",

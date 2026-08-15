@@ -18,7 +18,7 @@ And, from the tokens file itself:
  * reference first, then mirror it. */
 ```
 
-> ⚠️ **`apps/terminal` is not an application.** It is static HTML kept as the canonical reference. Do not delete it — deleting it makes the token values unverifiable.
+> ⚠️ **`apps/terminal` is not an application** and has since been **moved to `archive/apps-terminal-legacy-prototype/`** (archived, not deleted — Rule 1). The `tokens.css` docstring quoted above still names the old `apps/terminal/index.html` path; read it as `archive/apps-terminal-legacy-prototype/index.html`. The tokens in `packages/ui/src/styles/tokens.css` are now the operational source of truth; the archived HTML remains the historical reference behind their values.
 
 **The rule: change the canonical reference first, then mirror it into tokens.** A colour "improved" directly in `tokens.css` silently forks the design system from its own source of truth.
 

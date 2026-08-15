@@ -1,0 +1,20 @@
+{
+  "components\\trade\\TradeWorkspace.tsx -> ../terminal/panels/ChartPanel": {
+    "id": "components\\trade\\TradeWorkspace.tsx -> ../terminal/panels/ChartPanel",
+    "files": [
+      "static/chunks/_app-pages-browser_src_components_terminal_panels_ChartPanel_tsx.js"
+    ]
+  },
+  "components\\workspace\\panel-registry.tsx -> ../terminal/panels/ChartPanel": {
+    "id": "components\\workspace\\panel-registry.tsx -> ../terminal/panels/ChartPanel",
+    "files": [
+      "static/chunks/_app-pages-browser_src_components_terminal_panels_ChartPanel_tsx.js"
+    ]
+  },
+  "components\\workspace\\panel-registry.tsx -> ../terminal/panels/OptionChainPanel": {
+    "id": "components\\workspace\\panel-registry.tsx -> ../terminal/panels/OptionChainPanel",
+    "files": [
+      "static/chunks/_app-pages-browser_src_components_terminal_panels_OptionChainPanel_tsx.js"
+    ]
+  }
+}

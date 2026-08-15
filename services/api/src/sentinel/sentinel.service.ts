@@ -1,5 +1,6 @@
 import { BadGatewayException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { SentinelEventDispatcher } from './sentinel-event-dispatcher.service';
 
 /**
  * services/api side of Sentinel — the ONLY caller of the internal Sentinel
@@ -11,7 +12,10 @@ import { PrismaService } from '../prisma/prisma.service';
  */
 @Injectable()
 export class SentinelApiService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventDispatcher: SentinelEventDispatcher,
+  ) {}
 
   private get baseUrl(): string {
     return (process.env.SENTINEL_SERVICE_URL ?? 'http://localhost:4010').replace(/\/$/, '');
@@ -116,7 +120,18 @@ export class SentinelApiService {
       }
       throw new BadGatewayException(`Sentinel service error: ${res.status}`);
     }
-    return res.json();
+    const observation = await res.json();
+
+    // Durable delivery of whatever this observation produced. Fire-and-forget,
+    // modelled on the `audit()` / login-email pattern already used here: the
+    // observation is the product, a notification row is a consequence of it,
+    // and awaiting the consequence would put a database write on the critical
+    // path of a 45s poll from every open workspace. `dispatch` never rejects,
+    // so the `catch` is belt-and-braces against an unhandled rejection warning
+    // rather than an expected path.
+    void this.eventDispatcher.dispatch(userId, observation).catch(() => undefined);
+
+    return observation;
   }
 
   /**

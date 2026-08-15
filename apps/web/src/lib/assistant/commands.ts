@@ -1,6 +1,7 @@
 import { NAV_ITEMS } from '@/components/shell/nav-config';
 import type { PanelKind, ThemeName } from '../store/workspaceStore';
 import { commandPlan, type AssistantAction, type AssistantPlan } from './types';
+import { EXPLAIN_RE as CONCEPT_EXPLAIN_RE } from './concepts';
 import { contractHref, findSymbol, parseContract } from './instruments';
 
 /**
@@ -44,7 +45,17 @@ const VIEW_ALIASES: ReadonlyArray<{ view: string; label: string; aliases: string
   { view: 'depth', label: 'Market Depth', aliases: ['market depth', 'depth', 'order book'] },
   { view: 'technicals', label: 'Technicals', aliases: ['technicals', 'technical indicators', 'indicators'] },
   { view: 'markets', label: 'Markets', aliases: ['markets tab', 'market movers'] },
-  { view: 'charts', label: 'Charts', aliases: ['candles', 'candlestick'] },
+  // 'chart'/'charts' were MISSING here, so "show the chart" — the single most
+  // obvious way to ask for this tab — matched nothing at all. Only 'candles'
+  // and 'candlestick' worked, which nobody guesses. Bare 'chart' is safe
+  // despite "open RELIANCE chart" also being a symbol command: the resolver
+  // below folds `findSymbol` into the same href, so both phrasings land on the
+  // same place.
+  {
+    view: 'charts',
+    label: 'Charts',
+    aliases: ['chart', 'charts', 'price chart', 'chart view', 'candles', 'candlestick'],
+  },
 ];
 
 /**
@@ -85,6 +96,7 @@ export function resolveCommand(text: string, today = new Date()): AssistantPlan 
 
   return (
     matchContract(t, today) ??
+    matchDetect(t) ??
     matchTheme(lower) ??
     matchOverlay(lower) ??
     matchLayout(lower) ??
@@ -125,6 +137,67 @@ function matchContract(text: string, today: Date): AssistantPlan | null {
   }
 
   return commandPlan(reply, [{ type: 'selectSymbol', symbol: c.symbol }, { type: 'navigate', href }], steps);
+}
+
+// --- chart detection -------------------------------------------------------
+
+/** Names for the one detector that exists. "Imbalance" is the same thing. */
+const FVG_RE = /\b(fvgs?|fair\s+value\s+gaps?|imbalances?)\b/i;
+
+/** "clear the fvgs", "get rid of the gaps". */
+const ERASE_VERB = /\b(clear|erase|delete|get\s+rid\s+of|take\s+(?:them\s+)?off|remove|hide)\b/i;
+
+/**
+ * Phrasings that make the CHART the object of the question rather than the
+ * concept: "what's the FVG **on this chart**" wants rectangles, "what is an
+ * FVG" wants an explanation.
+ */
+const CHART_SCOPED_RE = /\b(on (?:the|this|my) chart|on screen|on the screen|right now|currently|here\b)/i;
+
+/**
+ * Detection commands — "FVG", "mark the fair value gaps", "clear the gaps".
+ *
+ * ── THE COLLISION THIS FUNCTION EXISTS TO NOT CAUSE ────────────────────────
+ *
+ * `router.ts` runs command resolution BEFORE concept questions, deliberately.
+ * That ordering is safe for navigation ("open the FVG chart" really is
+ * navigation) but it is a trap for a detector, because "what is a fair value
+ * gap" contains the same words as "mark the fair value gaps". Resolving that
+ * as a command would answer a question by drawing on the chart — precisely the
+ * regression `concepts.ts` was written to fix, reintroduced from the other
+ * side of the pipeline.
+ *
+ * So an explain-phrasing hands control back to `concepts.ts` by returning
+ * null, using that module's own exported regex rather than a second copy of
+ * it. The one exception is an utterance that names the chart as its subject,
+ * where "what are the FVGs on this chart" is plainly a request to look.
+ *
+ * ── WHY THIS NAVIGATES ─────────────────────────────────────────────────────
+ *
+ * Detection needs a chart on screen, and this resolver is pure — it cannot see
+ * which route the user is on. Opening `/trade` guarantees there is something to
+ * draw on. It is reversible in one click, which is why `safety.ts` leaves the
+ * whole plan in the `free` tier.
+ */
+function matchDetect(text: string): AssistantPlan | null {
+  if (!FVG_RE.test(text)) return null;
+  if (CONCEPT_EXPLAIN_RE.test(text) && !CHART_SCOPED_RE.test(text)) return null;
+
+  if (ERASE_VERB.test(text)) {
+    return commandPlan('Cleared the fair value gaps.', [{ type: 'chartClearDrawings', tag: 'fvg' }], [
+      'Classified → clear drawings',
+      'Removed the fvg layer (other drawings untouched)',
+    ]);
+  }
+
+  return commandPlan(
+    'Marking fair value gaps on the chart…',
+    [
+      { type: 'navigate', href: '/trade' },
+      { type: 'chartDetect', detector: 'fvg' },
+    ],
+    ['Classified → chart detection', 'Detector → fair value gaps'],
+  );
 }
 
 // --- theme -----------------------------------------------------------------

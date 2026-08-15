@@ -91,6 +91,27 @@ export const SparkleIcon = (p: IconProps) => (
     <path d="M12 3l1.8 4.9L19 9.6l-4.9 1.8L12 16l-2.1-4.6L5 9.6l5.2-1.7L12 3z" strokeWidth={1.4} />
   </svg>
 );
+/** Tara is speaking / is muted — the voice-output toggle on the assistant dock. */
+export const SpeakerIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+    <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
+  </svg>
+);
+export const SpeakerOffIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+    <path d="m16 9 5 6M21 9l-5 6" />
+  </svg>
+);
+
+/** Voice input on the assistant dock. */
+export const MicIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <rect x="9" y="3" width="6" height="11" rx="3" />
+    <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+  </svg>
+);
 export const MenuIcon = (p: IconProps) => (
   <svg {...base} {...p}>
     <path d="M4 7h16M4 12h16M4 17h16" />

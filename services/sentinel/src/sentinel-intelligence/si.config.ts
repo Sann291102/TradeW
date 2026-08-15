@@ -46,7 +46,14 @@ export interface SentinelIntelligenceConfig {
   maxCitationsPerVerdict: number;
   /** Retrieval fan-out per knowledge query. */
   retrievalLimit: number;
-  /** Auto-index the corpus at boot. Off by default — indexing is I/O heavy. */
+  /**
+   * Warm the corpus at boot, in the background. On by default;
+   * `SI_INDEX_ON_BOOT=false` leaves the corpus to be built by the first
+   * `/reason`. See `SentinelIntelligenceService.scheduleCorpusWarmup` for why
+   * this is deferred rather than awaited during the lifecycle hook — the "I/O
+   * heavy" concern this flag was originally created for is real, and is
+   * answered by running off the boot path rather than by not running.
+   */
   indexOnBoot: boolean;
   /** Run the continuous market watch. `SI_WATCH_ENABLED=false` disables it. */
   watchEnabled: boolean;
@@ -56,6 +63,12 @@ export interface SentinelIntelligenceConfig {
   watchMaxSymbols: number;
   /** How long a symbol stays watched after the last request that touched it. */
   watchTtlMs: number;
+  /**
+   * Hold a watch to the end of the trading session rather than only for
+   * `watchTtlMs` past the last request. On by default;
+   * `SI_WATCH_PERSIST_SESSION=false` restores pure-TTL behaviour.
+   */
+  watchPersistThroughSession: boolean;
   /** Minimum gap before the same symbol+pattern may be recorded again. */
   watchRecordCooldownMs: number;
   /** Run the full reasoning pipeline when the watch finds a new setup. */
@@ -114,7 +127,13 @@ const DEFAULT_WATCH_INTERVAL_MS = 60_000;
  */
 const DEFAULT_WATCH_MAX_SYMBOLS = 12;
 
-/** A board nobody has touched for half an hour stops being watched. */
+/**
+ * Floor on how long a watch survives with nobody asking about the symbol.
+ *
+ * With `watchPersistThroughSession` on — the default — this is only the floor
+ * that applies outside the session; inside it, a watch runs to the close. See
+ * `MarketWatchService.expiryFor`.
+ */
 const DEFAULT_WATCH_TTL_MS = 30 * 60_000;
 
 /**
@@ -200,7 +219,13 @@ export function loadSentinelIntelligenceConfig(
     requireLivePerformance: env.SI_REQUIRE_LIVE_PERFORMANCE === 'false' ? false : DEFAULT_REQUIRE_LIVE_PERFORMANCE,
     maxCitationsPerVerdict: Math.max(1, positiveInt(env.SI_MAX_CITATIONS, 6)),
     retrievalLimit: Math.max(1, positiveInt(env.SI_RETRIEVAL_LIMIT, 8)),
-    indexOnBoot: env.SI_INDEX_ON_BOOT === 'true',
+    // Opt-out, not opt-in. As an opt-in it was never set anywhere and — worse —
+    // never read by any code either, so the corpus stayed at zero documents
+    // until somebody called `/intelligence/reason` by hand, and the background
+    // watch declined to reason for exactly as long. The original "indexing is
+    // I/O heavy" reason still holds and is honoured by deferring the run off
+    // the boot path, not by leaving the corpus empty.
+    indexOnBoot: env.SI_INDEX_ON_BOOT === 'false' ? false : true,
     // On by default, but self-limiting: the loop is a no-op with no registered
     // symbols and outside trading hours, so an idle or dev instance that
     // nobody has opened a board on never touches the metered API.
@@ -211,6 +236,9 @@ export function loadSentinelIntelligenceConfig(
     ),
     watchMaxSymbols: Math.max(1, positiveInt(env.SI_WATCH_MAX_SYMBOLS, DEFAULT_WATCH_MAX_SYMBOLS)),
     watchTtlMs: Math.max(60_000, positiveInt(env.SI_WATCH_TTL_MS, DEFAULT_WATCH_TTL_MS)),
+    // Opt-out for the same reason `watchEnabled` is: a config typo must not
+    // quietly hand the heartbeat back to the browser.
+    watchPersistThroughSession: env.SI_WATCH_PERSIST_SESSION === 'false' ? false : true,
     watchRecordCooldownMs: positiveInt(env.SI_WATCH_RECORD_COOLDOWN_MS, DEFAULT_WATCH_RECORD_COOLDOWN_MS),
     watchReasonEnabled: env.SI_WATCH_REASON_ENABLED === 'false' ? false : true,
     watchMaxReasoningPerSweep: Math.max(

@@ -3,13 +3,20 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { Badge, panelSlide } from '@tradew/ui';
 import { useWorkspaceStore, NOTIFICATION_CATEGORY_TONE } from '@/lib/store/workspaceStore';
+import { markNotificationRead as apiMarkRead, markAllNotificationsRead as apiMarkAllRead } from '@/lib/notifications';
+import { alertRMultiple, alertTier } from '@/lib/sentinel/alertTier';
+import { formatRMultiple } from '@/lib/sentinel/watchModel';
 import { CloseIcon, InboxIcon } from './icons';
 
 /**
- * Notification Center (Milestone 3 §10) — the architecture for Trade/Sentinel/
- * Learning/Research/Portfolio/Broker/Announcement notifications. No backend
- * yet: reads the same store-seeded list the bell badge and `/notifications`
- * page use (one source, not three copies of mock data).
+ * Notification Center (Milestone 3 §10) — the Trade/Sentinel/Learning/Research/
+ * Portfolio/Broker/Announcement notification drawer.
+ *
+ * Reads the workspace store, which `NotificationSync` keeps in step with the
+ * real backend (services/api `/notifications`) — the bell badge, this drawer
+ * and the `/notifications` page are all one store slice, never three copies.
+ * Read actions update the store optimistically AND persist to the API so a
+ * mark-read survives reload; the mute toggle silences the TradeW arrival chime.
  */
 export function NotificationCenter() {
   const open = useWorkspaceStore((s) => s.notificationCenterOpen);
@@ -17,7 +24,20 @@ export function NotificationCenter() {
   const notifications = useWorkspaceStore((s) => s.notifications);
   const markRead = useWorkspaceStore((s) => s.markNotificationRead);
   const markAllRead = useWorkspaceStore((s) => s.markAllNotificationsRead);
+  const muted = useWorkspaceStore((s) => s.notificationsMuted);
+  const toggleMuted = useWorkspaceStore((s) => s.toggleNotificationsMuted);
   const unread = notifications.filter((n) => !n.read).length;
+
+  // Optimistic locally, durable on the server. A failed PATCH is swallowed —
+  // the next NotificationSync poll re-reconciles from the backend.
+  const handleRead = (id: string) => {
+    markRead(id);
+    void apiMarkRead(id).catch(() => undefined);
+  };
+  const handleAllRead = () => {
+    markAllRead();
+    void apiMarkAllRead().catch(() => undefined);
+  };
 
   return (
     <AnimatePresence>
@@ -52,11 +72,20 @@ export function NotificationCenter() {
               )}
               <button
                 type="button"
-                onClick={markAllRead}
+                onClick={handleAllRead}
                 disabled={unread === 0}
                 className="ml-auto text-[11px] font-semibold text-teal hover:underline disabled:pointer-events-none disabled:text-faint disabled:no-underline"
               >
                 Mark all read
+              </button>
+              <button
+                type="button"
+                onClick={toggleMuted}
+                aria-pressed={muted}
+                title={muted ? 'Notification sound is off' : 'Notification sound is on'}
+                className="text-[11px] font-semibold text-muted hover:text-text"
+              >
+                {muted ? 'Sound off' : 'Sound on'}
               </button>
               <button
                 type="button"
@@ -69,25 +98,37 @@ export function NotificationCenter() {
             </header>
 
             <ul className="min-h-0 flex-1 divide-y divide-border overflow-y-auto">
-              {notifications.map((n) => (
-                <li key={n.id}>
-                  <button
-                    type="button"
-                    onClick={() => markRead(n.id)}
-                    className="flex w-full flex-col items-start gap-1 px-4 py-3 text-left transition-colors duration-micro hover:bg-hover"
-                  >
-                    <div className="flex w-full items-center gap-2">
-                      <Badge tone={NOTIFICATION_CATEGORY_TONE[n.category]} className="px-1.5 py-0 text-[9px]">
-                        {n.category.toUpperCase()}
-                      </Badge>
-                      {!n.read && <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-teal" />}
-                      <span className="ml-auto text-[10px] text-faint">{n.time}</span>
-                    </div>
-                    <div className="text-xs font-semibold text-text">{n.title}</div>
-                    <div className="text-[11px] text-muted">{n.body}</div>
-                  </button>
-                </li>
-              ))}
+              {notifications.map((n) => {
+                // A Sentinel alert's tier says whether this is worth looking at
+                // now; anything else keeps the plain category pill it always had.
+                const tier = alertTier(n);
+                const r = tier ? alertRMultiple(n) : null;
+                return (
+                  <li key={n.id}>
+                    <button
+                      type="button"
+                      onClick={() => handleRead(n.id)}
+                      className="flex w-full flex-col items-start gap-1 px-4 py-3 text-left transition-colors duration-micro hover:bg-hover"
+                    >
+                      <div className="flex w-full items-center gap-2">
+                        <Badge
+                          tone={tier ? tier.tone : NOTIFICATION_CATEGORY_TONE[n.category]}
+                          className="px-1.5 py-0 text-[9px]"
+                        >
+                          {tier ? tier.label.toUpperCase() : n.category.toUpperCase()}
+                        </Badge>
+                        {r !== null && (
+                          <span className="font-mono text-[10px] font-bold text-muted">{formatRMultiple(r)}</span>
+                        )}
+                        {!n.read && <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-teal" />}
+                        <span className="ml-auto text-[10px] text-faint">{n.time}</span>
+                      </div>
+                      <div className="text-xs font-semibold text-text">{n.title}</div>
+                      <div className="text-[11px] text-muted">{n.body}</div>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </motion.aside>
         </>

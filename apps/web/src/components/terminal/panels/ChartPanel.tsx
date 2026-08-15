@@ -7,6 +7,7 @@ import type { CandleInterval } from '@tradew/types';
 import { INDEX_QUOTES, TOP_GAINERS, TOP_LOSERS, COMMODITIES } from '@/lib/mock/market';
 import { fmt } from '@/lib/format';
 import { useCandles } from '@/lib/hooks/useCandles';
+import { useChartDrawings } from '@/lib/hooks/useChartDrawings';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { useHasOptionChain } from '@/lib/hooks/useHasOptionChain';
 import { useOptionQuote } from '@/lib/hooks/useOptionQuote';
@@ -156,6 +157,39 @@ export default function ChartPanel({
   const [tf, setTf] = useState<(typeof TIMEFRAMES)[number]>('15m');
   const [maximized, setMaximized] = useState(false);
 
+  /**
+   * Follow `?view=` when it CHANGES, not just on mount.
+   *
+   * ── THE BUG THIS FIXES (2026-08-11) ──────────────────────────────────────
+   *
+   * `useState(initialView ?? 'charts')` reads its argument on the first render
+   * and never again. The assistant addresses these tabs by URL — "show the
+   * option chain" pushes `/trade?view=optionChain` — but if this panel is
+   * already mounted (the user is on /trade looking at the chart, which is the
+   * normal case) React keeps the existing state and the tab never moves.
+   *
+   * The result was the worst kind of failure: the URL updated, so the
+   * assistant truthfully reported "Option Chain is open", while the screen
+   * stayed on Charts. Told "that's charts, not option chain", she said it
+   * again — because from her side the navigation HAD succeeded. Reported by
+   * the user with a screenshot showing exactly that exchange.
+   *
+   * ── WHY IT KEYS ON CHANGE, NOT ON PRESENCE ───────────────────────────────
+   *
+   * Syncing whenever `initialView` is merely set would fight the user: click
+   * "Technicals" by hand while the URL still says `view=optionChain` and the
+   * effect would drag you back on the next render. Tracking the last value the
+   * URL asked for means a manual click sticks until the URL asks for something
+   * different.
+   */
+  const lastRequestedView = useRef(initialView);
+  useEffect(() => {
+    if (initialView && initialView !== lastRequestedView.current) {
+      lastRequestedView.current = initialView;
+      setView(initialView);
+    }
+  }, [initialView]);
+
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -251,6 +285,11 @@ export default function ChartPanel({
   };
   const { interval, days } = TF_CONFIG[tf];
   const { candles, status: candlesStatus, reason: candlesReason } = useCandles(q.symbol, interval, days);
+  // Publish the underlying series so "FVG" runs against these exact bars, and
+  // take back whatever the detector drew for it. Keyed identically to the
+  // chart's own `fitKey` — the two must not drift, or drawings silently stop
+  // rendering (see useChartDrawings).
+  const drawings = useChartDrawings(`${q.symbol}|${tf}`, candles, liveMatch?.ltp ?? q.ltp);
   const { candles: dailyCandles } = useCandles(q.symbol, '1d', 300);
   const realCandles = candlesStatus === 'live';
 
@@ -502,6 +541,7 @@ export default function ChartPanel({
                 fitKey={`${q.symbol}|${tf}`}
                 intervalMinutes={TF_MINUTES[tf]}
                 priceLines={priceLines}
+                drawings={drawings}
                 aria-label={`${q.symbol} ${tf} chart`}
               />
             ) : candlesStatus === 'loading' ? (

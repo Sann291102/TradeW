@@ -169,3 +169,31 @@ chip is rendered in brand teal instead: the design system has no violet token
 and DESIGN-SYSTEM.md §1 reserves color for meaning. That chip is a real
 entitlement readout, shown only when the session carries the `sentinel`
 capability — never an upsell button.
+
+**Added 2026-08-11 — Sentinel dashboard redesign (reference-image match):**
+`apps-web-sentinel-dashboard-redesign-2026-08-11/page.tsx.txt` — the previous
+`/sentinel` page: the two-column "Market Context Intelligence" workspace
+(Day Classification / Market Context / Live Charts on the left; Live Safety
+Feed / Side-in-Focus / Strategy Selector / Timeline on the right;
+Market Reasoning panel below).
+- **Why:** the authoritative Sentinel reference images define a classic
+  operational *dashboard* — a status-card row, a Live Market Overview with a
+  candle chart + indicator strip, a single Sentinel Observation card, an
+  8-factor Risk Radar, Emotion Mirror, a horizontal Session Timeline and
+  Quick Actions — not a two-column context workspace. The reference is now the
+  target.
+- **What replaces it:** `apps/web/src/components/sentinel/dashboard/*`
+  (`SentinelDashboard`, `StatusCards`, `LiveMarketOverview`, `ObservationCard`,
+  `RiskRadar`, `EmotionMirror`, `SessionTimeline`, `QuickActions`) driven by
+  `lib/sentinel/dashboardModel.ts` + `lib/sentinel/indicators.ts`, and a
+  rewritten `page.tsx`. Every card maps to the SAME real `/sentinel/observe`
+  response the old page used — no new fabrication, same auth, same `sentinel`
+  entitlement gating, same honest unavailable/pre-market/closed states.
+- **Dependencies:** none broken. The reused pieces (`useSentinel` hook,
+  `MarketSelector`, `OptionChainPanel`, `SentinelLocked`, `TradeChart`,
+  `useCandles`, `useDhanLiveFeed`) stay in place and are still imported. The
+  older presentational components (`DayClassificationCard`, `MarketContextPanel`,
+  `LiveSafetyFeed`, `SideInFocusCard`, `StrategySelector`, `SentinelTimeline`,
+  `MarketReasoningPanel`) are no longer imported by the page but are left in
+  the tree (not deleted) pending a follow-up decision — some may be reused by
+  the drill-down sub-views the reference sidebar implies.

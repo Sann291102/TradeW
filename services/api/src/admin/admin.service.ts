@@ -22,6 +22,14 @@ import { PrismaService } from '../prisma/prisma.service';
  *   prompts are never selected. An admin can see THAT a call happened and what
  *   it cost, not what was in it — the portal is an operational view, not a
  *   surveillance tool over users' trading conversations.
+ *
+ * · **Prisma and nothing else.** `ControlModule` provides this class directly
+ *   rather than importing `AdminModule`, so the console's one-way boundary
+ *   survives — and that only works while the only thing this constructor needs
+ *   is the `@Global` `PrismaService`. Injecting a second service here breaks
+ *   the control plane's boot with an unresolvable dependency, because that
+ *   module never imported whatever the new dependency came from. Live state
+ *   belongs on the controller, which can inject whatever it likes.
  */
 @Injectable()
 export class AdminService {
@@ -134,6 +142,35 @@ export class AdminService {
     }));
   }
 
+  /**
+   * Per-minute request pulse over the last `minutes` (clamped 1..180) from the
+   * API call log. Backs the "System pulse" panel with a real, recent cadence.
+   * Deliberately per-MINUTE, not per-second: the log records each request, so a
+   * minute bucket is a truthful rate, whereas a per-second figure would imply a
+   * resolution the data does not carry. The UI labels it accordingly.
+   */
+  async apiPulse(minutes = 30) {
+    const n = Number(minutes);
+    const m = Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 180) : 30;
+    const since = new Date(Date.now() - m * 60_000);
+    const rows = await this.prisma.$queryRaw<Array<{ bucket: Date; total: bigint; errors: bigint; avgMs: number }>>`
+      SELECT date_trunc('minute', "createdAt")                 AS bucket,
+             COUNT(*)                                           AS total,
+             COUNT(*) FILTER (WHERE "statusCode" >= 500)        AS errors,
+             AVG("durationMs")::float                           AS "avgMs"
+      FROM "ApiCallLog"
+      WHERE "createdAt" >= ${since}
+      GROUP BY bucket
+      ORDER BY bucket ASC
+    `;
+    return rows.map((r) => ({
+      bucket: r.bucket,
+      total: Number(r.total ?? 0),
+      errors: Number(r.errors ?? 0),
+      avgMs: Math.round(Number(r.avgMs ?? 0)),
+    }));
+  }
+
   // ------------------------------------------------------------ api calls
 
   async apiCalls(params: { limit?: number; status?: string; path?: string; userId?: string; hours?: number }) {
@@ -239,6 +276,44 @@ export class AdminService {
         failures: failureByAgent.get(r.agent) ?? 0,
       }))
       .sort((a: any, b: any) => b.calls - a.calls);
+  }
+
+  /**
+   * Per-model roll-up: a real GROUP BY over the AI call log by provider+model.
+   * Backs the console's "Model usage" panel with genuine figures (calls, tokens,
+   * spend, latency, failures) rather than the invented percentages a mockup
+   * shows. A model that made no calls in the window simply does not appear.
+   */
+  async aiByModel(hours = 24) {
+    const since = this.since(hours);
+    const [rows, failures] = await Promise.all([
+      this.prisma.aiCallLog.groupBy({
+        by: ['provider', 'model'],
+        where: { createdAt: { gte: since } },
+        _count: { _all: true },
+        _sum: { costUsd: true, promptTokens: true, completionTokens: true },
+        _avg: { latencyMs: true },
+      }),
+      this.prisma.aiCallLog.groupBy({
+        by: ['provider', 'model'],
+        where: { createdAt: { gte: since }, status: { not: 'ok' } },
+        _count: { _all: true },
+      }),
+    ]);
+    const failKey = (p: string, m: string) => `${p}::${m}`;
+    const failByModel = new Map(failures.map((f) => [failKey(f.provider, f.model), f._count._all]));
+    return rows
+      .map((r) => ({
+        provider: r.provider,
+        model: r.model,
+        calls: r._count._all,
+        costUsd: r._sum.costUsd ?? 0,
+        promptTokens: r._sum.promptTokens ?? 0,
+        completionTokens: r._sum.completionTokens ?? 0,
+        avgLatencyMs: Math.round(r._avg.latencyMs ?? 0),
+        failures: failByModel.get(failKey(r.provider, r.model)) ?? 0,
+      }))
+      .sort((a: { calls: number }, b: { calls: number }) => b.calls - a.calls);
   }
 
   /** Hourly AI spend and volume, for the cost chart. */
@@ -478,6 +553,134 @@ export class AdminService {
       nodeVersion: process.version,
       checkedAt: new Date(),
     };
+  }
+
+  // ------------------------------------------------------------- cognition
+
+  /**
+   * Note what is NOT here: the live network snapshot and the sensor roster.
+   * Those come off `CognitionService` on the controller, because they are the
+   * network's in-memory state rather than a Prisma read — and because pulling
+   * that dependency into this class is what broke the control plane's boot the
+   * first time round (see the constructor note above).
+   *
+   * The split is also the honest one. Postgres holds what the network has
+   * *recorded*; the live object holds what it is *doing*. On an instance where
+   * the loop is disabled, the tables still have yesterday's rows while the
+   * network is idle, and it is that second fact the console has to show —
+   * otherwise a disabled network is indistinguishable from a working one.
+   */
+
+  /**
+   * Recent passes.
+   *
+   * `unscoredOnly` exists because "how many episodes are still waiting for an
+   * outcome" is the question that reveals a stalled feedback loop, and a
+   * stalled feedback loop stops all learning without producing a single error.
+   */
+  async cognitionEpisodes(params: {
+    limit?: number;
+    domain?: string;
+    status?: string;
+    hours?: number;
+    unscoredOnly?: boolean;
+  }) {
+    return this.prisma.cognitiveEpisode.findMany({
+      where: {
+        startedAt: { gte: this.since(params.hours) },
+        ...(params.domain ? { domain: params.domain } : {}),
+        ...(params.status ? { status: params.status } : {}),
+        ...(params.unscoredOnly ? { scoredAt: null } : {}),
+      },
+      orderBy: { startedAt: 'desc' },
+      take: this.take(params.limit, 60, 300),
+    });
+  }
+
+  /** One pass and everything it perceived. The console's drill-down. */
+  async cognitionEpisode(episodeId: string) {
+    const [episode, percepts, proposals] = await Promise.all([
+      this.prisma.cognitiveEpisode.findUnique({ where: { episodeId } }),
+      this.prisma.percept.findMany({
+        where: { episodeId },
+        orderBy: { salience: 'desc' },
+        take: 200,
+      }),
+      this.prisma.cognitiveProposal.findMany({ where: { episodeId }, orderBy: { confidence: 'desc' } }),
+    ]);
+    return { episode, percepts, proposals };
+  }
+
+  /**
+   * Per-domain percept ingestion over a window, aggregated from real percept
+   * timestamps. Backs the "Perceptor domains" source panel: a genuine count,
+   * mean salience, last-seen and a DERIVED rate (percepts ÷ window hours). The
+   * rate is honest arithmetic on real rows, not a fabricated "signals/sec".
+   */
+  async cognitionDomains(hours = 24) {
+    const since = this.since(hours);
+    const rows = await this.prisma.percept.groupBy({
+      by: ['domain'],
+      where: { createdAt: { gte: since } },
+      _count: { _all: true },
+      _avg: { salience: true },
+      _max: { createdAt: true },
+    });
+    const windowHours = Math.max(0.001, (Date.now() - since.getTime()) / 3_600_000);
+    return rows
+      .map((r) => ({
+        domain: r.domain,
+        percepts: r._count._all,
+        meanSalience: r._avg.salience ?? 0,
+        lastAt: r._max.createdAt,
+        perHour: Math.round((r._count._all / windowHours) * 10) / 10,
+      }))
+      .sort((a: { percepts: number }, b: { percepts: number }) => b.percepts - a.percepts);
+  }
+
+  async cognitionPercepts(params: { limit?: number; domain?: string; perceptorId?: string; hours?: number }) {
+    return this.prisma.percept.findMany({
+      where: {
+        createdAt: { gte: this.since(params.hours) },
+        ...(params.domain ? { domain: params.domain } : {}),
+        ...(params.perceptorId ? { perceptorId: params.perceptorId } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: this.take(params.limit, 100, 500),
+    });
+  }
+
+  /**
+   * The learned weights.
+   *
+   * Ordered by weight, and every row carries `reinforcements` alongside it. The
+   * console renders that column deliberately: a high weight with zero
+   * reinforcements is a *guess* the network has never had scored, and presenting
+   * it beside a weight that survived forty outcomes without that distinction
+   * would misrepresent the one number this whole system exists to produce.
+   */
+  async cognitionSynapses(params: { limit?: number; layer?: string; provenOnly?: boolean }) {
+    return this.prisma.neuralSynapse.findMany({
+      where: {
+        ...(params.layer ? { layer: params.layer } : {}),
+        ...(params.provenOnly ? { reinforcements: { gt: 0 } } : {}),
+      },
+      orderBy: [{ weight: 'desc' }, { reinforcements: 'desc' }],
+      take: this.take(params.limit, 100, 500),
+    });
+  }
+
+  /** The operator queue. `pending` first — this is a worklist, not a log. */
+  async cognitionProposals(params: { limit?: number; status?: string; domain?: string; hours?: number }) {
+    return this.prisma.cognitiveProposal.findMany({
+      where: {
+        createdAt: { gte: this.since(params.hours, 24 * 7) },
+        ...(params.status ? { status: params.status } : {}),
+        ...(params.domain ? { domain: params.domain } : {}),
+      },
+      orderBy: [{ status: 'asc' }, { confidence: 'desc' }],
+      take: this.take(params.limit, 50, 200),
+    });
   }
 }
 

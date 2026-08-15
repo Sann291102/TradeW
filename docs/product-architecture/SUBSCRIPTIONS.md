@@ -1,6 +1,6 @@
 # Subscriptions & Monetization — Product Blueprint
 
-Status: design, pre-implementation. Covers Demo Trading limits, Learning Hub, and Sentinel pricing, per the Genesis v2 brief. Billing provider is an open decision (§6) — everything else here is specified regardless of which provider is chosen.
+Status: **substantially implemented.** Entitlements/quotas/plan-grants/trial-and-grace and capability gating are built in `services/api` (Plan/PlanGrant/Subscription/EntitlementOverride/UsageCounter models), and the **billing provider is decided and wired — Razorpay** (`services/api/src/payments/`, `apps/web/.../checkout/`), fulfilling idempotently through `EntitlementsService.activate`. The one operational gap is **plan seed data** (a fresh DB grants nothing until rows are inserted). Covers Demo Trading limits, Learning Hub, and Sentinel pricing, per the Genesis v2 brief. (§6's "billing provider is an open decision" is now resolved to Razorpay.)
 
 ## 1. Demo (paper) trading
 
@@ -14,21 +14,39 @@ Daily free-order count resets at midnight IST via a scheduled job — see `N8N-W
 
 ## 2. Learning Hub
 
-Lifetime Access — ₹299, one-time. Grants all current content plus every future update (`LEARNING-HUB.md` §5). No recurring billing for this tier.
+**₹299 / month.**
+
+> **Changed 2026-08-11.** This was a ₹299 one-time Lifetime Access purchase.
+> Lifetime access still exists but is now **earned, not bought** — see the
+> Lifetime Free entitlement in `LEARNING-HUB.md` §5, whose eligibility is
+> calculated and enforced server-side from real participation records.
 
 ## 3. Sentinel
 
-Monthly-equivalent pricing, billed as the stated term:
+Monthly-equivalent pricing, billed as the stated term. **There is no annual
+plan.**
 
-| Term | Monthly equivalent | Total payable |
-|---|---|---|
-| 1 month | ₹1,399 | ₹1,399 |
-| 3 months | ₹1,299/mo | ₹3,897 |
-| 6 months | ₹1,199/mo | ₹7,194 |
-| 9 months | ₹1,099/mo | ₹9,891 |
-| 12 months | ₹999/mo | ₹11,988 |
+| Term | Monthly equivalent | Total payable | Saving vs monthly |
+|---|---|---|---|
+| 1 month | ₹2,399 | ₹2,399 | — |
+| 3 months | ₹2,199/mo | ₹6,597 | ₹600 |
+| 6 months | ₹1,999/mo | ₹11,994 | ₹2,400 |
 
-UI must show savings explicitly (e.g. "Save ₹4,800 vs monthly" on the 12-month tier) — this is a display requirement on the pricing component, not just a data table.
+UI must show savings explicitly (e.g. "Save ₹2,400" on the 6-month tier) — this
+is a display requirement on the pricing component, not just a data table.
+
+> **Withdrawn 2026-08-11: the 9- and 12-month terms** (₹1,099 and ₹999/mo), and
+> the whole previous ladder (₹1,399 / ₹1,299 / ₹1,199). They are gone from the
+> product rather than hidden: no code path, API response or route can produce
+> one. `packages/types/src/pricing.ts` is the single source of truth,
+> `GET /pricing` serves it, and both `apps/web/src/lib/pricing.test.ts` and
+> `services/api/src/pricing/pricing.spec.ts` assert their absence rather than
+> trusting that nobody re-adds one.
+
+**Prices live in code, once.** `packages/types/src/pricing.ts` is canonical.
+They were previously hardcoded separately in the Settings page and the
+marketing landing page, which is how a product ends up quoting one price to a
+visitor and another to a subscriber. Do not reintroduce a local copy.
 
 ## 4. Entitlement gating (reuses existing architecture, no new pattern)
 

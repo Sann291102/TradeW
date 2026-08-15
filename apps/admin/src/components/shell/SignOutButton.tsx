@@ -10,7 +10,7 @@ export function SignOutButton() {
   const onClick = async () => {
     setBusy(true);
     try {
-      await fetch('/api/session', { method: 'DELETE' });
+      await fetch('/api/auth/logout', { method: 'POST' });
     } finally {
       router.push('/login');
       router.refresh();

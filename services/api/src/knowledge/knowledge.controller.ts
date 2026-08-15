@@ -2,7 +2,7 @@ import { Controller, Get, MessageEvent, Query, Sse, UseGuards } from '@nestjs/co
 import { ApiExcludeEndpoint, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Observable, interval, map, merge } from 'rxjs';
 import { fromEvent } from 'rxjs';
-import { AdminGuard } from '../admin/admin.guard';
+import { AdminAccessGuard } from '../admin/admin-access.guard';
 import { SECURITY } from '../swagger/swagger.setup';
 import { KnowledgeWorkspaceGuard } from './knowledge.guard';
 import { ActivityEvent, KnowledgeService } from './knowledge.service';
@@ -34,7 +34,7 @@ import { ActivityEvent, KnowledgeService } from './knowledge.service';
 @ApiTags('Admin Knowledge')
 /** Both, for the same reason as `AdminController` — see the note there. */
 @ApiSecurity({ [SECURITY.bearer]: [], [SECURITY.adminToken]: [] })
-@UseGuards(KnowledgeWorkspaceGuard, AdminGuard)
+@UseGuards(KnowledgeWorkspaceGuard, AdminAccessGuard)
 @Controller('admin/knowledge')
 export class KnowledgeController {
   constructor(private readonly knowledge: KnowledgeService) {}

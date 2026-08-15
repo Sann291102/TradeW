@@ -107,9 +107,9 @@ TradeW/
 
 ### 14.3.1 The `apps/terminal` oddity
 
-`apps/terminal` is static HTML and is **not an application**. It is the canonical design reference — `packages/ui`'s tokens were extracted from it verbatim (§14.5.2). It is in `apps/` for historical reasons and is not built or deployed.
+`apps/terminal` was static HTML and **never an application** — the canonical design reference `packages/ui`'s tokens were extracted from verbatim (§14.5.2). It has since been **retired to `archive/apps-terminal-legacy-prototype/`** (Rule 1 — archived, never deleted); `apps/` now holds only `web`, `admin`, and `mobile`.
 
-> ⚠️ Do not delete it. `tokens.css` says values must match it byte-for-byte, so deleting it makes the design system unverifiable.
+> ⚠️ It was moved, not deleted, precisely because `tokens.css` still references it as the byte-for-byte source. The operational source of truth for the tokens is now `packages/ui/src/styles/tokens.css` itself; `archive/apps-terminal-legacy-prototype/index.html` remains the historical reference behind those values.
 
 ---
 

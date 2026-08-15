@@ -4,6 +4,7 @@ import { OtpPurpose } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { SmsService } from '../sms/sms.service';
+import { otpCode as buildOtpEmail } from '../mail/templates';
 
 /**
  * One-time codes, over email or SMS.
@@ -96,11 +97,10 @@ export class OtpService {
       return result.delivered ? {} : { devCode: code };
     }
 
-    const result = await this.mail.send(
-      destination,
-      SUBJECTS[purpose],
-      `Your TradeW code is ${code}\n\nIt expires in ${minutes} minutes. If you didn't request it, ignore this email.`,
-    );
+    // `phone_verify` is handled above; everything reaching here is an
+    // email purpose the template layer knows how to render.
+    const email = buildOtpEmail({ code, purpose: purpose as 'login' | 'password_reset' | 'email_verify', minutes });
+    const result = await this.mail.send(destination, email.subject, email.text, email.html);
     return result.delivered ? {} : { devCode: code };
   }
 

@@ -1,4 +1,7 @@
 import type { PanelKind, ThemeName } from '../store/workspaceStore';
+import type { DrawingTag } from '../charts/drawings';
+import type { DetectorId } from '../charts/detectors';
+import type { QuoteAsk } from './quotes';
 
 /**
  * TradeW AI assistant — control-layer types (Phase 1).
@@ -33,6 +36,13 @@ import type { PanelKind, ThemeName } from '../store/workspaceStore';
  */
 export type AssistantAction =
   | { type: 'navigate'; href: string }
+  /**
+   * Read back live quotes for these symbols. The ONLY action that performs
+   * I/O, and the only one whose result becomes a new assistant turn rather
+   * than a change to the workspace — see `useAssistant`. It is read-only by
+   * construction: `GET /market-data/quotes` has no write side.
+   */
+  | { type: 'quote'; symbols: string[]; ask: QuoteAsk }
   | { type: 'selectSymbol'; symbol: string }
   | { type: 'openOverlay'; overlay: 'commandPalette' | 'notifications' | 'shortcuts' }
   | { type: 'setTheme'; theme: ThemeName }
@@ -40,7 +50,18 @@ export type AssistantAction =
   | { type: 'hidePanel'; panel: PanelKind }
   | { type: 'applyLayout'; layoutId: string }
   | { type: 'toggleSidebar' }
-  | { type: 'newWorkspaceTab' };
+  | { type: 'newWorkspaceTab' }
+  /**
+   * Run a deterministic chart detector and replace its tag's drawings.
+   *
+   * Deliberately NOT a `chartDraw` carrying coordinates: this resolver is pure
+   * and has no candles, so it cannot compute a zone's price bounds. It names
+   * the detector to run; the executor, which does have the series, runs it.
+   * Asking the grammar to emit coordinates would mean inventing them.
+   */
+  | { type: 'chartDetect'; detector: DetectorId }
+  /** Erase one producer's drawings. Tag-scoped — there is no "clear the chart". */
+  | { type: 'chartClearDrawings'; tag: DrawingTag };
 
 // ---------------------------------------------------------------------------
 // Intents
@@ -52,7 +73,7 @@ export type AssistantAction =
  *                until Phase 2 rather than answered with an invented reply.
  * - `refusal`  — outside the assistant's remit (see domain-guard.ts).
  */
-export type AssistantIntent = 'command' | 'analysis' | 'refusal';
+export type AssistantIntent = 'command' | 'quote' | 'analysis' | 'refusal';
 
 /** Why a refusal happened — drives which copy the dock renders. */
 export type RefusalReason =
@@ -86,6 +107,17 @@ export interface AssistantPlan {
   /** Analysis intents carry the observation-only disclaimer; commands don't
    *  (TRADEW-ASSISTANT.md §7 — a navigation ack is not an analytical claim). */
   disclaimer?: boolean;
+  /**
+   * This answer is settled — do NOT send the utterance to the conversation
+   * brain for a second opinion.
+   *
+   * Needed because the brain's failure mode on an explain-question is to
+   * produce a plausible-looking navigation ("✓ Open Research") and call it an
+   * answer. A deliberate, honest "I can't source that yet" must not be
+   * overwritten by one. Set only where the deterministic layer knows the
+   * answer is complete, never as a general opt-out.
+   */
+  final?: boolean;
 }
 
 /** Convenience constructors — keep plan shapes consistent across resolvers. */
@@ -101,6 +133,24 @@ export function refusalPlan(reply: string, refusalReason: RefusalReason): Assist
   return { intent: 'refusal', reply, actions: [], steps: [], refusalReason };
 }
 
-export function analysisPlan(reply: string, steps: string[] = []): AssistantPlan {
-  return { intent: 'analysis', reply, actions: [], steps, disclaimer: true };
+export function analysisPlan(
+  reply: string,
+  steps: string[] = [],
+  final = false,
+): AssistantPlan {
+  return { intent: 'analysis', reply, actions: [], steps, disclaimer: true, final };
+}
+
+/**
+ * A quote lookup. Carries the disclaimer even though a last price is a fact
+ * rather than an opinion — `TRADEW-AI.md` §4 attaches it to every response that
+ * touches trading data, and a number is exactly the kind of response someone
+ * might act on.
+ */
+export function quotePlan(
+  reply: string,
+  actions: AssistantAction[],
+  steps: string[] = [],
+): AssistantPlan {
+  return { intent: 'quote', reply, actions, steps, disclaimer: true };
 }

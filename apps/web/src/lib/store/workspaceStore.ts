@@ -1,5 +1,13 @@
 import { create } from 'zustand';
 import { persist, type StorageValue } from 'zustand/middleware';
+import type { Candle } from '@tradew/types';
+import type { NarrationMode } from '../assistant/narration';
+import {
+  clearDrawingsByTag,
+  replaceDrawingsByTag,
+  type ChartDrawing,
+  type DrawingTag,
+} from '../charts/drawings';
 
 /**
  * TradeW workspace store (Phase 1, Milestone 3).
@@ -235,6 +243,8 @@ export interface NotificationItem {
   body: string;
   time: string;
   read: boolean;
+  /** Producer-specific payload — Sentinel's alert tier rides here. */
+  metadata?: unknown;
 }
 
 /** Badge tone per category — the single mapping shared by NotificationCenter
@@ -277,6 +287,27 @@ interface WorkspaceStore {
   // theme + chrome
   theme: ThemeName;
   setTheme: (t: ThemeName) => void;
+
+  /**
+   * How much the assistant explains while it works — layer 7 of
+   * `docs/product-architecture/AI-OPERATING-SYSTEM.md`. Persisted, because a
+   * narration preference the user has to re-set every session is not a
+   * preference, it is a nag.
+   *
+   * This is the first slice of the assistant's memory layer (§7 there). It is
+   * deliberately an EXPLICIT setting rather than something inferred from
+   * behaviour: preferences are learned by asking, never by watching.
+   */
+  assistantMode: NarrationMode;
+  setAssistantMode: (m: NarrationMode) => void;
+
+  /**
+   * Whether Tara reads her replies aloud. Off by default and persisted: an app
+   * that starts talking unprompted is one the user mutes permanently, and a
+   * preference they have to re-set every session is not a preference.
+   */
+  assistantSpeech: boolean;
+  setAssistantSpeech: (on: boolean) => void;
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
 
@@ -294,6 +325,27 @@ interface WorkspaceStore {
 
   /** Close every overlay — the shared Escape-key target (WORKSPACE-SHELL.md §4). */
   closeAllOverlays: () => void;
+
+  /**
+   * The chart series currently on screen, published by the chart container so
+   * the assistant can run a detector against exactly the bars the user is
+   * looking at.
+   *
+   * `seriesKey` is `SYMBOL|timeframe` and is the whole safety mechanism here:
+   * drawings computed on NIFTY 15m are meaningless on RELIANCE 1D, and
+   * rendering them anyway would state price levels that were never detected on
+   * that instrument. Both the series and its drawings carry the key, and the
+   * chart renders drawings only when the two match.
+   *
+   * Neither field is in `partialize`, so neither is persisted — a few hundred
+   * candles in localStorage on every tick would be a real performance bug.
+   */
+  chartSeries: { seriesKey: string; candles: Candle[]; lastPrice: number | null } | null;
+  publishChartSeries: (seriesKey: string, candles: Candle[], lastPrice: number | null) => void;
+  chartDrawings: { seriesKey: string; drawings: ChartDrawing[] } | null;
+  /** Replace one tag's drawings for a series. Other tags are left untouched. */
+  replaceChartDrawings: (seriesKey: string, tag: DrawingTag, next: ChartDrawing[]) => void;
+  clearChartDrawings: (tag: DrawingTag) => void;
 
   // layouts (built-ins regenerated at load; custom ones would append here in a
   // later milestone — the array shape already supports it)
@@ -326,6 +378,13 @@ interface WorkspaceStore {
   unreadCount: () => number;
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
+  /** Replace the whole list — used by NotificationSync when it pulls the real
+   *  feed from services/api. The single writer for server-sourced state. */
+  setNotifications: (items: NotificationItem[]) => void;
+  /** When true, new notifications arrive silently (no TradeW chime). Persisted
+   *  so a muted operator stays muted across reloads. */
+  notificationsMuted: boolean;
+  toggleNotificationsMuted: () => void;
 }
 
 const STORAGE_KEY = 'tradew-workspace-v1';
@@ -338,6 +397,12 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
       theme: 'dark',
       setTheme: (t) => set({ theme: t }),
+
+      assistantMode: 'normal',
+      setAssistantMode: (m) => set({ assistantMode: m }),
+
+      assistantSpeech: false,
+      setAssistantSpeech: (on) => set({ assistantSpeech: on }),
       sidebarCollapsed: false,
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
@@ -360,6 +425,30 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           aiDockOpen: false,
           mobileNavOpen: false,
         }),
+
+      chartSeries: null,
+      chartDrawings: null,
+      publishChartSeries: (seriesKey, candles, lastPrice) =>
+        set((s) => ({
+          chartSeries: { seriesKey, candles, lastPrice },
+          // Changing instrument or timeframe invalidates every drawing derived
+          // from the old bars. Dropping them here rather than letting the chart
+          // filter on mismatch means stale zones cannot survive a round trip
+          // back to the original series.
+          chartDrawings:
+            s.chartDrawings && s.chartDrawings.seriesKey !== seriesKey ? null : s.chartDrawings,
+        })),
+      replaceChartDrawings: (seriesKey, tag, next) =>
+        set((s) => {
+          const existing = s.chartDrawings?.seriesKey === seriesKey ? s.chartDrawings.drawings : [];
+          return { chartDrawings: { seriesKey, drawings: replaceDrawingsByTag(existing, tag, next) } };
+        }),
+      clearChartDrawings: (tag) =>
+        set((s) =>
+          s.chartDrawings
+            ? { chartDrawings: { ...s.chartDrawings, drawings: clearDrawingsByTag(s.chartDrawings.drawings, tag) } }
+            : {},
+        ),
 
       layouts: buildPresets(),
 
@@ -524,6 +613,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       markNotificationRead: (id) =>
         set((s) => ({ notifications: s.notifications.map((n) => (n.id === id ? { ...n, read: true } : n)) })),
       markAllNotificationsRead: () => set((s) => ({ notifications: s.notifications.map((n) => ({ ...n, read: true })) })),
+      setNotifications: (items) => set({ notifications: items }),
+      notificationsMuted: false,
+      toggleNotificationsMuted: () => set((s) => ({ notificationsMuted: !s.notificationsMuted })),
     }),
     {
       name: STORAGE_KEY,
@@ -537,10 +629,13 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       // the regenerated built-in layouts are excluded (WORKSPACE-SHELL.md §5).
       partialize: (s) => ({
         theme: s.theme,
+        assistantMode: s.assistantMode,
+        assistantSpeech: s.assistantSpeech,
         sidebarCollapsed: s.sidebarCollapsed,
         workspaceTabs: s.workspaceTabs,
         activeTabId: s.activeTabId,
         notifications: s.notifications,
+        notificationsMuted: s.notificationsMuted,
       }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<WorkspaceStore>;

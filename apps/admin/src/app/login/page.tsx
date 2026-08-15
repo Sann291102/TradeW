@@ -8,7 +8,8 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const from = searchParams.get('from') || '/';
 
-  const [token, setToken] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -17,10 +18,13 @@ function LoginForm() {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch('/api/session', {
+      // Credentials go to this app's OWN server-side login, never to
+      // services/api directly. The browser gets back only a sealed session
+      // cookie — no operator assertion, no ADMIN_API_TOKEN.
+      const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({ email, password }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -44,14 +48,27 @@ function LoginForm() {
 
         <form onSubmit={onSubmit} className="space-y-3">
           <label className="block">
-            <span className="mb-1 block text-[11px] text-muted">Admin token</span>
+            <span className="mb-1 block text-[11px] text-muted">Operator email</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoFocus
+              autoComplete="username"
+              className="w-full rounded border border-border bg-bg px-3 py-2 text-[13px] text-text"
+              placeholder="you@tradew.io"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-[11px] text-muted">Password</span>
             <input
               type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              autoFocus
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
               className="w-full rounded border border-border bg-bg px-3 py-2 text-[13px] text-text"
-              placeholder="ADMIN_API_TOKEN"
+              placeholder="••••••••••••"
             />
           </label>
 
@@ -59,7 +76,7 @@ function LoginForm() {
 
           <button
             type="submit"
-            disabled={submitting || token.length === 0}
+            disabled={submitting || email.length === 0 || password.length === 0}
             className="w-full rounded bg-accent px-3 py-2 text-[13px] font-semibold text-bg transition-opacity disabled:opacity-50"
           >
             {submitting ? 'Signing in…' : 'Sign in'}
@@ -67,9 +84,9 @@ function LoginForm() {
         </form>
 
         <p className="mt-4 text-[10.5px] leading-relaxed text-faint">
-          This is the same shared operator credential that authorizes admin-only routes on services/api
-          (<code className="rounded bg-bg px-1">ADMIN_API_TOKEN</code>). It is verified against a live endpoint on
-          every sign-in and never stored in the browser.
+          Sign in with your operator account. Credentials are verified server-side against services/api, which also
+          requires the deployment&rsquo;s <code className="rounded bg-bg px-1">ADMIN_API_TOKEN</code> as a second
+          factor. The browser only ever receives a sealed session cookie &mdash; never your assertion or the token.
         </p>
       </div>
     </div>

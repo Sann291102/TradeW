@@ -1,7 +1,9 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiBody, ApiProperty, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminTokenGuard } from '../auth/admin-token.guard';
+import { EXPENSIVE_LIMIT } from '../common/throttling';
 import { SECURITY } from '../swagger/swagger.setup';
 import { EntitlementsService } from './entitlements.service';
 
@@ -36,6 +38,14 @@ class ActivateSubscriptionBody {
     example: '2026-12-31T00:00:00.000Z',
   })
   expiresAt?: string | null;
+}
+
+class RedeemCodeBody {
+  @ApiProperty({
+    description: 'The access code. Case-insensitive; a leading # is ignored.',
+    example: 'HashtagTradeWSetup100',
+  })
+  code!: string;
 }
 
 class CancelSubscriptionBody {
@@ -109,6 +119,31 @@ export class EntitlementsController {
   @Get('plans')
   async plans() {
     return this.entitlements.listPlans();
+  }
+
+  /**
+   * Redeem an access code for the plan it names.
+   *
+   * Authenticated, because a redemption has to attach to an account — this is
+   * what makes the unlock real and portable, rather than a flag in one
+   * browser's localStorage, which is what it used to be.
+   *
+   * Throttled: a redemption endpoint is a code-guessing oracle. EXPENSIVE_LIMIT
+   * is what the assistant route uses and is the tightest bucket available
+   * without inventing a new one.
+   *
+   * An unknown code returns 400 from the service, deliberately distinct from
+   * the 404 raised when a valid code names a plan missing from the database —
+   * the first is the user's problem, the second is ours, and collapsing them
+   * would send operators hunting for a typo that does not exist.
+   */
+  @ApiBearerAuth(SECURITY.bearer)
+  @ApiBody({ type: RedeemCodeBody })
+  @UseGuards(AuthGuard)
+  @Throttle(EXPENSIVE_LIMIT)
+  @Post('redeem')
+  async redeem(@Req() req: { user: { sub: string } }, @Body() body: { code?: string }) {
+    return this.entitlements.redeem(req.user.sub, body?.code ?? '');
   }
 
   // -------------------------------------------------------------- admin/ops

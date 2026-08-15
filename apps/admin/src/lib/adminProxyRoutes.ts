@@ -1,0 +1,112 @@
+/**
+ * The explicit allowlist of `services/api/admin/*` routes the standalone console
+ * proxy will forward.
+ *
+ * WHY AN ALLOWLIST INSTEAD OF `/admin/:path*`
+ *
+ * The same lesson `apps/web/feed-proxy-routes.mjs` records for the Dhan bridge.
+ * The catch-all proxy holds the operator token and forwards it to EVERY
+ * `/admin/*` route — every route that exists today and every route anyone adds
+ * later. A wildcard means the blast radius of the proxy is "the entire admin
+ * surface, forever", and a new admin endpoint becomes reachable through this
+ * console with no change here and no review step that would notice.
+ *
+ * Inverting the default fixes that: a new admin route is unreachable through the
+ * proxy until someone adds it to this file — a deliberate act in a module whose
+ * whole subject is what the console may call. Adding a route here is not "a page
+ * needs it"; it is "an authenticated operator is allowed to invoke this".
+ *
+ * This list mirrors `lib/api.ts` (the client) and `lib/knowledge.ts`. The SSE
+ * streams (`/admin/stream`, `/admin/knowledge/stream`) are deliberately absent:
+ * they are served by dedicated Route Handlers under `/api/stream`, not this
+ * proxy, so they never reach here.
+ *
+ * Kept as its own module, not inlined in the Route Handler, so it can be
+ * unit-tested — see adminProxyRoutes.test.ts.
+ */
+
+type Method = 'GET' | 'POST';
+
+/** One allowed route. `segments` is matched against the path AFTER the
+ *  `/admin/` prefix that the proxy adds; `'*'` matches exactly one path segment
+ *  (an id), never a slash and never nothing. */
+interface RouteRule {
+  method: Method;
+  segments: (string | '*')[];
+}
+
+export const ADMIN_PROXY_ROUTES: RouteRule[] = [
+  // --- Overview / health -----------------------------------------------------
+  { method: 'GET', segments: ['overview'] },
+  { method: 'GET', segments: ['health'] },
+
+  // --- API telemetry ---------------------------------------------------------
+  { method: 'GET', segments: ['api-calls'] },
+  { method: 'GET', segments: ['api-calls', 'timeseries'] },
+  { method: 'GET', segments: ['api-calls', 'routes'] },
+  { method: 'GET', segments: ['api-calls', 'pulse'] },
+
+  // --- AI telemetry ----------------------------------------------------------
+  { method: 'GET', segments: ['ai', 'calls'] },
+  { method: 'GET', segments: ['ai', 'by-agent'] },
+  { method: 'GET', segments: ['ai', 'by-model'] },
+  { method: 'GET', segments: ['ai', 'timeseries'] },
+
+  // --- Agents ----------------------------------------------------------------
+  { method: 'GET', segments: ['agents', 'states'] },
+  { method: 'GET', segments: ['agents', 'runs'] },
+  { method: 'GET', segments: ['agents', 'runs', '*'] },
+
+  // --- Orders / trades / users / audit --------------------------------------
+  { method: 'GET', segments: ['orders'] },
+  { method: 'GET', segments: ['orders', 'stats'] },
+  { method: 'GET', segments: ['trades'] },
+  { method: 'GET', segments: ['users'] },
+  { method: 'GET', segments: ['audit'] },
+  // The one privileged write on this surface — grant/revoke admin. Attributed
+  // to the operator by AdminAccessGuard's req.user.sub.
+  { method: 'POST', segments: ['users', 'set-admin'] },
+
+  // --- Cognition network -----------------------------------------------------
+  { method: 'GET', segments: ['cognition', 'overview'] },
+  { method: 'GET', segments: ['cognition', 'perceptors'] },
+  { method: 'GET', segments: ['cognition', 'domains'] },
+  { method: 'GET', segments: ['cognition', 'episodes'] },
+  { method: 'GET', segments: ['cognition', 'episodes', '*'] },
+  { method: 'GET', segments: ['cognition', 'percepts'] },
+  { method: 'GET', segments: ['cognition', 'synapses'] },
+  { method: 'GET', segments: ['cognition', 'proposals'] },
+  { method: 'POST', segments: ['cognition', 'perceptors', '*', 'enabled'] },
+  { method: 'POST', segments: ['cognition', 'proposals', '*', 'resolve'] },
+  { method: 'POST', segments: ['cognition', 'run'] },
+
+  // --- Knowledge workspace (read-only vault) --------------------------------
+  { method: 'GET', segments: ['knowledge', 'tree'] },
+  { method: 'GET', segments: ['knowledge', 'file'] },
+  { method: 'GET', segments: ['knowledge', 'recent'] },
+  { method: 'GET', segments: ['knowledge', 'search'] },
+  { method: 'GET', segments: ['knowledge', 'graph'] },
+  { method: 'GET', segments: ['knowledge', 'activity'] },
+];
+
+/**
+ * Is (method, path) an allowed forward? `path` is the segment array the proxy
+ * received (Next.js has already split on `/` and percent-decoded each part).
+ *
+ * A `'*'` in a rule matches exactly one concrete segment. Any segment that is
+ * empty or a `.`/`..` traversal token fails the whole match, so a crafted
+ * `cognition/../users` (were it ever to arrive un-normalised) cannot slip
+ * through against the `cognition/*` rules.
+ */
+export function isAllowedAdminRoute(method: string, path: string[]): boolean {
+  const upper = method.toUpperCase();
+  if (upper !== 'GET' && upper !== 'POST') return false;
+  if (path.length === 0) return false;
+  if (path.some((seg) => seg === '' || seg === '.' || seg === '..')) return false;
+
+  return ADMIN_PROXY_ROUTES.some((rule) => {
+    if (rule.method !== upper) return false;
+    if (rule.segments.length !== path.length) return false;
+    return rule.segments.every((seg, i) => seg === '*' || seg === path[i]);
+  });
+}

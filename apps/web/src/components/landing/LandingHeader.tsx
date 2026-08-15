@@ -2,10 +2,19 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { ASSISTANT_NAME } from '@/lib/assistant/identity';
 
+/**
+ * Kept to five entries even though the page now has ten sections. The nav is a
+ * map of the decision a visitor is making — what is it, what is the premium
+ * part, what does it cost, is it safe — not a table of contents. Everything
+ * else is reachable from the footer, which is where an exhaustive list belongs.
+ */
 const NAV = [
   { label: 'Platform', href: '#platform' },
-  { label: 'Intelligence', href: '#intelligence' },
+  { label: ASSISTANT_NAME, href: '#assistant' },
+  { label: 'Sentinel', href: '#sentinel' },
+  { label: 'Pricing', href: '#pricing' },
   { label: 'Security', href: '#security' },
 ];
 

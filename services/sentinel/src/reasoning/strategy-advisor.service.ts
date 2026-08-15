@@ -11,6 +11,7 @@ import { MarketSnapshot } from '../intelligence/market-intelligence.service';
 import { StrategyDetection } from '../intelligence/strategy-engine.service';
 import { MarketStateValue } from '../domain';
 import type { PublicationDecision } from '../orchestrator/publication-gate';
+import { istDateKey } from '../market-clock';
 import { Regime } from './types';
 
 /**
@@ -32,6 +33,12 @@ import { Regime } from './types';
 @Injectable()
 export class StrategyAdvisorService {
   constructor(private readonly registry: StrategyRegistryService) {}
+
+  /**
+   * symbol -> the spot price when the currently-favoured side was surfaced.
+   * One entry per symbol, reset on side flip or IST day change (`anchorFor`).
+   */
+  private readonly sideAnchors = new Map<string, { istDate: string; side: 'CE' | 'PE'; anchorPrice: number }>();
 
   /** Guidance states in which a side is genuinely in focus. */
   private static readonly GUIDANCE_STATES: MarketStateValue[] = [
@@ -265,15 +272,26 @@ export class StrategyAdvisorService {
     state: MarketStateValue;
     /** The four-condition gate's verdict. Null is treated as "did not clear". */
     publication: PublicationDecision | null;
+    /** Injectable clock — the anchor map evicts by IST date. */
+    now?: Date;
   }): SideInFocus | null {
-    // Strictly enforce minimum 70% confidence floor before surfacing Side in Focus
-    const confScore = input.confidence.score;
-    if (confScore < 70) {
-      return null;
-    }
+    // The four-condition gate is the sole authority on whether anything
+    // surfaces, exactly as this method's doc comment describes. It had drifted
+    // back to a bare confidence check, which is the second weaker gate the
+    // comment was written to record the removal of: a directional read could
+    // reach a trader with a mandatory rule unmet, conflicting evidence present
+    // and zero corroboration, as long as one number cleared 70.
+    if (!input.publication?.publish) return null;
 
-    const detectedBias = this.resolveBias(input.detections, input.snapshot);
-    const bias = detectedBias !== 'neutral' ? detectedBias : 'bullish';
+    const confScore = input.confidence.score;
+    if (confScore < 70) return null;
+
+    // No confirmed direction means no side. This previously defaulted a
+    // neutral read to 'bullish', which manufactured a CE out of the precise
+    // case where the evidence declined to pick a direction — the opposite of
+    // surfacing a side "only on confirmation".
+    const bias = this.resolveBias(input.detections, input.snapshot);
+    if (bias === 'neutral') return null;
 
     const side: 'CE' | 'PE' = bias === 'bullish' ? 'CE' : 'PE';
     let strike = this.strongestStrike(input.symbol, input.snapshot, bias);
@@ -288,23 +306,41 @@ export class StrategyAdvisorService {
       rationale.push(`Target ATM strike: ${input.symbol} ${strike} ${side}`);
     }
 
-    // Post-signal live verification tracking
-    const currentPrice = input.snapshot.lastPrice || (strike ?? 24550);
-    const entryPrice = strike ?? currentPrice;
-    const pnlPoints = bias === 'bullish' ? currentPrice - entryPrice : entryPrice - currentPrice;
-    
-    let valStatus: 'developing' | 'target_reached' | 'invalidated' | 'observing' = 'observing';
-    let valLabel = `⚡ Signal Active — Tracking live tape`;
-    
-    if (pnlPoints >= 10) {
-      valStatus = 'developing';
-      valLabel = `✓ Move Developing (+${pnlPoints.toFixed(1)} pts)`;
-    } else if (pnlPoints <= -25) {
+    // ---------------------------------------------------------- progress
+    // Movement since the side was surfaced, measured IN THAT SIDE'S FAVOUR:
+    // a CE gains as spot rises, a PE gains as spot falls. Reporting raw market
+    // direction instead would make the PE card read "market up 5" at the exact
+    // moment the read is winning, and pair a gain-protection line with a
+    // number that contradicts it.
+    //
+    // The anchor is the spot price when this side was surfaced. It used to be
+    // the ATM *strike*, which made this quantity a rounding artifact rather
+    // than a measurement: spot-minus-nearest-round-number is bounded by half a
+    // strike step, so on NIFTY it could never leave ±25 no matter how far the
+    // market travelled. "Move Developing (+10)" was reporting where spot sat
+    // relative to a round number, and "Setup Invalidated" (≤ −25) was
+    // unreachable in practice.
+    const currentPrice = input.snapshot.lastPrice && input.snapshot.lastPrice > 0 ? input.snapshot.lastPrice : (strike ?? 0);
+    const anchorPrice = this.anchorFor(input.symbol, side, currentPrice, input.now ?? new Date());
+    const pnlPoints = side === 'CE' ? currentPrice - anchorPrice : anchorPrice - currentPrice;
+
+    const steps = PROGRESS_STEPS_BY_SYMBOL[input.symbol] ?? DEFAULT_PROGRESS_STEPS;
+    const reached = [...steps].reverse().find((s) => pnlPoints >= s) ?? null;
+    const invalidationPoints = steps[steps.length - 1];
+    const contract = `${input.symbol} ${strike} ${side}`;
+
+    let valStatus: 'developing' | 'target_reached' | 'invalidated' | 'observing';
+    let valLabel: string;
+
+    if (reached !== null) {
+      valStatus = reached >= steps[steps.length - 1] ? 'target_reached' : 'developing';
+      valLabel = `${contract} is ${reached} points in favour. Trail or exit is a discipline choice.`;
+    } else if (pnlPoints <= -invalidationPoints) {
       valStatus = 'invalidated';
-      valLabel = `⚠ Setup Invalidated (${pnlPoints.toFixed(1)} pts)`;
+      valLabel = `${contract} has moved ${Math.abs(pnlPoints).toFixed(1)} points against this read.`;
     } else {
       valStatus = 'observing';
-      valLabel = `✓ Move Active — Tracking live tape (+${Math.max(0, pnlPoints).toFixed(1)} pts)`;
+      valLabel = `${contract} — tracking from ${anchorPrice.toFixed(1)}.`;
     }
 
     return {
@@ -320,10 +356,34 @@ export class StrategyAdvisorService {
         status: valStatus,
         label: valLabel,
         pnlPoints: Number(pnlPoints.toFixed(1)),
-        entryPrice,
+        // The spot price when this side was surfaced — the point movement is
+        // measured from. Named `entryPrice` by the existing contract; it is
+        // not an entry recommendation and Sentinel places no orders.
+        entryPrice: anchorPrice,
         currentPrice,
       },
     };
+  }
+
+  /**
+   * Spot price at the moment the current side was surfaced for this symbol.
+   *
+   * Reset on two events, both of which end the run being measured: a new IST
+   * trading day, and a flip of the favoured side. Keying by symbol alone
+   * rather than by (symbol, side) is what makes the flip reset work — keying
+   * by side would let a CE→PE→CE sequence resurrect the morning's stale CE
+   * anchor and report a day's drift as progress on a minute-old read.
+   *
+   * Date-based eviction is deliberate, matching the strategy lifecycle map:
+   * a market-close hook is another scheduled thing that can silently fail to
+   * fire, and this needs no scheduling to stay correct.
+   */
+  private anchorFor(symbol: string, side: 'CE' | 'PE', spot: number, now: Date): number {
+    const istDate = istDateKey(now);
+    const held = this.sideAnchors.get(symbol);
+    if (held && held.istDate === istDate && held.side === side) return held.anchorPrice;
+    this.sideAnchors.set(symbol, { istDate, side, anchorPrice: spot });
+    return spot;
   }
 
   private resolveBias(detections: StrategyDetection[], snapshot: MarketSnapshot): 'bullish' | 'bearish' | 'neutral' {
@@ -375,6 +435,26 @@ const TRADE_MANAGEMENT = {
   trailing: ['1:1', '1:2', '1:3'],
   note: 'Educational framing only. A 1:3 target with trailing at 1:1 → 1:2 → 1:3 is a study structure, not an instruction. Sentinel never places orders or guarantees outcomes.',
 };
+
+/**
+ * Index points of favourable movement at which progress is reported, per
+ * symbol, ascending.
+ *
+ * These cannot be one shared triple. NIFTY drifts 5 points in ordinary noise
+ * while BANKNIFTY moves in hundreds, so a flat 5/10/15 would fire all three
+ * BANKNIFTY steps within seconds of almost any read and report noise as
+ * progress. The last entry doubles as the adverse bound for `invalidated`.
+ */
+const PROGRESS_STEPS_BY_SYMBOL: Record<string, number[]> = {
+  NIFTY: [5, 10, 15],
+  BANKNIFTY: [25, 50, 75],
+  FINNIFTY: [5, 10, 15],
+  SENSEX: [25, 50, 75],
+  MIDCPNIFTY: [3, 6, 9],
+  BANKEX: [25, 50, 75],
+};
+
+const DEFAULT_PROGRESS_STEPS = [5, 10, 15];
 
 /** Illustrative NSE/BSE strike intervals; falls back to a magnitude-based step. */
 const STRIKE_STEP_BY_SYMBOL: Record<string, number> = {
