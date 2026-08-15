@@ -58,6 +58,12 @@ function describe(event: TimelineEvent): { label: string; tone: Tone; message: s
         tone: 'green',
         message: `All ${total} conditions you defined are met${event.reason ? `. ${event.reason}` : ''}.`,
       };
+    case 'rejected':
+      return {
+        label: 'SETUP STEPPED BACK',
+        tone: 'orange',
+        message: `A condition your strategy had already met is no longer met — ${event.reason}. The setup is back to watching.`,
+      };
     case 'milestone_1R':
       return {
         label: '1:1 REACHED — REVIEW',

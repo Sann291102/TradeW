@@ -21,6 +21,7 @@ export type Direction = 'LONG' | 'SHORT';
 export type TimelineEventKind =
   | 'wait_and_watch'
   | 'confirmed'
+  | 'rejected'
   | 'milestone_1R'
   | 'milestone_2R'
   | 'milestone_3R'
@@ -45,6 +46,9 @@ export interface TimelineEvent {
    * to one entry rather than one card per check. */
   firstAt: string;
   occurrences: number;
+  /** Present on `rejected`: the conditions the setup had satisfied and then
+   * gave back. */
+  lostConditions?: string[];
 }
 
 export interface TimelineWatch {

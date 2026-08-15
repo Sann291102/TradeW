@@ -48,6 +48,61 @@ def _pre_entry_event(observation: dict) -> dict | None:
     }
 
 
+def _met_mandatory(observation: dict) -> dict[str, str]:
+    """Mandatory rules currently satisfied, as {ruleId: name}."""
+    return {
+        rule.get("ruleId") or rule.get("name") or "": rule.get("name") or ""
+        for rule in (observation.get("ruleEvaluations") or [])
+        if rule.get("mandatory") and rule.get("met")
+    }
+
+
+def _rule_detail(observation: dict, rule_id: str) -> str:
+    for rule in observation.get("ruleEvaluations") or []:
+        if (rule.get("ruleId") or rule.get("name")) == rule_id:
+            return rule.get("detail") or ""
+    return ""
+
+
+def _rejection(newer: dict, older: dict) -> dict | None:
+    """A condition the setup had already satisfied is no longer satisfied.
+
+    This is the event that was missing: the feed could say a setup was
+    forming and later that it was forming less, but never that it had
+    actively given something back. "Reclaim confirmed, then volume fell below
+    the threshold and the setup returned to watching" is the sentence a user
+    learns from, and it is the sample a performance funnel needs in order to
+    measure where setups die.
+
+    Derived by comparing adjacent observations rather than recorded at sweep
+    time: the audit trail already stores every rule's met/unmet on every
+    pass, so the fact is already there and deriving it here keeps one
+    implementation for every consumer.
+    """
+    lost = {rid: name for rid, name in _met_mandatory(older).items() if rid not in _met_mandatory(newer)}
+    if not lost:
+        return None
+
+    names = ", ".join(sorted(name for name in lost.values() if name)) or "a condition"
+    detail = next((d for d in (_rule_detail(newer, rid) for rid in lost) if d), "")
+    meta = newer.get("metadata") or {}
+    met, total = meta.get("mandatoryMet"), meta.get("mandatoryTotal")
+
+    return {
+        "kind": "rejected",
+        "state": newer.get("state") or "",
+        # A rejection is something that happened, not a partial setup, so it
+        # is never filtered out by the feed's strength threshold.
+        "strength": 1.0,
+        "conditionsMet": met,
+        "conditionsTotal": total,
+        "rMultiple": None,
+        "reason": f"{names} no longer met{f' — {detail}' if detail else ''}",
+        "notified": False,
+        "lostConditions": sorted(lost.values()),
+    }
+
+
 # The sweep records in-trade findings under `ruleEvaluations` as
 # {event, detail, milestone}; one observation can carry several.
 _MILESTONE_KIND = {"1R": "milestone_1R", "2R": "milestone_2R", "3R": "milestone_3R"}
@@ -116,19 +171,27 @@ def build_timeline(watch: dict, observations: list[dict]) -> dict[str, Any]:
     assumed so a change to the query cannot silently invert the feed."""
     events: list[dict] = []
 
-    for observation in observations:
-        meta = observation.get("metadata") or {}
-        # A sweep that could not read the market is not an event the user
-        # needs, but it IS why they saw nothing — kept out of the feed and
-        # left in the audit trail.
-        if meta.get("skipped"):
-            continue
+    # A sweep that could not read the market is not an event the user needs,
+    # but it IS why they saw nothing — kept out of the feed and left in the
+    # audit trail. Filtered first so a skipped pass cannot look like a
+    # rejection when compared against its neighbours.
+    usable = [o for o in observations if not (o.get("metadata") or {}).get("skipped")]
 
+    for index, observation in enumerate(usable):
+        pre_entry = observation.get("agent") != "intrade-monitor"
         derived = (
             _in_trade_events(observation)
-            if observation.get("agent") == "intrade-monitor"
+            if not pre_entry
             else [e for e in [_pre_entry_event(observation)] if e]
         )
+
+        # `usable` is newest-first, so the NEXT item is the previous sweep.
+        if pre_entry and index + 1 < len(usable):
+            older = usable[index + 1]
+            if older.get("agent") != "intrade-monitor":
+                rejection = _rejection(observation, older)
+                if rejection:
+                    derived.append(rejection)
         for event in derived:
             events.append(
                 {

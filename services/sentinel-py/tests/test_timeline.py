@@ -145,3 +145,89 @@ def test_single_events_still_report_one_occurrence():
     events = build_timeline(WATCH, [forming("2026-08-13T10:00:00")])["events"]
     assert events[0]["occurrences"] == 1
     assert events[0]["firstAt"] == events[0]["at"]
+
+
+# --- rejection events -------------------------------------------------------
+
+
+def with_rules(at, rules, state="FORMING", met=None, total=2):
+    """An observation carrying explicit per-rule results."""
+    n_met = met if met is not None else sum(1 for r in rules if r["met"] and r["mandatory"])
+    return observation(
+        at,
+        state=state,
+        metadata={"mandatoryMet": n_met, "mandatoryTotal": total},
+        findings=rules,
+    )
+
+
+BREAKOUT_MET = {"ruleId": "r_breakout", "name": "breakout_high", "mandatory": True, "met": True, "detail": "close above"}
+BREAKOUT_LOST = {
+    "ruleId": "r_breakout",
+    "name": "breakout_high",
+    "mandatory": True,
+    "met": False,
+    "detail": "no close above 110",
+}
+RETEST_MET = {"ruleId": "r_retest", "name": "retest", "mandatory": True, "met": True, "detail": "retested"}
+
+
+def test_a_condition_given_back_produces_a_rejection():
+    """The setup had it, then lost it — the sentence a user learns from."""
+    obs = [
+        with_rules("2026-08-13T10:15:00", [BREAKOUT_LOST], met=0),   # newer
+        with_rules("2026-08-13T10:00:00", [BREAKOUT_MET], met=1),    # older
+    ]
+    kinds = [e["kind"] for e in build_timeline(WATCH, obs)["events"]]
+    assert "rejected" in kinds
+    rejection = next(e for e in build_timeline(WATCH, obs)["events"] if e["kind"] == "rejected")
+    assert "breakout_high" in rejection["reason"]
+    assert "no close above 110" in rejection["reason"]
+    assert rejection["lostConditions"] == ["breakout_high"]
+
+
+def test_a_rejection_is_never_hidden_by_the_strength_threshold():
+    """It happened; it is not a partial setup."""
+    obs = [
+        with_rules("2026-08-13T10:15:00", [BREAKOUT_LOST], met=0),
+        with_rules("2026-08-13T10:00:00", [BREAKOUT_MET], met=1),
+    ]
+    rejection = next(e for e in build_timeline(WATCH, obs)["events"] if e["kind"] == "rejected")
+    assert rejection["strength"] == 1.0
+
+
+def test_steady_progress_is_not_a_rejection():
+    obs = [
+        with_rules("2026-08-13T10:15:00", [BREAKOUT_MET, RETEST_MET], met=2),
+        with_rules("2026-08-13T10:00:00", [BREAKOUT_MET], met=1),
+    ]
+    assert "rejected" not in [e["kind"] for e in build_timeline(WATCH, obs)["events"]]
+
+
+def test_a_condition_never_met_is_not_a_rejection():
+    """Only something the setup ACTUALLY had counts as given back."""
+    obs = [
+        with_rules("2026-08-13T10:15:00", [BREAKOUT_LOST], met=0),
+        with_rules("2026-08-13T10:00:00", [BREAKOUT_LOST], met=0),
+    ]
+    assert "rejected" not in [e["kind"] for e in build_timeline(WATCH, obs)["events"]]
+
+
+def test_a_skipped_sweep_between_two_passes_cannot_fake_a_rejection():
+    """A pass with no market data records no rules; comparing against it
+    would read as every condition being lost at once."""
+    obs = [
+        with_rules("2026-08-13T10:15:00", [BREAKOUT_MET], met=1),
+        observation("2026-08-13T10:10:00", metadata={"skipped": "market_data_unavailable"}),
+        with_rules("2026-08-13T10:00:00", [BREAKOUT_MET], met=1),
+    ]
+    assert "rejected" not in [e["kind"] for e in build_timeline(WATCH, obs)["events"]]
+
+
+def test_losing_several_conditions_names_them_all():
+    obs = [
+        with_rules("2026-08-13T10:15:00", [BREAKOUT_LOST], met=0),
+        with_rules("2026-08-13T10:00:00", [BREAKOUT_MET, RETEST_MET], met=2),
+    ]
+    rejection = next(e for e in build_timeline(WATCH, obs)["events"] if e["kind"] == "rejected")
+    assert rejection["lostConditions"] == ["breakout_high", "retest"]
