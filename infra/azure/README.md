@@ -42,9 +42,30 @@ az deployment group what-if --resource-group tradew-staging-rg --template-file i
 az deployment group create --resource-group tradew-staging-rg --template-file infra/azure/main.bicep --parameters infra/azure/main.staging.local.bicepparam
 ```
 
+## Deploy application services to staging
+
+After the foundation and the Key Vault secrets exist, create a local
+`services.staging.local.bicepparam` from the checked-in example. Use a commit
+SHA as `imageTag`; a mutable `latest` tag makes a rollback impossible to state.
+
+```powershell
+az bicep build --file infra/azure/services.bicep
+az deployment group what-if --resource-group tradew-staging-rg --template-file infra/azure/services.bicep --parameters infra/azure/services.staging.local.bicepparam
+az deployment group create --resource-group tradew-staging-rg --template-file infra/azure/services.bicep --parameters infra/azure/services.staging.local.bicepparam
+```
+
+The module deploys `web`, `api`, `sentinel`, `market-data`, and `live-feed`
+with **internal ingress only**. It does not make an application publicly
+reachable. Azure Front Door Premium and Private Link remain the only approved
+way to introduce public production traffic in a later change.
+
+The parameters name versioned Key Vault secret URLs. Create these secrets out
+of band before deployment: `database-url`, `jwt-secret`, `admin-api-token`,
+`sentinel-service-token`, `service-token`, and `dhan-access-token`.
+
 ## Deliberate next steps
 
-The service deployment module comes after these facts are confirmed:
+The public ingress and scale-out work comes after these facts are confirmed:
 
 - Front Door Premium and Private Link are selected and cost-approved.
 - Private DNS and the database's network model are agreed.
@@ -52,9 +73,7 @@ The service deployment module comes after these facts are confirmed:
   process memory before API replicas can scale above one.
 - Clean CI builds publish an Azure-supported container architecture. The
   current OCI workflow publishes `linux/arm64` only.
-- Service secrets are created out of band in Key Vault: `database-url`,
-  `jwt-secret`, `admin-api-token`, `sentinel-service-token`, `service-token`,
-  and Dhan credentials.
+- Service secrets are created out of band in Key Vault.
 
 `market-data`, `live-feed`, and `sentinel` remain singleton workloads. The
 current broker-feed and Sentinel state model make a second replica incorrect,

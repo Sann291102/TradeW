@@ -23,4 +23,6 @@ jobs:
       - name: Compile Azure foundation
         uses: azure/cli@v2
         with:
-          inlineScript: az bicep build --file infra/azure/main.bicep
+          inlineScript: |
+            az bicep build --file infra/azure/main.bicep
+            az bicep build --file infra/azure/services.bicep

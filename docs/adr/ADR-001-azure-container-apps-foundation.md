@@ -18,8 +18,8 @@ services.
 
 ## Decision
 
-Build an Azure Container Apps foundation in Bicep before deploying application
-containers. It provides:
+Build an Azure Container Apps foundation and an internal-only service module in
+Bicep. They provide:
 
 - an internal, VNet-integrated Container Apps environment;
 - Azure Container Registry with managed-identity image pulls;
@@ -28,6 +28,10 @@ containers. It provides:
 - Service Bus queues for durable background-job triggers; and
 - a VNet split between the delegated Container Apps subnet and an isolated
   private-endpoint subnet.
+
+The service module deploys web, API, Sentinel, market-data, and live-feed from
+immutable image tags. It encodes one-replica limits for API (until Redis-backed
+rate limiting exists), Sentinel, market-data, and live-feed.
 
 Existing PostgreSQL is treated as an external dependency. Its ownership,
 networking, backup, and pgvector support must be verified before application
@@ -81,5 +85,5 @@ rollback plan.
    identity access to read them.
 3. Verify the existing PostgreSQL server's private networking, pgvector, backup
    restore, and connection budget.
-4. Add the Container Apps service module and Front Door only after the above
-   evidence is recorded.
+4. Add Front Door and private connectivity only after the above evidence is
+   recorded.
