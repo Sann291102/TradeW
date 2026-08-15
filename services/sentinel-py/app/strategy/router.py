@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.auth import require_service_token
 from app.strategy import store
+from app.strategy.contract import build_contract
 from app.strategy.performance import compute_performance
 from app.strategy.templates import get_template, list_templates
 from app.watch import store as watch_store
@@ -106,3 +107,24 @@ async def performance(strategy_id: str, user_id: str = Query(..., alias="userId"
     watches = await watch_store.list_watches_for_strategy(user_id, strategy_id)
     observations = {w["id"]: await watch_store.list_observations(w["id"], 500) for w in watches}
     return compute_performance(strategy_id, watches, observations).to_dict()
+
+
+@router.get("/{strategy_id}/contract")
+async def contract(
+    strategy_id: str,
+    user_id: str = Query(..., alias="userId"),
+    watch_id: str | None = Query(None, alias="watchId"),
+) -> dict:
+    """The one payload the whole strategy workflow renders from.
+
+    Adopt -> Configure -> Watch -> Focus -> Feed -> Performance, in a single
+    shape that does not vary by evaluator. The UI stays generic; a new
+    template becomes usable without a new screen.
+    """
+    strategy = await store.get_strategy(user_id, strategy_id)
+    if strategy is None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+
+    watches = await watch_store.list_watches_for_strategy(user_id, strategy_id)
+    observations = {w["id"]: await watch_store.list_observations(w["id"], 500) for w in watches}
+    return build_contract(strategy, watches, observations, focused_watch_id=watch_id)
