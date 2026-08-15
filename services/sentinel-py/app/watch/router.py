@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from app.core.auth import require_service_token
 from app.watch import store
 from app.watch.poller import sweep_once
+from app.watch.timeline import build_timeline
 
 router = APIRouter(prefix="/watch", tags=["watch"], dependencies=[Depends(require_service_token)])
 
@@ -90,3 +91,14 @@ async def close_position(watch_id: str, user_id: str = Query(..., alias="userId"
     if row is None:
         raise HTTPException(status_code=404, detail="Watch not found")
     return row
+
+
+@router.get("/{watch_id}/timeline")
+async def timeline(watch_id: str, user_id: str = Query(..., alias="userId"), limit: int = 100) -> dict:
+    """The event stream the workspace feed renders. Scoped by userId so one
+    user cannot read another's watch history."""
+    watch = await store.get_watch(user_id, watch_id)
+    if watch is None:
+        raise HTTPException(status_code=404, detail="Watch not found")
+    observations = await store.list_observations(watch_id, limit)
+    return build_timeline(watch, observations)

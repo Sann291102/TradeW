@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import type { DashboardModel } from '@/lib/sentinel/dashboardModel';
 import { StatusCards } from './StatusCards';
 import { LiveMarketOverview } from './LiveMarketOverview';
-import { ObservationCard } from './ObservationCard';
+import { StrategyTimelineFeed } from '../StrategyTimelineFeed';
 import { RiskRadar } from './RiskRadar';
 import { EmotionMirror } from './EmotionMirror';
 import { SessionTimeline } from './SessionTimeline';
@@ -67,7 +67,10 @@ export function SentinelDashboard({
           <LiveMarketOverview symbol={symbol} marketName={marketName} />
         </div>
         <div className="col-span-12 md:col-span-6 xl:col-span-4">
-          <ObservationCard model={model.observation} />
+          {/* Replaces the old generic ObservationCard (market-wide analysis +
+              model confidence bar), which said nothing about whether the
+              user's OWN strategy was working. */}
+          <StrategyTimelineFeed />
         </div>
         <div className="col-span-12 space-y-4 md:col-span-6 xl:col-span-3">
           <section className="rounded-2xl border border-border bg-card p-5 shadow-elev2">
