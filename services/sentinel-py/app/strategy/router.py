@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.auth import require_service_token
 from app.strategy import store
+from app.strategy.performance import compute_performance
+from app.watch import store as watch_store
 from app.strategy.parser import parse_strategy_text
 from app.strategy.schemas import (
     CreateStrategyRequest,
@@ -60,3 +62,16 @@ async def archive(strategy_id: str, user_id: str = Query(..., alias="userId")) -
     if row is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
     return UserStrategyResponse(**row)
+
+
+@router.get("/{strategy_id}/performance")
+async def performance(strategy_id: str, user_id: str = Query(..., alias="userId")) -> dict:
+    """How the user's OWN strategy has behaved. Describes what happened; it
+    never ranks strategies, nominates one, or proposes a trade."""
+    strategy = await store.get_strategy(user_id, strategy_id)
+    if strategy is None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+
+    watches = await watch_store.list_watches_for_strategy(user_id, strategy_id)
+    observations = {w["id"]: await watch_store.list_observations(w["id"], 500) for w in watches}
+    return compute_performance(strategy_id, watches, observations).to_dict()

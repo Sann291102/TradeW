@@ -110,6 +110,14 @@ export class SentinelPyService {
     return this.call(this.scoped(`/strategies/${encodeURIComponent(id)}`, userId), { method: 'DELETE' });
   }
 
+  /** How the user's OWN strategy has behaved: funnel, outcomes, R stats.
+   * Describes history; never ranks strategies or proposes a trade. */
+  strategyPerformance(userId: string, id: string) {
+    return this.call(this.scoped(`/strategies/${encodeURIComponent(id)}/performance`, userId), {
+      method: 'GET',
+    });
+  }
+
   // --- watches ------------------------------------------------------------
 
   createWatch(userId: string, body: unknown) {

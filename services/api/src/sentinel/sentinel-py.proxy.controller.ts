@@ -57,6 +57,11 @@ export class SentinelPyProxyController {
     return this.sentinelPy.updateStrategy(req.user.sub, id, body);
   }
 
+  @Get('strategies/:id/performance')
+  strategyPerformance(@Req() req: AuthedRequest, @Param('id') id: string) {
+    return this.sentinelPy.strategyPerformance(req.user.sub, id);
+  }
+
   /** Soft delete — archives rather than destroys. */
   @Delete('strategies/:id')
   archiveStrategy(@Req() req: AuthedRequest, @Param('id') id: string) {

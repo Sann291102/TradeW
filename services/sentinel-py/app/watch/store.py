@@ -259,3 +259,14 @@ async def get_watch(user_id: str, watch_id: str) -> dict | None:
             watch_id,
         )
     return _watch_to_dict(row) if row else None
+
+
+async def list_watches_for_strategy(user_id: str, strategy_id: str) -> list[dict]:
+    pool = _pool_or_raise()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            'SELECT * FROM "WatchSession" WHERE "userId" = $1 AND "strategyId" = $2 ORDER BY "createdAt" DESC',
+            user_id,
+            strategy_id,
+        )
+    return [_watch_to_dict(r) for r in rows]
