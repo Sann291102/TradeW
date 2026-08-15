@@ -9,7 +9,22 @@ This is a **new, additive service** (`services/sentinel-py`, default port
 unchanged until an explicit decision is made to retire it — see
 `SENTINEL_MASTER_PLAN.md` / the Sentinel architecture plan for that step.
 
-## Status: P0–P4 complete
+## Documentation
+
+| Document | Answers |
+|---|---|
+| [`docs/PRODUCT.md`](docs/PRODUCT.md) | What this product is, its non-negotiable principles, and the compliance posture |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How it is built: data model, module map, the watch loop, the generic contract, the frontend integration |
+| [`docs/PLAN.md`](docs/PLAN.md) | What is done, what is not, and the one thing that is not yet proven |
+
+The short version: P0–P4 and P7 are complete, 10 of 11 catalogue strategies
+are adoptable, and **no observation has yet been produced from real market
+data** — that gap is stated plainly in PLAN.md §4 rather than left to be
+discovered.
+
+## Status: P0–P4 and P7 complete
+
+(Full ledger in [`docs/PLAN.md`](docs/PLAN.md); the list below covers P0–P4.)
 
 - [x] FastAPI app with `/health`
 - [x] Service-token auth guard (`app/core/auth.py`), mirroring
