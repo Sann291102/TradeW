@@ -142,6 +142,10 @@ export interface StrategyContract {
   conditions: ContractCondition[];
   latestObservation: ObservedContext | null;
   lifecycle: TimelineEvent[];
+  /** Whether the engine could read the market on its most recent pass. A watch
+   * that has been unable to reach the feed all session looks exactly like a
+   * quiet market without this. */
+  dataStatus: { ok: boolean; reason: string; checkedAt: string | null };
   performance: Performance;
   /** Which breakdowns this user's history can support. Empty until watches
    * have actually produced observations. */

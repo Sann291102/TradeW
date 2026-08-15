@@ -151,6 +151,19 @@ def build_contract(
         None,
     )
 
+    # Whether the engine could read the market on its most recent pass. Skipped
+    # sweeps are filtered out of the feed and the observed context — they are
+    # not what the market did — but they ARE the answer to "why am I seeing
+    # nothing?", and a watch that has been silently unable to read candles all
+    # session looks identical to a quiet market without this.
+    newest = focus_observations[0] if focus_observations else None
+    skipped = (newest.get("metadata") or {}).get("skipped") if newest else None
+    data_status = {
+        "ok": not skipped,
+        "reason": (newest.get("metadata") or {}).get("detail", "") if skipped else "",
+        "checkedAt": newest.get("createdAt") if newest else None,
+    }
+
     all_observations = [o for obs in observations_by_watch.values() for o in obs]
 
     return {
@@ -190,6 +203,7 @@ def build_contract(
             else None
         ),
         "lifecycle": focus_timeline.get("events") or [],
+        "dataStatus": data_status,
         "performance": compute_performance(
             strategy["id"], watches, observations_by_watch
         ).to_dict(),
