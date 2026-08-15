@@ -83,6 +83,50 @@ export function sentinelSaving(term: SentinelTerm): number {
 }
 
 /**
+ * The paid 7-day Sentinel trial, 2026-08-15.
+ *
+ * A short paid taste of Sentinel for the pre-payment landing page, priced off
+ * the one-month term rather than picked: take the daily rate the ₹2,399 month
+ * implies, discount it, and charge seven of those days.
+ *
+ *   2399 / 7 = 342.71/day  →  −20%  =  274.17  →  ₹275
+ *
+ * DERIVED, NOT TYPED. Every figure below falls out of `SENTINEL_BASE_MONTHLY`,
+ * so a change to the one-month price re-prices the trial with it. Hand-typing
+ * ₹275 here is how the trial survives a price rise and quietly becomes a
+ * discount nobody approved — the same failure `total` is derived to avoid.
+ *
+ * The ₹5 rounding step is presentation, not slack: it keeps the charged figure
+ * clean without ever landing below the discounted rate by more than rounding.
+ */
+export const SENTINEL_TRIAL_DAYS = 7;
+export const SENTINEL_TRIAL_DISCOUNT_PCT = 20;
+
+export interface SentinelTrial {
+  /** Stable id — used on the wire and as the Razorpay `notes.itemId`. */
+  id: 'sentinel_trial_7d';
+  term: string;
+  /** Access granted, in days. */
+  days: number;
+  /** Undiscounted daily rate implied by the one-month term, for display. */
+  dailyRate: number;
+  discountPct: number;
+  /** Whole rupees actually charged. */
+  price: number;
+}
+
+const trialUndiscountedDaily = SENTINEL_BASE_MONTHLY / SENTINEL_TRIAL_DAYS;
+
+export const SENTINEL_TRIAL: SentinelTrial = {
+  id: 'sentinel_trial_7d',
+  term: '7-Day Trial',
+  days: SENTINEL_TRIAL_DAYS,
+  dailyRate: Math.round(trialUndiscountedDaily),
+  discountPct: SENTINEL_TRIAL_DISCOUNT_PCT,
+  price: Math.round((trialUndiscountedDaily * (100 - SENTINEL_TRIAL_DISCOUNT_PCT)) / 100 / 5) * 5,
+};
+
+/**
  * Learning Hub, 2026-08-11: a monthly subscription.
  *
  * This REPLACES the previous ₹299 one-time lifetime purchase. Lifetime access

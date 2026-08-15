@@ -1,0 +1,30 @@
+import { SentinelPricingClient } from '@/components/sentinel/pricing/SentinelPricingClient';
+
+export const metadata = {
+  title: 'Sentinel — TradeW',
+  description:
+    'Sentinel watches market structure and your trading behaviour in parallel, and explains what it sees. Observation and education only — never investment advice.',
+};
+
+/**
+ * `/sentinel/pricing` — the pre-payment Sentinel page.
+ *
+ * ── WHY THIS SITS OUTSIDE `(workspace)` ────────────────────────────────────
+ *
+ * The workspace group wraps every route in `AppFrame` — Sidebar, TopBar,
+ * Ticker. This page must be readable by someone with no account, and
+ * `(workspace)/layout.tsx` already records the reason that is wrong: it is the
+ * same call made for `/reset`, where "a sidebar full of gated links is wrong
+ * for them." A visitor evaluating whether to buy Sentinel should not first be
+ * shown a shell of links they cannot open.
+ *
+ * The route still resolves to `/sentinel/pricing` because `(workspace)` is a
+ * route GROUP and contributes no URL segment. `(workspace)/sentinel/page.tsx`
+ * owns `/sentinel`; this file owns `/sentinel/pricing`. Two different paths, so
+ * they do not collide — but `middleware.ts` gates on exact pathname, so this
+ * one had to be added to PUBLIC_PATHS explicitly. Adding a sibling page here
+ * without doing the same would silently bounce signed-out visitors to `/`.
+ */
+export default function SentinelPricingPage() {
+  return <SentinelPricingClient />;
+}

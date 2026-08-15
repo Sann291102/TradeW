@@ -8,6 +8,8 @@ tags: [payments, razorpay, entitlements, eod, scheduler, deploy, docker, admin]
 
 Follow-on to [[2026-08-11 - Transactional email + in-app notification wiring]] (same program). **Read before touching payments, the EOD job, or the prod compose.**
 
+> **Extended 2026-08-15** by [[2026-08-15 - Sentinel pre-payment page (day-length terms, durable claims, the shell that owned the session)]] — the catalog now also carries a DAY-length, once-per-account item (the paid 7-day trial). The "Catalog scope: Sentinel Pro terms only" note below still holds for renewable terms; the trial sits beside `CATALOG` rather than in it, and `fulfil` branches on `days` vs `months`. Read that note before adding any catalog item.
+
 ## Payments — Razorpay seam (`services/api/src/payments/`)
 - **No SDK dep** — raw REST + Node `crypto`, same rationale as `GoogleOauthService`. `RazorpayClient`: `createOrder` (Basic auth), `verifyPaymentSignature` (HMAC `${order}|${payment}` with key secret), `verifyWebhookSignature` (HMAC raw body with webhook secret). Constant-time compares.
 - **Unconfigured is first-class**: no `RAZORPAY_KEY_ID/SECRET` → `configured=false`, catalog returns `billingEnabled:false`, checkout refuses. Mirrors `/pricing`.

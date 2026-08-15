@@ -15,12 +15,37 @@ export interface CatalogItem {
   amountLabel: string;
 }
 
+/**
+ * The one-time paid trial. Sits beside `items` rather than inside it because it
+ * is granted in days, not months — see TRIAL_ITEM in the API's payment.catalog.
+ */
+export interface CatalogTrial {
+  id: string;
+  label: string;
+  days: number;
+  amountInr: number;
+  amountLabel: string;
+  dailyRateLabel: string;
+  discountPct: number;
+}
+
 export interface Catalog {
   currency: string;
   billingEnabled: boolean;
   keyId: string | null;
   items: CatalogItem[];
+  trial: CatalogTrial;
   notice?: string;
+}
+
+export interface TrialStatus {
+  eligible: boolean;
+  reason: 'available' | 'already_claimed' | 'already_subscribed';
+}
+
+/** Per-account trial eligibility. Authed — absent from the public catalog. */
+export function fetchTrialStatus(): Promise<TrialStatus> {
+  return api('/payments/trial');
 }
 
 export interface CheckoutOrder {

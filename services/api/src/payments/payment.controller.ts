@@ -50,6 +50,17 @@ export class PaymentController {
     return this.payments.catalog();
   }
 
+  /**
+   * Whether this account may still claim the one-time trial. Authed on purpose:
+   * `/catalog` is public and must stay free of per-account state.
+   */
+  @ApiBearerAuth(SECURITY.bearer)
+  @UseGuards(AuthGuard)
+  @Get('trial')
+  trial(@Req() req: AuthedRequest) {
+    return this.payments.trialStatus(req.user.sub);
+  }
+
   /** Start a checkout — creates a Razorpay order for the widget to collect against. */
   @Throttle(AUTH_LIMIT)
   @ApiBearerAuth(SECURITY.bearer)

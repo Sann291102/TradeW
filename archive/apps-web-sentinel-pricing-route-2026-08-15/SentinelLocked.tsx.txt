@@ -67,6 +67,9 @@ export function SentinelLocked() {
         </p>
       </form>
 
+      <Link href="/sentinel/pricing" className={buttonClasses({ variant: 'primary', size: 'sm' })}>
+        See plans &amp; start a 7-day trial
+      </Link>
       <Link href="/settings" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
         Choose standard plan
       </Link>

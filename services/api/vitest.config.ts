@@ -55,6 +55,10 @@ export default defineConfig({
       // Redemption must create a real subscription. It used to happen entirely
       // in the browser, so the UI unlocked and every premium call still 403'd.
       'src/entitlements/coupon-redeem.spec.ts',
+      // The paid 7-day trial: derived (never hand-typed) pricing, a claim that
+      // is durable rather than "is there a live subscription", and a day-length
+      // grant that must not quietly become a month.
+      'src/payments/trial.spec.ts',
       // Bearer-token parsing: the gate in front of every authenticated route.
       'src/auth/auth.guard.spec.ts',
       // Boot-time secret policy: no dev-fallback / vendor-key auth secrets

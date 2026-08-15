@@ -1,0 +1,314 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { SENTINEL_TERMS, SENTINEL_TRIAL, sentinelSaving, inr } from '@tradew/types';
+import { Reveal } from '@/components/common/Reveal';
+import { SentinelIcon } from '@/components/shell/icons';
+import { useSessionStore } from '@/lib/store/sessionStore';
+import {
+  fetchCatalog,
+  fetchTrialStatus,
+  startCheckout,
+  verifyPayment,
+  loadRazorpay,
+  openRazorpay,
+  type Catalog,
+  type TrialStatus,
+} from '@/lib/payments';
+import { PricingTierCard, type PricingTier } from './PricingTierCard';
+import { TrialOffer } from './TrialOffer';
+import { SentinelPreview } from './SentinelPreview';
+import { FeatureList } from './FeatureList';
+
+/**
+ * The Sentinel pre-payment landing page.
+ *
+ * PUBLIC TO READ, AUTHENTICATED TO BUY. A visitor with no account sees the
+ * whole page — that is the point of it — and a Checkout click sends them to
+ * sign-in carrying a `next` back to here, rather than being refused by a button
+ * that looks broken.
+ *
+ * ── WHAT THIS PAGE MAY NOT DO ──────────────────────────────────────────────
+ * It is informational and commercial, and nothing else. No order is placed
+ * from here, and no directional read appears on it — see the note in
+ * SentinelPreview.tsx.
+ *
+ * ── PRICES COME FROM THE SERVER ────────────────────────────────────────────
+ * Every rupee figure rendered is the one the server will charge, read from
+ * `/payments/catalog`. `@tradew/types` is used only for the SHAPE of the
+ * ladder (which terms exist, what each saves) and as the pre-paint fallback
+ * while the catalog loads — the two come from one source, so they agree, but
+ * where they could ever disagree the server wins.
+ */
+export function SentinelPricingClient() {
+  const router = useRouter();
+  const status = useSessionStore((s) => s.status);
+  const user = useSessionStore((s) => s.user);
+  const hasSentinel = useSessionStore((s) => s.hasCapability('sentinel'));
+  const refreshSession = useSessionStore((s) => s.init);
+
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [trialStatus, setTrialStatus] = useState<TrialStatus | null>(null);
+  const [busyItem, setBusyItem] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+
+  const authed = status === 'authenticated';
+
+  /**
+   * Establish the session ourselves.
+   *
+   * `AppFrame` is the only route-level caller of `sessionStore.init()`, and
+   * this page sits OUTSIDE the `(workspace)` group precisely so it does not
+   * wear that shell — so nothing here would ever initialise the store and
+   * `status` would stay 'idle' forever. Every account-dependent behaviour on
+   * this page silently inverted as a result: a subscriber was never redirected
+   * to `/sentinel`, trial eligibility was never fetched, and a signed-IN user
+   * was shown "Sign in to check out" and bounced to the landing page by their
+   * own Checkout button.
+   *
+   * Safe on a public page: `init()` short-circuits to 'unauthenticated' with no
+   * network call when there is no token. Guarded on 'idle' so arriving here
+   * from the workspace does not re-fetch a session that is already loaded.
+   */
+  useEffect(() => {
+    if (status === 'idle') void useSessionStore.getState().init();
+  }, [status]);
+
+  // Someone who already holds Sentinel has no business on a sales page — send
+  // them to the thing they bought.
+  useEffect(() => {
+    if (authed && hasSentinel) router.replace('/sentinel');
+  }, [authed, hasSentinel, router]);
+
+  useEffect(() => {
+    // The page already renders every price from the shared ladder, so a failed
+    // catalog fetch is not a blank page — it only means the server could not
+    // confirm them. Say so instead of clearing what is on screen.
+    fetchCatalog()
+      .then(setCatalog)
+      .catch(() => setMessage({ tone: 'bad', text: 'Could not reach the payment service. Prices shown may be out of date.' }));
+  }, []);
+
+  // Eligibility is per-account, so it is only knowable once signed in.
+  useEffect(() => {
+    if (!authed) {
+      setTrialStatus(null);
+      return;
+    }
+    fetchTrialStatus()
+      .then(setTrialStatus)
+      .catch(() => undefined);
+  }, [authed]);
+
+  /** Send a signed-out visitor to sign-in, carrying the way back. */
+  const toSignIn = useCallback(() => {
+    router.push(`/?next=${encodeURIComponent('/sentinel/pricing')}#auth`);
+  }, [router]);
+
+  const buy = useCallback(
+    async (itemId: string) => {
+      if (!authed) {
+        toSignIn();
+        return;
+      }
+      if (!catalog?.billingEnabled) return;
+
+      setBusyItem(itemId);
+      setMessage(null);
+      try {
+        const ready = await loadRazorpay();
+        if (!ready) throw new Error('Could not load the payment widget. Check your connection and retry.');
+
+        const order = await startCheckout(itemId);
+        const success = await openRazorpay(order, { email: user?.email });
+        if (!success) {
+          // Modal dismissed. Not an error, and nothing was charged.
+          setBusyItem(null);
+          return;
+        }
+
+        const result = await verifyPayment({
+          itemId,
+          razorpayOrderId: success.razorpay_order_id,
+          razorpayPaymentId: success.razorpay_payment_id,
+          razorpaySignature: success.razorpay_signature,
+        });
+        if (!result.ok) throw new Error('Payment could not be verified.');
+
+        await refreshSession(); // pull the freshly-granted capability
+        setMessage({ tone: 'ok', text: 'Payment confirmed. Opening Sentinel…' });
+        router.replace('/sentinel');
+      } catch (e) {
+        setMessage({
+          tone: 'bad',
+          text: e instanceof Error ? e.message : 'Something went wrong. Nothing was charged.',
+        });
+      } finally {
+        setBusyItem((cur) => (cur === itemId ? null : cur));
+      }
+    },
+    [authed, catalog, refreshSession, router, toSignIn, user],
+  );
+
+  const billingEnabled = Boolean(catalog?.billingEnabled);
+  /**
+   * One purchase policy for every control on the page: a signed-out visitor's
+   * click always routes to sign-in, and only a signed-IN visitor is stopped by
+   * billing being unconfigured. The page's notice already explains why.
+   */
+  const purchaseDisabled = authed && !billingEnabled;
+  const ctaLabel = !authed ? 'Sign in to check out' : billingEnabled ? 'Checkout' : 'Unavailable';
+
+  // Server figures where we have them; the shared ladder as the pre-load
+  // fallback so the page never renders a priceless card.
+  const tiers: PricingTier[] = SENTINEL_TERMS.map((t) => {
+    const fromServer = catalog?.items.find((i) => i.id === t.id);
+    const saving = sentinelSaving(t);
+    return {
+      id: t.id,
+      term: t.term,
+      totalLabel: fromServer?.amountLabel ?? inr(t.total),
+      monthlyLabel: inr(t.monthly),
+      months: t.months,
+      savingLabel: saving > 0 ? inr(saving) : undefined,
+      highlight: t.months === 6,
+    };
+  });
+  tiers.push({ id: 'coming_soon', term: 'More terms', placeholder: true });
+
+  /**
+   * Same server-first-with-a-static-fallback rule as the tiers above, and for a
+   * sharper reason: this is the page's headline offer. Rendering it only after
+   * `/payments/catalog` resolves left ₹275 absent from the server HTML entirely
+   * — so the primary call to action was invisible without JavaScript, and a
+   * skeleton for as long as the fetch took. Both figures are derived from the
+   * one-month term at build time, so the fallback cannot disagree with the
+   * server; where it somehow could, the server still wins.
+   */
+  const trial = catalog?.trial ?? {
+    id: SENTINEL_TRIAL.id,
+    label: `Sentinel Pro — ${SENTINEL_TRIAL.term}`,
+    days: SENTINEL_TRIAL.days,
+    amountInr: SENTINEL_TRIAL.price,
+    amountLabel: inr(SENTINEL_TRIAL.price),
+    dailyRateLabel: inr(SENTINEL_TRIAL.dailyRate),
+    discountPct: SENTINEL_TRIAL.discountPct,
+  };
+
+  return (
+    <div className="min-h-screen overflow-y-auto bg-bg">
+      <header className="border-b border-border">
+        <div className="mx-auto flex max-w-[1100px] items-center justify-between px-5 py-4">
+          <Link href="/" className="flex items-center gap-2 text-[13px] font-bold text-text">
+            <SentinelIcon className="h-5 w-5 text-teal" aria-hidden="true" />
+            TradeW · Sentinel
+          </Link>
+          {!authed && (
+            <button
+              type="button"
+              onClick={toSignIn}
+              className="text-[12.5px] font-semibold text-teal hover:underline"
+            >
+              Sign in
+            </button>
+          )}
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-[1100px] px-5 py-10 sm:py-14">
+        {/* ── Hero ─────────────────────────────────────────────────────── */}
+        <Reveal>
+          <p className="text-[11px] font-bold uppercase tracking-wide text-teal">Premium workspace</p>
+          <h1 className="mt-2.5 max-w-2xl text-[32px] font-extrabold leading-tight tracking-tightTrack text-text sm:text-[40px]">
+            A second set of eyes on the market, and on you.
+          </h1>
+          <p className="mt-4 max-w-2xl text-[14px] leading-relaxed text-muted">
+            Sentinel watches market structure and your own trading behaviour in parallel, and speaks up only
+            when something clears a deliberately strict bar. It explains what it saw and why — it never tells
+            you what to buy.
+          </p>
+        </Reveal>
+
+        {message && (
+          <div
+            className={`mt-6 rounded-lg border px-3.5 py-2.5 text-[12.5px] ${
+              message.tone === 'ok' ? 'border-teal bg-teal-bg text-teal' : 'border-down bg-down-bg text-down'
+            }`}
+            role="status"
+          >
+            {message.text}
+          </div>
+        )}
+
+        {catalog && !billingEnabled && (
+          <div className="mt-6 rounded-lg border border-border bg-card px-3.5 py-2.5 text-[12.5px] text-muted">
+            {catalog.notice || 'Payments are not enabled yet. No account can be charged.'}
+          </div>
+        )}
+
+        {/* ── What it does ─────────────────────────────────────────────── */}
+        <Reveal className="mt-14">
+          <h2 className="text-[20px] font-extrabold tracking-tightTrack text-text">What Sentinel does</h2>
+          <div className="mt-6">
+            <FeatureList />
+          </div>
+        </Reveal>
+
+        {/* ── How it works ─────────────────────────────────────────────── */}
+        <Reveal className="mt-14">
+          <h2 className="text-[20px] font-extrabold tracking-tightTrack text-text">
+            What it looks like in use
+          </h2>
+          <p className="mt-1.5 max-w-2xl text-[12.5px] leading-relaxed text-muted">
+            An illustration of the shape of an observation — a state, a confidence, and the evidence beneath
+            it. Not live market data.
+          </p>
+          <div className="mt-6">
+            <SentinelPreview />
+          </div>
+        </Reveal>
+
+        {/* ── Trial ────────────────────────────────────────────────────── */}
+        <Reveal className="mt-14">
+          <TrialOffer
+            trial={trial}
+            status={trialStatus}
+            disabled={purchaseDisabled}
+            busy={busyItem === trial.id}
+            ctaLabel={!authed ? 'Sign in to start' : billingEnabled ? 'Start trial' : 'Unavailable'}
+            onStart={() => buy(trial.id)}
+          />
+        </Reveal>
+
+        {/* ── Terms ────────────────────────────────────────────────────── */}
+        <Reveal className="mt-14">
+          <h2 className="text-[20px] font-extrabold tracking-tightTrack text-text">Or pick a term</h2>
+          <p className="mt-1.5 text-[12.5px] text-muted">
+            Billed once, up front. Access ends when the term does — nothing auto-renews.
+          </p>
+
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {tiers.map((t) => (
+              <PricingTierCard
+                key={t.id}
+                tier={t}
+                busy={busyItem === t.id}
+                disabled={purchaseDisabled}
+                ctaLabel={ctaLabel}
+                onCheckout={buy}
+              />
+            ))}
+          </div>
+
+          <p className="mt-5 text-[11.5px] leading-relaxed text-faint">
+            Prices are exclusive of GST. Payments are processed securely by Razorpay — TradeW never sees your
+            card details. Sentinel is observation and education only: it does not place orders, and paying for
+            it does not change how or whether your orders execute.
+          </p>
+        </Reveal>
+      </main>
+    </div>
+  );
+}

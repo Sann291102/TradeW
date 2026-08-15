@@ -43,6 +43,11 @@ const PUBLIC_PATHS = new Set<string>([
   // the reason for the redirect harder to see in a network log.
   '/login',
   '/signup',
+  // NOTE: `/sentinel/pricing` was briefly listed here (2026-08-15) when Sentinel
+  // pricing was a public standalone route. It is no longer a route at all —
+  // pricing is a view rendered by `/sentinel` for accounts without the
+  // capability, so it is gated by this list's default-deny like everything else.
+  // See archive/apps-web-sentinel-pricing-route-2026-08-15/.
 ]);
 
 function isPublic(pathname: string): boolean {
