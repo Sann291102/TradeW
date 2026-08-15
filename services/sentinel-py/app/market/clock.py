@@ -31,6 +31,13 @@ def minutes_since_midnight(at: datetime) -> int:
     return ist.hour * 60 + ist.minute
 
 
+def minutes_to_close(at: datetime) -> int:
+    """Minutes remaining in the session. Negative after the close, and large
+    before the open — callers asking "are we late in the day?" get a number
+    that is honest outside market hours instead of a clamped zero."""
+    return MARKET_CLOSE_MIN - minutes_since_midnight(at)
+
+
 def is_market_open(at: datetime) -> bool:
     mins = minutes_since_midnight(at)
     return MARKET_OPEN_MIN <= mins <= MARKET_CLOSE_MIN and to_ist(at).weekday() < 5

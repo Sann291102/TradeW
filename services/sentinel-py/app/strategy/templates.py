@@ -35,6 +35,11 @@ SUPPORTED_PRIMITIVES = {
     "candle_body_vs_level",
     "reclaim",
     "pullback_depth",
+    "vwap",
+    "vwap_slope",
+    "vwap_test_count",
+    "atr",
+    "session_clock",
 }
 
 
@@ -254,19 +259,110 @@ CATALOGUE: list[Template] = [
             "riskManagement": {"stopLoss": None, "targets": []},
         },
     ),
+    # The two VWAP templates share primitives and nothing else. One is a
+    # continuation setup, the other a fade; a single merged "VWAP strategy"
+    # would average a trend-follower with its opposite and report a number
+    # that described neither. They stay separate, and so do their funnels.
     Template(
         id="vwap_bounce",
         name="VWAP Bounce / Rejection",
-        summary="Price returns to VWAP, rejects it, and continues in the prevailing direction.",
+        summary=(
+            "A continuation setup. VWAP is trending and price is on its side; price returns to "
+            "VWAP, a body interacts with it, closes back onto the side it came from, and then "
+            "carries beyond the test candle."
+        ),
         direction="both",
-        requires={"vwap", "vwap_slope", "vwap_test_count"},
+        requires={"vwap", "vwap_slope", "vwap_test_count", "relative_volume"},
+        rules={
+            "timeframe": "5m",
+            "levels": ["vwap"],
+            "rules": [
+                {
+                    "id": "rule_vwap_trend",
+                    "name": "vwap_trend_established",
+                    "condition": "vwap_trend_established",
+                    "mandatory": True,
+                    "description": "VWAP is rising or falling and price is on the same side of it",
+                },
+                {
+                    "id": "rule_vwap_interaction",
+                    "name": "vwap_body_interaction",
+                    "condition": "vwap_body_interaction",
+                    "mandatory": True,
+                    "description": "A candle BODY reaches VWAP — a wick touch is not the event",
+                },
+                {
+                    "id": "rule_vwap_rejection",
+                    "name": "vwap_rejection_reclaim",
+                    "condition": "vwap_rejection_reclaim",
+                    "mandatory": True,
+                    "description": "Price closes back onto the side it approached VWAP from",
+                },
+                {
+                    "id": "rule_vwap_continuation",
+                    "name": "vwap_continuation",
+                    "condition": "vwap_continuation",
+                    "mandatory": True,
+                    "description": "Price closes beyond the extreme of the VWAP-test candle",
+                },
+                {
+                    "id": "rule_volume_confirm",
+                    "name": "volume_confirm",
+                    "condition": "volume_above_20_period_avg",
+                    "mandatory": False,
+                    "description": "The rejection carries above-average volume",
+                },
+            ],
+            "entry": {"long": "after_vwap_rejection_continuation", "short": "after_vwap_rejection_continuation"},
+            "riskManagement": {"stopLoss": None, "targets": []},
+        },
     ),
     Template(
         id="vwap_reversion_eod",
         name="End-of-Day VWAP Mean Reversion",
-        summary="An extreme, ATR-normalised deviation from VWAP late in the session, then reversion.",
+        summary=(
+            "A fade, not a continuation. Late in the session price is stretched at least 1.5 ATR "
+            "from VWAP, stops extending, and returns to the level. Deviation is measured in ATR "
+            "multiples so the same threshold means the same thing on an index and on an option."
+        ),
         direction="both",
         requires={"vwap", "atr", "session_clock"},
+        rules={
+            "timeframe": "5m",
+            "levels": ["vwap"],
+            "rules": [
+                {
+                    "id": "rule_late_session",
+                    "name": "late_session_window",
+                    "condition": "late_session_window",
+                    "mandatory": True,
+                    "description": "The session is inside its final 90 minutes",
+                },
+                {
+                    "id": "rule_extension",
+                    "name": "vwap_extension_beyond_atr",
+                    "condition": "vwap_extension_beyond_atr",
+                    "mandatory": True,
+                    "description": "Price has travelled at least 1.5 ATR away from VWAP",
+                },
+                {
+                    "id": "rule_exhaustion",
+                    "name": "vwap_exhaustion_reversal",
+                    "condition": "vwap_exhaustion_reversal",
+                    "mandatory": True,
+                    "description": "After the extreme, a candle closes back toward VWAP",
+                },
+                {
+                    "id": "rule_return",
+                    "name": "vwap_return_to_level",
+                    "condition": "vwap_return_to_level",
+                    "mandatory": True,
+                    "description": "Price reaches VWAP again",
+                },
+            ],
+            "entry": {"long": "after_vwap_reversion_confirmed", "short": "after_vwap_reversion_confirmed"},
+            "riskManagement": {"stopLoss": None, "targets": []},
+        },
     ),
     Template(
         id="sr_flip",

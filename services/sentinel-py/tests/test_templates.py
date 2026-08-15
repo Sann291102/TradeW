@@ -21,11 +21,25 @@ def test_available_templates_produce_rules_the_evaluator_understands():
 
 
 def test_unavailable_templates_name_the_missing_primitive():
-    vwap = get_template("vwap_bounce")
-    assert vwap is not None
-    assert vwap.available is False
-    assert "vwap" in vwap.missing
-    assert "vwap" in vwap.to_dict()["unavailableReason"]
+    sr_flip = get_template("sr_flip")
+    assert sr_flip is not None
+    assert sr_flip.available is False
+    assert "level_detection" in sr_flip.missing
+    assert "level_detection" in sr_flip.to_dict()["unavailableReason"]
+
+
+def test_six_of_eleven_are_adoptable_today():
+    """A count, so a template cannot quietly become adoptable because a
+    primitive name was added to the supported set without an evaluator."""
+    adoptable = {t.id for t in CATALOGUE if t.available}
+    assert adoptable == {
+        "orb_15m_retest",
+        "orb_30m",
+        "ema7_bullish_reclaim",
+        "ema_9_21_pullback",
+        "vwap_bounce",
+        "vwap_reversion_eod",
+    }
 
 
 def test_ema7_is_adoptable_now_that_its_primitives_exist():

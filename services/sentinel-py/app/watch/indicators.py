@@ -261,3 +261,192 @@ def find_pullback(
             + f" — {classification.value}"
         ),
     )
+
+
+# --- VWAP --------------------------------------------------------------------
+
+
+def vwap_series(candles: list[Candle]) -> list[float]:
+    """Session-anchored VWAP, one value per candle in the CURRENT session.
+
+    Sum(typical price x volume) / sum(volume), typical price = (H+L+C)/3,
+    reset at each session boundary because a VWAP carried across days is not
+    the level anyone trades against.
+
+    Returns EMPTY when the instrument reports no volume. That is deliberate
+    and load-bearing: several option contracts come back from the bridge with
+    zero volume, and a "VWAP" computed by falling back to an average price
+    would look like a working level while being unrelated to volume. A
+    strategy that cannot be evaluated must fail to evaluate, not quietly
+    evaluate against a fabricated number.
+    """
+    from app.market.clock import session_key
+
+    if not candles:
+        return []
+
+    today = session_key(candles[-1].timestamp)
+    session = [c for c in candles if session_key(c.timestamp) == today]
+    if not session or all(c.volume <= 0 for c in session):
+        return []
+
+    out: list[float] = []
+    cumulative_pv = 0.0
+    cumulative_volume = 0.0
+    for candle in session:
+        typical = (candle.high + candle.low + candle.close) / 3
+        cumulative_pv += typical * candle.volume
+        cumulative_volume += candle.volume
+        if cumulative_volume <= 0:
+            # Leading zero-volume candles carry no VWAP yet; recording the
+            # typical price here would invent one.
+            continue
+        out.append(cumulative_pv / cumulative_volume)
+    return out
+
+
+def vwap_deviation(price: float, vwap: float, atr_value: float | None) -> float | None:
+    """How far price sits from VWAP, in ATR multiples. Signed: positive above.
+    None without an ATR, rather than a raw distance that is incomparable
+    across symbols."""
+    if atr_value is None or atr_value <= 0:
+        return None
+    return (price - vwap) / atr_value
+
+
+class VwapTest(str, Enum):
+    FIRST = "first"
+    SECOND = "second"
+    REPEATED = "repeated"
+
+
+@dataclass(frozen=True)
+class VwapInteraction:
+    count: int
+    ordinal: VwapTest
+    last_index: int | None
+    detail: str
+
+
+def vwap_slope(vwap_values: list[float], lookback: int = 5, atr_value: float | None = None) -> Slope:
+    """Direction of VWAP itself, rising / flat / falling.
+
+    Deliberately the SAME classifier the EMAs use, with a configurable
+    lookback rather than a universal points threshold: "VWAP rising by 3" is
+    meaningless without knowing whether the instrument is a 24,000 index or a
+    ₹180 option, so the measurement is normalised against ATR exactly as the
+    EMA slope is. A longer default lookback than the EMA's because VWAP is a
+    cumulative average and moves more slowly by construction.
+    """
+    return classify_slope(vwap_values, lookback=lookback, atr=atr_value)
+
+
+#: Deviation buckets in ATR multiples. Stated as a convention so the funnel can
+#: split results by how stretched price was; the boundaries move once this
+#: user's own history says they should, not before.
+DEVIATION_BUCKETS = ((0.5, "0.5-1"), (1.0, "1-2"), (2.0, "2+"))
+
+#: What counts as "extended" for the mean-reversion setup. A convention, not a
+#: claim about edge — the funnel reports what actually happened at it.
+EXTENSION_MIN_ATR = 1.5
+
+
+def classify_deviation(deviation_atr: float | None) -> str | None:
+    """Bucket a signed ATR deviation by magnitude. None when there is no ATR —
+    an unbucketed sample is better than one filed under a made-up bucket."""
+    if deviation_atr is None:
+        return None
+    magnitude = abs(deviation_atr)
+    if magnitude < 0.5:
+        return "under-0.5"
+    if magnitude < 1.0:
+        return "0.5-1"
+    if magnitude < 2.0:
+        return "1-2"
+    return "2+"
+
+
+@dataclass(frozen=True)
+class VwapExtreme:
+    index: int
+    #: Signed ATR deviation at the extreme: positive above VWAP, negative below.
+    deviation_atr: float
+    price: float
+    vwap: float
+    detail: str
+
+
+def find_vwap_extreme(
+    candles: list[Candle],
+    vwap_values: list[float],
+    atr_value: float | None,
+) -> VwapExtreme | None:
+    """The most stretched point away from VWAP this session, in ATR multiples.
+
+    Measured on candle EXTREMES rather than closes: the stretch that matters
+    for a reversion setup is how far price actually travelled, and a bar that
+    ran 2 ATR clear of VWAP before closing back is precisely the event.
+    """
+    if not vwap_values or atr_value is None or atr_value <= 0:
+        return None
+
+    offset = len(candles) - len(vwap_values)
+    best: VwapExtreme | None = None
+    for i in range(offset, len(candles)):
+        level = vwap_values[i - offset]
+        candle = candles[i]
+        for price in (candle.high, candle.low):
+            deviation = vwap_deviation(price, level, atr_value)
+            if deviation is None:
+                continue
+            if best is None or abs(deviation) > abs(best.deviation_atr):
+                best = VwapExtreme(
+                    index=i,
+                    deviation_atr=deviation,
+                    price=price,
+                    vwap=level,
+                    detail=(
+                        f"{abs(deviation):.2f} ATR "
+                        f"{'above' if deviation > 0 else 'below'} VWAP {level:.2f}"
+                    ),
+                )
+    return best
+
+
+def count_vwap_tests(candles: list[Candle], vwap_values: list[float]) -> VwapInteraction:
+    """How many distinct times price has come back to VWAP this session.
+
+    Distinct matters: price hugging VWAP for six candles is ONE test, not
+    six. A new test is only counted after price has left the level — the run
+    of touching candles is collapsed the same way the feed collapses a state
+    the watch is sitting in.
+
+    The ordinal is what the performance engine will eventually bucket on,
+    since a first test and a fourth test are not the same event.
+    """
+    if not vwap_values:
+        return VwapInteraction(0, VwapTest.FIRST, None, "no VWAP available")
+
+    offset = len(candles) - len(vwap_values)
+    count = 0
+    last_index: int | None = None
+    touching = False
+
+    for i in range(offset, len(candles)):
+        level = vwap_values[i - offset]
+        interaction = body_interaction(candles[i], level)
+        if interaction.touched_wick:
+            if not touching:
+                count += 1
+                touching = True
+            last_index = i
+        else:
+            touching = False
+
+    ordinal = VwapTest.FIRST if count <= 1 else VwapTest.SECOND if count == 2 else VwapTest.REPEATED
+    return VwapInteraction(
+        count=count,
+        ordinal=ordinal,
+        last_index=last_index,
+        detail=f"{count} VWAP interaction(s) this session ({ordinal.value})",
+    )

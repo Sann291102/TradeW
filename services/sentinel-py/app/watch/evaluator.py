@@ -14,16 +14,24 @@ Sentinel exactly the noisy signal generator it is not supposed to be.
 
 from dataclasses import dataclass
 
-from app.market.clock import session_key
+from app.market.clock import minutes_to_close, session_key
 from app.market.feed import Candle
 from app.watch.indicators import (
+    EXTENSION_MIN_ATR,
     Slope,
     atr,
+    body_interaction,
+    classify_deviation,
     classify_slope,
+    count_vwap_tests,
     ema_of,
     find_bullish_reclaim,
     find_bullish_reclaims,
     find_pullback,
+    find_vwap_extreme,
+    vwap_deviation,
+    vwap_series,
+    vwap_slope,
 )
 
 
@@ -276,6 +284,204 @@ def _pullback_continuation(candles: list[Candle]) -> tuple[bool, str]:
     return False, "waiting for a close back above the 9 EMA"
 
 
+# --- VWAP --------------------------------------------------------------------
+#
+# TWO strategies share these primitives and nothing else. VWAP Bounce is a
+# CONTINUATION setup: the trend is intact, price comes back to VWAP, rejects
+# it, and carries on. EOD Mean Reversion is the opposite claim: price is
+# stretched away from VWAP late in the day and returns to it. Merging them
+# into one "VWAP strategy" would produce a funnel that averaged a
+# trend-following setup with a fade, and the resulting number would describe
+# neither. They stay separate all the way down to their conditions.
+#
+# Every VWAP condition below fails CLOSED when the instrument reports no
+# volume (vwap_series returns []), because a VWAP without volume is not a VWAP.
+
+
+def _vwap_context(candles: list[Candle]) -> tuple[list[float], float | None]:
+    return vwap_series(candles), atr(candles)
+
+
+def _vwap_available(candles: list[Candle]) -> tuple[bool, str]:
+    values, _ = _vwap_context(candles)
+    if not values:
+        return False, "no VWAP: this instrument reports no volume for the session"
+    return True, f"VWAP {values[-1]:.2f}"
+
+
+def _vwap_trend_established(candles: list[Candle]) -> tuple[bool, str]:
+    """Context for the BOUNCE only: VWAP has a direction, so a return to it is
+    a pullback within a trend rather than a drift inside a range."""
+    values, a = _vwap_context(candles)
+    if not values:
+        return False, "no VWAP: this instrument reports no volume for the session"
+    slope = vwap_slope(values, atr_value=a)
+    if slope is Slope.FLAT:
+        return False, f"VWAP {values[-1]:.2f} is flat — no trend to continue"
+    above = candles[-1].close > values[-1]
+    agrees = (slope is Slope.RISING and above) or (slope is Slope.FALLING and not above)
+    return agrees, (
+        f"VWAP {slope.value} at {values[-1]:.2f}, price {'above' if above else 'below'} it"
+        if agrees
+        else f"VWAP {slope.value} at {values[-1]:.2f} but price is on the other side"
+    )
+
+
+def _vwap_interaction(candles: list[Candle]) -> tuple[bool, str]:
+    """Approach and interaction: a candle BODY has reached VWAP this session.
+    Body, not wick — the same distinction the EMA-7 reclaim rests on."""
+    values, _ = _vwap_context(candles)
+    if not values:
+        return False, "no VWAP: this instrument reports no volume for the session"
+    offset = len(candles) - len(values)
+    for i in range(len(candles) - 1, offset - 1, -1):
+        if body_interaction(candles[i], values[i - offset]).touched_body:
+            tests = count_vwap_tests(candles, values)
+            return True, f"body reached VWAP {values[i - offset]:.2f} — {tests.detail}"
+    return False, "price has not traded back into VWAP"
+
+
+def _vwap_rejection(candles: list[Candle]) -> tuple[bool, str]:
+    """Rejection / reclaim: after touching VWAP, a candle closed back onto the
+    side price came from. A touch that closes through is the opposite event."""
+    values, _ = _vwap_context(candles)
+    if not values:
+        return False, "no VWAP: this instrument reports no volume for the session"
+    offset = len(candles) - len(values)
+    for i in range(offset, len(candles)):
+        level = values[i - offset]
+        interaction = body_interaction(candles[i], level)
+        if not interaction.touched_body:
+            continue
+        for j in range(i + 1, len(candles)):
+            later, later_vwap = candles[j], values[j - offset]
+            if later.close > later_vwap and candles[i].open > level:
+                return True, f"closed {later.close:.2f} back above VWAP {later_vwap:.2f}"
+            if later.close < later_vwap and candles[i].open < level:
+                return True, f"closed {later.close:.2f} back below VWAP {later_vwap:.2f}"
+    return False, "waiting for a close back onto the side price approached from"
+
+
+def _vwap_continuation(candles: list[Candle]) -> tuple[bool, str]:
+    """Confirmation that the bounce carried: price closed beyond the extreme of
+    the candle that interacted with VWAP, in the direction it rejected."""
+    values, _ = _vwap_context(candles)
+    if not values:
+        return False, "no VWAP: this instrument reports no volume for the session"
+    offset = len(candles) - len(values)
+    for i in range(offset, len(candles)):
+        level = values[i - offset]
+        if not body_interaction(candles[i], level).touched_body:
+            continue
+        upward = candles[i].open > level
+        trigger = candles[i].high if upward else candles[i].low
+        for later in candles[i + 1 :]:
+            if upward and later.close > trigger:
+                return True, f"closed {later.close:.2f} above the VWAP-test high {trigger:.2f}"
+            if not upward and later.close < trigger:
+                return True, f"closed {later.close:.2f} below the VWAP-test low {trigger:.2f}"
+    return False, "no close beyond the VWAP-test candle yet"
+
+
+# --- EOD VWAP Mean Reversion -------------------------------------------------
+
+
+#: How late "late in the session" is. 90 minutes puts the window at 14:00 IST.
+LATE_SESSION_MINUTES = 90
+
+
+def _late_in_session(candles: list[Candle]) -> tuple[bool, str]:
+    """Session clock. Read off the last CLOSED candle rather than wall-clock
+    time so a replay of yesterday's candles evaluates the same way it did
+    live — the condition describes the data, not when it was looked at."""
+    if not candles:
+        return False, "no candles"
+    remaining = minutes_to_close(candles[-1].timestamp)
+    if remaining < 0:
+        return False, "session already closed"
+    inside = remaining <= LATE_SESSION_MINUTES
+    return inside, f"{remaining} minutes to the close"
+
+
+def _vwap_extended(candles: list[Candle]) -> tuple[bool, str]:
+    values, a = _vwap_context(candles)
+    if not values:
+        return False, "no VWAP: this instrument reports no volume for the session"
+    if a is None:
+        return False, "not enough candles for an ATR, so deviation is not comparable"
+    extreme = find_vwap_extreme(candles, values, a)
+    if extreme is None:
+        return False, "no measurable deviation from VWAP"
+    met = abs(extreme.deviation_atr) >= EXTENSION_MIN_ATR
+    return met, (
+        extreme.detail if met else f"only {extreme.detail} (needs {EXTENSION_MIN_ATR} ATR)"
+    )
+
+
+def _vwap_exhaustion(candles: list[Candle]) -> tuple[bool, str]:
+    """After the stretch, a candle closes back TOWARD VWAP — the extension
+    stopped extending. Not yet the return; this is the turn."""
+    values, a = _vwap_context(candles)
+    if not values or a is None:
+        return False, "no VWAP/ATR available for this instrument"
+    extreme = find_vwap_extreme(candles, values, a)
+    if extreme is None or abs(extreme.deviation_atr) < EXTENSION_MIN_ATR:
+        return False, "no qualifying extension to reverse from"
+
+    offset = len(candles) - len(values)
+    for i in range(extreme.index + 1, len(candles)):
+        level = values[i - offset]
+        moved_back = vwap_deviation(candles[i].close, level, a)
+        if moved_back is None:
+            continue
+        if abs(moved_back) < abs(extreme.deviation_atr):
+            return True, f"closed back to {abs(moved_back):.2f} ATR from {extreme.detail}"
+    return False, "price has not closed back toward VWAP yet"
+
+
+def _vwap_return(candles: list[Candle]) -> tuple[bool, str]:
+    """The reversion completing: price trades back to VWAP itself."""
+    values, a = _vwap_context(candles)
+    if not values or a is None:
+        return False, "no VWAP/ATR available for this instrument"
+    extreme = find_vwap_extreme(candles, values, a)
+    if extreme is None or abs(extreme.deviation_atr) < EXTENSION_MIN_ATR:
+        return False, "no qualifying extension to revert from"
+    offset = len(candles) - len(values)
+    for i in range(extreme.index + 1, len(candles)):
+        if body_interaction(candles[i], values[i - offset]).touched_wick:
+            return True, f"returned to VWAP {values[i - offset]:.2f}"
+    return False, "price has not reached VWAP again"
+
+
+def measure_vwap(candles: list[Candle]) -> dict | None:
+    """VWAP measurements for the observation record.
+
+    Recorded so the funnel can later split THIS user's results by test ordinal
+    (1st / 2nd / repeated) and by deviation bucket. The buckets are stated
+    conventions; the expectancy, MAE and MFE inside them come from the user's
+    own watch history and nowhere else.
+    """
+    bars = closed_candles(candles)
+    values = vwap_series(bars)
+    if not values:
+        return None
+    a = atr(bars)
+    tests = count_vwap_tests(bars, values)
+    extreme = find_vwap_extreme(bars, values, a)
+    deviation = vwap_deviation(bars[-1].close, values[-1], a)
+    return {
+        "vwap": round(values[-1], 4),
+        "slope": vwap_slope(values, atr_value=a).value,
+        "testCount": tests.count,
+        "testOrdinal": tests.ordinal.value,
+        "deviationAtr": round(deviation, 4) if deviation is not None else None,
+        "deviationBucket": classify_deviation(deviation),
+        "maxDeviationAtr": round(extreme.deviation_atr, 4) if extreme else None,
+        "maxDeviationBucket": classify_deviation(extreme.deviation_atr) if extreme else None,
+    }
+
+
 def measure_pullback(candles: list[Candle]) -> dict | None:
     """Pullback measurements for the observation record, so the performance
     engine can eventually split this user's results by shallow/normal/deep.
@@ -320,6 +526,26 @@ def evaluate(rules: list[dict], candles: list[Candle]) -> EvaluationResult:
             met, detail = _pullback_into_zone(bars)
         elif condition == "pullback_rejection_continuation":
             met, detail = _pullback_continuation(bars)
+        # VWAP Bounce / Rejection — a continuation setup.
+        elif condition == "vwap_available":
+            met, detail = _vwap_available(bars)
+        elif condition == "vwap_trend_established":
+            met, detail = _vwap_trend_established(bars)
+        elif condition == "vwap_body_interaction":
+            met, detail = _vwap_interaction(bars)
+        elif condition == "vwap_rejection_reclaim":
+            met, detail = _vwap_rejection(bars)
+        elif condition == "vwap_continuation":
+            met, detail = _vwap_continuation(bars)
+        # EOD VWAP Mean Reversion — a different strategy, not a mode of the above.
+        elif condition == "late_session_window":
+            met, detail = _late_in_session(bars)
+        elif condition == "vwap_extension_beyond_atr":
+            met, detail = _vwap_extended(bars)
+        elif condition == "vwap_exhaustion_reversal":
+            met, detail = _vwap_exhaustion(bars)
+        elif condition == "vwap_return_to_level":
+            met, detail = _vwap_return(bars)
         elif condition == "ema7_rising":
             met, detail = _ema_rising(bars, 7)
         elif condition == "price_above_ema7":
