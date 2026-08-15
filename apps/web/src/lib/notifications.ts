@@ -7,6 +7,13 @@ export interface NotificationItem {
   body: string;
   time: string;
   read: boolean;
+  /**
+   * The producer's structured payload. Sentinel puts the alert tier here; see
+   * `lib/sentinel/alertTier.ts`, which is the only thing that interprets it.
+   * Typed as `unknown` rather than a union because every producer writes its
+   * own shape and none of them is validated on the way out.
+   */
+  metadata?: unknown;
 }
 
 export async function fetchNotifications(limit = 50): Promise<NotificationItem[]> {

@@ -32,8 +32,18 @@ const EMPTY: OptionChainStrikes = { status: 'loading', expiry: null, spot: null,
  *
  * `enabled` gates all network activity: the panel passes `false` while it is
  * collapsed so a closed panel costs nothing.
+ *
+ * `expiryOverride` pins the chain to an expiry the user picked (the watch
+ * creation flow lets them choose one) instead of resolving the nearest. When
+ * it is undefined the nearest-expiry behaviour is unchanged; when it is null
+ * the caller has an expiry picker that has not resolved yet, and nothing is
+ * fetched rather than briefly loading a different expiry's ladder.
  */
-export function useOptionChainStrikes(symbol: string, enabled: boolean): OptionChainStrikes {
+export function useOptionChainStrikes(
+  symbol: string,
+  enabled: boolean,
+  expiryOverride?: string | null,
+): OptionChainStrikes {
   const [state, setState] = useState<OptionChainStrikes>(EMPTY);
   /**
    * The ATM strike this hook last reported, fed back into `nearestStrikeIndex`
@@ -42,8 +52,12 @@ export function useOptionChainStrikes(symbol: string, enabled: boolean): OptionC
    */
   const atmStrikeRef = useRef<number | null>(null);
 
+  // undefined = resolve the nearest expiry ourselves; null = a caller-owned
+  // picker has not chosen one yet.
+  const pinnedExpiry = expiryOverride;
+
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || pinnedExpiry === null) {
       setState(EMPTY);
       atmStrikeRef.current = null;
       return;
@@ -57,9 +71,12 @@ export function useOptionChainStrikes(symbol: string, enabled: boolean): OptionC
 
     const load = async () => {
       try {
-        const expiries = await fetchDhanExpiryList(symbol);
-        const todayIso = new Date().toISOString().slice(0, 10);
-        const expiry = pickNearestExpiry(expiries, todayIso);
+        let expiry = pinnedExpiry ?? null;
+        if (expiry === null) {
+          const expiries = await fetchDhanExpiryList(symbol);
+          const todayIso = new Date().toISOString().slice(0, 10);
+          expiry = pickNearestExpiry(expiries, todayIso);
+        }
         if (!expiry) {
           if (!cancelled) {
             atmStrikeRef.current = null;
@@ -105,7 +122,7 @@ export function useOptionChainStrikes(symbol: string, enabled: boolean): OptionC
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [symbol, enabled]);
+  }, [symbol, enabled, pinnedExpiry]);
 
   return state;
 }

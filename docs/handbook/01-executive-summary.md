@@ -161,7 +161,7 @@ Not gated. Not with a confirmation. Not "for the sandbox." The `ToolRegistry` in
 
 ### 1.4.5 Document-driven architecture
 
-Architecture is decided in documents *before* code (`CLAUDE.md` Rule 2). `ARCHITECTURE.md` opens with "approved design, not yet implemented" and that is not an apology — it is the method.
+Architecture is decided in documents *before* code (`CLAUDE.md` Rule 2). `ARCHITECTURE.md` was written up-front as "approved design, not yet implemented" — and that was the method, not an apology. (It now reads "approved design, now substantially implemented," because the code has since caught up to the boundaries the document set.)
 
 The cost is real: 21 product-architecture blueprints exist for a platform where much is unbuilt, and an engineer can waste a day reading a design for something that does not exist. The mitigation is the status legend and the audit note (`knowledge/Plans/2026-07-21 - Full platform and product audit.md`) that reconciles docs against a ground-truth code pass. Read the audit note before the blueprints.
 
@@ -372,9 +372,11 @@ A candid snapshot, so nobody is surprised in week two. Source: the ground-truth 
 
 ### README-only stubs — zero source ⚪
 
-`apps/admin`, `apps/mobile`, `apps/terminal` (static HTML), `services/auth`, `services/trading-engine`, `services/notification`, `services/analytics`, `services/tradew-ai`, `packages/sdk`, `packages/shared`, `agents/tradew-ai`, `infra/k8s`, `infra/terraform`, `infra/oci`, `workflows/`, `scripts/`.
+`apps/mobile`, `services/auth`, `services/trading-engine`, `services/notification`, `services/analytics`, `packages/sdk`, `packages/shared`, `infra/k8s`, `infra/terraform`, `infra/oci`, `workflows/`.
 
-`agents/sentinel/` is partial: it holds `definitions.json` (configuration), not source.
+> **Since this edition (updated 2026-08-15):** several former stubs now have real code — **`apps/admin`** is a built standalone operator console; **`services/tradew-ai`** is a thin NestJS scaffold (intelligence still in `packages/ai-core`); **`services/sentinel-py`** is a new Python/FastAPI personal strategy watcher; both `agents/*` now hold `definitions.json`. `apps/terminal` was retired to `archive/apps-terminal-legacy-prototype/` (it was static HTML, never an application).
+
+`agents/sentinel/` holds `definitions.json` (configuration); the Sentinel agent logic runs inside `services/sentinel`.
 
 ### The structural fact that matters most
 
@@ -388,7 +390,7 @@ This is intentional (principle 1.4.2), it is documented, and you should not be s
 
 These are the honest weak points of the engineering practice as of this edition. They are not hidden in an appendix.
 
-1. **No test suite.** There is no meaningful automated test coverage anywhere in the repository. Chapter 21 specifies the strategy; almost none of it is implemented. This is the single largest engineering risk in the platform.
+1. ~~**No test suite.**~~ **Closed (updated 2026-08-15).** A real unit-test suite now exists — ~70 TS/JS `.spec`/`.test` files across `services/api`, `services/sentinel`, `apps/web`, `apps/admin`, `packages/ai-core`, plus 9 `pytest` files in `services/sentinel-py` — with a CI typecheck+test gate (`.github/workflows/ci.yml`). Chapter 21 is being reduced from "remediation plan" to "practice." The remaining gap is an **integration/E2E** harness across the running services (unit coverage only today).
 2. **No ESLint configuration exists anywhere in the repo.** Confirmed during Market Data Migration 1. Chapter 23 defines the standards; they are currently enforced by review, not by tooling.
 3. **Latency targets are targets, not measurements.** No profiling harness, no performance budget enforcement in CI, no RUM. Chapter 20 §20.9.
 4. **Never deployed.** The OCI Free Tier deployment is fully designed — Dockerfiles, production compose, Caddy/SSL, backups, CI/CD — and has never been provisioned.

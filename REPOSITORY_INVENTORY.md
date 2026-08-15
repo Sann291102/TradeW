@@ -5,6 +5,8 @@
 **Branch audited:** `feat/notifications` @ `2302a7a` (default/PR base branch: `feat/knowledge-workspace`)
 **Scope:** 537 git-tracked files. Read-only audit — nothing in the repository was created, modified, or deleted.
 
+> ⚠️ **Point-in-time audit (2026-07-25).** This is a historical snapshot at `feat/notifications @ 2302a7a`; it is intentionally *not* rewritten as the codebase evolves. For the current state read [`docs/APPLICATION-STATUS.md`](docs/APPLICATION-STATUS.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md). **Landed since this audit** (so treat the relevant rows below as superseded): the `services/sentinel-py` Python/FastAPI personal strategy watcher; the standalone `apps/admin` operator console; Razorpay payments/checkout; the four-layer cognition network in `packages/ai-core`; a real automated test suite + CI gate (the "zero tests" finding no longer holds); and the Sentinel publication gate that replaced the fixed 85% threshold with the 70%+confirmations+no-conflicts+corroboration rule.
+
 > **Note on file placement.** The instructions both forbade creating any file ("Never modify the repository", "DO NOT modify, create, delete, rename, or move any file") and asked for a document named `REPOSITORY_INVENTORY.md`. Resolution: this document was written to the session scratchpad, **outside** the repository, and delivered as a file. The repo working tree is untouched (`git status` shows only the pre-existing untracked `.claude/Settings.local.json`).
 
 ---

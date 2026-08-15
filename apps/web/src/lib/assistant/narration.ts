@@ -73,6 +73,12 @@ export function explainAction(a: AssistantAction): string | null {
       return 'Workspace tabs each keep their own panel arrangement, so you can hold one setup for scalping and another for research.';
     case 'quote':
       return 'I read prices from the same live feed the tiles and the ticker use, so what I tell you always matches what is on your screen.';
+    case 'chartDetect':
+      // Platform mechanics, not market commentary — teaching mode explains how
+      // the feature works, never what the market is doing (see the docblock).
+      return 'I find these by arithmetic on the bars, not by opinion, so the same chart always gives the same zones — and I draw every one I find rather than picking out the ones that look best.';
+    case 'chartClearDrawings':
+      return 'Drawings are grouped by what produced them, so clearing one group leaves anything you drew yourself exactly where it was.';
   }
 }
 

@@ -46,6 +46,34 @@ export interface MarketSnapshot {
   optionChain: OptionChainRead | null;
 }
 
+/**
+ * The bar this snapshot was built on — the market-event time of anything
+ * derived from it.
+ *
+ * Every rule in `strategy-rules.ts` is a pure function of the snapshot, so the
+ * newest bar in it IS the moment the market did whatever a detection describes.
+ * The scan's own clock is a poll clock and says nothing about the market.
+ *
+ * Prefers the session's newest bar (what the session narrative is ordered by)
+ * and falls back to the newest bar of the wider history, so a pre-market
+ * snapshot with no session bars yet still reports the last real bar instead of
+ * the wall clock. Returns null only when the snapshot carries no candles at
+ * all — the one case where a caller genuinely has nothing but its own clock.
+ */
+export function latestBarAt(
+  snapshot: Pick<MarketSnapshot, 'candles' | 'sessionCandles'>,
+): Date | null {
+  const session = snapshot.sessionCandles ?? [];
+  const history = snapshot.candles ?? [];
+  const bar = session[session.length - 1] ?? history[history.length - 1] ?? null;
+  if (!bar) return null;
+  // Declared as a Date, but the provider chain includes JSON hops where it
+  // arrives as an ISO string or epoch ms. Normalising here keeps every caller
+  // from having to know that.
+  const at = bar.timestamp instanceof Date ? bar.timestamp : new Date(bar.timestamp);
+  return Number.isNaN(at.getTime()) ? null : at;
+}
+
 export interface OptionChainRead {
   /** total put OI / total call OI */
   pcr: number;

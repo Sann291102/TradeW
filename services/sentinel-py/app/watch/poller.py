@@ -107,6 +107,7 @@ async def _monitor_position(watch: dict, candles) -> None:
             trading_day=trading_day,
             r_multiple=result.r_multiple,
             dedupe_suffix=suffix,
+            milestone=finding.milestone,
         )
 
     if result.newly_reached:

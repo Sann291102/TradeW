@@ -1,4 +1,4 @@
-# packages/ui 🟡
+# packages/ui 🟢
 
 Shared design-system components. **No longer speculative** — the design system is now extracted and documented at `../../docs/design-reference/DESIGN-SYSTEM.md` from real, already-built Emergent AI mockups, which are treated as the design system, not inspiration. Build this package to match that document, not a fresh interpretation of it.
 

@@ -705,9 +705,9 @@ Worth building, because zero-slippage MARKET fills teach a trader that size is f
 
 ---
 
-## 11.14 Testing this module 🔴
+## 11.14 Testing this module 🟡
 
-**No tests exist.** The priority order, because this module handles money-shaped numbers:
+**Status (updated 2026-08-15): tests now exist** — `services/api/src/sim/*.spec.ts` covers order fill math, settlement, position-convert, performance and trade history. Keep extending along the priority order below (this module handles money-shaped numbers):
 
 ### Tier 1 — `applyFill`, exhaustively
 

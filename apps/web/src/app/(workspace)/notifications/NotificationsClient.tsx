@@ -5,12 +5,15 @@ import { Card, EmptyState, Badge, Button, Skeleton } from '@tradew/ui';
 import { BellIcon } from '@/components/shell/icons';
 import { NOTIFICATION_CATEGORY_TONE } from '@/lib/store/workspaceStore';
 import { fetchNotifications, markNotificationRead, markAllNotificationsRead, type NotificationItem } from '@/lib/notifications';
+import { alertRMultiple, alertTier } from '@/lib/sentinel/alertTier';
+import { formatRMultiple } from '@/lib/sentinel/watchModel';
 
 /**
- * Full /notifications page — fetches from the real API (services/api /notifications/*).
- * The top-bar NotificationCenter drawer still reads from workspaceStore (seeded mock)
- * for now; that drawer is a preview and will be synced in a later milestone when
- * services/notification fanout is live (N8N-WORKFLOWS.md).
+ * Full /notifications page — fetches from the real API (services/api
+ * /notifications/*). The top-bar NotificationCenter drawer renders the same
+ * rows from the workspace store, which `NotificationSync` keeps in step with
+ * the same endpoint, so the two are one list shown twice rather than two
+ * sources. Both style Sentinel alerts through `lib/sentinel/alertTier.ts`.
  */
 export function NotificationsClient() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -101,32 +104,41 @@ export function NotificationsClient() {
           <EmptyState icon={<BellIcon className="h-6 w-6" />} title="You're all caught up" />
         ) : (
           <ul className="divide-y divide-border">
-            {notifications.map((n) => (
-              <li key={n.id}>
-                <button
-                  type="button"
-                  onClick={() => handleMarkRead(n.id)}
-                  className="flex w-full items-start gap-3 py-3 text-left transition-colors duration-micro hover:bg-hover"
-                >
-                  <Badge
-                    tone={NOTIFICATION_CATEGORY_TONE[n.category]}
-                    className="mt-0.5 shrink-0 px-1.5 py-0 text-[9px]"
+            {notifications.map((n) => {
+              // Same mapping as the top-bar drawer, from the same module — the
+              // two surfaces must never disagree about what an alert is.
+              const tier = alertTier(n);
+              const r = tier ? alertRMultiple(n) : null;
+              return (
+                <li key={n.id}>
+                  <button
+                    type="button"
+                    onClick={() => handleMarkRead(n.id)}
+                    className="flex w-full items-start gap-3 py-3 text-left transition-colors duration-micro hover:bg-hover"
                   >
-                    {n.category.toUpperCase()}
-                  </Badge>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-text">
-                      {!n.read && (
-                        <span aria-hidden className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-teal" />
-                      )}
-                      {n.title}
-                    </p>
-                    <p className="text-xs text-muted">{n.body}</p>
-                    <span className="text-[11px] text-faint">{n.time}</span>
-                  </div>
-                </button>
-              </li>
-            ))}
+                    <Badge
+                      tone={tier ? tier.tone : NOTIFICATION_CATEGORY_TONE[n.category]}
+                      className="mt-0.5 shrink-0 px-1.5 py-0 text-[9px]"
+                    >
+                      {tier ? tier.label.toUpperCase() : n.category.toUpperCase()}
+                    </Badge>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-text">
+                        {!n.read && (
+                          <span aria-hidden className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-teal" />
+                        )}
+                        {n.title}
+                        {r !== null && (
+                          <span className="ml-2 font-mono text-[11px] font-bold text-muted">{formatRMultiple(r)}</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-muted">{n.body}</p>
+                      <span className="text-[11px] text-faint">{n.time}</span>
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </Card>

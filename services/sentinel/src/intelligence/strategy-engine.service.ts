@@ -18,7 +18,7 @@ import { load as parseYaml } from 'js-yaml';
 import { join, resolve } from 'path';
 import { StrategyMatch } from '../domain';
 import { isWithinSession } from '../market-clock';
-import { MarketSnapshot } from './market-intelligence.service';
+import { MarketSnapshot, latestBarAt } from './market-intelligence.service';
 import { STRATEGY_RULES, isKnownRule } from './strategy-rules';
 
 /** How the engine derives which side the setup describes. */
@@ -149,9 +149,29 @@ export class StrategyEngineService implements OnModuleInit {
    * Scan every enabled strategy against the current snapshot.
    * Returns detections ordered strongest-first; a strategy with no confirmed
    * rules at all is omitted rather than reported as a zero-confidence match.
+   *
+   * `at` is the scan's own clock — a `/observe` poll or a watch sweep. It gates
+   * `idealSession` and is reported as `observedAt`, but it is NOT the time a
+   * detection describes: see `detectedAt` below.
    */
   scan(snapshot: MarketSnapshot, at: Date = new Date()): StrategyDetection[] {
     const detections: StrategyDetection[] = [];
+
+    /**
+     * Market-event time for everything this scan produces.
+     *
+     * Every rule is a pure function of `snapshot`, so the bar the snapshot ends
+     * on is the market event a detection is about. Stamping detections with the
+     * scan clock instead — which is what this did — meant a setup that formed
+     * on the 09:42 bar was re-dated to whatever minute the dashboard last
+     * polled, so the session timeline read as a burst of simultaneous setups at
+     * the moment of the refresh rather than as the sequence the market actually
+     * produced. Null only when the snapshot has no candles at all, and only
+     * then does the scan clock stand in for market time.
+     */
+    const barAt = latestBarAt(snapshot);
+    const detectedAt = (barAt ?? at).toISOString();
+    const observedAt = at.toISOString();
 
     for (const def of this.strategies) {
       if (!def.enabled) continue;
@@ -195,7 +215,8 @@ export class StrategyEngineService implements OnModuleInit {
         rulesMatched,
         rulesUnmet,
         invalidationsTriggered,
-        detectedAt: at.toISOString(),
+        detectedAt,
+        observedAt,
         validated,
         source: def.source,
       });

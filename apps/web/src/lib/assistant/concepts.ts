@@ -34,8 +34,15 @@
  * Until then it is where they get an honest no.
  */
 
-/** Phrasings that mean "teach me what this is", not "take me somewhere". */
-const EXPLAIN_RE =
+/**
+ * Phrasings that mean "teach me what this is", not "take me somewhere".
+ *
+ * Exported because `commands.ts` must consult the SAME definition before it
+ * treats "FVG" as an instruction to draw. Two copies of "what counts as a
+ * question" is exactly how "what is a fair value gap" ends up answered by
+ * putting rectangles on a chart — the failure this module exists to prevent.
+ */
+export const EXPLAIN_RE =
   /\b(explain|what (?:is|are|does|do)|what'?s\b|how (?:does|do|is|are|can|to)\b|meaning of|define|definition of|difference between|tell me about|teach me|help me understand|why (?:does|do|is|are))\b/i;
 
 /**

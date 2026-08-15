@@ -118,3 +118,34 @@ def test_intrade_payload_carries_no_price_levels():
     )
     keys = {k.lower() for k in payload["metadata"]}
     assert not keys & {"entryprice", "stoploss", "stopprice", "target", "targetprice"}
+
+
+def test_milestone_is_carried_as_a_field_and_passes_compliance():
+    """The notification bell labels the alert from this field rather than
+    parsing the body prose. Like rMultiple it names something that already
+    happened, so the vocabulary guard has no quarrel with it."""
+    payload = build_intrade_payload(
+        watch=IN_TRADE_WATCH,
+        event="milestone",
+        detail="your position has moved 2:1 relative to the risk you defined",
+        strategy_name="15-Min ORB",
+        trading_day="2026-08-13",
+        r_multiple=2.0,
+        dedupe_suffix="milestone:2R",
+        milestone="2R",
+    )
+    assert payload["metadata"]["milestone"] == "2R"
+    assert_compliant(payload["title"], payload["body"], payload["metadata"])
+
+
+def test_non_milestone_events_carry_no_milestone():
+    payload = build_intrade_payload(
+        watch=IN_TRADE_WATCH,
+        event="invalidation_reached",
+        detail="price reached the invalidation level you set (242.0)",
+        strategy_name="15-Min ORB",
+        trading_day="2026-08-13",
+        r_multiple=-1.0,
+        dedupe_suffix="invalidation_reached",
+    )
+    assert payload["metadata"]["milestone"] is None

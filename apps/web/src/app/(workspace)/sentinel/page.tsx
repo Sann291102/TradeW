@@ -11,6 +11,7 @@ import { MarketSelector } from '@/components/sentinel/MarketSelector';
 import { OptionChainPanel } from '@/components/sentinel/OptionChainPanel';
 import { SentinelLocked } from '@/components/sentinel/SentinelLocked';
 import { SentinelDashboard } from '@/components/sentinel/dashboard/SentinelDashboard';
+import { SentinelStrategyWorkspace } from '@/components/sentinel/strategy/SentinelStrategyWorkspace';
 
 /**
  * Sentinel — the reference-design operational dashboard.
@@ -103,6 +104,24 @@ export default function SentinelPage() {
               </Link>
             )}
           </div>
+
+          {/*
+            The user's own strategies do not come from `/observe` — they are a
+            different service (services/sentinel-py) reached through a different
+            route. So a dead observation service must not take them off the page
+            with it: the strategy the user wrote and the watches running against
+            it are exactly what they would want to still see.
+
+            Shown only for 'service-error', which is the fault that is specific
+            to the observation service. The other three (no session, no
+            entitlement, API unreachable) block this panel too, and it would
+            only repeat the message already above it.
+          */}
+          {unavailable.kind === 'service-error' && (
+            <div className="mt-4">
+              <SentinelStrategyWorkspace />
+            </div>
+          )}
         </main>
       </div>
     );
@@ -135,6 +154,7 @@ export default function SentinelPage() {
             tradesToday: summary?.tradesToday ?? null,
             flaggedEvents: summary?.flaggedEvents ?? null,
           }}
+          strategyWorkspace={<SentinelStrategyWorkspace />}
         />
       </main>
     </div>

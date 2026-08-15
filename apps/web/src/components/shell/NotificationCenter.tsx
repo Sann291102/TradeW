@@ -4,6 +4,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Badge, panelSlide } from '@tradew/ui';
 import { useWorkspaceStore, NOTIFICATION_CATEGORY_TONE } from '@/lib/store/workspaceStore';
 import { markNotificationRead as apiMarkRead, markAllNotificationsRead as apiMarkAllRead } from '@/lib/notifications';
+import { alertRMultiple, alertTier } from '@/lib/sentinel/alertTier';
+import { formatRMultiple } from '@/lib/sentinel/watchModel';
 import { CloseIcon, InboxIcon } from './icons';
 
 /**
@@ -96,25 +98,37 @@ export function NotificationCenter() {
             </header>
 
             <ul className="min-h-0 flex-1 divide-y divide-border overflow-y-auto">
-              {notifications.map((n) => (
-                <li key={n.id}>
-                  <button
-                    type="button"
-                    onClick={() => handleRead(n.id)}
-                    className="flex w-full flex-col items-start gap-1 px-4 py-3 text-left transition-colors duration-micro hover:bg-hover"
-                  >
-                    <div className="flex w-full items-center gap-2">
-                      <Badge tone={NOTIFICATION_CATEGORY_TONE[n.category]} className="px-1.5 py-0 text-[9px]">
-                        {n.category.toUpperCase()}
-                      </Badge>
-                      {!n.read && <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-teal" />}
-                      <span className="ml-auto text-[10px] text-faint">{n.time}</span>
-                    </div>
-                    <div className="text-xs font-semibold text-text">{n.title}</div>
-                    <div className="text-[11px] text-muted">{n.body}</div>
-                  </button>
-                </li>
-              ))}
+              {notifications.map((n) => {
+                // A Sentinel alert's tier says whether this is worth looking at
+                // now; anything else keeps the plain category pill it always had.
+                const tier = alertTier(n);
+                const r = tier ? alertRMultiple(n) : null;
+                return (
+                  <li key={n.id}>
+                    <button
+                      type="button"
+                      onClick={() => handleRead(n.id)}
+                      className="flex w-full flex-col items-start gap-1 px-4 py-3 text-left transition-colors duration-micro hover:bg-hover"
+                    >
+                      <div className="flex w-full items-center gap-2">
+                        <Badge
+                          tone={tier ? tier.tone : NOTIFICATION_CATEGORY_TONE[n.category]}
+                          className="px-1.5 py-0 text-[9px]"
+                        >
+                          {tier ? tier.label.toUpperCase() : n.category.toUpperCase()}
+                        </Badge>
+                        {r !== null && (
+                          <span className="font-mono text-[10px] font-bold text-muted">{formatRMultiple(r)}</span>
+                        )}
+                        {!n.read && <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-teal" />}
+                        <span className="ml-auto text-[10px] text-faint">{n.time}</span>
+                      </div>
+                      <div className="text-xs font-semibold text-text">{n.title}</div>
+                      <div className="text-[11px] text-muted">{n.body}</div>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </motion.aside>
         </>

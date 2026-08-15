@@ -1,12 +1,14 @@
 # Sentinel (Safety Nets) — Product Blueprint
 
-Status: design, pre-implementation. Grounded in the Emergent mockups' actual Sentinel workspace and the architecture doc's "Safety Nets" concept (Phase 4). Sentinel's job is to help a trader **avoid costly mistakes** — it observes, explains its concern, and asks questions. It never blocks an order and never issues an instruction.
+Status: **substantially implemented** (this doc remains the binding blueprint). `services/sentinel` runs the observation pipeline, Brain, ontology/reasoning and the publication gate; `services/sentinel-py` adds the personal strategy watcher (below); the `/sentinel` workspace is live in `apps/web`. Grounded in the Emergent mockups' actual Sentinel workspace and the architecture doc's "Safety Nets" concept (Phase 4). Sentinel's job is to help a trader **avoid costly mistakes** — it observes, explains its concern, and asks questions. It never blocks an order and never issues an instruction.
 
 ## 1. Why this is a separate system from TradeW AI
 
 TradeW AI answers "what does this mean?" (market/company/portfolio understanding). Sentinel answers "am I about to do something I'll regret?" (behavioral and structural risk). Different question, different data (Sentinel needs the user's *own* trading behavior history, not just market data), different tone (diagnostic and reflective, not explanatory), and — per the mockup — a visibly different workspace with its own nav entry, not a tab inside Research.
 
 "Separate system" here means a separate **runtime and agent roster** (`services/sentinel`, `agents/sentinel/`), not a separate product. Sentinel is a workspace inside TradeW and the AI intelligence layer beneath the platform — see §5.
+
+> **Two runtimes under the Sentinel umbrella.** The four-agent observation system in this doc runs in `services/sentinel` (TypeScript, port 4010). A second, additive runtime — `services/sentinel-py` (Python/FastAPI, port 4011) — implements the **personal strategy watcher**: the user writes their *own* strategy in plain text, a deterministic parser turns it into rules, and a sweep loop watches live candles (`IDLE→FORMING→CONFIRMED`) and monitors an open trade against R-multiple/invalidation/projected levels, pushing alerts through `services/api`. It obeys the same non-negotiables (never proposes, buys, or sells; a compliance gate blocks Buy/Sell/Entry/Target/Stop strings). It surfaces as the Sentinel "strategy workspace — write, watch, follow" in `apps/web`. See `services/sentinel-py/README.md` and `SENTINEL_MASTER_PLAN.md`.
 
 ## 2. Agent architecture (as already defined in the mockup — not reinvented here)
 

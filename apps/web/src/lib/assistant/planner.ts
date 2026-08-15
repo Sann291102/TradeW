@@ -1,3 +1,4 @@
+import { DETECTORS } from '../charts/detectors';
 import { resolveUtterance } from './router';
 import { riskOf } from './safety';
 import type { AssistantPlan, AssistantAction, AssistantIntent, RefusalReason } from './types';
@@ -125,6 +126,10 @@ export function describeAction(a: AssistantAction): string {
       return 'Open a new workspace tab';
     case 'quote':
       return `Read ${a.symbols.join(', ')}`;
+    case 'chartDetect':
+      return DETECTORS[a.detector].label;
+    case 'chartClearDrawings':
+      return `Clear the ${a.tag} drawings`;
   }
 }
 

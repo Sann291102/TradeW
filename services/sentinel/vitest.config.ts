@@ -64,6 +64,14 @@ export default defineConfig({
       // The internal api→sentinel auth boundary: fails closed on a weak/unset
       // service token, constant-time compare (2026-08-10 assessment).
       'src/service-token-guard.spec.ts',
+      // Detection timestamps: market-event time vs the scan's own clock. Added
+      // with the autonomy pass, where the session timeline was found stamping
+      // every setup with the time of the browser poll that noticed it.
+      'src/intelligence/strategy-engine.spec.ts',
+      // The autonomy wiring itself: `/observe` putting a symbol under watch,
+      // and the deferred, idempotent corpus warm-up that lets the background
+      // watch reason without a human calling `/intelligence/reason` first.
+      'src/sentinel-intelligence/sentinel-intelligence.spec.ts',
     ],
     environment: 'node',
     // Deterministic and clock-injected throughout: a slow test is a real hang,

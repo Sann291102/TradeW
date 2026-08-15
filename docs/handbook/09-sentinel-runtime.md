@@ -549,9 +549,9 @@ This is why ontology changes can ship on the normal deployment path rather than 
 
 ---
 
-## 9.10 Testing Sentinel 🔴
+## 9.10 Testing Sentinel 🟡
 
-**Status: essentially no tests exist.** This is the highest-priority engineering gap in the service. What should exist, in build order:
+**Status (updated 2026-08-15): a substantial unit suite now exists** — `services/sentinel/src/**/*.spec.ts` covers sentinel-intelligence, the orchestrator (cross-validation, publication gate), market structure, strategy engine/lifecycle, the visual geometry/drawing-spec layer, market watch, and vocabulary; `services/sentinel-py` adds 9 `pytest` files. The remaining gap is integration/E2E across the running service, not unit coverage. The build order below still describes the intended tiering:
 
 ### Tier 1 — pure functions (start here, today)
 

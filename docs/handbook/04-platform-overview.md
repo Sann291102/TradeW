@@ -616,7 +616,7 @@ This exists because coding agents and engineers both work in this repository, an
 |---|---|
 | `services/trading-engine` (real-money OMS) | Un-migrated. Chapter 5 §5.9. |
 | `apps/mobile` | Roadmap Y3. Folder only. |
-| `apps/terminal` | Static HTML reference. Not active. |
+| `apps/terminal` | Retired → `archive/apps-terminal-legacy-prototype/`. Was static HTML, never active. |
 | `packages/sdk` | Phase 3. Folder only. |
 | `packages/shared` | Config loader, logger, error types. Folder only — a genuine gap, since ARCH says every Node service should use it. |
 | `workflows/` (n8n exports) | Phase 11. Folder only. |

@@ -100,6 +100,14 @@ export class SentinelPyController {
           previousState: metadata.previousState ?? null,
           tier: metadata.tier ?? null,
           reason: metadata.reason ?? null,
+          // In-trade fields (P4). Without these three the drawer cannot tell a
+          // milestone from an invalidation — every in-trade alert arrives with
+          // tier 'in_trade' and nothing else to distinguish it. All three
+          // describe something that already happened; sentinel-py's compliance
+          // guard is what keeps entry/stop/target levels out of this payload.
+          event: metadata.event ?? null,
+          rMultiple: metadata.rMultiple ?? null,
+          milestone: metadata.milestone ?? null,
         },
       },
     });

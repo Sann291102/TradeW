@@ -75,6 +75,9 @@ export default defineConfig({
       // Sentinel events becoming durable notifications: the receiving end of the
       // no-direction boundary, durable dedupe, and never failing an observation.
       'src/sentinel/sentinel-event-dispatcher.spec.ts',
+      // The sentinel-py ingress allowlist: the alert tier the notification bell
+      // styles from must cross into the row, and nothing unreviewed may.
+      'src/sentinel/sentinel-py-notify.spec.ts',
     ],
     environment: 'node',
     // The suite is deterministic and clock-injected; a slow test means a real

@@ -1,6 +1,6 @@
 # TradeW — Final Target Architecture
 
-Status: **approved design, not yet implemented.** No files have been moved. This document is binding for all future development — new work should be built to match these boundaries, not the current scattered-folder state.
+Status: **approved design, now substantially implemented.** The monorepo structure below is real — `apps/`, `services/`, and `packages/` all exist and most are built out (see the 🟢/🟡 markers in §2, and [`docs/APPLICATION-STATUS.md`](docs/APPLICATION-STATUS.md) for exactly what runs end-to-end today). This document remains binding for all future development — new work should be built to match these boundaries.
 
 This extends [`../CONSOLIDATION-PLAN.md`](../CONSOLIDATION-PLAN.md) (the audit + what to keep/archive) with *how the kept pieces fit together* going forward, and folds in three things the consolidation plan deliberately left out of scope until now: an AI agent layer, n8n workflow automation, and admin/mobile apps.
 
@@ -23,26 +23,29 @@ This extends [`../CONSOLIDATION-PLAN.md`](../CONSOLIDATION-PLAN.md) (the audit +
 ```
 TradeW/
 ├── apps/
-│   ├── web/            🟢 trader-facing app — from tradew-prototype/frontend + ported watchlist page
-│   ├── admin/           🟡 internal ops console — KYC review, audit-log viewer, DLQ retry, user mgmt
-│   └── mobile/          🟡 React Native, roadmap v0.9 — consumes packages/sdk + packages/types only
+│   ├── web/            🟢 trader-facing app — Next.js; hosts every pillar's workspace (Core, Sentinel, Research, Learning)
+│   ├── admin/           🟢 standalone Next.js operator console (port 3001) — command centers (agents/ai/audit/orders/rules/system/health/observability), cognition graph, knowledge stream; operator-account auth, read-only aggregations
+│   └── mobile/          🟡 React Native, roadmap v0.9 — README/contract only, consumes packages/sdk + packages/types
 │
 ├── services/
-│   ├── api/             🟢 NestJS — from tradew-prototype/backend; the single public aggregator/BFF
-│   ├── auth/             🟡 extraction target for the api's auth module (see §2.1 — not split on day one)
-│   ├── trading-engine/   🟢 Python/Flask — from extreme_algo_package, "keep" set per consolidation plan
-│   ├── market-data/      🟡 formalizes tradew_live_runner.py's quote-feed role
-│   ├── tradew-ai/        🟡 new — Research pillar runtime, runs agents/tradew-ai/ definitions, see §4
-│   ├── sentinel/          🟡 new — Safety Nets pillar runtime, runs agents/sentinel/ definitions, see §4 — deliberately separate from tradew-ai
-│   ├── notification/     🟡 new — alert fanout (email/Slack/push), triggers/is triggered by n8n
-│   └── analytics/         🟡 new — portfolio/PnL analytics, eventual ClickHouse aggregation
+│   ├── api/             🟢 NestJS — the single public aggregator/BFF (port 4000); auth, orders, entitlements, payments, notifications, market-data proxy
+│   ├── auth/             🟡 extraction target for the api's auth module (see §2.1 — README/contract only, still an in-process module)
+│   ├── trading-engine/   🟡 Python/Dhan execution engine — README/contract only in-tree; real-money code not migrated in yet (see its README)
+│   ├── market-data/      🟢 NestJS ingestor + Dhan live-feed bridge & token scripts (live-feed-server.ts on port 4600)
+│   ├── tradew-ai/        🟡 Research pillar runtime scaffold (NestJS) — runs agents/tradew-ai/, thin; research features not wired yet, see §4
+│   ├── sentinel/          🟢 Safety Nets pillar runtime (NestJS, port 4010) — runs agents/sentinel/, observation pipeline, Brain, ontology/reasoning; separate from tradew-ai
+│   ├── sentinel-py/        🟢 new — Python/FastAPI personal strategy watcher (port 4011); parses a user's own text strategy, watches live candles, alerts. Additive to services/sentinel, never auto-trades, see §4
+│   ├── notification/     🟡 alert fanout (email/Slack/push) — README/contract only; in-app notifications currently live in services/api
+│   └── analytics/         🟡 portfolio/PnL analytics — README/contract only, eventual ClickHouse aggregation
 │
 ├── packages/
-│   ├── ui/               🟡 shared design-system components — binding spec now extracted from the Emergent mockups, see docs/design-reference/DESIGN-SYSTEM.md
-│   ├── types/            🟡 shared TS types/DTOs — source of truth for API contracts
-│   ├── sdk/               🟡 typed client generated from services/api's OpenAPI spec (PRD's "public developer API", Phase 3)
-│   ├── database/          🟢 single Prisma schema.prisma + migrations, merged per consolidation plan §2.1
-│   └── shared/            🟡 config loader, logger, error types — used by every Node service
+│   ├── ui/               🟢 shared design-system components — consumed by apps/web + apps/admin; spec in docs/design-reference/DESIGN-SYSTEM.md
+│   ├── types/            🟢 shared TS types/DTOs — source of truth for API contracts, consumed across apps + services
+│   ├── ai-core/           🟢 provider-agnostic AI primitives (LLM client, prompt/guardrail helpers) — consumed by api, sentinel, tradew-ai
+│   ├── market-data/       🟢 hand-written Dhan WebSocket binary parser + market types — consumed by services/market-data and services/sentinel
+│   ├── sdk/               🟡 typed client generated from services/api's OpenAPI spec (PRD's "public developer API", Phase 3) — not built; hand-written clients used
+│   ├── database/          🟢 single Prisma schema.prisma + migrations (owns the shared Postgres schema)
+│   └── shared/            🟡 config loader, logger, error types — still a placeholder; boot-time env validation is ad hoc per service
 │
 ├── agents/                🟡 declarative agent definitions, split into agents/tradew-ai/ and agents/sentinel/ — see §4
 ├── workflows/              🟡 versioned JSON exports of n8n workflows (n8n itself stays out-of-tree)
@@ -103,6 +106,7 @@ TradeW AI (Research) and Sentinel (Safety Nets) are **deliberately separate syst
 
 - `agents/tradew-ai/` and `agents/sentinel/` hold **declarative** agent definitions — system prompts, allowed tools, guardrail/disclaimer config — as version-controlled files, reviewed like code, one subfolder per system.
 - `services/tradew-ai` and `services/sentinel` are the two **runtimes** — each loads only its own subfolder's definitions, each exposes its own internal endpoint (`POST /agents/:name/invoke`), called only by `services/api` — never directly by `apps/*` — so there's one auth/rate-limit/audit chokepoint per system for compliance review later.
+- `services/sentinel-py` (Python/FastAPI, port 4011) is a **third, additive runtime** under the Sentinel umbrella: the *personal strategy watcher*. The user writes their own strategy in plain text; a deterministic parser turns it into rules, an in-process sweep loop watches live Dhan candles (`IDLE → FORMING → CONFIRMED`), and confirmations/in-trade R-multiple milestones are pushed to the user as `Notification` rows via `services/api`. It is called only by `services/api` (service-token guard, mirroring `services/sentinel`'s `ServiceTokenGuard`), reads/writes its own `UserStrategy`/`WatchSession`/`WatchObservation` tables in the shared Postgres via `asyncpg`, and — like every Sentinel component — **never proposes, buys, or sells**; a compliance gate (`app/notify/compliance.py`) blocks any Buy/Sell/Entry/Target/Stop string before it leaves the service. It runs alongside `services/sentinel` (TypeScript), which is unchanged; see `services/sentinel-py/README.md` and `SENTINEL_MASTER_PLAN.md`.
 - Model access goes through the Anthropic API directly (see the workspace's `claude-api` reference for model/pricing/caching choices); this is independent of the separate `TradingBot` project's own Anthropic integration, which stays out of scope per the earlier decision.
 - Every agent response that touches trading data carries a disclaimer and, where relevant, a structured "suggested next step" the user must explicitly act on — the UI converts that into an order only via the normal order-flow path in §3, never automatically. Sentinel additionally never blocks or delays the order flow — it comments in parallel, it is not a gate.
 - TradeW AI **and Sentinel** share the same `apps/web` UI shell as workspaces — see `docs/product-architecture/README.md` for the "one app, N workspaces" model and `docs/design-reference/DESIGN-SYSTEM.md` for the shared visual system, extracted from the Emergent mockups and now binding for `packages/ui`. Sentinel's workspace has its own layouts and workflows because its job differs, but it sits under the same sidebar, top bar, design language, auth and entitlements as every other pillar (§2.2, `TRADEW-OS.md` §1, `docs/product-architecture/SENTINEL.md` §5).
@@ -130,13 +134,15 @@ What lives in this repo instead:
 
 | Package | Purpose | Consumed by |
 |---|---|---|
-| `shared` | Config loader (fail-fast env validation), structured logger, common error types | every Node service |
+| `shared` | Config loader (fail-fast env validation), structured logger, common error types — still a placeholder | every Node service (once built) |
 | `types` | Shared TS interfaces/DTOs — source of truth for request/response shapes | `api`, `ui`, `sdk`, all `apps/*` |
-| `database` | The single, corrected `schema.prisma` (per consolidation plan §2.1) + migration history | `services/api` (and `services/auth` once extracted) |
+| `database` | The single `schema.prisma` + migration history (owns the shared Postgres schema) | `services/api` (and `services/auth` once extracted) |
 | `ui` | Design-system components extracted from `apps/web` as they stabilize — don't pre-extract UI that's still changing weekly | `apps/web`, `apps/admin`, later `apps/mobile`'s web-shared views if any |
-| `sdk` | Typed client generated from `services/api`'s OpenAPI spec | `apps/*` internally now; external developers once the Phase 3 public API ships |
+| `ai-core` | Provider-agnostic AI primitives — LLM client, prompt assembly, guardrail/disclaimer helpers | `services/api`, `services/sentinel`, `services/tradew-ai` |
+| `market-data` | Hand-written Dhan WebSocket binary parser + market types (verified by `scripts/verify-parser.ts`) | `services/market-data`, `services/sentinel` |
+| `sdk` | Typed client generated from `services/api`'s OpenAPI spec — not built yet | `apps/*` internally now; external developers once the Phase 3 public API ships |
 
-`services/trading-engine` (Python) does not consume any of the above — it's a different runtime with its own dependency set (`requirements.txt`) and, for now, its own SQLite store. See §5 of the consolidation plan and §2 above for its migration path.
+`services/trading-engine` (Python) and `services/sentinel-py` (Python) do not consume the TypeScript packages above — they're different runtimes with their own dependency sets. `sentinel-py` does read/write the shared Postgres schema that `packages/database` owns (directly via `asyncpg`, never through Prisma — one schema owner, never one ORM, §1.4). See §2 above for `trading-engine`'s migration path.
 
 ---
 
@@ -181,17 +187,22 @@ apps/mobile ───┘         │      ──► packages/types
                           ├──► services/market-data       (internal REST/event bus)
                           ├──► services/tradew-ai          (internal REST)
                           ├──► services/sentinel           (internal REST)
+                          ├──► services/sentinel-py        (internal REST, service token — strategy watcher)
                           ├──► services/notification      (internal REST/event bus)
                           └──► services/analytics          (internal REST)
 
-services/tradew-ai ──► agents/tradew-ai/ (definitions)
-services/sentinel  ──► agents/sentinel/ (definitions)
+services/tradew-ai ──► agents/tradew-ai/ (definitions),  packages/ai-core
+services/sentinel  ──► agents/sentinel/ (definitions),   packages/ai-core, packages/market-data
 services/sentinel  ──► services/trading-engine (read-only, via services/api — user's own trade history for Emotion Intelligence)
+services/sentinel-py ──► packages/database's Postgres schema (direct asyncpg; own UserStrategy/WatchSession/WatchObservation tables)
+services/sentinel-py ──► services/market-data live-feed bridge (candles) and ──► services/api /internal/sentinel-py/notify (alerts)
+services/market-data ──► packages/market-data (Dhan binary parser)
+services/api ──► packages/ai-core, packages/market-data
 
 services/notification ◄──► n8n (external service) ◄──► workflows/ (versioned exports)
 
 packages/ui, packages/sdk ──► consumed by apps/* only
-packages/database ──► consumed by services/api only (trading-engine owns its own tables/store)
+packages/database ──► consumed by services/api (Prisma) and services/sentinel-py (asyncpg, same schema)
 ```
 
 Rules this graph enforces:

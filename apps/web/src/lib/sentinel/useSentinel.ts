@@ -1,10 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { playNotificationSound } from '@/lib/notificationSound';
 import { useWorkspaceStore } from '@/lib/store/workspaceStore';
+import { classifyFault, type SentinelUnavailable } from './faults';
 import type { JournalEntry, ObserveResponse, SessionSummaryData, StrategyMode } from './types';
+
+export type { SentinelUnavailable };
 
 /**
  * Sentinel's default confidence gate for the workspace (Phase 3). Insights and
@@ -18,44 +21,6 @@ export interface SentinelFocus {
   strategyMode?: StrategyMode;
   /** registry strategy ids to track simultaneously when strategyMode === 'manual' (Phase 2, multi-strategy) */
   selectedStrategyIds?: string[];
-}
-
-/**
- * Why the workspace has no observation to show.
- *
- * There is deliberately no demo/sample fallback. Rendering canned DEMO data
- * on failure meant an expired session, an API outage and a dead Sentinel
- * service all looked like a working product — and the banner told every one
- * of them "sign in for live analysis", which was wrong in two cases out of
- * three. Sentinel now shows nothing and names the actual fault.
- */
-export type SentinelUnavailable =
-  | { kind: 'unauthenticated' }
-  | { kind: 'entitlement-required' }
-  | { kind: 'api-unreachable' }
-  | { kind: 'service-error'; status: number; message: string };
-
-/**
- * 401 and 403 are NOT the same fault, and used to be collapsed together here.
- * `SentinelController` puts `AuthGuard` before `CapabilityGuard`
- * (services/api/src/sentinel/sentinel.controller.ts) — AuthGuard throws 401
- * only when there is no valid session; CapabilityGuard throws 403 only once a
- * session already passed AuthGuard and the `sentinel` capability check
- * (EntitlementsService.check) came back false. A 403 therefore always means
- * "you are signed in, you're just not entitled to Sentinel" — telling that
- * user "Not signed in" sends them nowhere useful, most confusingly right after
- * they believe they *just* activated Sentinel Pro (e.g. via the client-only
- * "Redeem Testing Coupon", which never touches the server — see
- * sessionStore.ts's `hasCapability` docstring for the same failure mode).
- */
-function classify(err: unknown): SentinelUnavailable {
-  if (err instanceof ApiError) {
-    if (err.status === 401) return { kind: 'unauthenticated' };
-    if (err.status === 403) return { kind: 'entitlement-required' };
-    return { kind: 'service-error', status: err.status, message: err.message };
-  }
-  // fetch itself threw — services/api is not reachable at NEXT_PUBLIC_API_URL.
-  return { kind: 'api-unreachable' };
 }
 
 /**
@@ -124,7 +89,7 @@ export function useSentinel(symbol: string = 'NIFTY', focus: SentinelFocus = {})
       setData(null);
       setSummary(null);
       setJournal([]);
-      setUnavailable(classify(err));
+      setUnavailable(classifyFault(err));
     } finally {
       setLoading(false);
     }

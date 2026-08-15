@@ -69,6 +69,11 @@ function isConsequential(a: AssistantAction): string | null {
     case 'toggleSidebar':
     case 'newWorkspaceTab':
     case 'quote':
+    case 'chartDetect':
+    case 'chartClearDrawings':
+      // Drawing is annotation, not workspace surgery: detection replaces only
+      // its own tag and clearing it re-runs in one word, so neither destroys
+      // anything the user would have to rebuild.
       // All reversible in one click, or read-only. Confirming these would train
       // the user to click through prompts without reading them, which makes the
       // gate worse than useless when it finally guards something that matters.
