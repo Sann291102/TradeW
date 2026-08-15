@@ -21,14 +21,14 @@ def test_available_templates_produce_rules_the_evaluator_understands():
 
 
 def test_unavailable_templates_name_the_missing_primitive():
-    flag = get_template("flag_pennant")
-    assert flag is not None
-    assert flag.available is False
-    assert "impulse_detection" in flag.missing
-    assert "impulse_detection" in flag.to_dict()["unavailableReason"]
+    zone = get_template("supply_demand_zone")
+    assert zone is not None
+    assert zone.available is False
+    assert "zone_detection" in zone.missing
+    assert "zone_detection" in zone.to_dict()["unavailableReason"]
 
 
-def test_seven_of_eleven_are_adoptable_today():
+def test_eight_of_eleven_are_adoptable_today():
     """A count, so a template cannot quietly become adoptable because a
     primitive name was added to the supported set without an evaluator."""
     adoptable = {t.id for t in CATALOGUE if t.available}
@@ -40,6 +40,7 @@ def test_seven_of_eleven_are_adoptable_today():
         "vwap_bounce",
         "vwap_reversion_eod",
         "sr_flip",
+        "flag_pennant",
     }
 
 

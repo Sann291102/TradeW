@@ -17,9 +17,16 @@ from dataclasses import dataclass
 from app.market.clock import minutes_to_close, session_key
 from app.market.feed import Candle
 from app.watch.indicators import (
+    CONTRACTION_MAX,
     EXTENSION_MIN_ATR,
+    IMPULSE_MAX_BARS,
+    IMPULSE_MIN_ATR,
+    MAX_RETRACEMENT,
+    MIN_CONSOLIDATION_BARS,
     MIN_LEVEL_AGE_BARS,
     MIN_LEVEL_TOUCHES,
+    Contraction,
+    Impulse,
     Level,
     LevelKind,
     Slope,
@@ -31,6 +38,8 @@ from app.watch.indicators import (
     ema_of,
     find_bullish_reclaim,
     find_bullish_reclaims,
+    find_contraction,
+    find_impulse,
     find_levels,
     find_pullback,
     find_vwap_extreme,
@@ -288,6 +297,124 @@ def _pullback_continuation(candles: list[Candle]) -> tuple[bool, str]:
         if candles[i].close > fast[i - offset]:
             return True, f"closed {candles[i].close:.2f} back above the 9 EMA {fast[i - offset]:.2f}"
     return False, "waiting for a close back above the 9 EMA"
+
+
+# --- Flag / Pennant Continuation ---------------------------------------------
+#
+# Impulse, pause, resumption — in that order, on the same leg. Like the flip,
+# the conditions all read from one `_find_flag` result, so the strategy can
+# never confirm by pairing this morning's impulse with this afternoon's
+# unrelated quiet patch.
+
+
+@dataclass(frozen=True)
+class Flag:
+    impulse: Impulse
+    contraction: Contraction | None
+    breakout_index: int | None
+
+
+def _find_flag(candles: list[Candle]) -> Flag | None:
+    a = atr(candles)
+    impulse = find_impulse(candles, a)
+    if impulse is None:
+        return None
+
+    # Walk back through earlier legs until one has room for a pause behind it.
+    # Without this the newest impulse is always the one ending at the latest
+    # bar, which leaves zero bars to be the flag and makes the strategy
+    # permanently "waiting" no matter what the market did.
+    parts = _pause_and_break(candles, impulse)
+    cursor = impulse
+    while parts["contraction"] is None and cursor.start_index > 0:
+        cursor = find_impulse(candles, a, end_before=cursor.start_index - 1)
+        if cursor is None:
+            break
+        earlier = _pause_and_break(candles, cursor)
+        if earlier["contraction"] is not None:
+            parts = earlier
+            break
+
+    return Flag(**parts)
+
+
+def _pause_and_break(candles: list[Candle], impulse: Impulse) -> dict:
+    """Split what followed the impulse into the pause and the break out of it.
+
+    The breakout bar must NOT be inside the pause it is breaking. Measuring
+    the contraction over a window that includes the escaping candle makes
+    every flag that actually worked look like it never contracted.
+    """
+    rest = candles[impulse.end_index + 1 :]
+    breakout_offset = None
+    for b in range(MIN_CONSOLIDATION_BARS, len(rest)):
+        pause = rest[:b]
+        # The break has to clear the pause, in the direction the impulse was
+        # already going. A close out the other side is the flag failing.
+        if impulse.up and rest[b].close > max(c.high for c in pause):
+            breakout_offset = b
+            break
+        if not impulse.up and rest[b].close < min(c.low for c in pause):
+            breakout_offset = b
+            break
+
+    upto = len(candles) if breakout_offset is None else impulse.end_index + 1 + breakout_offset
+    return {
+        "impulse": impulse,
+        "contraction": find_contraction(candles[:upto], impulse),
+        "breakout_index": None if breakout_offset is None else upto,
+    }
+
+
+def _impulse_leg(candles: list[Candle]) -> tuple[bool, str]:
+    flag = _find_flag(candles)
+    if flag is None:
+        return False, f"no move of {IMPULSE_MIN_ATR} ATR within {IMPULSE_MAX_BARS} bars"
+    return True, flag.impulse.detail
+
+
+def _volatility_contraction(candles: list[Candle]) -> tuple[bool, str]:
+    """The pause. Tight RELATIVE to the impulse, and shallow enough that the
+    move is resting rather than being unwound."""
+    flag = _find_flag(candles)
+    if flag is None:
+        return False, "no impulse to contract after"
+    contraction = flag.contraction
+    if contraction is None:
+        return False, f"fewer than {MIN_CONSOLIDATION_BARS} bars since the impulse"
+    if contraction.ratio > CONTRACTION_MAX:
+        return False, f"range has not contracted — {contraction.detail}"
+    if contraction.retracement > MAX_RETRACEMENT:
+        return False, f"too much of the impulse given back — {contraction.detail}"
+    return True, contraction.detail
+
+
+def _flag_breakout(candles: list[Candle]) -> tuple[bool, str]:
+    flag = _find_flag(candles)
+    if flag is None or flag.contraction is None:
+        return False, "no flag to break out of"
+    if flag.breakout_index is None:
+        edge = flag.contraction.high if flag.impulse.up else flag.contraction.low
+        return False, f"waiting for a close beyond {edge:.2f}"
+    close = candles[flag.breakout_index].close
+    return True, f"closed {close:.2f} out of the flag in the impulse direction"
+
+
+def measure_flag(candles: list[Candle]) -> dict | None:
+    """Impulse size and contraction tightness for the observation record —
+    the two numbers a funnel would need to ask whether this user's flags work
+    better after bigger impulses or tighter pauses."""
+    flag = _find_flag(closed_candles(candles))
+    if flag is None:
+        return None
+    return {
+        "impulseAtr": round(flag.impulse.size_atr, 4),
+        "direction": "up" if flag.impulse.up else "down",
+        "contractionRatio": round(flag.contraction.ratio, 4) if flag.contraction else None,
+        "retracement": round(flag.contraction.retracement, 4) if flag.contraction else None,
+        "bars": flag.contraction.bars if flag.contraction else 0,
+        "brokeOut": flag.breakout_index is not None,
+    }
 
 
 # --- Support / Resistance Flip -----------------------------------------------
@@ -708,6 +835,13 @@ def evaluate(rules: list[dict], candles: list[Candle]) -> EvaluationResult:
             met, detail = _pullback_into_zone(bars)
         elif condition == "pullback_rejection_continuation":
             met, detail = _pullback_continuation(bars)
+        # Flag / Pennant — impulse, pause, resumption on the same leg.
+        elif condition == "impulse_leg":
+            met, detail = _impulse_leg(bars)
+        elif condition == "volatility_contraction":
+            met, detail = _volatility_contraction(bars)
+        elif condition == "flag_breakout_continuation":
+            met, detail = _flag_breakout(bars)
         # Support / Resistance Flip — four stages of ONE sequence on ONE level.
         elif condition == "established_level_present":
             met, detail = _established_level(bars)

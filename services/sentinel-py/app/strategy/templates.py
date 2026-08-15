@@ -42,6 +42,8 @@ SUPPORTED_PRIMITIVES = {
     "session_clock",
     "level_detection",
     "level_age",
+    "impulse_detection",
+    "volatility_contraction",
 }
 
 
@@ -423,9 +425,49 @@ CATALOGUE: list[Template] = [
     Template(
         id="flag_pennant",
         name="Flag / Pennant Continuation",
-        summary="An impulse, then volatility contraction, then a breakout in the impulse direction.",
+        summary=(
+            "A move that goes somewhere fast, a pause that goes nowhere, then a resumption. The "
+            "pause is measured against the impulse that preceded it, not against a fixed number "
+            "of points, and it may not give back more than half of the move."
+        ),
         direction="both",
-        requires={"impulse_detection", "volatility_contraction", "atr"},
+        requires={"impulse_detection", "volatility_contraction", "atr", "relative_volume"},
+        rules={
+            "timeframe": "5m",
+            "levels": ["flag_high", "flag_low"],
+            "rules": [
+                {
+                    "id": "rule_impulse",
+                    "name": "impulse_leg",
+                    "condition": "impulse_leg",
+                    "mandatory": True,
+                    "description": "A move of at least 2 ATR within 6 bars, mostly in one direction",
+                },
+                {
+                    "id": "rule_contraction",
+                    "name": "volatility_contraction",
+                    "condition": "volatility_contraction",
+                    "mandatory": True,
+                    "description": "A pause inside half the impulse range that gives back at most half the move",
+                },
+                {
+                    "id": "rule_breakout",
+                    "name": "flag_breakout_continuation",
+                    "condition": "flag_breakout_continuation",
+                    "mandatory": True,
+                    "description": "Price closes out of the pause in the impulse direction",
+                },
+                {
+                    "id": "rule_volume_confirm",
+                    "name": "volume_confirm",
+                    "condition": "volume_above_20_period_avg",
+                    "mandatory": False,
+                    "description": "The breakout carries above-average volume",
+                },
+            ],
+            "entry": {"long": "after_flag_breakout", "short": "after_flag_breakout"},
+            "riskManagement": {"stopLoss": None, "targets": []},
+        },
     ),
     Template(
         id="supply_demand_zone",

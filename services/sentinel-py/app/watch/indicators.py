@@ -263,6 +263,165 @@ def find_pullback(
     )
 
 
+# --- Impulse and contraction -------------------------------------------------
+#
+# The flag/pennant shape is three things in order: a move that goes somewhere
+# fast, a pause that goes nowhere, and a resumption. The two hard parts are
+# both about not accepting a weaker thing in place of a stronger one — any
+# sustained drift looks like an impulse if you don't require speed, and any
+# quiet stretch looks like a flag if you don't require the range to have
+# actually contracted RELATIVE to the impulse that preceded it.
+
+
+#: An impulse is a fast move, so it is bounded in bars as well as in size. A
+#: 2-ATR move that took thirty bars is a trend, not an impulse.
+IMPULSE_MAX_BARS = 6
+IMPULSE_MIN_ATR = 2.0
+
+#: A pause needs enough bars to be a pause rather than one inside bar.
+MIN_CONSOLIDATION_BARS = 3
+
+#: The consolidation range as a fraction of the impulse range. Above this the
+#: market is still moving, not resting.
+CONTRACTION_MAX = 0.5
+
+#: How much of the impulse the pause may give back. Past this it stops being
+#: a flag: a move that retraces most of its impulse is a reversal being
+#: described optimistically.
+MAX_RETRACEMENT = 0.5
+
+
+@dataclass(frozen=True)
+class Impulse:
+    start_index: int
+    end_index: int
+    #: True when the impulse went up.
+    up: bool
+    #: Displacement in ATR multiples — the comparable measure of "fast".
+    size_atr: float
+    high: float
+    low: float
+    detail: str
+
+    @property
+    def span(self) -> float:
+        return self.high - self.low
+
+
+def find_impulse(
+    candles: list[Candle],
+    atr_value: float | None,
+    end_before: int | None = None,
+) -> Impulse | None:
+    """The most recent fast directional move, or None.
+
+    Requires displacement of at least `IMPULSE_MIN_ATR` within at most
+    `IMPULSE_MAX_BARS`, and that the majority of those bars pushed the same
+    way — a violent two-way chop that happens to end higher is not an impulse,
+    and the flag that follows it would mean nothing.
+
+    `end_before` caps where the leg may end. The caller needs it because the
+    newest leg is not always the interesting one: a search that always ends at
+    the latest bar absorbs the pause into the impulse, and then there is
+    nothing left to be the flag.
+    """
+    if atr_value is None or atr_value <= 0 or len(candles) < 2:
+        return None
+
+    last = len(candles) - 1 if end_before is None else min(end_before, len(candles) - 1)
+    for end in range(last, 0, -1):
+        for length in range(2, min(IMPULSE_MAX_BARS, end + 1) + 1):
+            start = end - length + 1
+            leg = candles[start : end + 1]
+            displacement = leg[-1].close - leg[0].open
+            if abs(displacement) / atr_value < IMPULSE_MIN_ATR:
+                continue
+
+            up = displacement > 0
+
+            # An impulse ends at its extreme. Trailing bars that made no
+            # further progress belong to whatever came next — usually the very
+            # pause the caller is looking for — and leaving them inside the leg
+            # both overstates its length and eats the flag.
+            extreme_at = (
+                max(range(len(leg)), key=lambda i: leg[i].close)
+                if up
+                else min(range(len(leg)), key=lambda i: leg[i].close)
+            )
+            leg = leg[: extreme_at + 1]
+            end = start + extreme_at
+            if len(leg) < 2:
+                continue
+
+            displacement = leg[-1].close - leg[0].open
+            if abs(displacement) / atr_value < IMPULSE_MIN_ATR or (displacement > 0) is not up:
+                continue
+
+            agreeing = sum(1 for c in leg if (c.close > c.open) is up)
+            if agreeing * 2 <= len(leg):
+                continue
+
+            return Impulse(
+                start_index=start,
+                end_index=end,
+                up=up,
+                size_atr=abs(displacement) / atr_value,
+                high=max(c.high for c in leg),
+                low=min(c.low for c in leg),
+                detail=(
+                    f"{abs(displacement):.2f} ({abs(displacement) / atr_value:.2f} ATR) "
+                    f"{'up' if up else 'down'} over {len(leg)} bars"
+                ),
+            )
+    return None
+
+
+@dataclass(frozen=True)
+class Contraction:
+    start_index: int
+    bars: int
+    high: float
+    low: float
+    #: Consolidation range as a fraction of the impulse range. Lower is tighter.
+    ratio: float
+    #: How much of the impulse the pause gave back, as a fraction.
+    retracement: float
+    detail: str
+
+
+def find_contraction(candles: list[Candle], impulse: Impulse) -> Contraction | None:
+    """The pause after an impulse, measured against that impulse.
+
+    Both numbers are RELATIVE on purpose. An absolute "range under X points"
+    would call the same consolidation tight on a quiet day and wide on a busy
+    one, and the whole claim of a flag is that the market went quiet compared
+    with how it had just been moving.
+    """
+    rest = candles[impulse.end_index + 1 :]
+    if len(rest) < MIN_CONSOLIDATION_BARS or impulse.span <= 0:
+        return None
+
+    high = max(c.high for c in rest)
+    low = min(c.low for c in rest)
+    ratio = (high - low) / impulse.span
+    retracement = (
+        (impulse.high - low) / impulse.span if impulse.up else (high - impulse.low) / impulse.span
+    )
+
+    return Contraction(
+        start_index=impulse.end_index + 1,
+        bars=len(rest),
+        high=high,
+        low=low,
+        ratio=ratio,
+        retracement=retracement,
+        detail=(
+            f"{len(rest)} bars in {ratio * 100:.0f}% of the impulse range, "
+            f"{retracement * 100:.0f}% retraced"
+        ),
+    )
+
+
 # --- Horizontal levels -------------------------------------------------------
 #
 # A "level" here is not a line someone drew. It is a price the market has
