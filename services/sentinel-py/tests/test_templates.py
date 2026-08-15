@@ -25,10 +25,17 @@ def test_unavailable_templates_name_the_missing_primitive():
     assert news is not None
     assert news.available is False
     assert "news_feed" in news.missing
-    assert "news_feed" in news.to_dict()["unavailableReason"]
 
 
-def test_nine_of_eleven_are_adoptable_today():
+def test_news_momentum_says_it_needs_a_pipeline_not_a_primitive():
+    """It is not one function away from working, and the reason a user reads
+    should not suggest that it is."""
+    news = get_template("news_momentum").to_dict()
+    assert news["unavailableReason"] == "Unavailable — requires News Research / Market Impact pipeline."
+    assert news["rules"] == {}
+
+
+def test_ten_of_eleven_are_adoptable_today():
     """A count, so a template cannot quietly become adoptable because a
     primitive name was added to the supported set without an evaluator."""
     adoptable = {t.id for t in CATALOGUE if t.available}
@@ -42,6 +49,7 @@ def test_nine_of_eleven_are_adoptable_today():
         "sr_flip",
         "flag_pennant",
         "supply_demand_zone",
+        "liquidity_sweep_fvg",
     }
 
 

@@ -17,7 +17,7 @@ from app.market.feed import MarketDataUnavailableError, fetch_index_candles, fet
 from app.intrade.monitor import Direction, evaluate_position
 from app.notify.dispatcher import notify, notify_intrade
 from app.watch import store
-from app.watch.evaluator import evaluate, measure_flag, measure_zone, measure_flip, measure_pullback, measure_vwap
+from app.watch.evaluator import evaluate, measure_flag, measure_zone, measure_liquidity, measure_flip, measure_pullback, measure_vwap
 from app.watch.state_machine import Transition, WatchState, advance
 
 logger = logging.getLogger("sentinel.watch")
@@ -204,6 +204,10 @@ async def sweep_once() -> int:
                     # Carries the STABLE zone id, so touches accumulate across
                     # sweeps instead of resetting every fifteen seconds.
                     "zone": measure_zone(candles),
+                    # Records the STAGE the sequence reached, so the funnel can
+                    # see where this user's sweeps stopped progressing rather
+                    # than only that they did.
+                    "liquidity": measure_liquidity(candles),
                 },
             )
 

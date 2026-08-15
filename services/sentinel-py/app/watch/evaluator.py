@@ -27,10 +27,12 @@ from app.watch.indicators import (
     MIN_LEVEL_TOUCHES,
     ZONE_MIN_DEPARTURE_ATR,
     Contraction,
+    FairValueGap,
     Impulse,
     Level,
     LevelKind,
     Slope,
+    Sweep,
     Zone,
     ZoneKind,
     atr,
@@ -44,10 +46,14 @@ from app.watch.indicators import (
     find_contraction,
     find_impulse,
     find_levels,
+    find_fair_value_gaps,
     find_pullback,
+    find_structure_shift,
+    find_sweeps,
     find_vwap_extreme,
     find_zones,
     level_tolerance,
+    measure_departure,
     resample,
     score_zone,
     vwap_deviation,
@@ -303,6 +309,191 @@ def _pullback_continuation(candles: list[Candle]) -> tuple[bool, str]:
         if candles[i].close > fast[i - offset]:
             return True, f"closed {candles[i].close:.2f} back above the 9 EMA {fast[i - offset]:.2f}"
     return False, "waiting for a close back above the 9 EMA"
+
+
+# --- Liquidity Sweep + Fair Value Gap ----------------------------------------
+#
+# Seven stages, one event:
+#
+#   liquidity pool -> sweep -> displacement -> structure shift -> FVG
+#   -> retrace/interaction -> continuation
+#
+# `_find_liquidity_event` computes the whole lifecycle once and every
+# condition reads it. That is not tidiness — it is the correctness property.
+# Detected independently, "a pool was swept" could be about this morning's
+# low, "displacement" about an unrelated afternoon move, and "an FVG exists"
+# about a gap on the other side of the chart, and the strategy would confirm
+# on a chart where none of it happened together.
+
+
+#: The move away from the sweep. Weaker than this and the level was taken
+#: without consequence, which is a very common and very different event.
+DISPLACEMENT_MIN_ATR = 1.5
+
+
+@dataclass(frozen=True)
+class LiquidityEvent:
+    sweep: Sweep
+    displacement: Impulse | None
+    structure_shift_index: int | None
+    fvg: FairValueGap | None
+    retrace_index: int | None
+    continuation_index: int | None
+
+    @property
+    def stage(self) -> int:
+        if self.continuation_index is not None:
+            return 7
+        if self.retrace_index is not None:
+            return 6
+        if self.fvg is not None:
+            return 5
+        if self.structure_shift_index is not None:
+            return 4
+        if self.displacement is not None:
+            return 3
+        return 2
+
+
+def _find_liquidity_event(candles: list[Candle]) -> LiquidityEvent | None:
+    """The most advanced sweep-driven sequence on the chart.
+
+    Most advanced rather than most recent, for the same reason as the flip: a
+    completed sequence on an earlier sweep is more informative than a fresh
+    sweep that has gone nowhere, and preferring the fresh one would make a
+    finished setup appear to regress to waiting.
+    """
+    a = atr(candles)
+    sweeps = find_sweeps(candles, a)
+    if not sweeps:
+        return None
+
+    best: LiquidityEvent | None = None
+    for sweep in sweeps:
+        # Displacement is measured FROM the sweep candle, anchored, so a
+        # strong move elsewhere on the chart cannot stand in for this one.
+        displacement = measure_departure(candles[sweep.index :], a)
+        if displacement is not None and (
+            displacement.size_atr < DISPLACEMENT_MIN_ATR or displacement.up is not sweep.bullish
+        ):
+            displacement = None
+
+        shift = fvg = retrace = continuation = None
+        if displacement is not None:
+            end = sweep.index + displacement.end_index
+            shift = find_structure_shift(candles, sweep.index, sweep.bullish)
+            # Only gaps left BY THIS MOVE. A gap from an hour earlier is not
+            # the imbalance this displacement created.
+            gaps = find_fair_value_gaps(candles, sweep.bullish, start=sweep.index, end=end)
+            fvg = gaps[-1] if gaps else None
+
+            if fvg is not None:
+                for i in range(end + 1, len(candles)):
+                    if candles[i].low <= fvg.top and candles[i].high >= fvg.bottom:
+                        retrace = i
+                        break
+
+            if retrace is not None:
+                extreme = displacement.high if sweep.bullish else displacement.low
+                for i in range(retrace + 1, len(candles)):
+                    if sweep.bullish and candles[i].close > extreme:
+                        continuation = i
+                        break
+                    if not sweep.bullish and candles[i].close < extreme:
+                        continuation = i
+                        break
+
+        event = LiquidityEvent(
+            sweep=sweep,
+            displacement=displacement,
+            structure_shift_index=shift,
+            fvg=fvg,
+            retrace_index=retrace,
+            continuation_index=continuation,
+        )
+        if best is None or event.stage > best.stage:
+            best = event
+    return best
+
+
+def _liquidity_swept(candles: list[Candle]) -> tuple[bool, str]:
+    event = _find_liquidity_event(candles)
+    if event is None:
+        return False, "no liquidity pool has been swept"
+    return True, event.sweep.detail
+
+
+def _displacement(candles: list[Candle]) -> tuple[bool, str]:
+    event = _find_liquidity_event(candles)
+    if event is None:
+        return False, "no sweep to displace from"
+    if event.displacement is None:
+        return False, f"the sweep produced no {DISPLACEMENT_MIN_ATR} ATR move away"
+    return True, event.displacement.detail
+
+
+def _structure_shift(candles: list[Candle]) -> tuple[bool, str]:
+    event = _find_liquidity_event(candles)
+    if event is None or event.displacement is None:
+        return False, "no displacement to shift structure with"
+    if event.structure_shift_index is None:
+        return False, "the last opposing swing has not been taken out"
+    close = candles[event.structure_shift_index].close
+    return True, f"closed {close:.2f} beyond the prior swing — structure shifted"
+
+
+def _fair_value_gap(candles: list[Candle]) -> tuple[bool, str]:
+    event = _find_liquidity_event(candles)
+    if event is None or event.displacement is None:
+        return False, "no displacement to leave a gap"
+    if event.fvg is None:
+        return False, "the move left no unfilled imbalance"
+    return True, event.fvg.detail
+
+
+def _fvg_retrace(candles: list[Candle]) -> tuple[bool, str]:
+    event = _find_liquidity_event(candles)
+    if event is None or event.fvg is None:
+        return False, "no gap to retrace into"
+    if event.retrace_index is None:
+        return False, f"waiting for price to trade back into {event.fvg.detail}"
+    return True, f"price returned into the {event.fvg.detail}"
+
+
+def _liquidity_continuation(candles: list[Candle]) -> tuple[bool, str]:
+    event = _find_liquidity_event(candles)
+    if event is None or event.retrace_index is None:
+        return False, "no retrace to continue from"
+    if event.continuation_index is None:
+        return False, "waiting for a close beyond the displacement extreme"
+    close = candles[event.continuation_index].close
+    return True, f"closed {close:.2f} beyond the displacement extreme"
+
+
+def measure_liquidity(candles: list[Candle]) -> dict | None:
+    """The whole lifecycle in one record, so the funnel can see exactly where
+    this user's sweeps stopped progressing rather than only that they did."""
+    event = _find_liquidity_event(closed_candles(candles))
+    if event is None:
+        return None
+    return {
+        "poolPrice": round(event.sweep.pool.price, 4),
+        "poolTouches": event.sweep.pool.touches,
+        "bullish": event.sweep.bullish,
+        "penetrationAtr": round(event.sweep.penetration_atr, 4),
+        "displacementAtr": (
+            round(event.displacement.size_atr, 4) if event.displacement else None
+        ),
+        "structureShifted": event.structure_shift_index is not None,
+        "fvg": (
+            {"top": round(event.fvg.top, 4), "bottom": round(event.fvg.bottom, 4)}
+            if event.fvg
+            else None
+        ),
+        "retraced": event.retrace_index is not None,
+        "continued": event.continuation_index is not None,
+        "stage": event.stage,
+    }
 
 
 # --- Supply / Demand Zone ----------------------------------------------------
@@ -973,6 +1164,19 @@ def evaluate(rules: list[dict], candles: list[Candle]) -> EvaluationResult:
             met, detail = _pullback_into_zone(bars)
         elif condition == "pullback_rejection_continuation":
             met, detail = _pullback_continuation(bars)
+        # Liquidity Sweep + FVG — seven stages of one event.
+        elif condition == "liquidity_pool_swept":
+            met, detail = _liquidity_swept(bars)
+        elif condition == "displacement_from_sweep":
+            met, detail = _displacement(bars)
+        elif condition == "structure_shift":
+            met, detail = _structure_shift(bars)
+        elif condition == "fair_value_gap_left":
+            met, detail = _fair_value_gap(bars)
+        elif condition == "fvg_retrace":
+            met, detail = _fvg_retrace(bars)
+        elif condition == "liquidity_continuation":
+            met, detail = _liquidity_continuation(bars)
         # Supply / Demand Zone — a place, and what price does on returning.
         elif condition == "zone_present":
             met, detail = _zone_present(bars)

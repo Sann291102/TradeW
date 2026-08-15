@@ -267,6 +267,132 @@ def find_pullback(
     )
 
 
+# --- Liquidity and fair value gaps -------------------------------------------
+#
+# A liquidity pool is just a level looked at from the other side: where equal
+# highs or lows sit, resting orders sit behind them. So pools reuse
+# `find_levels` rather than introducing a parallel notion of "a price that
+# matters" that could drift out of agreement with it.
+#
+# A sweep is the specific event of price trading THROUGH such a pool and
+# closing back — the level being taken, not broken. The distinction is the
+# whole strategy: a close beyond the pool is a breakout, and reading it as a
+# sweep would invert the direction the setup expects.
+
+
+@dataclass(frozen=True)
+class Sweep:
+    index: int
+    pool: Level
+    #: True when a pool of lows was swept, which sets up a move UP.
+    bullish: bool
+    #: How far beyond the pool price reached, in ATR multiples.
+    penetration_atr: float
+    detail: str
+
+
+def find_sweeps(candles: list[Candle], atr_value: float | None) -> list[Sweep]:
+    """Every sweep of a liquidity pool, oldest first.
+
+    Requires the candle to trade beyond the pool and CLOSE back on the side it
+    came from. A close beyond the pool is a break, not a sweep, and the two
+    imply opposite directions.
+    """
+    if atr_value is None or atr_value <= 0:
+        return []
+
+    tolerance = level_tolerance(candles, atr_value)
+    found: list[Sweep] = []
+    for pool in find_levels(candles, atr_value):
+        for i in range(pool.last_index + 1, len(candles)):
+            candle = candles[i]
+            if pool.kind is LevelKind.SUPPORT:
+                took = candle.low < pool.price - tolerance and candle.close > pool.price
+                reach = pool.price - candle.low
+            else:
+                took = candle.high > pool.price + tolerance and candle.close < pool.price
+                reach = candle.high - pool.price
+            if not took:
+                continue
+            found.append(
+                Sweep(
+                    index=i,
+                    pool=pool,
+                    bullish=pool.kind is LevelKind.SUPPORT,
+                    penetration_atr=reach / atr_value,
+                    detail=(
+                        f"swept the {pool.kind.value} pool at {pool.price:.2f} "
+                        f"by {reach / atr_value:.2f} ATR and closed back"
+                    ),
+                )
+            )
+            break
+    return sorted(found, key=lambda s: s.index)
+
+
+@dataclass(frozen=True)
+class FairValueGap:
+    #: Index of the MIDDLE candle of the three that formed the gap.
+    index: int
+    top: float
+    bottom: float
+    bullish: bool
+
+    @property
+    def detail(self) -> str:
+        return f"{'bullish' if self.bullish else 'bearish'} gap {self.bottom:.2f}-{self.top:.2f}"
+
+
+def find_fair_value_gaps(
+    candles: list[Candle],
+    bullish: bool,
+    start: int = 0,
+    end: int | None = None,
+) -> list[FairValueGap]:
+    """Three-candle imbalances inside a range of the series.
+
+    A bullish gap is where the first candle's HIGH sits below the third
+    candle's LOW: price moved so fast that a band of prices never traded on
+    the way through. `start`/`end` exist so a caller can ask only about the
+    gaps left by one specific move rather than every gap on the chart — an
+    unrelated gap from an hour earlier is not the one the setup is about.
+    """
+    stop = len(candles) if end is None else min(end + 1, len(candles))
+    gaps: list[FairValueGap] = []
+    for i in range(max(start + 1, 1), stop - 1):
+        first, third = candles[i - 1], candles[i + 1]
+        if bullish and first.high < third.low:
+            gaps.append(FairValueGap(index=i, top=third.low, bottom=first.high, bullish=True))
+        if not bullish and first.low > third.high:
+            gaps.append(FairValueGap(index=i, top=first.low, bottom=third.high, bullish=False))
+    return gaps
+
+
+def find_structure_shift(
+    candles: list[Candle],
+    from_index: int,
+    bullish: bool,
+) -> int | None:
+    """The first close beyond the swing that stood before `from_index`.
+
+    This is what separates "price bounced" from "the market changed its mind":
+    after a sweep, taking out the last opposing swing is the evidence that the
+    move has structural consequence rather than being a single strong candle.
+    """
+    highs, lows = find_swing_pivots(candles)
+    prior = [i for i in (highs if bullish else lows) if i < from_index]
+    if not prior:
+        return None
+
+    level = candles[prior[-1]].high if bullish else candles[prior[-1]].low
+    for i in range(from_index + 1, len(candles)):
+        if bullish and candles[i].close > level:
+            return i
+        if not bullish and candles[i].close < level:
+            return i
+    return None
+
+
 # --- Higher-timeframe context ------------------------------------------------
 
 
@@ -405,31 +531,43 @@ def measure_departure(candles: list[Candle], atr_value: float | None) -> Impulse
     Deliberately not `find_impulse`: that scans for the best leg anywhere in
     the window and will happily report one that starts a few bars later. The
     question a zone asks is narrower — did price leave THIS area immediately
-    and fast — so the window is anchored at index 0 and only its length varies.
+    and fast — so the window is anchored at index 0.
+
+    The leg ends at the first close that goes AGAINST it, not at whichever
+    window happens to be biggest. Taking the biggest lets the leg swallow the
+    pullback and the continuation that came after it, which leaves the caller
+    with no bars in which to observe either — the same failure the flag had.
     """
     if atr_value is None or atr_value <= 0 or len(candles) < 2:
         return None
 
-    best: Impulse | None = None
-    for length in range(2, min(IMPULSE_MAX_BARS, len(candles)) + 1):
-        leg = candles[:length]
-        displacement = leg[-1].close - leg[0].open
-        if abs(displacement) / atr_value < ZONE_MIN_DEPARTURE_ATR:
-            continue
-        up = displacement > 0
-        candidate = Impulse(
-            start_index=0,
-            end_index=length - 1,
-            up=up,
-            size_atr=abs(displacement) / atr_value,
-            high=max(c.high for c in leg),
-            low=min(c.low for c in leg),
-            detail=f"left {abs(displacement):.2f} ({abs(displacement) / atr_value:.2f} ATR) "
-            f"{'up' if up else 'down'} over {length} bars",
+    up = candles[1].close > candles[0].open
+    end = 1
+    for i in range(2, min(IMPULSE_MAX_BARS, len(candles))):
+        progressed = (
+            candles[i].close > candles[i - 1].close
+            if up
+            else candles[i].close < candles[i - 1].close
         )
-        if best is None or candidate.size_atr > best.size_atr:
-            best = candidate
-    return best
+        if not progressed:
+            break
+        end = i
+
+    leg = candles[: end + 1]
+    displacement = leg[-1].close - leg[0].open
+    if abs(displacement) / atr_value < ZONE_MIN_DEPARTURE_ATR or (displacement > 0) is not up:
+        return None
+
+    return Impulse(
+        start_index=0,
+        end_index=end,
+        up=up,
+        size_atr=abs(displacement) / atr_value,
+        high=max(c.high for c in leg),
+        low=min(c.low for c in leg),
+        detail=f"left {abs(displacement):.2f} ({abs(displacement) / atr_value:.2f} ATR) "
+        f"{'up' if up else 'down'} over {len(leg)} bars",
+    )
 
 
 def find_zones(

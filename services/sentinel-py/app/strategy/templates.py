@@ -47,6 +47,10 @@ SUPPORTED_PRIMITIVES = {
     "zone_detection",
     "zone_scoring",
     "htf_alignment",
+    "liquidity_pools",
+    "displacement",
+    "fair_value_gap",
+    "structure_shift",
 }
 
 
@@ -59,6 +63,10 @@ class Template:
     direction: str  # "both" | "long_only"
     requires: set[str]
     rules: dict[str, Any] = field(default_factory=dict)
+    #: Overrides the derived reason when "the evaluator lacks a primitive"
+    #: understates the situation — some templates are waiting on a subsystem,
+    #: not on a function.
+    unavailable_note: str = ""
 
     @property
     def missing(self) -> list[str]:
@@ -80,7 +88,8 @@ class Template:
             "unavailableReason": (
                 ""
                 if self.available
-                else f"Needs {', '.join(self.missing)}, which the watch engine cannot evaluate yet."
+                else self.unavailable_note
+                or f"Needs {', '.join(self.missing)}, which the watch engine cannot evaluate yet."
             ),
             "rules": self.rules if self.available else {},
         }
@@ -522,16 +531,77 @@ CATALOGUE: list[Template] = [
     Template(
         id="liquidity_sweep_fvg",
         name="Liquidity Sweep + Fair Value Gap",
-        summary="A liquidity pool is swept, price displaces away, and retraces into the gap left behind.",
+        summary=(
+            "Seven stages of one event: a pool of equal highs or lows is TAKEN rather than broken, "
+            "price displaces away, structure shifts, the move leaves an unfilled imbalance, price "
+            "returns into it, and then carries beyond the displacement."
+        ),
         direction="both",
-        requires={"liquidity_pools", "displacement", "fair_value_gap", "structure_shift"},
+        requires={"liquidity_pools", "displacement", "fair_value_gap", "structure_shift", "atr"},
+        rules={
+            "timeframe": "5m",
+            "levels": ["liquidity_pool", "fvg_top", "fvg_bottom"],
+            "rules": [
+                {
+                    "id": "rule_sweep",
+                    "name": "liquidity_pool_swept",
+                    "condition": "liquidity_pool_swept",
+                    "mandatory": True,
+                    "description": "Price trades through a pool of equal highs or lows and closes back",
+                },
+                {
+                    "id": "rule_displacement",
+                    "name": "displacement_from_sweep",
+                    "condition": "displacement_from_sweep",
+                    "mandatory": True,
+                    "description": "At least 1.5 ATR away from the sweep, in the direction it implies",
+                },
+                {
+                    "id": "rule_structure",
+                    "name": "structure_shift",
+                    "condition": "structure_shift",
+                    "mandatory": True,
+                    "description": "The last opposing swing is taken out",
+                },
+                {
+                    "id": "rule_fvg",
+                    "name": "fair_value_gap_left",
+                    "condition": "fair_value_gap_left",
+                    "mandatory": True,
+                    "description": "The displacement left a three-candle imbalance",
+                },
+                {
+                    "id": "rule_retrace",
+                    "name": "fvg_retrace",
+                    "condition": "fvg_retrace",
+                    "mandatory": True,
+                    "description": "Price trades back into that gap",
+                },
+                {
+                    "id": "rule_continuation",
+                    "name": "liquidity_continuation",
+                    "condition": "liquidity_continuation",
+                    "mandatory": True,
+                    "description": "Price closes beyond the displacement extreme",
+                },
+            ],
+            "entry": {"long": "after_fvg_continuation", "short": "after_fvg_continuation"},
+            "riskManagement": {"stopLoss": None, "targets": []},
+        },
     ),
+    # Not waiting on an indicator. This one needs a research and market-impact
+    # pipeline — sourcing, verification, event extraction, entity and market
+    # linking, expected versus actual reaction, persistence — which is a
+    # subsystem with its own data model, not a function in the evaluator.
+    # Listing it with a placeholder `news_feed` primitive would make it look
+    # one afternoon away from working.
     Template(
         id="news_momentum",
         name="News Momentum",
         summary="A classified catalyst, the reaction it produces, and whether that reaction persists.",
         direction="both",
         requires={"news_feed", "news_classification", "reaction_persistence"},
+        unavailable_note="Unavailable — requires News Research / Market Impact pipeline.",
     ),
 ]
 
