@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from 'framer-motion';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { Ticker } from './Ticker';
@@ -45,6 +45,8 @@ import { useDisciplineStore } from '@/lib/store/disciplineStore';
 export function AppFrame({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const reduce = useReducedMotion();
+  const routeFade = useAnimationControls();
+  const lastPath = useRef<string | null>(null);
   const mobileNavOpen = useWorkspaceStore((s) => s.mobileNavOpen);
   const setMobileNavOpen = useWorkspaceStore((s) => s.setMobileNavOpen);
   const theme = useWorkspaceStore((s) => s.theme);
@@ -79,6 +81,52 @@ export function AppFrame({ children }: { children: ReactNode }) {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
+  // Replay the route-change fade WITHOUT remounting the route tree.
+  //
+  // ── THE BUG THIS REPLACES ──────────────────────────────────────────────────
+  //
+  // This used to be `<AnimatePresence mode="wait"><motion.div key={pathname}>`.
+  // Two separate defects came out of that one line:
+  //
+  //   1. `key={pathname}` made React tear down and rebuild the ENTIRE route
+  //      subtree on every pathname change. Not just sibling routes — a dynamic
+  //      segment moving (`/learning/a/b` -> `/learning/a/c`) or an RSC payload
+  //      re-fetch that momentarily reports a different pathname was enough.
+  //      Every `useEffect` fetch below re-fired from scratch, every accumulated
+  //      bit of client state (scroll position, open tab, filter, half-typed
+  //      order) was discarded, and every poller restarted its clock. Navigating
+  //      away and back was a cold boot, which is what drove the duplicate
+  //      request storms into the rate limiter.
+  //
+  //   2. `mode="wait"` held the OLD tree mounted for the full 250ms exit before
+  //      the new one was allowed to mount. So the two trees overlapped — both
+  //      fetching — and the user watched a quarter-second of blank main area on
+  //      every single navigation.
+  //
+  // The fade was never the problem; the key was. Driving the same animation
+  // through controls keeps the visual polish while the children stay mounted
+  // and React reconciles them normally.
+  //
+  // The first pass only STARTS the animation — `initial` has already placed the
+  // element at the from-state, and re-setting it there would be a redundant
+  // frame. Later passes reset first, because the element is sitting at the
+  // end-state of the previous route's fade.
+  useEffect(() => {
+    const previous = lastPath.current;
+    lastPath.current = pathname;
+    if (previous === pathname) return;
+    if (reduce) {
+      routeFade.set({ opacity: 1, y: 0 });
+      return;
+    }
+    if (previous !== null) routeFade.set({ opacity: 0, y: 6 });
+    void routeFade.start({
+      opacity: 1,
+      y: 0,
+      transition: { duration: 0.25, ease: [0.4, 0, 0.2, 1] },
+    });
+  }, [pathname, reduce, routeFade]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-text">
       <Sidebar />
@@ -103,17 +151,15 @@ export function AppFrame({ children }: { children: ReactNode }) {
         <TopBar />
         <Ticker />
         <main className="min-h-0 flex-1 overflow-auto">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={pathname}
-              initial={reduce ? false : { opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-              className=""
-            >
-              {children}
-            </motion.div>
-          </AnimatePresence>
+          {/* No `key` and no AnimatePresence: this element must persist for the
+              life of the shell so route changes reconcile instead of remount.
+              See the routeFade effect above. */}
+          <motion.div
+            initial={reduce ? false : { opacity: 0, y: 6 }}
+            animate={routeFade}
+          >
+            {children}
+          </motion.div>
         </main>
       </div>
 

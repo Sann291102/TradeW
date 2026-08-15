@@ -1,15 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchStrategyContract, renderableSegments, toTimelineWatch } from '@/lib/sentinel/strategyContract';
-import type { StrategyContract } from '@/lib/sentinel/strategyContract';
+import { useState } from 'react';
+import { renderableSegments, toTimelineWatch } from '@/lib/sentinel/strategyContract';
+import { useStrategyContract } from '@/lib/query/useSentinel';
 import { ActiveWatchList } from './ActiveWatchList';
 import { ObservedContextPanel } from './ObservedContextPanel';
 import { StrategyConfigureForm } from './StrategyConfigureForm';
 import { StrategyPerformancePanel } from './StrategyPerformancePanel';
 import { TimelineEventCard } from './TimelineEventCard';
-
-const POLL_MS = 10_000;
 
 /**
  * The strategy workspace: Configure → Watch → Focus → Feed → Performance,
@@ -31,36 +29,40 @@ interface Props {
 }
 
 export function StrategyWorkspace({ strategyId }: Props) {
-  const [contract, setContract] = useState<StrategyContract | null>(null);
   const [watchId, setWatchId] = useState<string | undefined>(undefined);
-  const [error, setError] = useState<string | null>(null);
 
-  // A slow response for one watch must not overwrite a newer one the user has
-  // already switched to.
-  const requestRef = useRef(0);
+  // The manual request-ticket guard this used to keep — "a slow response for
+  // one watch must not overwrite a newer one the user has switched to" — is
+  // now structural: the watch id is part of the query key, so a stale response
+  // lands in the entry it belongs to and can no longer overwrite the current
+  // one. Switching back to a watch also reads its cached contract rather than
+  // re-fetching from nothing.
+  const query = useStrategyContract(strategyId, watchId);
+  const contract = query.data ?? null;
+  const error =
+    query.isError && !contract
+      ? query.error instanceof Error
+        ? query.error.message
+        : 'Could not load this strategy'
+      : null;
 
-  const load = useCallback(async () => {
-    const ticket = ++requestRef.current;
-    try {
-      const next = await fetchStrategyContract(strategyId, watchId);
-      if (ticket === requestRef.current) {
-        setContract(next);
-        setError(null);
-      }
-    } catch (err) {
-      if (ticket === requestRef.current) {
-        setError(err instanceof Error ? err.message : 'Could not load this strategy');
-      }
-    }
-  }, [strategyId, watchId]);
-
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, POLL_MS);
-    return () => clearInterval(timer);
-  }, [load]);
-
-  if (error && !contract) return <p className="text-sm text-red-400">{error}</p>;
+  // A failure here is no longer terminal: the shared retry policy has already
+  // backed off through 429s and 5xxs before this renders, and the button gives
+  // the user a way through anything that outlived it.
+  if (error) {
+    return (
+      <div className="text-sm text-red-400">
+        <p>{error}</p>
+        <button
+          type="button"
+          onClick={() => void query.refetch()}
+          className="mt-2 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-text hover:border-teal"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
   if (!contract) return <p className="text-sm text-muted">Loading your strategy…</p>;
 
   const focused = contract.watches.find((w) => w.id === contract.focusedWatchId) ?? null;

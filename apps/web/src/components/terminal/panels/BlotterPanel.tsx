@@ -1,20 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Panel, Badge, EmptyState, Skeleton, cn } from '@tradew/ui';
 import { fmt, inr, sign } from '@/lib/format';
 import {
-  type OrderDto,
-  type PositionDto,
-  type TradeDto,
   cancelOrder,
   exitAll,
   exitPosition,
-  fetchOrders,
-  fetchPositions,
-  fetchTrades,
-  isSignedIn,
+  type OrderDto,
+  type PositionDto,
+  type TradeDto,
 } from '@/lib/oms';
+import {
+  useInvalidateTradingData,
+  useOrders,
+  usePositions,
+  useSignedIn,
+  useTrades,
+} from '@/lib/query/usePortfolio';
 import type { DockPanelContentProps } from './types';
 
 /**
@@ -30,6 +33,13 @@ import type { DockPanelContentProps } from './types';
  * server-side, and a resting order can be filled by the matching engine at any
  * time, so a one-shot read would be stale within seconds.
  *
+ * That poll is now the shared cache's (lib/query/usePortfolio), which matters
+ * for this panel specifically: it is docked in the terminal alongside the
+ * Portfolio page and the dashboard card, and all three wanted `/sim/positions`
+ * on their own 5s timer. One query per resource means one request per tick no
+ * matter how many of them are open, and none while the tab is in the
+ * background.
+ *
  * The former "Activity" tab is gone. There is no activity endpoint, and a tab
  * that can only ever render an empty state is worse than one tab fewer.
  */
@@ -37,60 +47,32 @@ import type { DockPanelContentProps } from './types';
 const TABS = ['Positions', 'Orders', 'Trades'] as const;
 type Tab = (typeof TABS)[number];
 
-const POLL_MS = 5_000;
-
 /** Statuses worth showing in a working blotter — terminal ones are history. */
 const LIVE_ORDER_STATUSES = new Set(['PENDING', 'OPEN', 'TRIGGER_PENDING', 'PARTIALLY_FILLED']);
 
 export function BlotterPanel({ className, actions, collapsed }: DockPanelContentProps) {
   const [tab, setTab] = useState<Tab>('Positions');
-  const [positions, setPositions] = useState<PositionDto[] | null>(null);
-  const [orders, setOrders] = useState<OrderDto[] | null>(null);
-  const [trades, setTrades] = useState<TradeDto[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [signedIn, setSignedIn] = useState(false);
+  const signedIn = useSignedIn();
 
-  // localStorage does not exist during SSR; reading it in render would make
-  // server and client HTML disagree. Same pattern as the order ticket.
-  useEffect(() => setSignedIn(isSignedIn()), []);
+  // Collapsing the panel stops the polling but KEEPS the cached rows, so
+  // re-opening it paints immediately instead of flashing skeletons for data
+  // the app was holding a second earlier.
+  const live = signedIn && !collapsed;
+  const positionsQuery = usePositions(live);
+  const ordersQuery = useOrders(undefined, live);
+  const tradesQuery = useTrades(live);
+  const reloadAll = useInvalidateTradingData();
 
-  async function reloadAll() {
-    try {
-      const [p, o, t] = await Promise.all([fetchPositions(), fetchOrders(), fetchTrades()]);
-      setPositions(p);
-      setOrders(o);
-      setTrades(t);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not reach the trading backend');
-    }
-  }
+  const positions = positionsQuery.data ?? null;
+  const orders = ordersQuery.data ?? null;
+  const trades = tradesQuery.data ?? null;
 
-  useEffect(() => {
-    if (!signedIn || collapsed) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    async function tick() {
-      try {
-        const [p, o, t] = await Promise.all([fetchPositions(), fetchOrders(), fetchTrades()]);
-        if (cancelled) return;
-        setPositions(p);
-        setOrders(o);
-        setTrades(t);
-        setError(null);
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not reach the trading backend');
-      } finally {
-        if (!cancelled) timer = setTimeout(tick, POLL_MS);
-      }
-    }
-    void tick();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [signedIn, collapsed]);
+  const failed = [positionsQuery, ordersQuery, tradesQuery].find((q) => q.isError && !q.data);
+  const error = failed
+    ? failed.error instanceof Error
+      ? failed.error.message
+      : 'Could not reach the trading backend'
+    : null;
 
   const counts: Record<Tab, number | null> = {
     Positions: positions?.length ?? null,
@@ -160,7 +142,7 @@ function Loading() {
   );
 }
 
-function Positions({ rows, onReload }: { rows: PositionDto[] | null; onReload: () => Promise<void> }) {
+function Positions({ rows, onReload }: { rows: PositionDto[] | null; onReload: () => void }) {
   const [exitingId, setExitingId] = useState<string | null>(null);
   const [exitingAll, setExitingAll] = useState(false);
   const [exitError, setExitError] = useState<string | null>(null);
@@ -173,7 +155,7 @@ function Positions({ rows, onReload }: { rows: PositionDto[] | null; onReload: (
     setExitError(null);
     try {
       await exitPosition(p.instrumentId, p.productType);
-      await onReload();
+      onReload();
     } catch (err) {
       setExitError(err instanceof Error ? err.message : 'Could not exit position');
     } finally {
@@ -186,7 +168,7 @@ function Positions({ rows, onReload }: { rows: PositionDto[] | null; onReload: (
     setExitError(null);
     try {
       await exitAll();
-      await onReload();
+      onReload();
     } catch (err) {
       setExitError(err instanceof Error ? err.message : 'Could not exit all positions');
     } finally {

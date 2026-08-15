@@ -1,6 +1,7 @@
 // Design tokens first (defines the CSS vars), then app globals that consume them.
 import '@tradew/ui/styles.css';
 import './globals.css';
+import { QueryProvider } from '@/components/providers/QueryProvider';
 
 export const metadata = {
   title: 'TradeW — AI Trading Operating System',
@@ -30,7 +31,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           so that which routes get chrome is decided by the route tree rather
           than by a pathname compared at render time — see that file for the
           bug this prevents. */}
-      <body>{children}</body>
+      {/* QueryProvider wraps EVERYTHING, workspace and bare routes alike, so
+          there is exactly one cache per tab — see that component. */}
+      <body>
+        <QueryProvider>{children}</QueryProvider>
+      </body>
     </html>
   );
 }

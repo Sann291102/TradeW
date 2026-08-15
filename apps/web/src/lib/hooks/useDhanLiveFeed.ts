@@ -79,14 +79,25 @@ function apply(data: DhanLiveSnapshot) {
   setState({ snapshot: data, status: data.marketOpen ? 'live' : 'closed' });
 }
 
+/**
+ * The no-EventSource fallback.
+ *
+ * Skips the request outright while the tab is hidden but keeps the timer
+ * running, so a backgrounded tab costs nothing and a returning one is current
+ * within one tick rather than having to be woken. The SSE path above needs no
+ * equivalent: it is push-based, so an unwatched tab already costs one idle
+ * socket and no requests.
+ */
 async function poll() {
-  try {
-    apply(await fetchDhanQuotes());
-  } catch {
-    scheduleUnreachable();
-  } finally {
-    pollTimer = setTimeout(poll, POLL_MS);
+  const hidden = typeof document !== 'undefined' && document.hidden;
+  if (!hidden) {
+    try {
+      apply(await fetchDhanQuotes());
+    } catch {
+      scheduleUnreachable();
+    }
   }
+  pollTimer = setTimeout(poll, POLL_MS);
 }
 
 function ensureStarted() {

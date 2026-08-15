@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { adoptTemplate, listTemplates, splitCatalogue } from '@/lib/sentinel/strategyContract';
+import { useState } from 'react';
+import { splitCatalogue } from '@/lib/sentinel/strategyContract';
 import type { TemplateSummary } from '@/lib/sentinel/strategyContract';
+import { useAdoptTemplate, useStrategyTemplates } from '@/lib/query/useSentinel';
 
 /**
  * The catalogue: a menu the user adopts from.
@@ -22,36 +23,51 @@ interface Props {
 }
 
 export function StrategyCatalogue({ onAdopted }: Props) {
-  const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [adoptError, setAdoptError] = useState<string | null>(null);
   const [adopting, setAdopting] = useState<string | null>(null);
 
-  useEffect(() => {
-    let live = true;
-    listTemplates()
-      .then((rows) => live && setTemplates(rows))
-      .catch((err) => live && setError(err instanceof Error ? err.message : 'Could not load templates'));
-    return () => {
-      live = false;
-    };
-  }, []);
+  const templatesQuery = useStrategyTemplates();
+  // Adopting creates a strategy, so the mutation invalidates the sentinel
+  // queries rather than leaving the catalogue claiming this template is still
+  // un-adopted — see lib/query/useSentinel.
+  const adoptTemplate = useAdoptTemplate();
+
+  const templates = templatesQuery.data ?? null;
+  const loadError =
+    templatesQuery.isError && !templates
+      ? templatesQuery.error instanceof Error
+        ? templatesQuery.error.message
+        : 'Could not load templates'
+      : null;
+  const error = adoptError ?? loadError;
 
   async function adopt(template: TemplateSummary) {
     if (!template.id || !template.available) return;
     setAdopting(template.id);
-    setError(null);
+    setAdoptError(null);
     try {
-      const created = await adoptTemplate(template.id);
+      const created = await adoptTemplate.mutateAsync(template.id);
       onAdopted(created.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not adopt this strategy');
+      setAdoptError(err instanceof Error ? err.message : 'Could not adopt this strategy');
     } finally {
       setAdopting(null);
     }
   }
 
-  if (error && !templates) {
-    return <p className="text-sm text-red-400">{error}</p>;
+  if (loadError) {
+    return (
+      <div className="text-sm text-red-400">
+        <p>{loadError}</p>
+        <button
+          type="button"
+          onClick={() => void templatesQuery.refetch()}
+          className="mt-2 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-text hover:border-teal"
+        >
+          Try again
+        </button>
+      </div>
+    );
   }
   if (!templates) {
     return <p className="text-sm text-muted">Loading strategies…</p>;

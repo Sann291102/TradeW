@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { motion, useReducedMotion } from 'framer-motion';
 import {
@@ -15,8 +15,8 @@ import {
   withReducedMotion,
 } from '@tradew/ui';
 import { SearchIcon, CheckIcon, TradeIcon } from '@/components/shell/icons';
-import { learningApi } from '@/lib/learning-platform/api';
-import type { CourseCard, CoursesResponse } from '@/lib/learning-platform/types';
+import { useCourses } from '@/lib/query/useLearning';
+import type { CourseCard } from '@/lib/learning-platform/types';
 import { RadialProgress } from './RadialProgress';
 import { StreakStrip } from './StreakStrip';
 import { CourseCarousel } from './CourseCarousel';
@@ -40,23 +40,18 @@ import { iconForCourse, FlameIcon, CalendarIcon, StrategyIcon } from './category
  * knowledge/Patterns/2026-08-05 - Learning homepage premium redesign.
  */
 export function LearningClient() {
-  const [data, setData] = useState<CoursesResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const reduce = useReducedMotion();
   const container = withReducedMotion(staggerContainerSlow, !!reduce);
   const item = withReducedMotion(cardEntrance, !!reduce);
 
-  useEffect(() => {
-    let cancelled = false;
-    learningApi
-      .courses()
-      .then((d) => !cancelled && setData(d))
-      .catch(() => !cancelled && setError('Could not load courses. The learning service may be starting up.'));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Shares one cached `/learning/courses` request with the course path page.
+  const coursesQuery = useCourses();
+  const data = coursesQuery.data ?? null;
+  const error =
+    coursesQuery.isError && !coursesQuery.data
+      ? 'Could not load courses. The learning service may be starting up.'
+      : null;
 
   const derived = useMemo(() => {
     if (!data) return null;
@@ -95,7 +90,16 @@ export function LearningClient() {
   if (error) {
     return (
       <div className="mx-auto max-w-[1440px] p-4">
-        <div className="rounded-card border border-border bg-card p-6 text-center text-[13px] text-muted">{error}</div>
+        <div className="rounded-card border border-border bg-card p-6 text-center text-[13px] text-muted">
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={() => void coursesQuery.refetch()}
+            className={cn(buttonClasses({ variant: 'outline', size: 'sm' }), 'mt-3')}
+          >
+            Try again
+          </button>
+        </div>
       </div>
     );
   }

@@ -1,12 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ApiError, fetchTimeline, listWatches } from '@/lib/sentinel/sentinelPy';
-import type { Timeline, TimelineEvent, WatchSummary } from '@/lib/sentinel/sentinelPy';
+import { useEffect, useMemo, useState } from 'react';
+import { ApiError, listWatches } from '@/lib/sentinel/sentinelPy';
+import type { TimelineEvent, WatchSummary } from '@/lib/sentinel/sentinelPy';
+import { useStrategyTimeline } from '@/lib/query/useSentinel';
 import { StrategyFocusPanel } from './StrategyFocusPanel';
 import { TimelineEventCard } from './TimelineEventCard';
-
-const POLL_MS = 10_000;
 
 /**
  * Minimum `strength` an event needs before the user sees it.
@@ -29,13 +28,24 @@ const MIN_STRENGTH = 0.6;
 export function StrategyTimelineFeed() {
   const [watches, setWatches] = useState<WatchSummary[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [timeline, setTimeline] = useState<Timeline | null>(null);
-  const [error, setError] = useState<'none' | 'notFound' | 'failed'>('none');
   const [loading, setLoading] = useState(true);
 
-  // Guards against a slow response for watch A landing after the user has
-  // already switched to watch B and overwriting the newer feed.
-  const requestRef = useRef(0);
+  // The watch id is part of the query key, which replaces the request-ticket
+  // ref this used to need: a slow response for watch A lands in A's cache
+  // entry and cannot overwrite B's feed, and switching back to A shows its
+  // last-known timeline immediately instead of blanking.
+  const timelineQuery = useStrategyTimeline(selectedId);
+  const timeline = timelineQuery.data ?? null;
+
+  // A 404 is "this watch has no timeline yet", which is a normal empty state
+  // rather than a failure worth alarming anyone about. Note this is decided
+  // AFTER the shared retry policy has run, and that policy deliberately does
+  // not retry a 404 — only 429s, 5xxs and network drops.
+  const error: 'none' | 'notFound' | 'failed' = !timelineQuery.isError
+    ? 'none'
+    : timelineQuery.error instanceof ApiError && timelineQuery.error.status === 404
+      ? 'notFound'
+      : 'failed';
 
   useEffect(() => {
     let cancelled = false;
@@ -55,28 +65,6 @@ export function StrategyTimelineFeed() {
       cancelled = true;
     };
   }, []);
-
-  const load = useCallback(async (watchId: string) => {
-    const ticket = ++requestRef.current;
-    try {
-      const next = await fetchTimeline(watchId);
-      if (ticket !== requestRef.current) return;
-      setTimeline(next);
-      setError('none');
-    } catch (err) {
-      if (ticket !== requestRef.current) return;
-      // A 404 is "this watch has no timeline yet", which is a normal empty
-      // state rather than a failure worth alarming anyone about.
-      setError(err instanceof ApiError && err.status === 404 ? 'notFound' : 'failed');
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!selectedId) return;
-    void load(selectedId);
-    const timer = setInterval(() => void load(selectedId), POLL_MS);
-    return () => clearInterval(timer);
-  }, [selectedId, load]);
 
   const visible = useMemo(() => {
     if (!timeline) return [] as TimelineEvent[];
@@ -120,10 +108,9 @@ export function StrategyTimelineFeed() {
         watches.length > 1 ? (
           <select
             value={selectedId ?? ''}
-            onChange={(e) => {
-              setSelectedId(e.target.value);
-              setTimeline(null);
-            }}
+            // No manual clear needed: the timeline is keyed by watch id, so
+            // selecting a different one reads that watch's own cache entry.
+            onChange={(e) => setSelectedId(e.target.value)}
             className="rounded-lg border border-border bg-bg px-2 py-1 text-[11px] text-text"
             aria-label="Select which watch to display"
           >
@@ -149,7 +136,14 @@ export function StrategyTimelineFeed() {
 
       {error === 'failed' && (
         <p className="mb-3 text-[11.5px] text-amber">
-          Could not refresh the feed just now — showing the last known state.
+          Could not refresh the feed just now — showing the last known state.{' '}
+          <button
+            type="button"
+            onClick={() => void timelineQuery.refetch()}
+            className="font-semibold underline underline-offset-2 hover:no-underline"
+          >
+            Try again
+          </button>
         </p>
       )}
 

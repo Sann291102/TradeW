@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Badge, EmptyState, Skeleton, buttonClasses, cn } from '@tradew/ui';
 import { fmt } from '@/lib/format';
-import { PRODUCT_TYPE_LABELS, type OrderDto, type OrderStatus, cancelOrder, fetchOrders, modifyOrder } from '@/lib/oms';
+import { PRODUCT_TYPE_LABELS, type OrderDto, type OrderStatus, cancelOrder, modifyOrder } from '@/lib/oms';
+import { useInvalidateTradingData, useOrders, useSignedIn } from '@/lib/query/usePortfolio';
 
 type Tab = 'Open' | 'Pending' | 'Executed' | 'Cancelled' | 'Rejected';
 const TAB_STATUSES: Record<Tab, OrderStatus[]> = {
@@ -26,31 +27,30 @@ function statusTone(status: OrderStatus): 'positive' | 'negative' | 'warning' | 
 
 export function OrdersSection() {
   const [tab, setTab] = useState<Tab>('Open');
-  const [orders, setOrders] = useState<OrderDto[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [modifyTarget, setModifyTarget] = useState<OrderDto | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
+  const signedIn = useSignedIn();
 
-  const load = useCallback(async () => {
-    try {
-      const rows = await fetchOrders(TAB_STATUSES[tab]);
-      setOrders(rows);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load orders');
-    }
-  }, [tab]);
+  const query = useOrders(TAB_STATUSES[tab], signedIn);
+  // Cancelling or modifying moves margin and can unwind a position, so it
+  // invalidates the whole trading blast radius rather than just this list —
+  // otherwise the Portfolio summary a scroll away keeps showing the margin the
+  // cancelled order was holding. See lib/query/usePortfolio.
+  const invalidateTrading = useInvalidateTradingData();
 
-  useEffect(() => {
-    setOrders(null);
-    void load();
-  }, [load]);
+  const orders = query.data ?? null;
+  const error =
+    query.isError && !query.data
+      ? query.error instanceof Error
+        ? query.error.message
+        : 'Could not load orders'
+      : null;
 
   async function onCancel(o: OrderDto) {
     setCancelling(o.id);
     try {
       await cancelOrder(o.id);
-      await load();
+      invalidateTrading();
     } finally {
       setCancelling(null);
     }
@@ -76,9 +76,16 @@ export function OrdersSection() {
       </div>
 
       {error && (
-        <p role="alert" className="mb-3 rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
-          {error}
-        </p>
+        <div role="alert" className="mb-3 rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={() => void query.refetch()}
+            className="mt-1.5 font-semibold underline underline-offset-2 hover:no-underline"
+          >
+            Try again
+          </button>
+        </div>
       )}
 
       {orders === null && !error ? (
@@ -158,7 +165,7 @@ export function OrdersSection() {
           onClose={() => setModifyTarget(null)}
           onModified={() => {
             setModifyTarget(null);
-            void load();
+            invalidateTrading();
           }}
         />
       )}

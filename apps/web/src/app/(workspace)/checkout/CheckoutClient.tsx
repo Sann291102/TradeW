@@ -1,17 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Card, Button, Badge, Skeleton } from '@tradew/ui';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import {
-  fetchCatalog,
   startCheckout,
   verifyPayment,
   loadRazorpay,
   openRazorpay,
-  type Catalog,
   type CatalogItem,
 } from '@/lib/payments';
+import { useCatalog } from '@/lib/query/useBilling';
 
 /**
  * Premium checkout — sells the Sentinel Pro subscription terms via Razorpay.
@@ -33,20 +32,21 @@ export function CheckoutClient() {
   const hasSentinel = useSessionStore((s) => s.hasCapability('sentinel'));
   const refreshSession = useSessionStore((s) => s.init);
 
-  const [catalog, setCatalog] = useState<Catalog | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
   const [activeItem, setActiveItem] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [message, setMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchCatalog()
-      .then(setCatalog)
-      .catch((e) => setLoadError(e instanceof Error ? e.message : 'Could not load plans'))
-      .finally(() => setLoading(false));
-  }, []);
+  // Shares one cached price list with the /sentinel pricing view — two screens
+  // quoting the same catalogue must not be able to quote it differently.
+  const catalogQuery = useCatalog();
+  const catalog = catalogQuery.data ?? null;
+  const loading = catalogQuery.isPending;
+  const loadError =
+    catalogQuery.isError && !catalog
+      ? catalogQuery.error instanceof Error
+        ? catalogQuery.error.message
+        : 'Could not load plans'
+      : null;
 
   async function buy(item: CatalogItem) {
     if (!catalog?.billingEnabled) return;
@@ -111,7 +111,18 @@ export function CheckoutClient() {
           Observation and education only — Sentinel never places trades or recommends them.
         </p>
 
-        {loadError && <p className="mb-3 text-[12.5px] text-red-400">{loadError}</p>}
+        {loadError && (
+          <p className="mb-3 text-[12.5px] text-red-400">
+            {loadError}{' '}
+            <button
+              type="button"
+              onClick={() => void catalogQuery.refetch()}
+              className="font-semibold underline underline-offset-2 hover:no-underline"
+            >
+              Try again
+            </button>
+          </p>
+        )}
 
         {catalog && !catalog.billingEnabled && (
           <div className="mb-4 rounded-lg border border-border bg-hover/40 px-3 py-2 text-[12.5px] text-muted">
