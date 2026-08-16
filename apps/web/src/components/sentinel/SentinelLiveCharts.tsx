@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { Candle, CandleInterval } from '@tradew/types';
 import { cn } from '@tradew/ui';
 import { TradeChart } from '@/components/charts/TradeChart';
@@ -10,8 +10,15 @@ import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { useOptionCandles } from '@/lib/hooks/useOptionCandles';
 import { useOptionQuote } from '@/lib/hooks/useOptionQuote';
 import { useOptionChainStrikes } from '@/lib/sentinel/useOptionChainStrikes';
+import { findMarket } from '@/lib/sentinel/markets';
+import { seriesNote, type ChartFocus } from '@/lib/sentinel/chartFocus';
 import { fmt, pct } from '@/lib/format';
 
+/**
+ * The series drawn when nothing is under observation — a general market read
+ * rather than a claim about what any engine is evaluating. With a focus, these
+ * are replaced by the timeframe the sweep actually reads (see `chartFocus.ts`).
+ */
 const INDEX_INTERVAL: CandleInterval = '5m';
 const INDEX_DAYS = 5;
 const OPTION_INTERVAL: CandleInterval = '1m';
@@ -82,18 +89,40 @@ function sanitizeOptionCandles(candles: Candle[] | null, liveLtp?: number): Cand
  * hooks the Trade workspace's ChartPanel uses — no simulated fallback, so an
  * unreachable bridge or an illiquid contract says so instead of drawing
  * placeholder candles.
+ *
+ * ── WITH A FOCUS ───────────────────────────────────────────────────────────
+ * When a watch is selected, `focus` overrides all of that: the market becomes
+ * the watch's, both legs pin to the strike the sweep is reading, and — the
+ * part that matters — every series is drawn on the timeframe the ENGINE
+ * evaluates rather than this component's own defaults. That is the whole
+ * reason the focus exists. A 1m chart beside a 15m evaluation makes the
+ * engine's verdicts uncheckable: the user is looking at bars Sentinel never
+ * read, and any disagreement between the two is unexplainable.
  */
 export function SentinelLiveCharts({
   symbol,
   marketName,
   ceStrike,
   peStrike,
+  focus = null,
+  footer = null,
 }: {
   symbol: string;
   marketName: string;
   /** User-selected strikes from OptionChainPanel; null defaults to ATM. */
   ceStrike: number | null;
   peStrike: number | null;
+  /**
+   * The watch under observation. Null is the standing market read; a focus
+   * makes this "here is what Sentinel is reading, on the bars it reads it on".
+   */
+  focus?: ChartFocus | null;
+  /**
+   * Rendered inside the card, below the charts — so it survives into full
+   * screen with them. A slot rather than a prop of its own keeps this
+   * component a renderer of series and nothing else.
+   */
+  footer?: ReactNode;
 }) {
   // Presentation-only expansion: the same three panels, the same hooks, drawn
   // against the whole viewport. No extra data is fetched in this mode.
@@ -115,40 +144,68 @@ export function SentinelLiveCharts({
   const indexHeight = fullScreen ? 620 : 415;
   const optionHeight = fullScreen ? 300 : 192;
 
-  const { candles: indexCandles, status: indexStatus, reason: indexReason } = useCandles(symbol, INDEX_INTERVAL, INDEX_DAYS);
+  // The focus owns the market too: a watch on BANKNIFTY must not be drawn
+  // against whatever the market selector happens to be showing.
+  const chartSymbol = focus?.symbol ?? symbol;
+  const chartName = focus ? findMarket(focus.symbol).name : marketName;
+
+  // One series for every panel when focused — the engine reads the index and
+  // the contract on the SAME timeframe (`_candles_for` in the poller passes
+  // one interval to both), so drawing them on two different ones would
+  // misrepresent the comparison the engine is making.
+  const indexInterval = focus?.series.interval ?? INDEX_INTERVAL;
+  const indexDays = focus?.series.days ?? INDEX_DAYS;
+  const optionInterval = focus?.series.interval ?? OPTION_INTERVAL;
+  const optionDays = focus?.series.days ?? OPTION_DAYS;
+
+  const { candles: indexCandles, status: indexStatus, reason: indexReason } = useCandles(
+    chartSymbol,
+    indexInterval,
+    indexDays,
+  );
   const { quotes: liveIndices } = useDhanLiveFeed();
-  const liveIndex = liveIndices?.find((q) => q.symbol === symbol) ?? null;
+  const liveIndex = liveIndices?.find((q) => q.symbol === chartSymbol) ?? null;
 
   // Independent chain poll (nearest expiry + ATM fallback) — decoupled from
   // OptionChainPanel's own poll, same as every other panel on this page
   // fetching what it needs rather than threading a shared cache through.
-  const chain = useOptionChainStrikes(symbol, true);
-  const effectiveCe = ceStrike ?? chain.ce[chain.atmIndex]?.strike ?? null;
-  const effectivePe = peStrike ?? chain.pe[chain.atmIndex]?.strike ?? null;
+  const chain = useOptionChainStrikes(chartSymbol, true);
+
+  // The watch's own expiry wins: it is the contract the sweep is reading, and
+  // the nearest expiry may not be it.
+  const expiry = focus?.expiry ?? chain.expiry;
+
+  // A focused watch pins BOTH legs to its own strike. That is the comparison
+  // the panel exists for — the leg Sentinel is reading beside its opposite, so
+  // "which side is actually confirming" is one glance rather than two screens.
+  // A watch with no strike is an index watch; it falls through to the user's
+  // own pick and then ATM, exactly as before.
+  const effectiveCe = focus?.strike ?? ceStrike ?? chain.ce[chain.atmIndex]?.strike ?? null;
+  const effectivePe = focus?.strike ?? peStrike ?? chain.pe[chain.atmIndex]?.strike ?? null;
 
   const { candles: ceCandles, status: ceCandlesStatus, reason: ceReason } = useOptionCandles(
-    symbol,
-    chain.expiry ?? undefined,
+    chartSymbol,
+    expiry ?? undefined,
     effectiveCe ?? undefined,
     'CE',
-    OPTION_INTERVAL,
-    OPTION_DAYS,
+    optionInterval,
+    optionDays,
   );
   const { candles: peCandles, status: peCandlesStatus, reason: peReason } = useOptionCandles(
-    symbol,
-    chain.expiry ?? undefined,
+    chartSymbol,
+    expiry ?? undefined,
     effectivePe ?? undefined,
     'PE',
-    OPTION_INTERVAL,
-    OPTION_DAYS,
+    optionInterval,
+    optionDays,
   );
-  const { quote: ceQuote } = useOptionQuote(symbol, chain.expiry ?? undefined, effectiveCe ?? undefined, 'CE');
-  const { quote: peQuote } = useOptionQuote(symbol, chain.expiry ?? undefined, effectivePe ?? undefined, 'PE');
+  const { quote: ceQuote } = useOptionQuote(chartSymbol, expiry ?? undefined, effectiveCe ?? undefined, 'CE');
+  const { quote: peQuote } = useOptionQuote(chartSymbol, expiry ?? undefined, effectivePe ?? undefined, 'PE');
 
   const safeCeCandles = sanitizeOptionCandles(ceCandles, ceQuote?.ltp);
   const safePeCandles = sanitizeOptionCandles(peCandles, peQuote?.ltp);
 
-  const expiryLabel = expiryTag(chain.expiry);
+  const expiryLabel = expiryTag(expiry);
 
   /**
    * Copy for a contract panel with nothing to draw. An upstream fault and an
@@ -169,17 +226,37 @@ export function SentinelLiveCharts({
     if (reason === 'api-unreachable') {
       return {
         title: 'Market data API declined',
-        detail: `Dhan's historical API could not be read for ${symbol} ${strike} ${side} — the bridge is down, rate-limited, or its token has expired. No candles are drawn in place of the real ones.`,
+        detail: `Dhan's historical API could not be read for ${chartSymbol} ${strike} ${side} — the bridge is down, rate-limited, or its token has expired. No candles are drawn in place of the real ones.`,
       };
     }
     return {
       title: 'No traded history for this contract',
-      detail: `Dhan has no traded candles for ${symbol} ${strike} ${side}.`,
+      detail: `Dhan has no traded candles for ${chartSymbol} ${strike} ${side}.`,
     };
   };
 
   const ceUnavailable = contractUnavailable(effectiveCe, 'CE', ceReason);
   const peUnavailable = contractUnavailable(effectivePe, 'PE', peReason);
+
+  /**
+   * Which of the three panels the sweep is actually evaluating.
+   *
+   * The other two are context, and saying so matters: a watch on the 24350 CE
+   * is not a watch on the index or on the put, and marking all three the same
+   * would claim the engine is reading three instruments when it reads one.
+   * Mirrors `_candles_for` in the poller — a strike watch reads the contract,
+   * a strikeless watch reads the index.
+   */
+  const readingPanel: 'index' | 'ce' | 'pe' | null = !focus
+    ? null
+    : focus.strike != null && focus.optionType
+      ? focus.optionType === 'CE'
+        ? 'ce'
+        : 'pe'
+      : 'index';
+
+  const indexLabel = String(indexInterval);
+  const optionLabel = String(optionInterval);
 
   return (
     <section
@@ -192,9 +269,12 @@ export function SentinelLiveCharts({
     >
       <div className="mb-3.5 flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
-          <p className="text-[11px] font-bold uppercase tracking-wideTrack text-faint">Live Charts</p>
+          <p className="text-[11px] font-bold uppercase tracking-wideTrack text-faint">
+            {focus ? 'What Sentinel is reading' : 'Live Charts'}
+          </p>
           <p className="mt-1 text-[11.5px] text-muted">
-            {marketName} · {expiryLabel ? `${expiryLabel} expiry` : 'nearest expiry'} — what Sentinel is watching, observation only
+            {chartName} · {expiryLabel ? `${expiryLabel} expiry` : 'nearest expiry'}
+            {focus ? ` · ${focus.series.interval} bars` : ''} — what Sentinel is watching, observation only
           </p>
         </div>
 
@@ -212,9 +292,10 @@ export function SentinelLiveCharts({
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:grid-rows-2">
         <div className="lg:col-start-1 lg:row-span-2">
           <ChartTile
-            title={marketName}
+            title={chartName}
             badge="IDX"
-            interval="5"
+            interval={indexLabel}
+            reading={readingPanel === 'index'}
             candles={indexCandles}
             status={indexStatus}
             liveLast={liveIndex?.ltp}
@@ -223,22 +304,23 @@ export function SentinelLiveCharts({
               ? { open: liveIndex.open, high: liveIndex.high, low: liveIndex.low, close: liveIndex.ltp }
               : null}
             height={indexHeight}
-            fitKey={`${symbol}|idx|5m`}
-            intervalMinutes={5}
+            fitKey={`${chartSymbol}|idx|${indexInterval}`}
+            intervalMinutes={focus?.series.minutes ?? 5}
             unavailableTitle={indexReason === 'api-unreachable' ? 'Market data API not connected' : 'No history available'}
             unavailableDetail={
               indexReason === 'api-unreachable'
                 ? 'The Dhan live-feed bridge (port 4600) could not be read — it is down, rate-limited, or its token has expired. No candles are drawn in place of the real ones.'
-                : `Dhan returned no candles for ${symbol} at 5m.`
+                : `Dhan returned no candles for ${chartSymbol} at ${indexLabel}.`
             }
           />
         </div>
 
         <div className="lg:col-start-2 lg:row-start-1">
           <ChartTile
-            title={effectiveCe != null ? `${marketName} ${expiryLabel} ${effectiveCe} CALL`.trim() : `${marketName} CALL`}
+            title={effectiveCe != null ? `${chartName} ${expiryLabel} ${effectiveCe} CALL`.trim() : `${chartName} CALL`}
             badge="NSE"
-            interval="1"
+            interval={optionLabel}
+            reading={readingPanel === 'ce'}
             candles={safeCeCandles}
             status={ceCandlesStatus}
             liveLast={ceQuote?.ltp}
@@ -246,8 +328,8 @@ export function SentinelLiveCharts({
             ohlc={lastCandleOhlc(safeCeCandles)}
             tone="up"
             height={optionHeight}
-            fitKey={`${symbol}|ce|${effectiveCe}|1m`}
-            intervalMinutes={1}
+            fitKey={`${chartSymbol}|ce|${effectiveCe}|${optionInterval}`}
+            intervalMinutes={focus?.series.minutes ?? 1}
             unavailableTitle={ceUnavailable.title}
             unavailableDetail={ceUnavailable.detail}
           />
@@ -255,9 +337,10 @@ export function SentinelLiveCharts({
 
         <div className="lg:col-start-2 lg:row-start-2">
           <ChartTile
-            title={effectivePe != null ? `${marketName} ${expiryLabel} ${effectivePe} PUT`.trim() : `${marketName} PUT`}
+            title={effectivePe != null ? `${chartName} ${expiryLabel} ${effectivePe} PUT`.trim() : `${chartName} PUT`}
             badge="NSE"
-            interval="1"
+            interval={optionLabel}
+            reading={readingPanel === 'pe'}
             candles={safePeCandles}
             status={peCandlesStatus}
             liveLast={peQuote?.ltp}
@@ -265,15 +348,24 @@ export function SentinelLiveCharts({
             ohlc={lastCandleOhlc(safePeCandles)}
             tone="down"
             height={optionHeight}
-            fitKey={`${symbol}|pe|${effectivePe}|1m`}
-            intervalMinutes={1}
+            fitKey={`${chartSymbol}|pe|${effectivePe}|${optionInterval}`}
+            intervalMinutes={focus?.series.minutes ?? 1}
             unavailableTitle={peUnavailable.title}
             unavailableDetail={peUnavailable.detail}
           />
         </div>
       </div>
 
-      <p className="mt-3 text-[10.5px] leading-relaxed text-faint">
+      {footer}
+
+      {/* The series claim is separated from the provenance claim because they
+          fail independently: the data can be real and still be the wrong bars,
+          which is precisely the state this panel used to be in. */}
+      {focus && (
+        <p className="mt-3 text-[10.5px] leading-relaxed text-teal">{seriesNote(focus.series)}</p>
+      )}
+
+      <p className="mt-2 text-[10.5px] leading-relaxed text-faint">
         Real OHLC from Dhan — the same data behind the Trade workspace charts. Nothing here is simulated; a panel with
         no reachable data says so instead of drawing a placeholder series.
       </p>
@@ -285,6 +377,7 @@ function ChartTile({
   title,
   badge,
   interval,
+  reading = false,
   candles,
   status,
   liveLast,
@@ -300,6 +393,8 @@ function ChartTile({
   title: string;
   badge: string;
   interval: string;
+  /** This is the one panel the sweep evaluates; the others are context. */
+  reading?: boolean;
   candles: Candle[] | null;
   status: 'loading' | 'live' | 'unavailable';
   liveLast?: number;
@@ -316,13 +411,23 @@ function ChartTile({
   const accentClass = tone === 'up' ? 'text-up' : tone === 'down' ? 'text-down' : 'text-text';
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border bg-bg">
+    <div
+      className={cn(
+        'flex h-full flex-col overflow-hidden rounded-xl border bg-bg',
+        reading ? 'border-teal' : 'border-border',
+      )}
+    >
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border px-3 py-2.5">
         <div className="flex min-w-0 items-baseline gap-2">
           <span className={cn('truncate text-[12px] font-bold', accentClass)}>{title}</span>
           <span className="shrink-0 text-[10.5px] text-faint">
             · {interval} · {badge}
           </span>
+          {reading && (
+            <span className="shrink-0 rounded bg-teal-bg px-1.5 py-px text-[9px] font-bold uppercase tracking-wideTrack text-teal">
+              Sentinel reads this
+            </span>
+          )}
         </div>
         {status === 'live' && ohlc && (
           <div className="flex flex-wrap items-baseline gap-2 font-mono text-[10.5px] text-muted">

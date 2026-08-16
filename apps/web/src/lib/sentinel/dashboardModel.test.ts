@@ -55,6 +55,11 @@ describe('buildDashboardModel', () => {
     expect(m.radar[0].label).toBe('Market Volatility'); // market_risk relabeled
     expect(m.observation.headline).toBe('OBSERVING');
     expect(m.timeline[0].time).toBe('09:15');
-    expect(m.timeline[0].detail).toContain('Market open');
+    // The engine's sentence is now split at its own punctuation: the leading
+    // clause becomes the dot's label and the remainder its detail, so the
+    // track can render a phase name above a description. Nothing is dropped —
+    // the two halves reassemble into the original. See sessionTimeline.ts.
+    expect(m.timeline[0].title).toBe('Market open');
+    expect(m.timeline[0].detail).toBe('NIFTY opened at 24581.3');
   });
 });

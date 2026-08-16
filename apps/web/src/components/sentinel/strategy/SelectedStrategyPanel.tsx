@@ -112,8 +112,21 @@ export function SelectedStrategyPanel({ strategyId }: { strategyId: string }) {
         <h4 className="mb-2 text-[12px] font-bold uppercase tracking-wide text-faint">
           {contract.name} · lifecycle
         </h4>
-        {contract.lifecycle.length === 0 || !focused ? (
-          <p className="text-[12px] text-muted">Nothing has changed yet on this strategy.</p>
+        {!contract.dataStatus.ok ? (
+          // Named, not silent. "Sentinel could not read the market" and "the
+          // market did nothing" produce the same empty feed, and only one of
+          // them is something the user can act on.
+          <p className="text-[12px] leading-relaxed text-amber">
+            Sentinel could not read the market on its last check
+            {contract.dataStatus.reason ? ` — ${contract.dataStatus.reason}` : ''}. No events are
+            shown rather than events invented from missing data.
+          </p>
+        ) : contract.lifecycle.length === 0 || !focused ? (
+          <p className="text-[12px] text-muted">
+            {focused
+              ? 'Waiting for live strategy conditions.'
+              : 'Not watching yet — choose a market below to start.'}
+          </p>
         ) : (
           <ul className="space-y-2">
             {/* Collapsed server-side: a state the watch is sitting in is one

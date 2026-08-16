@@ -117,7 +117,15 @@ export function useOptionChainStrikes(
     };
 
     void load();
-    timer = setInterval(() => void load(), REFRESH_MS);
+    // Skip the request while the tab is hidden, but keep the timer so a
+    // returning trader is current within one cycle. `enabled` already stops
+    // this entirely for a collapsed panel; this covers the other case the
+    // audit found — a visible panel in a BACKGROUND tab, which was polling a
+    // rate-limited upstream every 4 seconds for a screen nobody was looking at.
+    timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void load();
+    }, REFRESH_MS);
     return () => {
       cancelled = true;
       if (timer) clearInterval(timer);

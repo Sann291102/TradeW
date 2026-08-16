@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { cn } from '@tradew/ui';
 import { api } from '@/lib/api';
 import type { RegistryStrategy, StrategyAdvice, StrategyMode } from '@/lib/sentinel/types';
@@ -31,23 +31,22 @@ export function StrategySelector({
   advices?: StrategyAdvice[];
   onChange: (next: { mode: StrategyMode; selectedStrategyIds?: string[] }) => void;
 }) {
-  const [strategies, setStrategies] = useState<RegistryStrategy[]>([]);
-  const [loadError, setLoadError] = useState(false);
+  // The registry is reference data that changes on deploy, so it takes the
+  // default five-minute staleTime and no polling. What it gains from the cache
+  // is a failure path: this used to set a boolean that nothing could clear, so
+  // a registry request lost to a 502 left the selector permanently empty with
+  // no way back short of a reload. Now a transient failure retries itself, and
+  // anything that outlives the backoff offers the user a retry.
+  const registryQuery = useQuery({
+    queryKey: ['sentinel', 'strategy-registry'] as const,
+    queryFn: async () => {
+      const res = (await api('/sentinel/strategies/registry')) as { strategies: RegistryStrategy[] };
+      return res.strategies ?? [];
+    },
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = (await api('/sentinel/strategies/registry')) as { strategies: RegistryStrategy[] };
-        if (!cancelled) setStrategies(res.strategies ?? []);
-      } catch {
-        if (!cancelled) setLoadError(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const strategies = registryQuery.data ?? [];
+  const loadError = registryQuery.isError;
 
   function selectAuto() {
     onChange({ mode: 'auto' });
@@ -114,7 +113,16 @@ export function StrategySelector({
       </div>
 
       {loadError && strategies.length === 0 && (
-        <p className="mt-3 text-[11.5px] text-muted">Strategy registry unavailable right now — Auto mode still works.</p>
+        <p className="mt-3 text-[11.5px] text-muted">
+          Strategy registry unavailable right now — Auto mode still works.{' '}
+          <button
+            type="button"
+            onClick={() => void registryQuery.refetch()}
+            className="font-semibold text-teal underline underline-offset-2 hover:no-underline"
+          >
+            Try again
+          </button>
+        </p>
       )}
 
       {isAuto ? (

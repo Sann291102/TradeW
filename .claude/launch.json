@@ -4,42 +4,74 @@
     {
       "name": "api",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:api"],
+      "runtimeArgs": [
+        "run",
+        "dev:api"
+      ],
       "port": 4000,
-      "autoPort": true
+      "autoPort": false
     },
     {
       "name": "web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:web"],
+      "runtimeArgs": [
+        "run",
+        "dev:web"
+      ],
       "port": 3000,
-      "autoPort": true
+      "autoPort": false
     },
     {
       "name": "sentinel",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:sentinel"],
+      "runtimeArgs": [
+        "run",
+        "dev:sentinel"
+      ],
       "port": 4010,
+      "autoPort": false
+    },
+    {
+      "name": "sentinel-py",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:sentinel-py"
+      ],
+      "port": 4011,
       "autoPort": false
     },
     {
       "name": "dhan-bridge",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "live:server", "-w", "@tradew/market-data-service"],
+      "runtimeArgs": [
+        "run",
+        "live:server",
+        "-w",
+        "@tradew/market-data-service"
+      ],
       "port": 4600,
       "autoPort": false
     },
     {
       "name": "admin",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "-w", "@tradew/admin"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "-w",
+        "@tradew/admin"
+      ],
       "port": 3001,
-      "autoPort": true
+      "autoPort": false
     },
     {
       "name": "tradew-ai",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:ai"],
+      "runtimeArgs": [
+        "run",
+        "dev:ai"
+      ],
       "port": 4020,
       "autoPort": false
     }
