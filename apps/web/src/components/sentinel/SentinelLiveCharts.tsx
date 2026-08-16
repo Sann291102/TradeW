@@ -11,13 +11,19 @@ import { useOptionCandles } from '@/lib/hooks/useOptionCandles';
 import { useOptionQuote } from '@/lib/hooks/useOptionQuote';
 import { useOptionChainStrikes } from '@/lib/sentinel/useOptionChainStrikes';
 import { findMarket } from '@/lib/sentinel/markets';
-import { seriesNote, type ChartFocus } from '@/lib/sentinel/chartFocus';
+import { seriesNote, type ChartFocus, type EngineChartFocus } from '@/lib/sentinel/chartFocus';
 import { fmt, pct } from '@/lib/format';
 
 /**
- * The series drawn when nothing is under observation — a general market read
- * rather than a claim about what any engine is evaluating. With a focus, these
- * are replaced by the timeframe the sweep actually reads (see `chartFocus.ts`).
+ * The series drawn when NEITHER engine has reported what it read — no selected
+ * watch and no `/observe` contract read yet. A general market read, and the
+ * only case in which this component picks a timeframe of its own.
+ *
+ * Both focuses replace these. That matters: these defaults (5m index, 1m
+ * contracts) never matched `/observe`, which has always snapshotted 15m bars,
+ * so on a plain market selection the user was reading 5m while Sentinel read
+ * 15m — the same chart-vs-engine mismatch the watch focus was built to fix,
+ * one level up. See `engineFocusFrom` in `chartFocus.ts`.
  */
 const INDEX_INTERVAL: CandleInterval = '5m';
 const INDEX_DAYS = 5;
@@ -90,14 +96,21 @@ function sanitizeOptionCandles(candles: Candle[] | null, liveLtp?: number): Cand
  * unreachable bridge or an illiquid contract says so instead of drawing
  * placeholder candles.
  *
- * ── WITH A FOCUS ───────────────────────────────────────────────────────────
- * When a watch is selected, `focus` overrides all of that: the market becomes
- * the watch's, both legs pin to the strike the sweep is reading, and — the
- * part that matters — every series is drawn on the timeframe the ENGINE
- * evaluates rather than this component's own defaults. That is the whole
- * reason the focus exists. A 1m chart beside a 15m evaluation makes the
- * engine's verdicts uncheckable: the user is looking at bars Sentinel never
- * read, and any disagreement between the two is unexplainable.
+ * ── TWO FOCUSES, IN PRECEDENCE ORDER ───────────────────────────────────────
+ * Both answer the same question — "which series is Sentinel actually reading?"
+ * — for two different engines, and both replace this component's defaults.
+ *
+ *   1. `focus` (a watch the user created in services/sentinel-py). The most
+ *      specific claim available: one contract, one timeframe, one panel marked
+ *      as read. Wins when present.
+ *   2. `engineRead` (what `/observe` read for the SELECTED MARKET). Since
+ *      2026-08-16 that engine reads three series — the underlying and both
+ *      legs at the at-the-money strike — so up to three panels are marked, and
+ *      each one only if the engine actually got that series back.
+ *
+ * The rule under both: a 1m chart beside a 15m evaluation makes the engine's
+ * verdicts uncheckable. The user is looking at bars Sentinel never read, and
+ * any disagreement between the two is unexplainable.
  */
 export function SentinelLiveCharts({
   symbol,
@@ -105,6 +118,7 @@ export function SentinelLiveCharts({
   ceStrike,
   peStrike,
   focus = null,
+  engineRead = null,
   footer = null,
 }: {
   symbol: string;
@@ -117,6 +131,12 @@ export function SentinelLiveCharts({
    * makes this "here is what Sentinel is reading, on the bars it reads it on".
    */
   focus?: ChartFocus | null;
+  /**
+   * What `/observe` read for the selected market. Used when no watch is
+   * selected — which is the state a user is in the moment they pick a market,
+   * and the state this panel spent its whole life mislabelling.
+   */
+  engineRead?: EngineChartFocus | null;
   /**
    * Rendered inside the card, below the charts — so it survives into full
    * screen with them. A slot rather than a prop of its own keeps this
@@ -144,19 +164,27 @@ export function SentinelLiveCharts({
   const indexHeight = fullScreen ? 620 : 415;
   const optionHeight = fullScreen ? 300 : 192;
 
+  // A watch is the more specific claim, so it wins; `/observe`'s read of the
+  // selected market is the fallback, and this component's own defaults are the
+  // last resort (neither engine has said anything yet).
+  const reading = focus ?? engineRead ?? null;
+
   // The focus owns the market too: a watch on BANKNIFTY must not be drawn
   // against whatever the market selector happens to be showing.
-  const chartSymbol = focus?.symbol ?? symbol;
-  const chartName = focus ? findMarket(focus.symbol).name : marketName;
+  const chartSymbol = reading?.symbol ?? symbol;
+  const chartName = reading ? findMarket(reading.symbol).name : marketName;
 
-  // One series for every panel when focused — the engine reads the index and
-  // the contract on the SAME timeframe (`_candles_for` in the poller passes
-  // one interval to both), so drawing them on two different ones would
-  // misrepresent the comparison the engine is making.
-  const indexInterval = focus?.series.interval ?? INDEX_INTERVAL;
-  const indexDays = focus?.series.days ?? INDEX_DAYS;
-  const optionInterval = focus?.series.interval ?? OPTION_INTERVAL;
-  const optionDays = focus?.series.days ?? OPTION_DAYS;
+  // One series for every panel when either engine has reported. Both read the
+  // index and the contracts on the SAME timeframe (`_candles_for` in the
+  // poller passes one interval to both; `MarketIntelligenceService.contracts`
+  // uses `SNAPSHOT_INTERVAL` for all three), so drawing them on two different
+  // ones would misrepresent the comparison the engine is making — a 15m index
+  // move against a 1m premium move compares different amounts of time and
+  // calls the difference divergence.
+  const indexInterval = reading?.series.interval ?? INDEX_INTERVAL;
+  const indexDays = reading?.series.days ?? INDEX_DAYS;
+  const optionInterval = reading?.series.interval ?? OPTION_INTERVAL;
+  const optionDays = reading?.series.days ?? OPTION_DAYS;
 
   const { candles: indexCandles, status: indexStatus, reason: indexReason } = useCandles(
     chartSymbol,
@@ -171,17 +199,17 @@ export function SentinelLiveCharts({
   // fetching what it needs rather than threading a shared cache through.
   const chain = useOptionChainStrikes(chartSymbol, true);
 
-  // The watch's own expiry wins: it is the contract the sweep is reading, and
-  // the nearest expiry may not be it.
-  const expiry = focus?.expiry ?? chain.expiry;
+  // The reading engine's own expiry wins: it is the contract being read, and
+  // the nearest expiry resolved here may not be it.
+  const expiry = reading?.expiry ?? chain.expiry;
 
-  // A focused watch pins BOTH legs to its own strike. That is the comparison
-  // the panel exists for — the leg Sentinel is reading beside its opposite, so
-  // "which side is actually confirming" is one glance rather than two screens.
-  // A watch with no strike is an index watch; it falls through to the user's
-  // own pick and then ATM, exactly as before.
-  const effectiveCe = focus?.strike ?? ceStrike ?? chain.ce[chain.atmIndex]?.strike ?? null;
-  const effectivePe = focus?.strike ?? peStrike ?? chain.pe[chain.atmIndex]?.strike ?? null;
+  // The reading engine pins BOTH legs to its own strike. That is the
+  // comparison the panel exists for — the leg Sentinel is reading beside its
+  // opposite, so "which side is actually moving with the index" is one glance
+  // rather than two screens. A watch with no strike is an index watch; it
+  // falls through to the user's own pick and then ATM, exactly as before.
+  const effectiveCe = reading?.strike ?? ceStrike ?? chain.ce[chain.atmIndex]?.strike ?? null;
+  const effectivePe = reading?.strike ?? peStrike ?? chain.pe[chain.atmIndex]?.strike ?? null;
 
   const { candles: ceCandles, status: ceCandlesStatus, reason: ceReason } = useOptionCandles(
     chartSymbol,
@@ -239,21 +267,27 @@ export function SentinelLiveCharts({
   const peUnavailable = contractUnavailable(effectivePe, 'PE', peReason);
 
   /**
-   * Which of the three panels the sweep is actually evaluating.
+   * Which panels are actually being evaluated — per panel, from evidence.
    *
-   * The other two are context, and saying so matters: a watch on the 24350 CE
-   * is not a watch on the index or on the put, and marking all three the same
-   * would claim the engine is reading three instruments when it reads one.
-   * Mirrors `_candles_for` in the poller — a strike watch reads the contract,
-   * a strikeless watch reads the index.
+   * A WATCH marks exactly one. The other two are context, and saying so
+   * matters: a watch on the 24350 CE is not a watch on the index or on the
+   * put, and marking all three would claim the engine reads three instruments
+   * when it reads one. Mirrors `_candles_for` in the poller — a strike watch
+   * reads the contract, a strikeless watch reads the index.
+   *
+   * `/observe` legitimately marks up to three, because since 2026-08-16 it
+   * genuinely reads three. But only the ones it got back: `reads.ce` is false
+   * when that leg failed, so a chart of a contract Sentinel could not fetch is
+   * never captioned as one Sentinel is reading. That distinction is the entire
+   * value of the badge — a badge that is always on says nothing.
    */
-  const readingPanel: 'index' | 'ce' | 'pe' | null = !focus
-    ? null
-    : focus.strike != null && focus.optionType
-      ? focus.optionType === 'CE'
-        ? 'ce'
-        : 'pe'
-      : 'index';
+  const reads: { index: boolean; ce: boolean; pe: boolean } = focus
+    ? {
+        index: focus.strike == null || !focus.optionType,
+        ce: focus.strike != null && focus.optionType === 'CE',
+        pe: focus.strike != null && focus.optionType === 'PE',
+      }
+    : (engineRead?.reads ?? { index: false, ce: false, pe: false });
 
   const indexLabel = String(indexInterval);
   const optionLabel = String(optionInterval);
@@ -270,11 +304,11 @@ export function SentinelLiveCharts({
       <div className="mb-3.5 flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           <p className="text-[11px] font-bold uppercase tracking-wideTrack text-faint">
-            {focus ? 'What Sentinel is reading' : 'Live Charts'}
+            {reading ? 'What Sentinel is reading' : 'Live Charts'}
           </p>
           <p className="mt-1 text-[11.5px] text-muted">
             {chartName} · {expiryLabel ? `${expiryLabel} expiry` : 'nearest expiry'}
-            {focus ? ` · ${focus.series.interval} bars` : ''} — what Sentinel is watching, observation only
+            {reading ? ` · ${reading.series.interval} bars` : ''} — what Sentinel is watching, observation only
           </p>
         </div>
 
@@ -295,7 +329,7 @@ export function SentinelLiveCharts({
             title={chartName}
             badge="IDX"
             interval={indexLabel}
-            reading={readingPanel === 'index'}
+            reading={reads.index}
             candles={indexCandles}
             status={indexStatus}
             liveLast={liveIndex?.ltp}
@@ -305,7 +339,7 @@ export function SentinelLiveCharts({
               : null}
             height={indexHeight}
             fitKey={`${chartSymbol}|idx|${indexInterval}`}
-            intervalMinutes={focus?.series.minutes ?? 5}
+            intervalMinutes={reading?.series.minutes ?? 5}
             unavailableTitle={indexReason === 'api-unreachable' ? 'Market data API not connected' : 'No history available'}
             unavailableDetail={
               indexReason === 'api-unreachable'
@@ -320,7 +354,7 @@ export function SentinelLiveCharts({
             title={effectiveCe != null ? `${chartName} ${expiryLabel} ${effectiveCe} CALL`.trim() : `${chartName} CALL`}
             badge="NSE"
             interval={optionLabel}
-            reading={readingPanel === 'ce'}
+            reading={reads.ce}
             candles={safeCeCandles}
             status={ceCandlesStatus}
             liveLast={ceQuote?.ltp}
@@ -329,7 +363,7 @@ export function SentinelLiveCharts({
             tone="up"
             height={optionHeight}
             fitKey={`${chartSymbol}|ce|${effectiveCe}|${optionInterval}`}
-            intervalMinutes={focus?.series.minutes ?? 1}
+            intervalMinutes={reading?.series.minutes ?? 1}
             unavailableTitle={ceUnavailable.title}
             unavailableDetail={ceUnavailable.detail}
           />
@@ -340,7 +374,7 @@ export function SentinelLiveCharts({
             title={effectivePe != null ? `${chartName} ${expiryLabel} ${effectivePe} PUT`.trim() : `${chartName} PUT`}
             badge="NSE"
             interval={optionLabel}
-            reading={readingPanel === 'pe'}
+            reading={reads.pe}
             candles={safePeCandles}
             status={peCandlesStatus}
             liveLast={peQuote?.ltp}
@@ -349,7 +383,7 @@ export function SentinelLiveCharts({
             tone="down"
             height={optionHeight}
             fitKey={`${chartSymbol}|pe|${effectivePe}|${optionInterval}`}
-            intervalMinutes={focus?.series.minutes ?? 1}
+            intervalMinutes={reading?.series.minutes ?? 1}
             unavailableTitle={peUnavailable.title}
             unavailableDetail={peUnavailable.detail}
           />
@@ -361,8 +395,21 @@ export function SentinelLiveCharts({
       {/* The series claim is separated from the provenance claim because they
           fail independently: the data can be real and still be the wrong bars,
           which is precisely the state this panel used to be in. */}
-      {focus && (
-        <p className="mt-3 text-[10.5px] leading-relaxed text-teal">{seriesNote(focus.series)}</p>
+      {reading && (
+        <p className="mt-3 text-[10.5px] leading-relaxed text-teal">{seriesNote(reading.series)}</p>
+      )}
+
+      {/* Said only when it is true and only when it is useful: the provider
+          cannot read contract series at all, so the two option panels are
+          drawing what the BROWSER fetched while the engine read the index
+          alone. Without this line that state is indistinguishable from a
+          working three-series read, which is the exact confusion this whole
+          change exists to remove. */}
+      {!focus && engineRead && !engineRead.contractsReadable && (
+        <p className="mt-1.5 text-[10.5px] leading-relaxed text-amber">
+          Sentinel is reading the underlying only — its market-data provider cannot fetch individual contract series in
+          this environment. The two option panels are drawn from the browser&apos;s own feed and are not being evaluated.
+        </p>
       )}
 
       <p className="mt-2 text-[10.5px] leading-relaxed text-faint">

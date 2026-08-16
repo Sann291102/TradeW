@@ -4,11 +4,13 @@ import {
   MARKET_OPEN_MIN,
   SQUARE_OFF_MIN,
   isMarketOpen,
+  isTradingDay,
   isWithinSession,
   istDateKey,
   istMinutesOfDay,
   istTimeLabel,
   minutesToClose,
+  nonTradingReason,
   sessionPhaseAt,
   sessionProgress,
 } from './market-clock';
@@ -26,8 +28,13 @@ import {
  * IST is UTC+5:30 with no DST. 2026-08-03T05:00:00Z is Monday 10:30 IST — a
  * normal mid-session weekday, used as the baseline throughout.
  *
- * Note the final `describe` block: it pins a KNOWN GAP rather than correct
- * behaviour, and says so loudly. See the comment there before changing it.
+ * Every date used by the first blocks is Monday 2026-08-03 — a real trading
+ * day. That matters now: since clock unification (2026-08-16) the clock also
+ * reads the NSE calendar, so a baseline on a weekend would make half these
+ * assertions fail for the right reason and hide the boundary they test.
+ *
+ * The final `describe` block used to pin a KNOWN GAP and now pins its fix; the
+ * comment there explains why the block was inverted rather than deleted.
  */
 
 /** Monday 2026-08-03, `hh:mm` IST, as a UTC instant. */
@@ -175,49 +182,76 @@ describe('isWithinSession — strategy time windows', () => {
 });
 
 /**
- * ⚠ KNOWN GAP — these assertions describe a DEFECT, not desired behaviour.
+ * ✅ CLOSED 2026-08-16 — the gap this block used to pin.
  *
- * `isMarketOpen` and `sessionPhaseAt` look only at the time of day. They have
- * no `getDay()` check and no holiday list, so Sentinel believes the market is
- * open at 10:30 on a Saturday, a Sunday, and on Republic Day.
+ * These assertions previously read `expect(isMarketOpen(SATURDAY)).toBe(true)`
+ * and were documented as describing a DEFECT: the clock looked only at the time
+ * of day, so Sentinel believed the market was open at 10:30 on a Saturday, a
+ * Sunday and on Republic Day. The block's own comment said the assertions
+ * SHOULD flip from `true` to `false` when clock-unification landed, and that
+ * the inversion would be the signal the fix worked rather than a regression.
  *
- * This is a documented, deliberate deferral, not an unknown bug: see
- * `services/api/src/discipline/market-calendar.ts:13` — `TODO(clock-unification)`
- * — which already owns a correct `isTradingDay` (weekend + NSE holiday aware)
- * and names this exact module as the one that should adopt it. It was left
- * alone because seven Sentinel services key off the current semantics, so
- * changing it is a behaviour change wanting its own review.
- *
- * The tests are written the way they are so the gap is impossible to forget and
- * impossible to change silently. WHEN clock-unification lands, these assertions
- * SHOULD flip from `true` to `false` — that inversion is the intended signal
- * that the fix worked, not a regression. Do not "fix" the tests to match new
- * behaviour without also deleting this block's premise.
+ * That is what happened. `market-clock.ts` now reads the NSE calendar in
+ * `@tradew/market-data` (one list, shared with `services/api`), so both
+ * `isMarketOpen` and `sessionPhaseAt` honour weekends and holidays. The block
+ * is kept — inverted — because the direction of these particular assertions is
+ * the whole point, and a deleted test cannot fail if someone reverts the gate.
  */
-describe('KNOWN GAP: the clock is day-of-week and holiday blind', () => {
+describe('the clock honours the NSE trading calendar', () => {
   const SATURDAY = new Date('2026-08-01T05:00:00Z'); // Sat 10:30 IST
   const SUNDAY = new Date('2026-08-02T05:00:00Z'); // Sun 10:30 IST
   const REPUBLIC_DAY = new Date('2026-01-26T05:00:00Z'); // Mon 10:30 IST, NSE closed
+  const MONDAY = new Date('2026-08-03T05:00:00Z'); // Mon 10:30 IST, a normal session
 
-  it('wrongly reports the market OPEN on a Saturday', () => {
-    expect(isMarketOpen(SATURDAY)).toBe(true);
-    expect(sessionPhaseAt(SATURDAY)).toBe('active');
+  it('reports the market CLOSED on a Saturday', () => {
+    expect(isMarketOpen(SATURDAY)).toBe(false);
+    expect(sessionPhaseAt(SATURDAY)).toBe('closed');
+    expect(isTradingDay(SATURDAY)).toBe(false);
   });
 
-  it('wrongly reports the market OPEN on a Sunday', () => {
-    expect(isMarketOpen(SUNDAY)).toBe(true);
-    expect(sessionPhaseAt(SUNDAY)).toBe('active');
+  it('reports the market CLOSED on a Sunday', () => {
+    expect(isMarketOpen(SUNDAY)).toBe(false);
+    expect(sessionPhaseAt(SUNDAY)).toBe('closed');
+    expect(isTradingDay(SUNDAY)).toBe(false);
   });
 
-  it('wrongly reports the market OPEN on an NSE holiday', () => {
-    expect(isMarketOpen(REPUBLIC_DAY)).toBe(true);
-    expect(sessionPhaseAt(REPUBLIC_DAY)).toBe('active');
+  it('reports the market CLOSED on an NSE holiday that is a weekday', () => {
+    // The case a `getDay()` check alone cannot catch, and the reason the
+    // calendar had to be shared rather than reimplemented as a weekday test.
+    expect(istDateKey(REPUBLIC_DAY)).toBe('2026-01-26');
+    expect(isMarketOpen(REPUBLIC_DAY)).toBe(false);
+    expect(sessionPhaseAt(REPUBLIC_DAY)).toBe('closed');
+    expect(isTradingDay(REPUBLIC_DAY)).toBe(false);
   });
 
-  it('gives a weekend the same session key and progress as a trading day', () => {
-    // Consequence, not cosmetics: session state is keyed by IST date, so a
-    // weekend produces a full phantom session in the state machine.
-    expect(istDateKey(SATURDAY)).toBe('2026-08-01');
+  it('still reports a normal weekday session as open', () => {
+    // The other half of the gate: closing the gap must not close the market.
+    expect(isMarketOpen(MONDAY)).toBe(true);
+    expect(sessionPhaseAt(MONDAY)).toBe('active');
+    expect(isTradingDay(MONDAY)).toBe(true);
+  });
+
+  it('names WHY a day is not a trading day', () => {
+    // "Sentinel is not observing" needs a reason a trader can read, and a
+    // weekend and a holiday are different sentences.
+    expect(nonTradingReason(SATURDAY)).toBe('weekend');
+    expect(nonTradingReason(REPUBLIC_DAY)).toBe('holiday');
+    expect(nonTradingReason(MONDAY)).toBeNull();
+  });
+
+  it('is never pre-market on a non-trading day', () => {
+    // PRE_MARKET seeds a session that spends the day waiting for a bell that
+    // will not ring; MARKET_CLOSE is the honest seed. See sessionPhaseAt.
+    expect(sessionPhaseAt(new Date('2026-08-01T02:00:00Z'))).toBe('closed'); // Sat 07:30 IST
+    expect(sessionPhaseAt(new Date('2026-01-26T02:00:00Z'))).toBe('closed'); // Republic Day 07:30 IST
+  });
+
+  it('leaves the time-of-day arithmetic day-blind on purpose', () => {
+    // `sessionProgress` and `minutesToClose` size things ("how far into the
+    // window are we", "how long until 15:30"); they are not gates. Making them
+    // calendar-aware would break `MarketWatchService.expiryFor`, which needs
+    // minutes-to-close whatever day it is asked on.
     expect(sessionProgress(SATURDAY)).toBeGreaterThan(0);
+    expect(istDateKey(SATURDAY)).toBe('2026-08-01');
   });
 });

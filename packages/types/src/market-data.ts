@@ -62,6 +62,19 @@ export interface NewsItem {
   unscheduled?: boolean;
 }
 
+/** One side of an option contract. */
+export type OptionSide = 'CE' | 'PE';
+
+/** A specific traded contract — underlying, expiry, strike and side. */
+export interface OptionContractRef {
+  /** Underlying symbol, e.g. 'NIFTY'. */
+  symbol: string;
+  /** Expiry as 'YYYY-MM-DD' (IST), matching the provider's own expiry list. */
+  expiry: string;
+  strike: number;
+  side: OptionSide;
+}
+
 export interface MarketDataProvider {
   readonly name: string;
   getQuote(symbol: string): Promise<Quote>;
@@ -70,4 +83,36 @@ export interface MarketDataProvider {
   getMarketBreadth(): Promise<MarketBreadth>;
   getNews(symbols?: string[], sinceHours?: number): Promise<NewsItem[]>;
   healthCheck(): Promise<boolean>;
+
+  /**
+   * Traded expiries for `symbol`, nearest first, as 'YYYY-MM-DD' (IST).
+   *
+   * OPTIONAL — and optional is the honest shape, not a convenience. Reading a
+   * single option contract's own OHLC needs a provider that can resolve a
+   * securityId from (underlying, expiry, strike, side); the Dhan bridge can,
+   * the simulator cannot and must never pretend to. A caller that needs
+   * contract series therefore has to check for the capability, which is
+   * exactly the check that keeps "Sentinel could not read this leg" distinct
+   * from "Sentinel read this leg and it was flat".
+   *
+   * Returns [] for an instrument with no options market (a commodity, most
+   * equities) — an empty list is an answer, an absent method is not.
+   */
+  getOptionExpiries?(symbol: string): Promise<string[]>;
+
+  /**
+   * OHLC for ONE option contract — the premium series, not the underlying's.
+   *
+   * Optional for the same reason as `getOptionExpiries`. See
+   * `services/sentinel/src/intelligence/contract-alignment.ts` for why Sentinel
+   * needs the premium series at all rather than inferring the leg's behaviour
+   * from the underlying: a call premium can fall while the index rises, and
+   * that divergence is the observation.
+   */
+  getOptionCandles?(
+    contract: OptionContractRef,
+    interval: CandleInterval,
+    from: Date,
+    to: Date,
+  ): Promise<Candle[]>;
 }

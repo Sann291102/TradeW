@@ -232,6 +232,54 @@ export type RegistryStrategy = {
 /** Strategy focus the UI drives observe with. */
 export type StrategyMode = 'auto' | 'manual';
 
+/** One series' move across the bars the engine read. */
+export type ContractSeriesRead = {
+  bars: number;
+  open: number;
+  last: number;
+  changePct: number;
+  direction: 'rising' | 'falling' | 'flat';
+};
+
+/**
+ * One option leg as the engine read it.
+ *
+ * `series: null` with a reason is a leg Sentinel could NOT read. That is never
+ * the same as a leg that read cleanly and did not move, which is
+ * `direction: 'flat'` — collapsing the two is how a dead bridge renders as a
+ * calm market.
+ */
+export type ContractLegRead = {
+  side: 'CE' | 'PE';
+  strike: number;
+  series: ContractSeriesRead | null;
+  unavailableReason: string | null;
+};
+
+export type ContractAlignmentRead =
+  | 'call-side-tracking'
+  | 'put-side-tracking'
+  | 'both-sides-bid'
+  | 'both-sides-decaying'
+  | 'index-flat'
+  | 'mixed';
+
+export type ContractWatch = {
+  underlying: string;
+  expiry: string | null;
+  strike: number | null;
+  /** The bars every series below was read on — draw these. */
+  interval: string;
+  index: ContractSeriesRead | null;
+  ce: ContractLegRead | null;
+  pe: ContractLegRead | null;
+  /** Null whenever either leg is unreadable — one leg is not an alignment. */
+  alignment: ContractAlignmentRead | null;
+  notes: string[];
+  /** False when the data provider cannot read contract series at all. */
+  contractsReadable: boolean;
+};
+
 export type ObserveResponse = {
   synthesis: Synthesis | null;
   observations: Observation[];
@@ -259,6 +307,17 @@ export type ObserveResponse = {
   publication?: PublicationDecision;
   /** Phase 2 — what the market is doing, as opposed to what its indicators read. */
   marketBehaviour?: MarketBehaviourRead;
+  /**
+   * What the engine read on this observation, per instrument — the underlying
+   * and both option legs at the at-the-money strike.
+   *
+   * This is what makes the three-chart panel checkable. Before 2026-08-16 the
+   * workspace drew an index, a CALL and a PUT while `/observe` snapshotted
+   * only the underlying, so two of the three panels asserted an engine that
+   * was not running. `interval` is the bars EVERY series here was read on and
+   * is what the charts draw when no watch is selected.
+   */
+  contractWatch?: ContractWatch;
   /** Phase 3 — where each strategy sits in its own lifecycle. */
   strategyLifecycles?: StrategyLifecycle[];
   /** Phase 5 — every element used in the reasoning, as chart drawings. */

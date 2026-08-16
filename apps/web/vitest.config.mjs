@@ -91,6 +91,12 @@ export default defineConfig({
       // is a confident statement about bars: a measurement the sweep never
       // produced, or a stale one presented as current after the bridge died.
       'src/components/sentinel/SentinelChartReading.test.tsx',
+      // The other engine's reading — what `/observe` read across the index and
+      // both option legs. Same class of failure as the strip above, plus the
+      // one this surface adds by naming a strike and a side together: it is
+      // the only place in the workspace where a recommendation could be
+      // implied by layout alone, so Rule 2 is asserted here.
+      'src/components/sentinel/SentinelContractReading.test.tsx',
       // The strategy contract read back to the user. A card full of price
       // levels on a surface forbidden from recommending any is only safe
       // because every number on it came from the user — so the boundary is

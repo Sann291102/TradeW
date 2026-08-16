@@ -12,7 +12,7 @@ import os
 from datetime import datetime, timezone
 
 from app.core.lease import JobLease
-from app.market.clock import is_market_open, session_key
+from app.market.clock import is_market_open, non_trading_reason, session_key
 from app.market.feed import MarketDataUnavailableError, fetch_index_candles, fetch_option_candles
 from app.intrade.monitor import Direction, evaluate_position
 from app.notify.dispatcher import notify, notify_intrade
@@ -247,10 +247,15 @@ async def _loop(lease: JobLease) -> None:
             # replicas would evaluate every watch twice and notify twice.
             if not await lease.acquire_or_renew():
                 logger.debug("not the sweep leader — standing by")
-            elif is_market_open(datetime.now(timezone.utc)):
+            elif is_market_open(now := datetime.now(timezone.utc)):
                 await sweep_once()
             else:
-                logger.debug("market closed — skipping sweep")
+                # Naming the reason costs one call and answers the question an
+                # operator actually asks ("why is nothing being observed?").
+                # `is_market_open` is calendar-aware since 2026-08-16, so this
+                # branch is now also the weekend/holiday branch.
+                reason = non_trading_reason(now) or "outside session hours"
+                logger.debug("market closed (%s) — skipping sweep", reason)
         except asyncio.CancelledError:
             raise
         except Exception:

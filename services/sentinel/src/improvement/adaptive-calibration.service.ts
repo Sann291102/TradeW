@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
-import { isMarketOpen } from '../market-clock';
+import { isMarketOpen, isTradingDay } from '../market-clock';
 import { ContinuousImprovementService } from './continuous-improvement.service';
 
 /**
@@ -333,6 +333,15 @@ export function shouldRunDailyPass(
   const istDate = istDateString(now);
   if (lastRunDate === istDate) {
     return { run: false, istDate, reason: 'already ran today' };
+  }
+  if (!isTradingDay(now)) {
+    // A weekend or NSE holiday produced no observations and therefore no
+    // outcomes, so a pass here would recalibrate on the previous session's
+    // sample a second time. Before clock unification this was unreachable in
+    // practice for the wrong reason — `isMarketOpen` returned true at 11:00 on
+    // a Saturday, so the branch below caught it — and it ran anyway after
+    // 15:30. Checked explicitly now that the clock is honest.
+    return { run: false, istDate, reason: 'not a trading day' };
   }
   if (isMarketOpen(now)) {
     // Rewriting scoring weights mid-session would mean two observations

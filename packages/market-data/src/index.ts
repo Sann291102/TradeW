@@ -13,6 +13,11 @@
  * packages/ and runtimes in services/.
  */
 
+// calendar — which days the exchange trades. Consumed by services/api's
+// discipline + settlement paths and by services/sentinel's clock, so both
+// runtimes answer "is today a trading day" from ONE list.
+export * from './calendar/nse-calendar';
+
 // contracts
 export * from './contracts/cache';
 export * from './contracts/feed';

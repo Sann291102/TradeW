@@ -46,6 +46,17 @@ describe('shouldRunDailyPass — the schedule', () => {
     expect(d.reason).toBe('before the close');
   });
 
+  it('does not run on a weekend or an NSE holiday', () => {
+    // No session means no observations and no outcomes, so a pass here would
+    // recalibrate on the previous session's sample twice. 2026-08-08 is a
+    // Saturday; 2026-08-26 is Ganesh Chaturthi, a Wednesday the NSE is shut.
+    for (const day of ['2026-08-08', '2026-08-26']) {
+      const d = shouldRunDailyPass(ist(day, 16, 0), null);
+      expect(d.run, day).toBe(false);
+      expect(d.reason, day).toBe('not a trading day');
+    }
+  });
+
   it('reports the IST date it decided for, so the caller records the right day', () => {
     // 23:00 UTC on the 6th is already 04:30 IST on the 7th — recomputing the
     // date separately could disagree across the boundary.

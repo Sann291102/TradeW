@@ -1,4 +1,5 @@
 import type { CandleInterval } from '@tradew/types';
+import type { ContractWatch } from './types';
 import type { Timeline, WatchState } from './sentinelPy';
 
 /**
@@ -136,6 +137,59 @@ export function focusFromTimeline(timeline: Timeline | null): ChartFocus | null 
     expiry: watch.expiry,
     state: watch.state,
     series: resolveSeries(watch.timeframe),
+  };
+}
+
+/**
+ * What the `/observe` engine itself read, as a chart focus.
+ *
+ * A SECOND kind of focus, and the distinction is the point:
+ *
+ *   · `ChartFocus` comes from a watch the user created in
+ *     `services/sentinel-py`. It is about ONE contract, and exactly one panel
+ *     is marked as read (`_candles_for`: a strike watch reads the contract, a
+ *     strikeless watch reads the index).
+ *   · `EngineChartFocus` comes from the `/observe` response's `contractWatch`
+ *     and is about the MARKET the user selected. Since 2026-08-16 that engine
+ *     reads three series — the underlying and both legs at the at-the-money
+ *     strike — so up to three panels are legitimately marked.
+ *
+ * `reads` is per panel and derived from evidence, never assumed: a leg the
+ * engine could not read is not marked, because "Sentinel reads this" over a
+ * chart of a contract it failed to fetch is the same false claim the panel was
+ * built to stop making.
+ *
+ * Selecting a market is what produces this. That is the whole user-facing
+ * behaviour: pick NIFTY in the market selector, and the three charts become
+ * the three series Sentinel is reading, on its bars.
+ */
+export interface EngineChartFocus {
+  symbol: string;
+  strike: number | null;
+  expiry: string | null;
+  series: ResolvedSeries;
+  reads: { index: boolean; ce: boolean; pe: boolean };
+  /** False when the provider cannot read contract series at all. */
+  contractsReadable: boolean;
+}
+
+export function engineFocusFrom(watch: ContractWatch | null | undefined): EngineChartFocus | null {
+  if (!watch) return null;
+  return {
+    symbol: watch.underlying,
+    strike: watch.strike,
+    expiry: watch.expiry,
+    // The engine reports the interval it REQUESTED. `resolveSeries` reproduces
+    // the bridge's silent substitution on top of it, so a timeframe the bridge
+    // cannot serve is drawn as what would actually come back — and said out
+    // loud — rather than drawn as what was asked for.
+    series: resolveSeries(watch.interval),
+    reads: {
+      index: watch.index !== null,
+      ce: watch.ce?.series != null,
+      pe: watch.pe?.series != null,
+    },
+    contractsReadable: watch.contractsReadable,
   };
 }
 

@@ -5,9 +5,32 @@
  * reasons about "late in the session" or renders a timeline stamp must agree
  * on the same India-time conversion. `Intl` does the zone maths, so DST-free
  * IST needs no table and no dependency.
+ *
+ * ── CLOCK UNIFICATION (2026-08-16) ─────────────────────────────────────────
+ *
+ * This module used to be day-of-week and holiday BLIND: `isMarketOpen` looked
+ * only at the time of day, so Sentinel believed the market was open at 10:30
+ * on a Saturday and on Republic Day. `market-clock.spec.ts` pinned that as a
+ * KNOWN GAP with assertions written to flip when it was fixed, and
+ * `services/api/src/discipline/market-calendar.ts` carried the
+ * `TODO(clock-unification)` naming this exact module.
+ *
+ * It is fixed here. The calendar itself moved to `@tradew/market-data` so this
+ * service and `services/api` read ONE list — see that module's docstring for
+ * why it is not copied. What stays local is the SESSION WINDOW: which days the
+ * exchange trades is an exchange-wide fact, 09:15–15:30 is a segment fact.
+ *
+ * Two things deliberately stay time-of-day only, because they are arithmetic
+ * rather than gates: `istMinutesOfDay`/`minutesToClose` (used to size a watch's
+ * expiry, which must answer "how long until 15:30" whatever day it is) and
+ * `sessionProgress`. Callers that need "is the market actually trading" use
+ * `isMarketOpen` or `sessionPhaseAt`, both of which now honour the calendar.
  */
 
+import { isTradingDay as isNseTradingDay, nonTradingReason } from '@tradew/market-data';
 import { SessionPhase } from './domain';
+
+export { nonTradingReason };
 
 export const MARKET_OPEN_MIN = 9 * 60 + 15; // 09:15 IST
 export const MARKET_CLOSE_MIN = 15 * 60 + 30; // 15:30 IST
@@ -44,8 +67,26 @@ export function istMinutesOfDay(at: Date = new Date()): number {
   return h * 60 + m;
 }
 
-/** True when `at` falls inside NSE regular trading hours. */
+/**
+ * True when `at` is an NSE trading day (weekday, not a published holiday).
+ *
+ * Re-exported from `@tradew/market-data` under this module's name so Sentinel
+ * code has a single clock import rather than two, and so a future segment with
+ * its own calendar has one place to diverge.
+ */
+export function isTradingDay(at: Date = new Date()): boolean {
+  return isNseTradingDay(at);
+}
+
+/**
+ * True when `at` falls inside NSE regular trading hours ON A TRADING DAY.
+ *
+ * The calendar check is first and non-negotiable: a weekend or holiday is
+ * closed at every hour, so no caller can reach the time-of-day comparison and
+ * conclude the market is open on a day the exchange never opened.
+ */
 export function isMarketOpen(at: Date = new Date()): boolean {
+  if (!isNseTradingDay(at)) return false;
   const mins = istMinutesOfDay(at);
   return mins >= MARKET_OPEN_MIN && mins <= MARKET_CLOSE_MIN;
 }
@@ -62,7 +103,18 @@ export function sessionProgress(at: Date = new Date()): number {
   return Math.max(0, Math.min(1, (mins - MARKET_OPEN_MIN) / span));
 }
 
+/**
+ * The session phase.
+ *
+ * A non-trading day is 'closed' at every hour — never 'pre-market'. Both would
+ * keep `isMarketOpen` false, but they mean different things downstream:
+ * `MarketStateMachineService.session()` seeds a fresh session as `PRE_MARKET`
+ * on the former and `MARKET_CLOSE` on the latter, and a Saturday that opens in
+ * PRE_MARKET is a session that spends all day waiting for a bell that will not
+ * ring.
+ */
 export function sessionPhaseAt(at: Date = new Date()): SessionPhase {
+  if (!isNseTradingDay(at)) return 'closed';
   const mins = istMinutesOfDay(at);
   if (mins < MARKET_OPEN_MIN) return 'pre-market';
   if (mins > MARKET_CLOSE_MIN) return 'closed';
