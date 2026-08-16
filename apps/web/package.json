@@ -11,6 +11,7 @@
     "test:sentinel": "vitest run --config vitest.sentinel.config.mjs"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.101.4",
     "@tradew/types": "*",
     "@tradew/ui": "*",
     "framer-motion": "^11.15.0",

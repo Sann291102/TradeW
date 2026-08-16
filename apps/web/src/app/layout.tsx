@@ -1,6 +1,7 @@
 // Design tokens first (defines the CSS vars), then app globals that consume them.
 import '@tradew/ui/styles.css';
 import './globals.css';
+import { QueryProvider } from '@/components/providers/QueryProvider';
 
 export const metadata = {
   title: 'TradeW — AI Trading Operating System',
@@ -29,8 +30,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       {/* No AppFrame here. The workspace shell lives in `(workspace)/layout.tsx`
           so that which routes get chrome is decided by the route tree rather
           than by a pathname compared at render time — see that file for the
-          bug this prevents. */}
-      <body>{children}</body>
+          bug this prevents.
+
+          QueryProvider IS here, and has to be: it owns the cache that has to
+          outlive every client-side navigation. Mounted any deeper it would be
+          remounted by the navigations it exists to survive. */}
+      <body>
+        <QueryProvider>{children}</QueryProvider>
+      </body>
     </html>
   );
 }
