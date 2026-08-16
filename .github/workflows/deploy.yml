@@ -17,6 +17,7 @@ on:
     branches: [main]
     paths:
       - 'apps/web/**'
+      - 'apps/admin/**'
       - 'services/**'
       - 'packages/**'
       - 'infra/docker/**'
@@ -44,6 +45,21 @@ jobs:
             dockerfile: services/sentinel/Dockerfile
           - name: market-data
             dockerfile: services/market-data/Dockerfile
+          # The operator console. It ships via docker-compose.admin.yml, which
+          # is layered on top of the prod stack and reads ${IMAGE_ADMIN} — but
+          # nothing ever built that image, so the tag fell through to its
+          # `tradew-admin:local` default and resolved to nothing on the VM.
+          # Loopback-bound and SSH-tunnel-only (see that file) does not mean
+          # unbuilt: it still has to exist in the registry to be pulled.
+          - name: admin
+            dockerfile: apps/admin/Dockerfile
+            # Baked at build time (NEXT_PUBLIC_*), so it cannot be supplied by
+            # compose once CI is the thing producing the image. This is the
+            # "View as Trader" link target — the PUBLIC web origin, not the
+            # console's own. Set the PUBLIC_WEB_URL repository variable to the
+            # deployed domain; unset, the Dockerfile's `/` default applies and
+            # that one link points at the console itself.
+            build_args: NEXT_PUBLIC_TRADEW_WEB_URL=${{ vars.PUBLIC_WEB_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3 # arm64 emulation on amd64 runners
@@ -69,6 +85,7 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             NEXT_PUBLIC_API_URL=/api
+            ${{ matrix.build_args }}
 
   deploy:
     needs: build
