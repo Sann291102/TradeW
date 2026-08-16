@@ -32,6 +32,15 @@ export default defineConfig({
       'src/broker/broker-authz.spec.ts',
       // Feed link validation — the XSS boundary on third-party content.
       'src/news/feed-url.spec.ts',
+      // The NSE dataset allowlist: the only thing between a caller-supplied
+      // string and an outbound request from inside this network. Nothing
+      // outside the catalogue resolves, no entry leaves nseindia.com, and the
+      // one interpolated path segment cannot be other than eight digits.
+      'src/nse/nse-datasets.spec.ts',
+      // The participant-OI CSV reader. Every failure mode is a confident
+      // number attributed to the wrong participant or the wrong column, and
+      // the real file's padded headers make an untrimmed lookup miss silently.
+      'src/nse/nse.service.spec.ts',
       // Proof that a secret cannot be logged through the security logger.
       'src/common/security-log.spec.ts',
       // Learning Platform: entitlement/admin access decisions, and progress math.
@@ -61,6 +70,15 @@ export default defineConfig({
       'src/payments/trial.spec.ts',
       // Bearer-token parsing: the gate in front of every authenticated route.
       'src/auth/auth.guard.spec.ts',
+      // When an OTP may appear in its own HTTP response. The rule was "only
+      // when the channel is unconfigured" but the test was `!delivered`, which
+      // is also true of a configured provider that failed — so any provider
+      // outage turned POST /auth/otp/request into an OTP oracle for any
+      // address. Pinned in both directions, for mail and SMS.
+      'src/auth/otp-disclosure.spec.ts',
+      // Mail provider selection, and the `preview`-only-in-console-mode
+      // invariant the disclosure rule above is built on.
+      'src/mail/mail.service.spec.ts',
       // Boot-time secret policy: no dev-fallback / vendor-key auth secrets
       // (2026-08-10 assessment — JWT_SECRET forgery + ADMIN_API_TOKEN reuse).
       'src/common/secret-validation.spec.ts',

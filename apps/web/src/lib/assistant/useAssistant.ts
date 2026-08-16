@@ -12,6 +12,8 @@ import { ASSISTANT_NAME } from './identity';
 import { riskOf } from './safety';
 import { askBrain, type BrainPlan } from './brain';
 import type { QuoteAsk } from './quotes';
+import { formatBreadth, formatCashFlow, formatPositioning } from './flows';
+import { fetchBreadth, fetchFiiDii, fetchParticipantOi } from '../sentinel/nse';
 import type { AssistantAction, AssistantIntent, RefusalReason } from './types';
 
 /**
@@ -332,6 +334,52 @@ export function useAssistant() {
                   intent: 'quote',
                   text: "I couldn't reach the market-data service just now, so I don't have a price to give you. I won't guess at one.",
                   steps: ['GET /market-data/quotes failed'],
+                },
+              ]);
+            }
+          })();
+          break;
+        case 'marketFlow':
+          /**
+           * The exchange's own institutional publications. Same fire-and-forget
+           * shape as `quote` and for the same reason — the acknowledgement must
+           * land before the fetch does.
+           *
+           * The `ask` is mapped to a fixed fetcher HERE, by a switch over a
+           * three-value union. Nothing from the utterance reaches the network:
+           * there is no URL to build and no dataset name to pass through, which
+           * is what keeps an assistant that "reaches NSE" from being an
+           * assistant that can make this server fetch anything.
+           */
+          void (async () => {
+            try {
+              const text =
+                action.ask === 'breadth'
+                  ? formatBreadth(await fetchBreadth())
+                  : action.ask === 'positioning'
+                    ? formatPositioning(await fetchParticipantOi())
+                    : formatCashFlow(await fetchFiiDii());
+
+              setTurns((prev) => [
+                ...prev,
+                {
+                  id: turnId(),
+                  role: 'assistant',
+                  intent: 'quote',
+                  disclaimer: true,
+                  text,
+                  steps: [`Read ${action.ask} from NSE via /nse`],
+                },
+              ]);
+            } catch {
+              setTurns((prev) => [
+                ...prev,
+                {
+                  id: turnId(),
+                  role: 'assistant',
+                  intent: 'quote',
+                  text: "I couldn't read NSE's published figures just now. That happens — it's a public exchange endpoint with no guarantee behind it, and I'd rather say so than give you a number I made up.",
+                  steps: [`GET /nse (${action.ask}) failed`],
                 },
               ]);
             }

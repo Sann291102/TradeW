@@ -30,7 +30,13 @@ export function SentinelPanel({ className, actions, collapsed }: DockPanelConten
 
   const isEntitled = mounted && hasSentinel;
 
-  const { data, loading } = useSentinel('NIFTY');
+  // Gated on the entitlement, not just the rendering below it. This panel is
+  // mounted on /trade for every user, and it used to run the observation for
+  // all of them — a request that can only return 403 for an account without
+  // the capability, and that still spends the per-IP rate-limit budget of the
+  // entitled users on the same network before any guard sees it. The locked
+  // state below reads nothing from this hook.
+  const { data, loading } = useSentinel('NIFTY', { enabled: isEntitled });
   const observations = data?.observations ?? [];
   const safetyCards = extractSafetyFeed(observations, data?.synthesis ?? null, data?.sideInFocus ?? null);
   const feedCards = pushworthyCards(safetyCards);

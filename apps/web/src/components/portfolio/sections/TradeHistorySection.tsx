@@ -1,9 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Badge, EmptyState, Skeleton, buttonClasses, cn } from '@tradew/ui';
 import { fmt, inr, sign } from '@/lib/format';
-import { type TradeHistoryFilters, type TradeHistoryRow, downloadTradeHistoryCsv, fetchTradeHistory } from '@/lib/oms';
+import { type TradeHistoryFilters, downloadTradeHistoryCsv, fetchTradeHistory } from '@/lib/oms';
+import { qk } from '@/lib/query/keys';
+import { useSignedIn } from '@/lib/query/usePortfolio';
 import { Pagination } from '../Pagination';
 
 const PAGE_SIZE = 25;
@@ -16,10 +19,9 @@ export function TradeHistorySection() {
     search: '',
   });
   const [page, setPage] = useState(1);
-  const [rows, setRows] = useState<TradeHistoryRow[] | null>(null);
-  const [total, setTotal] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const signedIn = useSignedIn();
 
   const activeFilters: TradeHistoryFilters = {
     from: filters.from || undefined,
@@ -30,22 +32,26 @@ export function TradeHistorySection() {
     pageSize: PAGE_SIZE,
   };
 
-  const load = useCallback(async () => {
-    try {
-      const res = await fetchTradeHistory(activeFilters);
-      setRows(res.rows);
-      setTotal(res.total);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load trade history');
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.from, filters.to, filters.symbol, filters.search, page]);
+  // Every filter/page combination is its own cache entry, so paging forward and
+  // back — or clearing a filter — is instant instead of a fresh round-trip.
+  // The global `placeholderData` default keeps the previous page's rows on
+  // screen while the next one loads, which is what stops the table collapsing
+  // to a spinner and shoving the pagination control up the page on every click.
+  const query = useQuery({
+    queryKey: qk.tradeHistory.list(activeFilters as Record<string, unknown>),
+    queryFn: () => fetchTradeHistory(activeFilters),
+    enabled: signedIn,
+  });
 
-  useEffect(() => {
-    setRows(null);
-    void load();
-  }, [load]);
+  const rows = query.data?.rows ?? null;
+  const total = query.data?.total ?? 0;
+  const error =
+    exportError ??
+    (query.isError && !query.data
+      ? query.error instanceof Error
+        ? query.error.message
+        : 'Could not load trade history'
+      : null);
 
   function updateFilter(key: keyof typeof filters, value: string) {
     setPage(1);
@@ -54,10 +60,11 @@ export function TradeHistorySection() {
 
   async function onExport() {
     setExporting(true);
+    setExportError(null);
     try {
       await downloadTradeHistoryCsv({ from: activeFilters.from, to: activeFilters.to, symbol: activeFilters.symbol, search: activeFilters.search });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not export trade history');
+      setExportError(err instanceof Error ? err.message : 'Could not export trade history');
     } finally {
       setExporting(false);
     }
@@ -115,9 +122,19 @@ export function TradeHistorySection() {
       </div>
 
       {error && (
-        <p role="alert" className="mb-3 rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
-          {error}
-        </p>
+        <div role="alert" className="mb-3 rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setExportError(null);
+              void query.refetch();
+            }}
+            className="mt-1.5 font-semibold underline underline-offset-2 hover:no-underline"
+          >
+            Try again
+          </button>
+        </div>
       )}
 
       {rows === null && !error ? (

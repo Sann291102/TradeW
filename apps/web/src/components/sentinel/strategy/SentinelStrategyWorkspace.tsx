@@ -109,6 +109,11 @@ export function SentinelStrategyWorkspace() {
                 <span className="text-[10.5px] text-faint">{selectable.length} available</span>
               )}
             </div>
+            {/* Transient: the cached list below is still on screen and still
+                usable, so this is a line of text rather than a replacement for
+                it. `fault` is the terminal case — nothing cached — and only
+                then does the list give way. */}
+            {strategiesState.reconnecting && <Retrying subject="your strategies" />}
             {strategiesState.fault ? (
               <Fault message={faultMessage(strategiesState.fault, 'your strategies')} onRetry={strategiesState.refresh} />
             ) : (
@@ -155,6 +160,7 @@ export function SentinelStrategyWorkspace() {
               )}
             </div>
 
+            {watchesState.reconnecting && <Retrying subject="your watches" />}
             {watchesState.fault ? (
               <Fault message={faultMessage(watchesState.fault, 'your watches')} onRetry={watchesState.refresh} />
             ) : watching.length === 0 && grouped.inTrade.length === 0 ? (
@@ -263,6 +269,23 @@ export function SentinelStrategyWorkspace() {
         </div>
       </div>
     </section>
+  );
+}
+
+/**
+ * A refresh failed while what it was refreshing is still on screen.
+ *
+ * Deliberately one line with no button: there is nothing for the user to do,
+ * because a retry is already running. A "Try again" control here would offer
+ * them the chance to add a request to the pile that is currently being rate
+ * limited — the opposite of what helps.
+ */
+function Retrying({ subject }: { subject: string }) {
+  return (
+    <p role="status" aria-live="polite" className="mb-2 flex items-center gap-1.5 text-[11px] text-amber">
+      <span aria-hidden className="h-2.5 w-2.5 animate-spin rounded-full border border-border border-t-amber" />
+      Reconnecting — showing the last loaded copy of {subject}.
+    </p>
   );
 }
 

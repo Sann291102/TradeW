@@ -14,6 +14,7 @@ import { SimModule } from './sim/sim.module';
 import { DisciplineModule } from './discipline/discipline.module';
 import { CryptoModule } from './crypto/crypto.module';
 import { NewsModule } from './news/news.module';
+import { NseModule } from './nse/nse.module';
 import { BrokerModule } from './broker/broker.module';
 import { MailModule } from './mail/mail.module';
 import { SmsModule } from './sms/sms.module';
@@ -72,6 +73,7 @@ import { HealthController } from './health.controller';
     MarketDataModule,
     CryptoModule,
     NewsModule,
+    NseModule,
     BrokerModule,
     MailModule,
     SmsModule,

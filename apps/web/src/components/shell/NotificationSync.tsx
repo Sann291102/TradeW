@@ -3,8 +3,8 @@
 import { useEffect, useRef } from 'react';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { useWorkspaceStore } from '@/lib/store/workspaceStore';
-import { fetchNotifications } from '@/lib/notifications';
 import { playNotificationSound } from '@/lib/notificationSound';
+import { useNotifications } from '@/lib/query/useNotifications';
 
 /**
  * Keeps the workspace store's notification list in sync with the real backend
@@ -28,59 +28,54 @@ import { playNotificationSound } from '@/lib/notificationSound';
  * fire the chime at once on login. Only ids that appear in a LATER poll are
  * treated as new and allowed to ring.
  */
-const POLL_MS = 30_000;
-
 export function NotificationSync() {
   const status = useSessionStore((s) => s.status);
   const setNotifications = useWorkspaceStore((s) => s.setNotifications);
 
   // Ids we have already shown the user. A ref, not state: mutating it must not
-  // trigger a re-render, and it has to survive across interval ticks.
+  // trigger a re-render, and it has to survive across polls.
   const seen = useRef<Set<string>>(new Set());
   const primed = useRef(false);
 
+  const authenticated = status === 'authenticated';
+
+  // The fetch, the 30s cadence and the retry policy now belong to the shared
+  // query (lib/query/useNotifications) rather than a private setInterval here.
+  // Three things fall out of that: the /notifications page reuses this exact
+  // request instead of making its own, the poll pauses while the tab is in the
+  // background, and marking something read from the page invalidates this
+  // entry — so the bell's unread count corrects immediately instead of at the
+  // next tick. What stays local is the part that is genuinely this component's
+  // job: deciding when to ring.
+  const { data: items } = useNotifications(authenticated);
+
   useEffect(() => {
-    if (status !== 'authenticated') {
+    if (!authenticated) {
       // Reset so a future different sign-in re-primes cleanly rather than
       // inheriting the previous user's seen-set.
       seen.current = new Set();
       primed.current = false;
-      return;
     }
+  }, [authenticated]);
 
-    let cancelled = false;
+  useEffect(() => {
+    if (!authenticated || !items) return;
 
-    async function poll() {
-      try {
-        const items = await fetchNotifications(50);
-        if (cancelled) return;
+    // Genuinely-new unread ids: not seen before AND currently unread.
+    const fresh = items.filter((n) => !n.read && !seen.current.has(n.id));
+    // Track every id we've now observed, read or not.
+    for (const n of items) seen.current.add(n.id);
 
-        // Genuinely-new unread ids: not seen before AND currently unread.
-        const fresh = items.filter((n) => !n.read && !seen.current.has(n.id));
-        // Track every id we've now observed, read or not.
-        for (const n of items) seen.current.add(n.id);
+    setNotifications(items);
 
-        setNotifications(items);
-
-        // Sound only after the first load has primed the seen-set, and only if
-        // the operator hasn't muted. Read the flag at ring-time so a mid-session
-        // mute takes effect immediately.
-        if (primed.current && fresh.length > 0) {
-          if (!useWorkspaceStore.getState().notificationsMuted) playNotificationSound();
-        }
-        primed.current = true;
-      } catch {
-        // A failed poll is a no-op: keep the last-known list, try again next tick.
-      }
+    // Sound only after the first load has primed the seen-set, and only if the
+    // operator hasn't muted. Read the flag at ring-time so a mid-session mute
+    // takes effect immediately.
+    if (primed.current && fresh.length > 0) {
+      if (!useWorkspaceStore.getState().notificationsMuted) playNotificationSound();
     }
-
-    void poll();
-    const timer = setInterval(poll, POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [status, setNotifications]);
+    primed.current = true;
+  }, [authenticated, items, setNotifications]);
 
   return null;
 }

@@ -197,3 +197,24 @@ Market Reasoning panel below).
   `MarketReasoningPanel`) are no longer imported by the page but are left in
   the tree (not deleted) pending a follow-up decision — some may be reused by
   the drill-down sub-views the reference sidebar implies.
+
+**Added 2026-08-16 — Live Market Overview removed from the Sentinel dashboard:**
+`web-sentinel-live-market-overview-2026-08-16.tsx.txt` — the
+`apps/web/src/components/sentinel/dashboard/LiveMarketOverview.tsx` card
+introduced by the 2026-08-11 redesign above (1m/5m/15m/1H/1D tabs over real
+Dhan candles, plus a six-cell EMA20 · RSI14 · VWAP · MACD · OI · Volume strip
+from `lib/sentinel/indicators.ts`).
+- **Why:** it drew the *same instrument* as the "What Sentinel is reading"
+  panel rendered directly beneath it, on a timeframe the user picked rather
+  than the bar the engine actually evaluates. Two candle charts of one index,
+  disagreeing about which bar matters, one screen apart — the page answered
+  "what is Sentinel looking at?" twice, differently. The reading panel is the
+  one wired to the engine's own timeframe, so it is the one that stayed.
+  Requested directly: the panel should be gone, and the reference band should
+  follow the reading panel with nothing wedged between them.
+- **Dependencies:** none broken. It was the card's *only* consumer of
+  `buildIndicatorStrip`, but `lib/sentinel/indicators.ts` and its 15-case test
+  are left in the tree untouched — `SentinelChartReading` is the natural next
+  consumer, and the module is pure and independently tested. `chartFocus.ts`'s
+  `DAYS_FOR` table used to be documented as mirroring this card's tabs; that
+  comment now records that the table owns the mapping outright.

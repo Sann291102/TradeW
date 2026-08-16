@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Badge, Card, Skeleton, cn } from '@tradew/ui';
-import { NEWS_POLL_MS, fetchNews, newsTime, type NewsItem } from '@/lib/news';
+import { newsTime } from '@/lib/news';
+import { useNews } from '@/lib/query/useNews';
 
 /**
  * Market News — real headlines from Indian financial newswires.
@@ -24,32 +25,9 @@ const CATEGORY_TONE: Record<string, 'neutral' | 'brand' | 'warning'> = {
 };
 
 export function NewsClient() {
-  const [items, setItems] = useState<NewsItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [activeCat, setActiveCat] = useState<string>('All News');
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    async function tick() {
-      try {
-        const next = await fetchNews();
-        if (cancelled) return;
-        setItems(next);
-        setError(null);
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load market news');
-      } finally {
-        if (!cancelled) timer = setTimeout(tick, NEWS_POLL_MS);
-      }
-    }
-    void tick();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
+  // Shares one cached request with the dashboard card and the terminal panel.
+  const { items, error, refetch } = useNews();
 
   const categories = ['All News', 'Market', 'Economy', 'Stocks', 'Commodities', 'Global', 'Policy', 'Results'];
 
@@ -99,9 +77,16 @@ export function NewsClient() {
         {/* Left column: News Feed */}
         <div className="space-y-3">
           {error && (
-            <p role="alert" className="rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
-              {error}
-            </p>
+            <div role="alert" className="rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
+              <p>{error}</p>
+              <button
+                type="button"
+                onClick={refetch}
+                className="mt-1.5 font-semibold underline underline-offset-2 hover:no-underline"
+              >
+                Try again
+              </button>
+            </div>
           )}
 
           {!items && !error && (

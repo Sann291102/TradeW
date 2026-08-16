@@ -25,12 +25,13 @@ import { TradewThrottlerGuard } from './throttling';
 
 type KeyFn = (context: ExecutionContext, suffix: string, name: string) => string;
 type SkipFn = (context: ExecutionContext) => Promise<boolean>;
+type ThrowFn = (context: ExecutionContext, detail: { timeToBlockExpire?: number }) => Promise<void>;
 
 /** A guard instance with the DI arguments the base constructor never touches
  *  on these two code paths. */
 function guard() {
   const g = new TradewThrottlerGuard({ throttlers: [] } as never, {} as never, {} as never);
-  return g as unknown as { generateKey: KeyFn; shouldSkip: SkipFn };
+  return g as unknown as { generateKey: KeyFn; shouldSkip: SkipFn; throwThrottlingException: ThrowFn };
 }
 
 /** Minimal structural ExecutionContext — only the members these paths read. */
@@ -41,6 +42,21 @@ function ctx(url: string, className = 'AuthController', handlerName = 'login'): 
     getClass: () => ({ name: className }),
     getHandler: () => ({ name: handlerName }),
   } as unknown as ExecutionContext;
+}
+
+/** As `ctx`, plus a response that records the headers the guard sets on a 429. */
+function ctxWithResponse(): { context: ExecutionContext; headers: Record<string, string> } {
+  const headers: Record<string, string> = {};
+  const context = {
+    getType: () => 'http',
+    switchToHttp: () => ({
+      getRequest: () => ({ url: '/sentinel/observe' }),
+      getResponse: () => ({ setHeader: (k: string, v: string) => void (headers[k] = v) }),
+    }),
+    getClass: () => ({ name: 'SentinelController' }),
+    getHandler: () => ({ name: 'observe' }),
+  } as unknown as ExecutionContext;
+  return { context, headers };
 }
 
 describe('TradewThrottlerGuard — bucket identity', () => {
@@ -107,5 +123,54 @@ describe('TradewThrottlerGuard — unmetered probes', () => {
   it('skips non-HTTP contexts rather than reading a request that is not there', async () => {
     const rpc = { getType: () => 'rpc' } as unknown as ExecutionContext;
     expect(await guard().shouldSkip(rpc)).toBe(true);
+  });
+});
+
+/**
+ * A 429 has to say WHEN to come back.
+ *
+ * @nestjs/throttler suffixes the header with the throttler's name for anything
+ * not literally called `default`, and both of this API's throttlers are named.
+ * So without the override under test a rate-limited response carries
+ * `Retry-After-global` / `Retry-After-route` and no canonical `Retry-After` at
+ * all — leaving every client, including apps/web, to guess a delay the server
+ * already knows exactly. Guessing short earns another 429; guessing long keeps
+ * the Sentinel workspace showing "reconnecting" after the window has lifted.
+ */
+describe('TradewThrottlerGuard — Retry-After', () => {
+  const detail = (timeToBlockExpire: number) => ({ timeToBlockExpire });
+
+  async function retryAfter(timeToBlockExpire: number): Promise<string | undefined> {
+    const { context, headers } = ctxWithResponse();
+    // The base implementation's job is to throw; this asserts what was set on
+    // the way out, not that it declined to throw.
+    await guard()
+      .throwThrottlingException(context, detail(timeToBlockExpire))
+      .catch(() => undefined);
+    return headers['Retry-After'];
+  }
+
+  it('sets the canonical header from the time left in the window', async () => {
+    expect(await retryAfter(37)).toBe('37');
+  });
+
+  it('rounds up, never down', async () => {
+    // Rounding 4.2s down to 4 names an instant still inside the window — a
+    // retry guaranteed to be refused, which extends the block it is waiting on.
+    expect(await retryAfter(4.2)).toBe('5');
+  });
+
+  it('never says zero seconds', async () => {
+    // "Retry immediately" is not an answer a rate limiter can give.
+    expect(await retryAfter(0)).toBe('1');
+  });
+
+  it('does not touch a non-HTTP context', async () => {
+    const rpc = { getType: () => 'rpc' } as unknown as ExecutionContext;
+    await expect(
+      guard()
+        .throwThrottlingException(rpc, detail(10))
+        .catch(() => 'threw'),
+    ).resolves.toBeDefined();
   });
 });

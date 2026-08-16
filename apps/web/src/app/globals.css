@@ -42,3 +42,34 @@ body {
     animation: none;
   }
 }
+
+/* Route transition (shell/AppFrame.tsx).
+ *
+ * Deliberately a CSS animation on a STABLE element rather than framer-motion's
+ * <AnimatePresence><motion.div key={pathname}>. The keyed version cross-faded
+ * routes by unmounting and remounting the entire page subtree on every
+ * navigation, which turned Dashboard → Sentinel into a cold start: state lost,
+ * caches dropped, a duplicate /sentinel/observe fired, and a rate-limited
+ * response latched into an error card that only a browser reload cleared.
+ *
+ * AppFrame restarts this animation by removing and re-adding `.route-fade`
+ * around a forced reflow, so the fade replays on navigation while the node —
+ * and everything React has mounted beneath it — stays put. */
+@keyframes tw-route-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.route-fade {
+  animation: tw-route-fade 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .route-fade {
+    animation: none;
+  }
+}

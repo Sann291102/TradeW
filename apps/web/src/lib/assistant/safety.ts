@@ -69,6 +69,7 @@ function isConsequential(a: AssistantAction): string | null {
     case 'toggleSidebar':
     case 'newWorkspaceTab':
     case 'quote':
+    case 'marketFlow':
     case 'chartDetect':
     case 'chartClearDrawings':
       // Drawing is annotation, not workspace surgery: detection replaces only

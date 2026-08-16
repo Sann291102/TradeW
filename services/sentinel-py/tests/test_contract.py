@@ -80,6 +80,7 @@ def test_the_contract_shape_is_the_same_for_every_evaluator():
         "conditions",
         "latestObservation",
         "lifecycle",
+        "dataStatus",
         "performance",
         "availableAnalytics",
         "segments",
@@ -204,6 +205,22 @@ def test_the_latest_observation_skips_sweeps_that_could_not_read_the_market():
     skipped = _observation(0, metadata={"skipped": "market_data_unavailable"})
     contract = build_contract(_strategy(), [_watch()], {"w1": [skipped, _observation(1)]})
     assert contract["latestObservation"]["at"] == _observation(1)["createdAt"]
+
+
+def test_a_watch_that_cannot_read_the_market_says_so():
+    """A watch unable to reach the feed all session looks exactly like a quiet
+    market unless the contract says which one it is."""
+    skipped = _observation(
+        0, metadata={"skipped": "market_data_unavailable", "detail": "bridge unreachable"}
+    )
+    contract = build_contract(_strategy(), [_watch()], {"w1": [skipped, _observation(1)]})
+    assert contract["dataStatus"]["ok"] is False
+    assert "bridge unreachable" in contract["dataStatus"]["reason"]
+
+
+def test_a_readable_market_reports_ok():
+    contract = build_contract(_strategy(), [_watch()], {"w1": [_observation(1)]})
+    assert contract["dataStatus"]["ok"] is True
 
 
 def test_observed_context_is_passed_through_untouched():

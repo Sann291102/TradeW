@@ -142,6 +142,10 @@ export interface StrategyContract {
   conditions: ContractCondition[];
   latestObservation: ObservedContext | null;
   lifecycle: TimelineEvent[];
+  /** Whether the engine could read the market on its most recent pass. A watch
+   * that has been unable to reach the feed all session looks exactly like a
+   * quiet market without this. */
+  dataStatus: { ok: boolean; reason: string; checkedAt: string | null };
   performance: Performance;
   /** Which breakdowns this user's history can support. Empty until watches
    * have actually produced observations. */
@@ -207,6 +211,15 @@ export function toTimelineWatch(
     state: (watch.state ?? 'IDLE') as WatchState,
     direction: watch.direction ?? null,
     strategyId,
+    // The contract endpoint does not carry the strategy's timeframe, and this
+    // adapter must not guess one: null means "unknown here", which is true.
+    // Only the timeline route reports it, and only that path drives the charts.
+    timeframe: null,
+    // Same rule for the declared levels: this endpoint does not report them,
+    // so they are unknown here rather than absent from the position.
+    entryPrice: null,
+    invalidationPrice: null,
+    projectedPrice: null,
   };
 }
 

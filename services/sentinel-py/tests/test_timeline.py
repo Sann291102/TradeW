@@ -103,6 +103,26 @@ def test_watch_block_carries_what_the_feed_needs_to_label_direction():
     assert result["watch"]["direction"] == "SHORT"
 
 
+def test_declared_levels_are_reported_under_their_compliant_names():
+    """The columns are `stopPrice`/`targetPrice`; the contract is not."""
+    watch = {**WATCH, "entryPrice": 118.0, "stopPrice": 132.0, "targetPrice": 90.0}
+    block = build_timeline(watch, [])["watch"]
+    assert block["entryPrice"] == 118.0
+    assert block["invalidationPrice"] == 132.0
+    assert block["projectedPrice"] == 90.0
+    # The order-type vocabulary must not survive the boundary.
+    assert "stopPrice" not in block
+    assert "targetPrice" not in block
+
+
+def test_undeclared_levels_are_none_never_zero():
+    """A watch with no position has no levels. Zero is a price."""
+    block = build_timeline(WATCH, [])["watch"]
+    assert block["entryPrice"] is None
+    assert block["invalidationPrice"] is None
+    assert block["projectedPrice"] is None
+
+
 # --- run collapsing ---------------------------------------------------------
 
 
@@ -272,3 +292,76 @@ def test_conditions_ignore_in_trade_sweeps():
 
 def test_conditions_are_empty_when_nothing_has_been_evaluated():
     assert build_timeline(WATCH, [])["conditions"] == []
+
+
+# ── the engine's reading of the candles ──────────────────────────────────────
+# The sweep has always measured these (poller.py writes them into observation
+# metadata on every pass); until now nothing read them back out, so the browser
+# could show WHICH conditions were met but never WHAT was measured to decide it.
+
+
+def test_reading_reports_what_the_sweep_measured():
+    obs = [
+        observation(
+            "2026-08-13T10:00:00",
+            metadata={
+                "mandatoryMet": 1,
+                "mandatoryTotal": 2,
+                "openingRangeHigh": 24400.0,
+                "openingRangeLow": 24310.0,
+                "vwap": {"testOrdinal": 2, "deviationAtr": 0.4},
+                "pullback": None,
+            },
+        )
+    ]
+    reading = build_timeline(WATCH, obs)["reading"]
+    assert reading["candleTime"] is None
+    assert reading["openingRangeHigh"] == 24400.0
+    assert reading["measurements"]["vwap"] == {"testOrdinal": 2, "deviationAtr": 0.4}
+    # A measurement the instrument cannot support is absent, not null: "no
+    # volume means no VWAP" reads differently from "VWAP is nothing".
+    assert "pullback" not in reading["measurements"]
+
+
+def test_reading_names_a_sweep_that_could_not_read_the_market():
+    """A dead bridge must not leave stale levels looking current."""
+    obs = [
+        observation(
+            "2026-08-13T10:05:00",
+            metadata={"skipped": "market_data_unavailable", "detail": "bridge unreachable"},
+        ),
+        observation("2026-08-13T10:00:00", metadata={"openingRangeHigh": 24400.0}),
+    ]
+    reading = build_timeline(WATCH, obs)["reading"]
+    assert reading["unreadable"] == "bridge unreachable"
+    # The last thing that WAS true is still reported — it is just no longer
+    # claimed to be current.
+    assert reading["openingRangeHigh"] == 24400.0
+    assert reading["at"] == "2026-08-13T10:00:00"
+
+
+def test_reading_ignores_in_trade_sweeps():
+    """An in-trade pass measures the position against the user's own levels
+    and records none of the chart geometry."""
+    obs = [
+        observation("2026-08-13T11:00:00", agent="intrade-monitor", state="IN_TRADE",
+                    metadata={"rMultiple": 1.4}),
+        observation("2026-08-13T10:00:00", metadata={"zone": {"id": "z1", "touches": 3}}),
+    ]
+    reading = build_timeline(WATCH, obs)["reading"]
+    assert reading["measurements"]["zone"] == {"id": "z1", "touches": 3}
+
+
+def test_reading_is_none_when_nothing_has_been_swept():
+    assert build_timeline(WATCH, [])["reading"] is None
+
+
+def test_timeframe_is_the_one_the_sweep_reads():
+    tl = build_timeline(WATCH, [], {"timeframe": "15m"})
+    assert tl["watch"]["timeframe"] == "15m"
+
+
+def test_timeframe_is_none_when_the_strategy_named_none():
+    """Never a second copy of the poller's default — the browser is told
+    'unspecified' so the two cannot drift apart."""
+    assert build_timeline(WATCH, [])["watch"]["timeframe"] is None

@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { Card, EmptyState, Skeleton, cn } from '@tradew/ui';
-import { fetchTradeHistory, isSignedIn, type TradeHistoryRow } from '@/lib/oms';
+import { fetchTradeHistory } from '@/lib/oms';
+import { qk } from '@/lib/query/keys';
+import { LIVE_POLL_MS, liveQueryOptions } from '@/lib/query/live';
+import { useSignedIn } from '@/lib/query/usePortfolio';
 import { fmt, sign, inr } from '@/lib/format';
-
-const POLL_MS = 5_000;
 
 /** Today's date, IST, as `YYYY-MM-DD` — the `/sim/trade-history` filter
  *  boundary. NSE's own trading day is IST, matching every other date/time
@@ -23,36 +24,22 @@ function todayIsoIst(): string {
  * always reconciles with what's listed above it.
  */
 export function TodaysTrades() {
-  const [rows, setRows] = useState<TradeHistoryRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const signedIn = useSignedIn();
 
-  const load = useCallback(async () => {
-    const today = todayIsoIst();
-    const res = await fetchTradeHistory({ from: today, to: today, pageSize: 20 });
-    setRows(res.rows);
-    setError(null);
-  }, []);
+  const todayFilters = { from: todayIsoIst(), to: todayIsoIst(), pageSize: 20 };
+  const query = useQuery({
+    queryKey: qk.tradeHistory.list(todayFilters),
+    queryFn: () => fetchTradeHistory(todayFilters),
+    ...liveQueryOptions({ intervalMs: LIVE_POLL_MS, enabled: signedIn }),
+  });
 
-  useEffect(() => {
-    if (!signedIn) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    async function tick() {
-      try {
-        await load();
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not reach the trading backend');
-      } finally {
-        if (!cancelled) timer = setTimeout(tick, POLL_MS);
-      }
-    }
-    void tick();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [signedIn, load]);
+  const rows = query.data?.rows ?? null;
+  const error =
+    query.isError && !query.data
+      ? query.error instanceof Error
+        ? query.error.message
+        : 'Could not reach the trading backend'
+      : null;
 
   const totalPnl = rows?.reduce((sum, r) => sum + r.netPnl, 0) ?? 0;
 
@@ -71,7 +58,16 @@ export function TodaysTrades() {
           <EmptyState title="Sign in to see today's trades" description="Executed fills appear here as soon as an order fills on the Trade screen." />
         </div>
       ) : error ? (
-        <p role="alert" className="py-4 text-center text-xs text-down">{error}</p>
+        <div role="alert" className="py-4 text-center text-xs text-down">
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={() => void query.refetch()}
+            className="mt-1.5 font-semibold underline underline-offset-2 hover:no-underline"
+          >
+            Try again
+          </button>
+        </div>
       ) : rows === null ? (
         <div className="space-y-2">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -125,12 +121,4 @@ export function TodaysTrades() {
       )}
     </Card>
   );
-}
-
-/** `isSignedIn` reads localStorage, unavailable during SSR — same
- *  hydration-safety pattern as `PortfolioClient.tsx`'s local hook. */
-function useSignedIn(): boolean {
-  const [signedIn, setSignedIn] = useState(false);
-  useEffect(() => setSignedIn(isSignedIn()), []);
-  return signedIn;
 }

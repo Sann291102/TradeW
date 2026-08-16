@@ -1,5 +1,5 @@
 import { ExecutionContext, Injectable } from '@nestjs/common';
-import { ThrottlerGuard, ThrottlerModuleOptions, ThrottlerStorage } from '@nestjs/throttler';
+import { ThrottlerGuard, ThrottlerLimitDetail, ThrottlerModuleOptions, ThrottlerStorage } from '@nestjs/throttler';
 import { Reflector } from '@nestjs/core';
 
 /**
@@ -143,5 +143,43 @@ export class TradewThrottlerGuard extends ThrottlerGuard {
   protected generateKey(context: ExecutionContext, suffix: string, name: string): string {
     if (name === 'global') return `global:${suffix}`;
     return `${name}:${context.getClass().name}.${context.getHandler().name}:${suffix}`;
+  }
+
+  /**
+   * Emit a STANDARD `Retry-After` alongside whatever the base guard set.
+   *
+   * ── WHY THIS IS NOT REDUNDANT ──────────────────────────────────────────────
+   *
+   * `@nestjs/throttler` suffixes the header with the throttler's name for every
+   * throttler not literally called `default`. Both of ours are named — `global`
+   * and `route`, deliberately, because the two-bucket design in the header of
+   * this file depends on telling them apart. The consequence nobody notices
+   * until a client tries to be well-behaved: a 429 from this API carries
+   * `Retry-After-global` or `Retry-After-route` and NO `Retry-After` at all.
+   *
+   * So every HTTP client on earth, ours included, falls back to guessing when
+   * the server already knows the answer to the second. Guessing short means
+   * another 429 that extends the window; guessing long means the workspace
+   * sits in a "reconnecting" state after the limit has already lifted. The
+   * named headers stay — they say WHICH bucket tripped, which is genuinely
+   * useful — and the canonical one is added next to them.
+   *
+   * Reading it in the browser also needs it in `exposedHeaders` on the CORS
+   * config (services/api/src/main.ts): the API and the web app are separate
+   * origins, and a response header not on that list is invisible to `fetch`
+   * even though it arrived.
+   */
+  protected async throwThrottlingException(
+    context: ExecutionContext,
+    throttlerLimitDetail: ThrottlerLimitDetail,
+  ): Promise<void> {
+    if (context.getType() === 'http') {
+      const res = context.switchToHttp().getResponse();
+      // Seconds, rounded UP: rounding down names an instant that is still
+      // inside the window, which is a retry guaranteed to be refused.
+      const seconds = Math.max(1, Math.ceil((throttlerLimitDetail.timeToBlockExpire ?? 0) || 1));
+      res?.setHeader?.('Retry-After', String(seconds));
+    }
+    return super.throwThrottlingException(context, throttlerLimitDetail);
   }
 }

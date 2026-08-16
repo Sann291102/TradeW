@@ -14,6 +14,8 @@ import { NotificationModule } from '../notification/notification.module';
   imports: [NotificationModule],
   controllers: [PaymentController],
   providers: [PaymentService, RazorpayClient],
-  exports: [PaymentService],
+  // RazorpayClient is exported so PricingModule can ask it the one question
+  // `GET /pricing` must not answer on its own — whether billing is configured.
+  exports: [PaymentService, RazorpayClient],
 })
 export class PaymentModule {}

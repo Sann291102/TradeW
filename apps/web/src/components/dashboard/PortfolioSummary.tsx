@@ -1,12 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, AnimatedNumber, EmptyState, Skeleton, cn } from '@tradew/ui';
-import { fetchPortfolio, isSignedIn, type PortfolioSummary as PortfolioSummaryDto } from '@/lib/oms';
+import { usePortfolioSummary, useSignedIn } from '@/lib/query/usePortfolio';
 import { inr, sign } from '@/lib/format';
-
-const POLL_MS = 5_000;
 
 function Metric({ label, value, tone, signed }: { label: string; value: number; tone?: 'up' | 'down'; signed?: boolean }) {
   return (
@@ -31,38 +28,25 @@ function Metric({ label, value, tone, signed }: { label: string; value: number; 
  * Was rendering `PORTFOLIO_SUMMARY`, a hardcoded object from
  * lib/mock/market.ts, even though `/sim/portfolio` was already live and the
  * real Portfolio page (`app/portfolio/PortfolioClient.tsx`) had already moved
- * off it. Same real fetch + 5s poll pattern as that page, condensed to a
- * summary card.
+ * off it. Condensed to a summary card.
+ *
+ * Reads the SAME cached `/sim/portfolio` query as the Portfolio page rather
+ * than running its own 5s timer — with both mounted that endpoint was being
+ * fetched twice per tick for identical data.
  */
 export function PortfolioSummary() {
-  const [summary, setSummary] = useState<PortfolioSummaryDto | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const signedIn = useSignedIn();
+  const { data, isError, error: queryError } = usePortfolioSummary(signedIn);
 
-  const load = useCallback(async () => {
-    setSummary(await fetchPortfolio());
-    setError(null);
-  }, []);
-
-  useEffect(() => {
-    if (!signedIn) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    async function tick() {
-      try {
-        await load();
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not reach the trading backend');
-      } finally {
-        if (!cancelled) timer = setTimeout(tick, POLL_MS);
-      }
-    }
-    void tick();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [signedIn, load]);
+  const summary = data ?? null;
+  // Stale numbers beat an error banner: a failed poll against figures already
+  // on screen is transient, and the retry is already scheduled.
+  const error =
+    isError && !data
+      ? queryError instanceof Error
+        ? queryError.message
+        : 'Could not reach the trading backend'
+      : null;
 
   if (!signedIn) {
     return (
@@ -121,12 +105,4 @@ export function PortfolioSummary() {
       </Card>
     </Link>
   );
-}
-
-/** `isSignedIn` reads localStorage, unavailable during SSR — same
- *  hydration-safety pattern as `PortfolioClient.tsx`'s local hook. */
-function useSignedIn(): boolean {
-  const [signedIn, setSignedIn] = useState(false);
-  useEffect(() => setSignedIn(isSignedIn()), []);
-  return signedIn;
 }

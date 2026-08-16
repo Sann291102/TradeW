@@ -10,6 +10,8 @@
  * See docs/product-architecture/SENTINEL.md and lib/sentinel/types.ts.
  */
 
+import { extractMarketContext, type MarketContextDimension } from './deriveContext';
+import { toTimelineDots, type TimelineDot } from './sessionTimeline';
 import type {
   ConfidenceBreakdown,
   MarketProfile,
@@ -19,10 +21,10 @@ import type {
   ObserveResponse,
   RiskAssessment,
   Synthesis,
-  TimelineEntry,
 } from './types';
 
 export type Tone = 'up' | 'down' | 'amber' | 'teal' | 'neutral';
+export type { TimelineDot };
 
 export interface RegimeCard {
   /** short uppercase regime word, e.g. TRENDING / RANGING / VOLATILE */
@@ -77,14 +79,6 @@ export interface EmotionCard {
   tone: Tone;
 }
 
-export interface TimelineDot {
-  time: string;
-  title: string;
-  detail: string;
-  level: TimelineEntry['level'];
-  tone: Tone;
-}
-
 export interface DashboardModel {
   regime: RegimeCard;
   confidence: ConfidenceCard;
@@ -95,6 +89,13 @@ export interface DashboardModel {
   observation: ObservationCardModel;
   emotion: EmotionCard;
   timeline: TimelineDot[];
+  /**
+   * The structural read of the market itself — volatility, momentum,
+   * structure, trap probability, liquidity, trend, institutional
+   * participation. Each dimension carries `known`, and a dimension nothing
+   * computes says "not enough data yet" rather than showing a guess.
+   */
+  marketContext: { tags: string[]; dimensions: MarketContextDimension[] };
   sessionPhase: MarketStateSnapshot['sessionPhase'];
   /** true when the exchange session is live (active/closing) */
   marketActive: boolean;
@@ -265,43 +266,12 @@ function emotionCard(r: RiskAssessment | undefined, observations: Observation[])
   return { state: 'Elevated', message: emoObs?.content ?? 'Emotional risk detected — slow down before acting.', tone: 'down' };
 }
 
-// --- timeline --------------------------------------------------------------
-
-const LEVEL_TONE: Record<TimelineEntry['level'], Tone> = {
-  info: 'teal',
-  observation: 'teal',
-  setup: 'amber',
-  guidance: 'up',
-  transition: 'neutral',
-};
-
-function timeline(entries: TimelineEntry[] | undefined): TimelineDot[] {
-  if (!entries?.length) return [];
-  return entries.map((e) => ({
-    time: e.time,
-    title: levelTitle(e.level),
-    detail: e.event || '',
-    level: e.level,
-    tone: LEVEL_TONE[e.level] ?? 'neutral',
-  }));
-}
-
-function levelTitle(level: TimelineEntry['level']): string {
-  switch (level) {
-    case 'setup':
-      return 'Setup';
-    case 'guidance':
-      return 'Guidance';
-    case 'transition':
-      return 'State Change';
-    case 'observation':
-      return 'Observation';
-    default:
-      return 'Note';
-  }
-}
-
 // --- top-level -------------------------------------------------------------
+//
+// Timeline mapping moved to `sessionTimeline.ts`. It used to live here as a
+// straight `entries.map(...)`, which preserved the engine's APPEND order — and
+// the engine stamps entries with market time, not append time, so the track
+// could render an event out of sequence. See that module's header.
 
 export function buildDashboardModel(data: ObserveResponse | null, loading: boolean): DashboardModel {
   const observations = data?.observations ?? [];
@@ -315,7 +285,12 @@ export function buildDashboardModel(data: ObserveResponse | null, loading: boole
     radar: radar(data?.risk),
     observation: observationCard(data?.synthesis, data?.confidence, observations, data?.publication, loading),
     emotion: emotionCard(data?.risk, observations),
-    timeline: timeline(data?.timeline),
+    timeline: toTimelineDots(data?.timeline),
+    marketContext: extractMarketContext(data?.signals ?? [], {
+      profile: data?.marketProfile,
+      confidence: data?.confidence,
+      risk: data?.risk,
+    }),
     sessionPhase,
     marketActive: sessionPhase === 'active' || sessionPhase === 'closing',
   };

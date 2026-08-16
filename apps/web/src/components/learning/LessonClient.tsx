@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { cn } from '@tradew/ui';
 import { learningApi, lessonIdOf } from '@/lib/learning-platform/api';
+import { useCompleteLesson, useRecordQuiz } from '@/lib/query/useLearning';
 import type { Flashcard, Lesson, Quiz, TeacherAnswer } from '@/lib/learning-platform/types';
 
 /**
@@ -19,6 +20,7 @@ export function LessonClient({ courseId, conceptId }: { courseId: string; concep
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
+  const completeLesson = useCompleteLesson();
 
   useEffect(() => {
     let cancelled = false;
@@ -37,9 +39,13 @@ export function LessonClient({ courseId, conceptId }: { courseId: string; concep
     };
   }, [lessonId]);
 
+  // Completing a lesson changes the catalogue's progress counts, which the
+  // Learning hub and the course path both render. The mutation invalidates
+  // that shared query, so the tick and the progress ring update the moment the
+  // user goes back rather than whenever the catalogue happens to be refetched.
   async function markComplete() {
     try {
-      await learningApi.completeLesson(lessonId);
+      await completeLesson.mutateAsync(lessonId);
       setCompleted(true);
     } catch {
       /* non-fatal */
@@ -223,6 +229,7 @@ function QuizPanel({ lessonId }: { lessonId: string }) {
   const [open, setOpen] = useState(false);
   const [picks, setPicks] = useState<Record<string, number>>({});
   const [submitted, setSubmitted] = useState(false);
+  const recordQuiz = useRecordQuiz();
 
   async function load() {
     setOpen(true);
@@ -237,11 +244,13 @@ function QuizPanel({ lessonId }: { lessonId: string }) {
 
   const score = quiz ? quiz.questions.filter((q) => picks[q.id] === q.answerIndex).length : 0;
 
+  // Recording a quiz score moves the catalogue's progress the same way
+  // completing a lesson does, so it invalidates the same shared query.
   async function finish() {
     setSubmitted(true);
     if (quiz) {
       try {
-        await learningApi.recordQuiz(lessonId, score, quiz.questions.length);
+        await recordQuiz.mutateAsync({ lessonId, score, total: quiz.questions.length });
       } catch {
         /* non-fatal */
       }

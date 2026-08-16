@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { PricingController } from './pricing.controller';
+import { RazorpayClient } from '../payments/razorpay.client';
 
 /**
  * The server's view of pricing.
@@ -10,8 +11,24 @@ import { PricingController } from './pricing.controller';
  * A frontend that no longer renders one is not the same thing as an endpoint
  * that can no longer produce one, and the spec asked for the latter.
  */
+
+/**
+ * `RazorpayClient` reads its credentials once, at construction, so a test
+ * controls `configured` by setting the environment BEFORE building one.
+ */
+function controllerWithBilling(enabled: boolean): PricingController {
+  if (enabled) {
+    process.env.RAZORPAY_KEY_ID = 'rzp_test_pricing_spec';
+    process.env.RAZORPAY_KEY_SECRET = 'secret_pricing_spec';
+  } else {
+    delete process.env.RAZORPAY_KEY_ID;
+    delete process.env.RAZORPAY_KEY_SECRET;
+  }
+  return new PricingController(new RazorpayClient());
+}
+
 describe('GET /pricing', () => {
-  const body = new PricingController().get();
+  const body = controllerWithBilling(false).get();
 
   it('serves exactly the three active Sentinel terms', () => {
     expect(body.sentinel).toHaveLength(3);
@@ -47,5 +64,50 @@ describe('GET /pricing', () => {
   it('leaks no entitlement or user state — it is the same list for everyone', () => {
     const json = JSON.stringify(body);
     expect(json).not.toMatch(/userId|capabilit|entitle|token|email/i);
+  });
+});
+
+/**
+ * `billingEnabled` used to be the constant `false`, which meant this route kept
+ * telling signed-out visitors that no account could be charged on a server that
+ * had Razorpay credentials and was charging them. These tests exist so that the
+ * payload cannot drift from the server's real state again — the earlier suite
+ * above passes just as happily against a hardcoded `false`, so it could never
+ * have caught it.
+ */
+describe('GET /pricing — billing state tracks the server, not a constant', () => {
+  const savedId = process.env.RAZORPAY_KEY_ID;
+  const savedSecret = process.env.RAZORPAY_KEY_SECRET;
+
+  afterEach(() => {
+    // Restore, rather than delete: this process's env is shared with every
+    // other spec in the run.
+    if (savedId === undefined) delete process.env.RAZORPAY_KEY_ID;
+    else process.env.RAZORPAY_KEY_ID = savedId;
+    if (savedSecret === undefined) delete process.env.RAZORPAY_KEY_SECRET;
+    else process.env.RAZORPAY_KEY_SECRET = savedSecret;
+  });
+
+  it('reports billing ON once Razorpay is configured', () => {
+    expect(controllerWithBilling(true).get().billingEnabled).toBe(true);
+  });
+
+  it('drops the "not enabled" notice once billing is on, rather than contradicting itself', () => {
+    expect(controllerWithBilling(true).get().notice).toBeUndefined();
+  });
+
+  it('reports billing OFF with no credentials, and says why', () => {
+    const off = controllerWithBilling(false).get();
+    expect(off.billingEnabled).toBe(false);
+    expect(off.notice).toMatch(/not enabled/i);
+  });
+
+  it('agrees with the payments surface, which reads the same RazorpayClient', () => {
+    // The defect was these two disagreeing. Assert the shared source directly:
+    // whatever `RazorpayClient.configured` says is what /pricing must publish.
+    process.env.RAZORPAY_KEY_ID = 'rzp_test_agreement';
+    process.env.RAZORPAY_KEY_SECRET = 'secret_agreement';
+    const razorpay = new RazorpayClient();
+    expect(new PricingController(razorpay).get().billingEnabled).toBe(razorpay.configured);
   });
 });

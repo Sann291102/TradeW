@@ -58,6 +58,12 @@ export default defineConfig({
       'src/lib/assistant/voice-output.test.ts',
       // Explain-questions must never resolve to navigation.
       'src/lib/assistant/concepts.test.ts',
+      // Institutional data. Two boundaries in one file: a judgement question
+      // that names FIIs must not be answered with a flow number, and the
+      // action the agent emits carries an ASK and never a destination — the
+      // reason "the agent can reach NSE" is not "the agent can make this
+      // server fetch anything".
+      'src/lib/assistant/flows.test.ts',
       // Per-tab session isolation. Regression cover for "every tab shows
       // whoever logged in last" — the credential's storage scope is the fix,
       // so it is asserted rather than eyeballed.
@@ -81,6 +87,16 @@ export default defineConfig({
       // value gaps" (draw) and "what is a fair value gap" (explain), which
       // reach the same matcher with the same words.
       'src/lib/assistant/detect.test.ts',
+      // The engine's reading of the chart beside it. Every failure mode here
+      // is a confident statement about bars: a measurement the sweep never
+      // produced, or a stale one presented as current after the bridge died.
+      'src/components/sentinel/SentinelChartReading.test.tsx',
+      // The strategy contract read back to the user. A card full of price
+      // levels on a surface forbidden from recommending any is only safe
+      // because every number on it came from the user — so the boundary is
+      // asserted, including that the reference mock's position-size
+      // recommendation never appears.
+      'src/components/sentinel/StrategyConditionsPanel.test.tsx',
     ],
     environment: 'node',
     // The strategy components are rendered with renderToStaticMarkup, which
