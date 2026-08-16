@@ -128,6 +128,18 @@ export function SentinelWorkspace() {
             </>
           }
           controls={controls}
+          /*
+           * Only the observation-side figure is threaded through now. The
+           * strategy-side ones (confirmed, open, outcomes, expectancy) are
+           * fetched by the stats grid itself against services/sentinel-py on
+           * its own faster cadence — they describe the user's watches, which
+           * the sweep re-evaluates every 15s, and re-deriving them from this
+           * 45s poll would show a confirmed setup as unconfirmed for most of
+           * a minute. `tradesToday`/`flaggedEvents` still come from here —
+           * they describe the trader's own activity rather than any strategy,
+           * so they stay on the observation cadence and are rendered as a
+           * separate line rather than as tiles in the strategy grid.
+           */
           sessionStats={{
             signalsTriggered: (data?.signals ?? []).filter((s) => s.triggered).length,
             tradesToday: summary?.tradesToday ?? null,

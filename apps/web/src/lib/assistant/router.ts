@@ -1,6 +1,7 @@
 import { resolveCommand } from './commands';
 import { guardDomain, guardHardBoundaries } from './domain-guard';
 import { resolveQuoteQuestion } from './quotes';
+import { resolveFlowQuestion } from './flows';
 import { conceptReply, resolveConceptQuestion } from './concepts';
 import { ASSISTANT_NAME } from './identity';
 import { analysisPlan, commandPlan, quotePlan, type AssistantPlan } from './types';
@@ -15,8 +16,10 @@ import { analysisPlan, commandPlan, quotePlan, type AssistantPlan } from './type
  *   2. hard boundaries       — orders, Sentinel's reasoning, trade advice
  *   3. command resolution    — navigation / app control, executed immediately
  *   4. quote lookup          — "what is NIFTY trading at", answered for real
- *   5. remit fence           — markets + this app only
- *   6. analysis              — parked for Phase 2
+ *   5. institutional data    — "were FIIs buying", answered from NSE
+ *   6. concept question      — "what is a fair value gap"
+ *   7. remit fence           — markets + this app only
+ *   8. analysis              — parked for Phase 2
  *
  * Boundaries sit above command resolution so no phrasing can reach a
  * prohibited capability. The remit fence sits below it, because a resolved
@@ -81,6 +84,33 @@ export function resolveUtterance(text: string, today = new Date()): AssistantPla
         : `Reading ${quote.symbols.join(', ')}…`,
       [{ type: 'quote', symbols: quote.symbols, ask: quote.ask }],
       [`Classified → quote lookup (${quote.ask})`, `Resolved ${quote.symbols.join(', ')}`],
+    );
+  }
+
+  /**
+   * Institutional data — FII/DII flow, breadth, derivatives positioning.
+   *
+   * Sits directly below quote lookup because it is the same KIND of thing: a
+   * fact the exchange publishes, which this app can fetch and read back. It is
+   * still below the hard boundaries, so "should I follow the FII flow" is
+   * refused rather than answered with a number, and `flows.ts` declines
+   * judgement phrasing on its own account as a second guard.
+   *
+   * Above the concept resolver, for the reason the comment below records about
+   * quotes: "what is FII activity today" and "what is an FII" open identically,
+   * and the first is a lookup.
+   */
+  const flow = resolveFlowQuestion(t);
+  if (flow) {
+    const reading = {
+      cash: 'institutional cash flow',
+      breadth: 'market breadth',
+      positioning: 'derivatives positioning',
+    }[flow.ask];
+    return quotePlan(
+      `Reading ${reading} from NSE…`,
+      [{ type: 'marketFlow', ask: flow.ask }],
+      [`Classified → institutional data (${flow.ask})`, 'Source: NSE public publications'],
     );
   }
 

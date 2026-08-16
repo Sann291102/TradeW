@@ -2,9 +2,31 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, fetchTimeline, listWatches } from '@/lib/sentinel/sentinelPy';
-import type { Timeline, TimelineEvent, WatchSummary } from '@/lib/sentinel/sentinelPy';
+import type { Timeline, TimelineEvent, TimelineReading, WatchState, WatchSummary } from '@/lib/sentinel/sentinelPy';
+import { focusFromTimeline, type ChartFocus } from '@/lib/sentinel/chartFocus';
 import { StrategyFocusPanel } from './StrategyFocusPanel';
 import { TimelineEventCard } from './TimelineEventCard';
+
+/**
+ * What the selected watch puts under observation, reported upward so the
+ * charts can be drawn on it.
+ *
+ * The selector lives here because this is where the watches are already
+ * loaded; duplicating that fetch one level up would mean two lists that can
+ * disagree about which watch is selected.
+ */
+export interface WatchObservation {
+  focus: ChartFocus;
+  reading: TimelineReading | null;
+  /**
+   * The whole timeline for the selected watch, so panels beside the feed (the
+   * conditions contract) render the SAME watch the feed and the charts are
+   * showing. Publishing the object rather than re-fetching it one level up is
+   * the point: a second fetch is a second selection that can disagree with
+   * this one about which watch is current.
+   */
+  timeline: Timeline;
+}
 
 const POLL_MS = 10_000;
 
@@ -21,12 +43,47 @@ const POLL_MS = 10_000;
 const MIN_STRENGTH = 0.6;
 
 /**
+ * How each watch state reads in the selector. Plain words rather than the
+ * engine's enum: "IN_TRADE" is a state name, "Active" is what the user would
+ * call it. Deliberately not shared with `StrategyFocusPanel`'s badge map —
+ * that one styles a status chip, this one fills an `<option>`, and merging
+ * them would couple a tone to a word for no gain.
+ */
+const STATE_WORD: Record<WatchState, string> = {
+  IDLE: 'Watching',
+  FORMING: 'Forming',
+  CONFIRMED: 'Confirmed',
+  IN_TRADE: 'Active',
+  EXITED: 'Closed',
+};
+
+/**
  * Live per-strategy feed: newest first, only events about the user's own
  * watch. Replaces the old generic observation panel, which reported
  * market-wide analysis and a model confidence bar that said nothing about
  * whether THIS strategy was working.
  */
-export function StrategyTimelineFeed() {
+export function StrategyTimelineFeed({
+  onObservationChange,
+  showFocusPanel = true,
+}: {
+  /**
+   * Called when the selected watch — or what the engine last read off it —
+   * changes. Optional: the feed is fully usable on its own, and nothing here
+   * depends on anyone listening.
+   */
+  onObservationChange?: (next: WatchObservation | null) => void;
+  /**
+   * Whether to render `StrategyFocusPanel` above the feed.
+   *
+   * Defaults to true so every existing caller is unchanged. The dashboard
+   * passes false: it renders `StrategyConditionsPanel` in the column beside
+   * this one, and the focus panel's own condition list would then be the same
+   * ticks twice, side by side. Its other half (strategy history) is what the
+   * session-stats grid on the same screen already aggregates.
+   */
+  showFocusPanel?: boolean;
+} = {}) {
   const [watches, setWatches] = useState<WatchSummary[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [timeline, setTimeline] = useState<Timeline | null>(null);
@@ -78,6 +135,50 @@ export function StrategyTimelineFeed() {
     return () => clearInterval(timer);
   }, [selectedId, load]);
 
+  /**
+   * The feed re-polls every 10s and gets a fresh `Timeline` object each time,
+   * so publishing on object identity would restart the charts' data hooks
+   * every poll for no reason. This key changes only when something the charts,
+   * the reading strip or the conditions panel actually render has changed —
+   * `reading.at` moves whenever the engine has measured a new sweep, so it
+   * covers the measurements without listing every one of them.
+   *
+   * The conditions signature is part of the key because the conditions panel
+   * now consumes this: a rule flipping met/unmet changes nothing else in the
+   * list, and without it the panel would keep showing the previous sweep's
+   * ticks until some unrelated field moved.
+   */
+  const observationKey = timeline
+    ? [
+        timeline.watch.id,
+        timeline.watch.symbol,
+        timeline.watch.strike,
+        timeline.watch.optionType,
+        timeline.watch.expiry,
+        timeline.watch.state,
+        timeline.watch.timeframe,
+        timeline.watch.entryPrice,
+        timeline.watch.invalidationPrice,
+        timeline.watch.projectedPrice,
+        timeline.reading?.at,
+        timeline.reading?.unreadable,
+        timeline.conditions.map((c) => `${c.id}:${c.met ? 1 : 0}`).join(','),
+      ].join('|')
+    : '';
+
+  const publishedKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!onObservationChange) return;
+    if (publishedKeyRef.current === observationKey) return;
+    publishedKeyRef.current = observationKey;
+
+    const focus = focusFromTimeline(timeline);
+    onObservationChange(
+      focus && timeline ? { focus, reading: timeline.reading ?? null, timeline } : null,
+    );
+  }, [observationKey, timeline, onObservationChange]);
+
   const visible = useMemo(() => {
     if (!timeline) return [] as TimelineEvent[];
     const strong = timeline.events.filter((e) => e.strength >= MIN_STRENGTH);
@@ -113,28 +214,31 @@ export function StrategyTimelineFeed() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      {timeline && <StrategyFocusPanel timeline={timeline} />}
+    <div className="flex h-full flex-col gap-4">
+      {showFocusPanel && timeline && <StrategyFocusPanel timeline={timeline} />}
       <Shell
       selector={
-        watches.length > 1 ? (
-          <select
-            value={selectedId ?? ''}
-            onChange={(e) => {
-              setSelectedId(e.target.value);
-              setTimeline(null);
-            }}
-            className="rounded-lg border border-border bg-bg px-2 py-1 text-[11px] text-text"
-            aria-label="Select which watch to display"
-          >
-            {watches.map((w) => (
-              <option key={w.id} value={w.id}>
-                {[w.symbol, w.strike, w.optionType].filter(Boolean).join(' ')}
-                {w.state === 'EXITED' ? ' (closed)' : ''}
-              </option>
-            ))}
-          </select>
-        ) : null
+        /*
+         * Shown even for a single watch, unlike before. The reference puts the
+         * instrument in the header for a reason: the feed, the charts above it
+         * and the conditions panel beside it are all scoped to ONE watch, and
+         * a header that names it is the only thing on screen saying which.
+         */
+        <select
+          value={selectedId ?? ''}
+          onChange={(e) => {
+            setSelectedId(e.target.value);
+            setTimeline(null);
+          }}
+          className="max-w-[190px] truncate rounded-lg border border-border bg-bg px-2 py-1 text-[11px] text-text"
+          aria-label="Select which watch to display"
+        >
+          {watches.map((w) => (
+            <option key={w.id} value={w.id}>
+              {[w.symbol, w.strike, w.optionType].filter(Boolean).join(' ')} ({STATE_WORD[w.state]})
+            </option>
+          ))}
+        </select>
       }
     >
       {isClosed && timeline && (
@@ -160,10 +264,25 @@ export function StrategyTimelineFeed() {
             : `Watching your strategy${selected ? ` on ${selected.symbol}` : ''}… conditions not yet met.`}
         </Empty>
       ) : (
-        <div className="flex flex-col gap-2">
-          {visible.map((event) => (
-            <TimelineEventCard key={`${event.id}-${event.kind}`} event={event} watch={timeline!.watch} />
-          ))}
+        /*
+         * Scrolls rather than truncating behind a "View all" link.
+         *
+         * The reference design ends each feed section with one, and it is the
+         * wrong control here: this feed is already collapsed (a run of forty
+         * identical FORMING sweeps is one card — see `_collapse` in the
+         * service), so what a cut-off hides is not repetition, it is older
+         * *distinct* events. A link that navigates away from a live surface to
+         * read them is also a link away from the thing that is updating.
+         *
+         * `overscroll-contain` keeps a scroll that reaches the end of the feed
+         * from continuing into the page behind it.
+         */
+        <div className="-mr-1 max-h-[560px] overflow-y-auto overscroll-contain pr-1">
+          <div className="flex flex-col gap-2">
+            {visible.map((event) => (
+              <TimelineEventCard key={`${event.id}-${event.kind}`} event={event} watch={timeline!.watch} />
+            ))}
+          </div>
         </div>
       )}
       </Shell>
@@ -173,9 +292,9 @@ export function StrategyTimelineFeed() {
 
 function Shell({ children, selector }: { children: React.ReactNode; selector?: React.ReactNode }) {
   return (
-    <section className="rounded-2xl border border-border bg-card p-5 shadow-elev2">
+    <section className="flex h-full flex-col rounded-2xl border border-border bg-card p-5 shadow-elev2">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-[13px] font-bold text-text">Strategy Feed</h2>
+        <h2 className="shrink-0 text-[13px] font-bold text-text">Strategy Feed</h2>
         {selector}
       </div>
       {children}

@@ -32,6 +32,15 @@ export default defineConfig({
       'src/broker/broker-authz.spec.ts',
       // Feed link validation — the XSS boundary on third-party content.
       'src/news/feed-url.spec.ts',
+      // The NSE dataset allowlist: the only thing between a caller-supplied
+      // string and an outbound request from inside this network. Nothing
+      // outside the catalogue resolves, no entry leaves nseindia.com, and the
+      // one interpolated path segment cannot be other than eight digits.
+      'src/nse/nse-datasets.spec.ts',
+      // The participant-OI CSV reader. Every failure mode is a confident
+      // number attributed to the wrong participant or the wrong column, and
+      // the real file's padded headers make an untrimmed lookup miss silently.
+      'src/nse/nse.service.spec.ts',
       // Proof that a secret cannot be logged through the security logger.
       'src/common/security-log.spec.ts',
       // Learning Platform: entitlement/admin access decisions, and progress math.

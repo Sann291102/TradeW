@@ -207,6 +207,15 @@ export function toTimelineWatch(
     state: (watch.state ?? 'IDLE') as WatchState,
     direction: watch.direction ?? null,
     strategyId,
+    // The contract endpoint does not carry the strategy's timeframe, and this
+    // adapter must not guess one: null means "unknown here", which is true.
+    // Only the timeline route reports it, and only that path drives the charts.
+    timeframe: null,
+    // Same rule for the declared levels: this endpoint does not report them,
+    // so they are unknown here rather than absent from the position.
+    entryPrice: null,
+    invalidationPrice: null,
+    projectedPrice: null,
   };
 }
 

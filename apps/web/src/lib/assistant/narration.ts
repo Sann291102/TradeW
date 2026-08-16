@@ -73,6 +73,10 @@ export function explainAction(a: AssistantAction): string | null {
       return 'Workspace tabs each keep their own panel arrangement, so you can hold one setup for scalping and another for research.';
     case 'quote':
       return 'I read prices from the same live feed the tiles and the ticker use, so what I tell you always matches what is on your screen.';
+    case 'marketFlow':
+      // Platform mechanics, in the sense the docblock allows: WHERE the number
+      // comes from and why it is dated the way it is. Not what it means.
+      return 'FII/DII figures come from NSE itself, not from a broker feed — and the exchange publishes them once a day after the close, which is why I always tell you which session you are looking at.';
     case 'chartDetect':
       // Platform mechanics, not market commentary — teaching mode explains how
       // the feature works, never what the market is doing (see the docblock).
