@@ -12,16 +12,30 @@ name: Deploy to Oracle Cloud
 # Assumes the repo is checked out at /opt/tradew on the VM with .env.prod in
 # place (IMAGE_* pointing at ghcr.io/<owner>/tradew-*:latest).
 
+# ── DEPLOY IS MANUAL-ONLY (gated 2026-08-16) ────────────────────────────────
+#
+# The automatic `push: branches: [main]` trigger below is deliberately disabled.
+# It is NOT dead config and NOT a bug — restore it by uncommenting the block.
+#
+# Why: a large accumulated merge (Sentinel dashboard, NSE public data, mail /
+# SendGrid, React Query data layer) landed on main in one go. Auto-deploy would
+# have taken that straight to the OCI VM — image build, then `prisma migrate
+# deploy` against the production database, then a stack restart — unattended and
+# on a Sunday. Running migrations on production is the half that does not
+# trivially roll back, so the deploy was made a deliberate act instead.
+#
+# To deploy: GitHub → Actions → "Deploy to Oracle Cloud" → Run workflow.
+# To restore automatic deploys: uncomment the `push:` block and delete this note.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'apps/web/**'
-      - 'apps/admin/**'
-      - 'services/**'
-      - 'packages/**'
-      - 'infra/docker/**'
-      - '.github/workflows/deploy.yml'
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - 'apps/web/**'
+  #     - 'apps/admin/**'
+  #     - 'services/**'
+  #     - 'packages/**'
+  #     - 'infra/docker/**'
+  #     - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 env:
