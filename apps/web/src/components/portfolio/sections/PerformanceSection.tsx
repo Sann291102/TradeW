@@ -1,15 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Badge, Skeleton, StatCard, cn } from '@tradew/ui';
 import { inr, pct, sign } from '@/lib/format';
 import {
-  type DailyPnlBar,
-  type DiaryEntry,
-  type MonthlyReturnBar,
   type MonthlyReturnsRange,
   type PerformanceOverview,
-  type PortfolioValuePoint,
   type PortfolioValueRange,
   type TodayPerformance,
   fetchDailyPnl,
@@ -19,6 +16,8 @@ import {
   fetchPortfolioValueSeries,
   fetchTodayPerformance,
 } from '@/lib/oms';
+import { qk } from '@/lib/query/keys';
+import { NEAR_LIVE_POLL_MS, liveQueryOptions } from '@/lib/query/live';
 import { AreaChart } from '../charts/AreaChart';
 import { BarChart } from '../charts/BarChart';
 import { Pagination } from '../Pagination';
@@ -30,33 +29,45 @@ const RETURNS_RANGES: MonthlyReturnsRange[] = ['3M', '6M', '1Y'];
 
 export function PerformanceSection() {
   const [tab, setTab] = useState<Tab>('Portfolio Value');
-  const [overview, setOverview] = useState<PerformanceOverview | null>(null);
-  const [today, setToday] = useState<TodayPerformance | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const [o, t] = await Promise.all([fetchPerformanceOverview(), fetchTodayPerformance()]);
-      setOverview(o);
-      setToday(t);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load performance');
-    }
-  }, []);
+  // The 15s cadence is the cache's now, so it pauses with the tab rather than
+  // running against a screen nobody is looking at.
+  const overviewQuery = useQuery({
+    queryKey: qk.performance.overview(),
+    queryFn: fetchPerformanceOverview,
+    ...liveQueryOptions({ intervalMs: NEAR_LIVE_POLL_MS }),
+  });
+  const todayQuery = useQuery({
+    queryKey: qk.performance.today(),
+    queryFn: fetchTodayPerformance,
+    ...liveQueryOptions({ intervalMs: NEAR_LIVE_POLL_MS }),
+  });
 
-  useEffect(() => {
-    void load();
-    const timer = setInterval(load, 15_000);
-    return () => clearInterval(timer);
-  }, [load]);
+  const overview = overviewQuery.data ?? null;
+  const today = todayQuery.data ?? null;
+  const failed = [overviewQuery, todayQuery].find((q) => q.isError && !q.data);
+  const error = failed
+    ? failed.error instanceof Error
+      ? failed.error.message
+      : 'Could not load performance'
+    : null;
 
   return (
     <div>
       {error && (
-        <p role="alert" className="mb-3 rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
-          {error}
-        </p>
+        <div role="alert" className="mb-3 rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={() => {
+              void overviewQuery.refetch();
+              void todayQuery.refetch();
+            }}
+            className="mt-1.5 font-semibold underline underline-offset-2 hover:no-underline"
+          >
+            Try again
+          </button>
+        </div>
       )}
 
       <section className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -204,14 +215,36 @@ function RangeTabs<T extends string>({ ranges, active, onChange }: { ranges: T[]
   );
 }
 
+/**
+ * A failed chart load used to be unrecoverable AND silent.
+ *
+ * These four panels each did `setPoints(null); void fetchX().then(setPoints)`.
+ * The `void` swallowed the rejection, so a 500 left the skeleton up forever
+ * with nothing on screen to say why and no way to ask again — the exact
+ * "permanent error state" shape this audit set out to remove. And clearing to
+ * `null` first meant every range switch dropped the chart to a grey block
+ * before redrawing, even for a range the user had already viewed.
+ *
+ * One shared footer covers both: cached per range so re-selecting one is
+ * instant, and a real retry when the request genuinely could not be served.
+ */
+function ChartFailure({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div role="alert" className="flex h-[180px] flex-col items-center justify-center gap-2 text-xs text-amber">
+      <p>Could not load this chart.</p>
+      <button type="button" onClick={onRetry} className="font-semibold underline underline-offset-2 hover:no-underline">
+        Try again
+      </button>
+    </div>
+  );
+}
+
 function PortfolioValuePanel() {
   const [range, setRange] = useState<PortfolioValueRange>('1M');
-  const [points, setPoints] = useState<PortfolioValuePoint[] | null>(null);
-
-  useEffect(() => {
-    setPoints(null);
-    void fetchPortfolioValueSeries(range).then(setPoints);
-  }, [range]);
+  const query = useQuery({
+    queryKey: qk.performance.valueSeries(range),
+    queryFn: () => fetchPortfolioValueSeries(range),
+  });
 
   return (
     <div className="rounded-card border border-border bg-card p-4 shadow-card">
@@ -219,19 +252,23 @@ function PortfolioValuePanel() {
         <h3 className="text-sm font-bold text-text">Portfolio Value</h3>
         <RangeTabs ranges={VALUE_RANGES} active={range} onChange={setRange} />
       </div>
-      {points === null ? <Skeleton className="h-[220px] w-full" /> : <AreaChart points={points} />}
+      {query.isError && !query.data ? (
+        <ChartFailure onRetry={() => void query.refetch()} />
+      ) : !query.data ? (
+        <Skeleton className="h-[220px] w-full" />
+      ) : (
+        <AreaChart points={query.data} />
+      )}
     </div>
   );
 }
 
 function DailyPnlPanel() {
   const [range, setRange] = useState<PortfolioValueRange>('1M');
-  const [bars, setBars] = useState<DailyPnlBar[] | null>(null);
-
-  useEffect(() => {
-    setBars(null);
-    void fetchDailyPnl(range).then(setBars);
-  }, [range]);
+  const query = useQuery({
+    queryKey: qk.performance.dailyPnl(range),
+    queryFn: () => fetchDailyPnl(range),
+  });
 
   return (
     <div className="rounded-card border border-border bg-card p-4 shadow-card">
@@ -239,10 +276,12 @@ function DailyPnlPanel() {
         <h3 className="text-sm font-bold text-text">Daily P&amp;L</h3>
         <RangeTabs ranges={VALUE_RANGES} active={range} onChange={setRange} />
       </div>
-      {bars === null ? (
+      {query.isError && !query.data ? (
+        <ChartFailure onRetry={() => void query.refetch()} />
+      ) : !query.data ? (
         <Skeleton className="h-[180px] w-full" />
       ) : (
-        <BarChart points={bars.map((b) => ({ label: b.dateKey.slice(5), value: b.netPnl }))} valueFormat="currency" />
+        <BarChart points={query.data.map((b) => ({ label: b.dateKey.slice(5), value: b.netPnl }))} valueFormat="currency" />
       )}
     </div>
   );
@@ -250,12 +289,10 @@ function DailyPnlPanel() {
 
 function MonthlyReturnsPanel() {
   const [range, setRange] = useState<MonthlyReturnsRange>('6M');
-  const [bars, setBars] = useState<MonthlyReturnBar[] | null>(null);
-
-  useEffect(() => {
-    setBars(null);
-    void fetchMonthlyReturns(range).then(setBars);
-  }, [range]);
+  const query = useQuery({
+    queryKey: qk.performance.monthlyReturns(range),
+    queryFn: () => fetchMonthlyReturns(range),
+  });
 
   return (
     <div className="rounded-card border border-border bg-card p-4 shadow-card">
@@ -263,10 +300,12 @@ function MonthlyReturnsPanel() {
         <h3 className="text-sm font-bold text-text">Monthly Returns</h3>
         <RangeTabs ranges={RETURNS_RANGES} active={range} onChange={setRange} />
       </div>
-      {bars === null ? (
+      {query.isError && !query.data ? (
+        <ChartFailure onRetry={() => void query.refetch()} />
+      ) : !query.data ? (
         <Skeleton className="h-[180px] w-full" />
       ) : (
-        <BarChart points={bars.map((b) => ({ label: b.month, value: b.returnPct }))} valueFormat="percent" />
+        <BarChart points={query.data.map((b) => ({ label: b.month, value: b.returnPct }))} valueFormat="percent" />
       )}
     </div>
   );
@@ -276,16 +315,15 @@ const DIARY_PAGE_SIZE = 10;
 
 function DiaryPanel() {
   const [page, setPage] = useState(1);
-  const [rows, setRows] = useState<DiaryEntry[] | null>(null);
-  const [total, setTotal] = useState(0);
+  const query = useQuery({
+    queryKey: qk.performance.diary(page, DIARY_PAGE_SIZE),
+    queryFn: () => fetchDiary(page, DIARY_PAGE_SIZE),
+  });
 
-  useEffect(() => {
-    setRows(null);
-    void fetchDiary(page, DIARY_PAGE_SIZE).then((res) => {
-      setRows(res.rows);
-      setTotal(res.total);
-    });
-  }, [page]);
+  const rows = query.data?.rows ?? null;
+  const total = query.data?.total ?? 0;
+
+  if (query.isError && !query.data) return <ChartFailure onRetry={() => void query.refetch()} />;
 
   if (rows === null) {
     return (

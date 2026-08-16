@@ -1,9 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { cn } from '@tradew/ui';
-import { fetchStrategyPerformance } from '@/lib/sentinel/sentinelPy';
-import type { StrategyPerformance, Timeline } from '@/lib/sentinel/sentinelPy';
+import type { Timeline } from '@/lib/sentinel/sentinelPy';
+import { useStrategyPerformance } from '@/lib/query/useSentinel';
 
 /**
  * The focus panel: ONE watch, answering "why is this happening?".
@@ -42,18 +41,11 @@ function R({ value }: { value: number | null }) {
 }
 
 export function StrategyFocusPanel({ timeline }: Props) {
-  const [performance, setPerformance] = useState<StrategyPerformance | null>(null);
   const { watch, conditions } = timeline;
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchStrategyPerformance(watch.strategyId)
-      .then((p) => !cancelled && setPerformance(p))
-      .catch(() => !cancelled && setPerformance(null));
-    return () => {
-      cancelled = true;
-    };
-  }, [watch.strategyId]);
+  // Cached per strategy, so re-selecting a watch does not re-fetch a funnel
+  // the app already has. A failure still degrades to "no performance block"
+  // exactly as before — but only after the shared retry policy has run.
+  const performance = useStrategyPerformance(watch.strategyId).data ?? null;
 
   const state = STATE_LABEL[watch.state] ?? STATE_LABEL.IDLE;
   const instrument = [watch.symbol, watch.strike, watch.optionType].filter(Boolean).join(' ');

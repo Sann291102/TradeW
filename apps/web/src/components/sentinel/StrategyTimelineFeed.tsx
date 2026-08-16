@@ -1,5 +1,6 @@
 'use client';
 
+<<<<<<< HEAD
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ApiError, fetchTimeline } from '@/lib/sentinel/sentinelPy';
@@ -18,6 +19,25 @@ export interface WatchObservation {
   timeline: Timeline;
 }
 
+=======
+import { useEffect, useMemo, useState } from 'react';
+import { ApiError, listWatches } from '@/lib/sentinel/sentinelPy';
+import type { TimelineEvent, WatchSummary } from '@/lib/sentinel/sentinelPy';
+import { useStrategyTimeline } from '@/lib/query/useSentinel';
+import { StrategyFocusPanel } from './StrategyFocusPanel';
+import { TimelineEventCard } from './TimelineEventCard';
+
+/**
+ * Minimum `strength` an event needs before the user sees it.
+ *
+ * `strength` is NOT a confidence score — this service has none and invents
+ * none. It is the real ratio of mandatory conditions met to mandatory
+ * conditions the user defined, so 0.6 means "at least 60% of your own rules
+ * are satisfied". Events below it are still recorded in `WatchObservation`
+ * (the audit trail answers "why didn't I see anything?"); they just do not
+ * reach the feed.
+ */
+>>>>>>> origin/claude/tradew-frontend-audit-p8igb0
 const MIN_STRENGTH = 0.6;
 
 const STATE_WORD: Record<WatchState, string> = {
@@ -38,6 +58,27 @@ export function StrategyTimelineFeed({
   const userId = useSessionStore((s) => s.user?.id ?? null);
   const { watches, loading } = useWatchSessions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+<<<<<<< HEAD
+=======
+  const [loading, setLoading] = useState(true);
+
+  // The watch id is part of the query key, which replaces the request-ticket
+  // ref this used to need: a slow response for watch A lands in A's cache
+  // entry and cannot overwrite B's feed, and switching back to A shows its
+  // last-known timeline immediately instead of blanking.
+  const timelineQuery = useStrategyTimeline(selectedId);
+  const timeline = timelineQuery.data ?? null;
+
+  // A 404 is "this watch has no timeline yet", which is a normal empty state
+  // rather than a failure worth alarming anyone about. Note this is decided
+  // AFTER the shared retry policy has run, and that policy deliberately does
+  // not retry a 404 — only 429s, 5xxs and network drops.
+  const error: 'none' | 'notFound' | 'failed' = !timelineQuery.isError
+    ? 'none'
+    : timelineQuery.error instanceof ApiError && timelineQuery.error.status === 404
+      ? 'notFound'
+      : 'failed';
+>>>>>>> origin/claude/tradew-frontend-audit-p8igb0
 
   useEffect(() => {
     if (watches.length === 0) return;
@@ -48,6 +89,7 @@ export function StrategyTimelineFeed({
     );
   }, [watches]);
 
+<<<<<<< HEAD
   const timelineQuery = useQuery({
     queryKey: sentinelKeys.timeline(userId, selectedId ?? ''),
     queryFn: () => fetchTimeline(selectedId as string),
@@ -99,6 +141,8 @@ export function StrategyTimelineFeed({
     );
   }, [observationKey, timeline, onObservationChange]);
 
+=======
+>>>>>>> origin/claude/tradew-frontend-audit-p8igb0
   const visible = useMemo(() => {
     if (!timeline) return [] as TimelineEvent[];
     const strong = timeline.events.filter((e) => e.strength >= MIN_STRENGTH);
@@ -134,8 +178,15 @@ export function StrategyTimelineFeed({
         selector={
           <select
             value={selectedId ?? ''}
+<<<<<<< HEAD
             onChange={(e) => setSelectedId(e.target.value)}
             className="max-w-[190px] truncate rounded-lg border border-border bg-bg px-2 py-1 text-[11px] text-text"
+=======
+            // No manual clear needed: the timeline is keyed by watch id, so
+            // selecting a different one reads that watch's own cache entry.
+            onChange={(e) => setSelectedId(e.target.value)}
+            className="rounded-lg border border-border bg-bg px-2 py-1 text-[11px] text-text"
+>>>>>>> origin/claude/tradew-frontend-audit-p8igb0
             aria-label="Select which watch to display"
           >
             {watches.map((w) => (
@@ -162,6 +213,7 @@ export function StrategyTimelineFeed({
           </p>
         )}
 
+<<<<<<< HEAD
         {error === 'notFound' || visible.length === 0 ? (
           <Empty>
             {error === 'notFound'
@@ -177,6 +229,34 @@ export function StrategyTimelineFeed({
             </div>
           </div>
         )}
+=======
+      {error === 'failed' && (
+        <p className="mb-3 text-[11.5px] text-amber">
+          Could not refresh the feed just now — showing the last known state.{' '}
+          <button
+            type="button"
+            onClick={() => void timelineQuery.refetch()}
+            className="font-semibold underline underline-offset-2 hover:no-underline"
+          >
+            Try again
+          </button>
+        </p>
+      )}
+
+      {error === 'notFound' || visible.length === 0 ? (
+        <Empty>
+          {error === 'notFound'
+            ? 'Start watching a strategy to see live updates.'
+            : `Watching your strategy${selected ? ` on ${selected.symbol}` : ''}… conditions not yet met.`}
+        </Empty>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {visible.map((event) => (
+            <TimelineEventCard key={`${event.id}-${event.kind}`} event={event} watch={timeline!.watch} />
+          ))}
+        </div>
+      )}
+>>>>>>> origin/claude/tradew-frontend-audit-p8igb0
       </Shell>
     </div>
   );

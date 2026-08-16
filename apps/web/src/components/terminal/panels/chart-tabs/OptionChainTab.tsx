@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { Badge, cn } from '@tradew/ui';
+import { qk } from '@/lib/query/keys';
 import { fmt, pct } from '@/lib/format';
 import { blackScholesGreeks, type Greeks } from '@/lib/black-scholes';
 import { useTradeBasketStore, useHydrateTradeBasket, contractKeyOf, type ContractKey } from '@/lib/store/tradeBasketStore';
@@ -157,7 +159,6 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
   // /optionchain/expirylist route) — null while loading/not-yet-known,
   // [] once confirmed there are none (ETF/commodity, or unreachable), both
   // of which fall back to the simulated EXPIRIES table below.
-  const [liveExpiries, setLiveExpiries] = useState<ExpiryOption[] | null>(null);
   const [expiryIdx, setExpiryIdx] = useState(() => {
     const found = EXPIRIES.findIndex((e) => e.label === initialExpiryLabel);
     return found >= 0 ? found : 0;
@@ -166,30 +167,33 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<ContractAnalysisData | null>(null);
 
+  // Shares the cached expiry list with Sentinel's `useExpiries` and the
+  // ApplyStrategy dialog. It also gives the request a failure path it did not
+  // have: the previous `.then()` carried no `.catch`, so a rejected list was an
+  // unhandled promise rejection that left `liveExpiries` null forever.
+  const expiryQuery = useQuery({
+    queryKey: qk.optionChain.expiries(underlyingSymbol),
+    queryFn: () => fetchDhanExpiryList(underlyingSymbol),
+    staleTime: 60 * 60 * 1000,
+  });
+
+  const liveExpiries: ExpiryOption[] | null = useMemo(() => {
+    if (!expiryQuery.data) return expiryQuery.isError ? [] : null;
+    // Dhan's expiry list runs years out (monthly/yearly contracts beyond the
+    // weeklies) — the tab row only needs the near-term ones a trader actually
+    // picks from, same rough count as the old mock EXPIRIES table.
+    return expiryQuery.data
+      .slice(0, MAX_EXPIRY_TABS)
+      .map((iso) => ({ label: formatExpiryLabel(iso), iso }));
+  }, [expiryQuery.data, expiryQuery.isError]);
+
   useEffect(() => {
-    let cancelled = false;
-    setLiveExpiries(null);
-    setChain(null);
-    fetchDhanExpiryList(underlyingSymbol).then((isoList) => {
-      if (cancelled) return;
-      if (isoList.length === 0) {
-        setLiveExpiries([]);
-        return;
-      }
-      // Dhan's expiry list runs years out (monthly/yearly contracts beyond
-      // the weeklies) — the tab row only needs the near-term ones a trader
-      // actually picks from, same rough count as the old mock EXPIRIES table.
-      const mapped = isoList.slice(0, MAX_EXPIRY_TABS).map((iso) => ({ label: formatExpiryLabel(iso), iso }));
-      setLiveExpiries(mapped);
-      const found = initialExpiryLabel ? mapped.findIndex((e) => e.label === initialExpiryLabel) : -1;
-      setExpiryIdx(found >= 0 ? found : 0);
-    });
-    return () => {
-      cancelled = true;
-    };
+    if (!liveExpiries || liveExpiries.length === 0) return;
+    const found = initialExpiryLabel ? liveExpiries.findIndex((e) => e.label === initialExpiryLabel) : -1;
+    setExpiryIdx(found >= 0 ? found : 0);
     // initialExpiryLabel is only meant to apply on first resolve for a symbol
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [underlyingSymbol]);
+  }, [underlyingSymbol, liveExpiries]);
 
   const expiries: ExpiryOption[] = liveExpiries && liveExpiries.length > 0 ? liveExpiries : EXPIRIES.map((e) => ({ label: e.label, iso: null }));
   const expiry = expiries[expiryIdx] ?? expiries[0];
@@ -208,11 +212,21 @@ export function OptionChainTab({ underlyingSymbol = 'NIFTY', spotPrice, initialE
     let cancelled = false;
     const iso = expiry.iso;
     const load = () =>
-      fetchDhanOptionChain(underlyingSymbol, iso).then((data) => {
-        if (!cancelled) setChain(data);
-      });
+      fetchDhanOptionChain(underlyingSymbol, iso)
+        .then((data) => {
+          if (!cancelled) setChain(data);
+        })
+        // The bridge being briefly unreachable is not fatal: the table falls
+        // back to its computed rows and the next tick tries again. Previously
+        // this had no catch at all, so a failure was an unhandled rejection.
+        .catch(() => undefined);
     load();
-    const timer = setInterval(load, CHAIN_REFRESH_MS);
+    // Skipped while the tab is hidden — a backgrounded terminal was refreshing
+    // the whole chain on this cadence for a screen nobody could see.
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void load();
+    }, CHAIN_REFRESH_MS);
     return () => {
       cancelled = true;
       clearInterval(timer);

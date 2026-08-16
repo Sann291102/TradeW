@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from 'framer-motion';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { Ticker } from './Ticker';
@@ -45,6 +45,8 @@ import { useDisciplineStore } from '@/lib/store/disciplineStore';
 export function AppFrame({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const reduce = useReducedMotion();
+  const routeFade = useAnimationControls();
+  const lastPath = useRef<string | null>(null);
   const mobileNavOpen = useWorkspaceStore((s) => s.mobileNavOpen);
   const setMobileNavOpen = useWorkspaceStore((s) => s.setMobileNavOpen);
   const theme = useWorkspaceStore((s) => s.theme);
@@ -79,21 +81,12 @@ export function AppFrame({ children }: { children: ReactNode }) {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
-  // Replay the route transition WITHOUT remounting the route.
-  //
-  // A CSS animation fires when an element is created or when the animation is
-  // (re)applied — not when a stable element's children change. So the class is
-  // stripped, a reflow is forced to flush the removal, and it is re-applied.
-  // That restarts the animation on the same DOM node, which is the whole
-  // trick: the fade is back, and the element's identity never changes, so
-  // nothing below it unmounts. See the note in the JSX below for what
-  // remounting cost us.
   const contentRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = contentRef.current;
     if (!el || reduce) return;
     el.classList.remove('route-fade');
-    void el.offsetWidth; // force reflow — without it the removal is coalesced away
+    void el.offsetWidth;
     el.classList.add('route-fade');
   }, [pathname, reduce]);
 
@@ -101,7 +94,6 @@ export function AppFrame({ children }: { children: ReactNode }) {
     <div className="flex h-screen overflow-hidden bg-bg text-text">
       <Sidebar />
 
-      {/* mobile drawer scrim */}
       <AnimatePresence>
         {mobileNavOpen && (
           <motion.button
@@ -121,37 +113,6 @@ export function AppFrame({ children }: { children: ReactNode }) {
         <TopBar />
         <Ticker />
         <main className="min-h-0 flex-1 overflow-auto">
-          {/*
-            ── NO `key={pathname}` HERE. IT MUST NOT COME BACK. ──────────────
-
-            This used to be `<AnimatePresence mode="wait"><motion.div key={pathname}>`,
-            which bought a 250ms cross-fade between routes and paid for it with
-            the three worst bugs Sentinel had.
-
-            Changing the key unmounts the entire page subtree and mounts a new
-            one. So every client-side navigation into /sentinel was a cold
-            start: hooks re-ran from scratch, in-component state was discarded,
-            and a fresh `/sentinel/observe` fired. When that request lost —
-            because a burst of remounts had already spent the per-IP rate-limit
-            budget — the workspace latched into "Sentinel service not
-            connected", and the only escape was a full browser reload. Which
-            worked, and therefore looked like a server problem, when it was
-            this line.
-
-            `mode="wait"` made it worse: the outgoing subtree was held mounted
-            for the length of the exit animation while the incoming one
-            mounted, so both were live at once and both fetched.
-
-            The transition is now driven by CSS on a STABLE element (see
-            `.route-fade` in globals.css) — the animation replays on navigation
-            because the content changes, without the identity of the tree
-            changing. React reconciles rather than remounts, React Query keeps
-            its cache, and Dashboard → Sentinel renders the last observation on
-            the first frame.
-
-            If a route genuinely needs a hard reset, it should key ITSELF on
-            whatever actually changed. Never here, for every route at once.
-          */}
           <div ref={contentRef} className="route-content">
             {children}
           </div>

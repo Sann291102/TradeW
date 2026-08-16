@@ -1,20 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { SENTINEL_TERMS, SENTINEL_TRIAL, sentinelSaving, inr } from '@tradew/types';
 import { buttonClasses, cn } from '@tradew/ui';
 import { Reveal } from '@/components/common/Reveal';
 import { useSessionStore } from '@/lib/store/sessionStore';
-import {
-  fetchCatalog,
-  fetchTrialStatus,
-  startCheckout,
-  verifyPayment,
-  loadRazorpay,
-  openRazorpay,
-  type Catalog,
-  type TrialStatus,
-} from '@/lib/payments';
+import { startCheckout, verifyPayment, loadRazorpay, openRazorpay } from '@/lib/payments';
+import { useCatalog, useTrialStatus } from '@/lib/query/useBilling';
 import { PricingTierCard, type PricingTier } from './pricing/PricingTierCard';
 import { TrialOffer } from './pricing/TrialOffer';
 import { SentinelPreview } from './pricing/SentinelPreview';
@@ -44,8 +36,10 @@ export function SentinelPricingView({ onActivated }: { onActivated: () => void }
   const refreshSession = useSessionStore((s) => s.init);
   const redeemCoupon = useSessionStore((s) => s.redeemCoupon);
 
-  const [catalog, setCatalog] = useState<Catalog | null>(null);
-  const [trialStatus, setTrialStatus] = useState<TrialStatus | null>(null);
+  // Shares the cached catalogue with /checkout rather than fetching its own —
+  // two screens quoting the same prices must not be able to disagree.
+  const catalog = useCatalog().data ?? null;
+  const trialStatus = useTrialStatus().data ?? null;
   const [busyItem, setBusyItem] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
 
@@ -53,14 +47,6 @@ export function SentinelPricingView({ onActivated }: { onActivated: () => void }
   const [couponMsg, setCouponMsg] = useState<{ success?: boolean; text: string } | null>(null);
   const [redeeming, setRedeeming] = useState(false);
 
-  useEffect(() => {
-    fetchCatalog()
-      .then(setCatalog)
-      .catch(() =>
-        setMessage({ tone: 'bad', text: 'Could not reach the payment service. Prices shown may be out of date.' }),
-      );
-    fetchTrialStatus().then(setTrialStatus).catch(() => undefined);
-  }, []);
 
   /**
    * Refresh entitlements and tell the parent. No redirect: the capability

@@ -1,10 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { Card, EmptyState, Badge, Button, Skeleton } from '@tradew/ui';
 import { BellIcon } from '@/components/shell/icons';
 import { NOTIFICATION_CATEGORY_TONE } from '@/lib/store/workspaceStore';
-import { fetchNotifications, markNotificationRead, markAllNotificationsRead, type NotificationItem } from '@/lib/notifications';
+import {
+  useMarkAllNotificationsRead,
+  useMarkNotificationRead,
+  useNotifications,
+} from '@/lib/query/useNotifications';
 import { alertRMultiple, alertTier } from '@/lib/sentinel/alertTier';
 import { formatRMultiple } from '@/lib/sentinel/watchModel';
 
@@ -14,51 +17,33 @@ import { formatRMultiple } from '@/lib/sentinel/watchModel';
  * rows from the workspace store, which `NotificationSync` keeps in step with
  * the same endpoint, so the two are one list shown twice rather than two
  * sources. Both style Sentinel alerts through `lib/sentinel/alertTier.ts`.
+ *
+ * As of the caching pass this shares the CACHE ENTRY as well as the endpoint.
+ * It used to fetch `?limit=100` into local state while NotificationSync
+ * fetched `?limit=50` into the store — two requests, and a read marked here
+ * left the bell's badge stale for up to 30 seconds because nothing told it.
+ * Both now read one key, and the mutations invalidate it.
  */
 export function NotificationsClient() {
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, isPending, isError, error, refetch } = useNotifications(true);
+  const markRead = useMarkNotificationRead();
+  const markAllRead = useMarkAllNotificationsRead();
 
-  async function load() {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await fetchNotifications(100);
-      setNotifications(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load notifications');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void load();
-  }, []);
-
+  const notifications = data ?? [];
   const unread = notifications.filter((n) => !n.read).length;
 
-  async function handleMarkRead(id: string) {
-    try {
-      await markNotificationRead(id);
-      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
-    } catch {
-      // optimistic UI — if it fails, the next load will sync
-    }
+  function handleMarkRead(id: string) {
+    markRead.mutate(id);
   }
 
-  async function handleMarkAllRead() {
+  function handleMarkAllRead() {
     if (unread === 0) return;
-    try {
-      await markAllNotificationsRead();
-      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-    } catch {
-      // optimistic UI — if it fails, the next load will sync
-    }
+    markAllRead.mutate();
   }
 
-  if (loading) {
+  // Only a first load with nothing cached shows skeletons. Returning to the
+  // page reads the cache and paints immediately, refreshing behind the rows.
+  if (isPending) {
     return (
       <div className="mx-auto max-w-[720px] space-y-4 p-4">
         <Card title="Notifications">
@@ -72,12 +57,16 @@ export function NotificationsClient() {
     );
   }
 
-  if (error) {
+  // Only fatal when the retry policy has already exhausted its attempts AND
+  // there is nothing cached to fall back on.
+  if (isError && !data) {
     return (
       <div className="mx-auto max-w-[720px] space-y-4 p-4">
         <Card title="Notifications">
-          <div className="text-center py-8 text-red-400">{error}</div>
-          <Button variant="outline" size="sm" onClick={load}>
+          <div className="text-center py-8 text-red-400">
+            {error instanceof Error ? error.message : 'Failed to load notifications'}
+          </div>
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>
             Retry
           </Button>
         </Card>

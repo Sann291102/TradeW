@@ -27,14 +27,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
-      {/* No AppFrame here. The workspace shell lives in `(workspace)/layout.tsx`
-          so that which routes get chrome is decided by the route tree rather
-          than by a pathname compared at render time — see that file for the
-          bug this prevents.
-
-          QueryProvider IS here, and has to be: it owns the cache that has to
-          outlive every client-side navigation. Mounted any deeper it would be
-          remounted by the navigations it exists to survive. */}
+      {/* QueryProvider wraps EVERYTHING, workspace and bare routes alike, so
+          there is exactly one cache per tab. It owns the cache that outlives
+          every client-side navigation. */}
       <body>
         <QueryProvider>{children}</QueryProvider>
       </body>
