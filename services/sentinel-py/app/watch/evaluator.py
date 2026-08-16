@@ -1153,6 +1153,14 @@ def evaluate(rules: list[dict], candles: list[Candle]) -> EvaluationResult:
             met, detail = (False, "no opening range yet") if or_high is None else _breakout_above(bars, or_high)
         elif condition.endswith("_low") and condition.startswith("price_closes_below"):
             met, detail = (False, "no opening range yet") if or_low is None else _breakout_below(bars, or_low)
+        elif condition == "opening_range_established":
+            # The range exists once the session's first candle has closed. It
+            # is a precondition rather than a signal: without it there is no
+            # level for a breakout to be a breakout OF.
+            met = or_high is not None and or_low is not None
+            detail = (
+                f"opening range {or_low:.2f}-{or_high:.2f}" if met else "no opening range yet"
+            )
         elif condition == "price_retests_level_then_bounces":
             if or_high is None or or_low is None:
                 met, detail = False, "no opening range yet"

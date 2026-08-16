@@ -36,6 +36,7 @@ function contract(overrides: Partial<StrategyContract>): StrategyContract {
     conditions: [],
     latestObservation: null,
     lifecycle: [],
+    dataStatus: { ok: true, reason: '', checkedAt: null },
     performance: {
       strategyId: 'strat',
       funnel: { watches: 1, interactions: 1, confirmations: 0, entries: 0, outcomes: 0, rejections: 0 },
