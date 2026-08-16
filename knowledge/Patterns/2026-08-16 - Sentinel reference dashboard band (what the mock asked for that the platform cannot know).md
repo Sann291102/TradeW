@@ -71,6 +71,20 @@ The generalisable bit: **duplication on a dashboard is not redundancy, it is amb
 
 `lib/sentinel/indicators.ts` and its tests are deliberately left in the tree despite losing their only consumer: the module is pure, independently tested, and `SentinelChartReading` is the natural next caller. `chartFocus.ts`'s `DAYS_FOR` table used to be documented as mirroring the removed card's tabs and now owns the mapping outright.
 
+## The band was then cut to four panels — and the charts un-gated (same day)
+
+At the product owner's direction the dashboard lost **Risk Radar, Session Timeline, Session Stats and Quick Actions**. What remains is status cards → your strategies → the three charts → `feed | conditions | emotion + market context`. All four components are archived under `archive/web-sentinel-dashboard-*-2026-08-16.tsx.txt`, not deleted.
+
+Read that against the sections above before re-deriving any of it: most of this note's hard-won content — the six unavailable mock figures, the two arithmetic traps in `sessionStats.ts`, the append-vs-time ordering bug in `sessionTimeline.ts` — describes panels that are **no longer on screen**. The findings stay valid and the pure modules stay in the tree, tested; what changed is that nothing renders them. Do not read the layout diagram in this note's opening as current.
+
+**The load-bearing lesson is the chart gate.** The three-chart panel was wrapped in `{observation && …}`, on the reasoning that three ATM charts labelled "what Sentinel is reading" claim an engine is running when none is. The reasoning was right. The lever was wrong — and the failure it produced was invisible to every check we ran.
+
+`SentinelLiveCharts` **already** distinguishes the two cases internally: with no `focus` it titles itself "Live Charts" and draws the selected market's ATM strikes from its own option-chain poll; with a `focus` it becomes "What Sentinel is reading", pinned to the watch's strike and the engine's timeframe. The honesty requirement was satisfied inside the component. The outer gate therefore bought nothing and cost the entire panel for every user without a watch — which is *everyone whose sentinel-py is unreachable*, precisely the degraded state where being able to see the market still matters.
+
+The generalisable rule: **when a component already encodes a distinction, a caller-side gate on the same distinction is not defence in depth — it is a second, cruder copy of the judgement that silently wins.** Check whether the callee handles the empty case before guarding it from outside.
+
+Worth noting how this surfaced: it was reported as "you removed the charts". Nothing had removed them. `services/sentinel-py` (4011) was simply down — the one service with no entry in `.claude/launch.json`, so nothing ever started it — which meant no watches, no observation, and a gate that never opened. A missing launch entry presented as deleted code. Added to `launch.json` in the same change.
+
 ## Smaller decisions worth not re-deriving
 
 - **"View all" → scroll.** The feed is already collapsed server-side (`_collapse` turns forty identical FORMING sweeps into one card), so a cut-off hides older *distinct* events, not repetition — and a link that navigates away from a live surface is a link away from the thing that is updating.
