@@ -2,6 +2,7 @@ import type { PanelKind, ThemeName } from '../store/workspaceStore';
 import type { DrawingTag } from '../charts/drawings';
 import type { DetectorId } from '../charts/detectors';
 import type { QuoteAsk } from './quotes';
+import type { FlowAsk } from './flows';
 
 /**
  * TradeW AI assistant — control-layer types (Phase 1).
@@ -43,6 +44,17 @@ export type AssistantAction =
    * construction: `GET /market-data/quotes` has no write side.
    */
   | { type: 'quote'; symbols: string[]; ask: QuoteAsk }
+  /**
+   * Read back the exchange's institutional publications — FII/DII cash flow,
+   * advance/decline breadth, participant-wise derivatives OI.
+   *
+   * The second action that performs I/O, and read-only for the same structural
+   * reason: it names one of three fixed asks, and the executor maps that to a
+   * fixed `/nse/*` route. There is deliberately no URL, path or dataset-name
+   * field here — if there were, the model's output would be choosing what this
+   * server fetches. See `flows.ts` and `services/api/src/nse/nse-datasets.ts`.
+   */
+  | { type: 'marketFlow'; ask: FlowAsk }
   | { type: 'selectSymbol'; symbol: string }
   | { type: 'openOverlay'; overlay: 'commandPalette' | 'notifications' | 'shortcuts' }
   | { type: 'setTheme'; theme: ThemeName }

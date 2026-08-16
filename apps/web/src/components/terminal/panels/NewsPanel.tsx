@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { Panel, Badge, Skeleton, type BadgeTone } from '@tradew/ui';
-import { NEWS_POLL_MS, fetchNews, newsTime, type NewsItem } from '@/lib/news';
+import { newsTime } from '@/lib/news';
+import { useNews } from '@/lib/query/useNews';
 import type { DockPanelContentProps } from './types';
 
 /**
@@ -24,36 +24,21 @@ const TONE: Record<string, BadgeTone> = {
 };
 
 export function NewsPanel({ className, actions, collapsed }: DockPanelContentProps) {
-  const [items, setItems] = useState<NewsItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (collapsed) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    async function tick() {
-      try {
-        const next = await fetchNews(12);
-        if (cancelled) return;
-        setItems(next);
-        setError(null);
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'News unavailable');
-      } finally {
-        if (!cancelled) timer = setTimeout(tick, NEWS_POLL_MS);
-      }
-    }
-    void tick();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [collapsed]);
+  // Shares one cached request with the dashboard card and /news. Collapsing
+  // the panel no longer discards the headlines it had — re-opening reads the
+  // cache and shows them instantly, then refreshes behind the numbers.
+  const { items, error, refetch } = useNews(12);
 
   return (
     <Panel title="News" className={className} actions={actions} collapsed={collapsed}>
-      {error && <p className="text-[11px] leading-relaxed text-amber">{error}</p>}
+      {error && (
+        <p className="text-[11px] leading-relaxed text-amber">
+          {error}{' '}
+          <button type="button" onClick={refetch} className="font-semibold underline underline-offset-2">
+            Try again
+          </button>
+        </p>
+      )}
 
       {!items && !error && (
         <div className="space-y-2">

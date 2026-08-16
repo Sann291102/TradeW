@@ -1,10 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, Badge, cn } from '@tradew/ui';
-import { learningApi } from '@/lib/learning-platform/api';
-import type { CourseCard, CoursesResponse } from '@/lib/learning-platform/types';
+import { useCourses, useRefreshKnowledge } from '@/lib/query/useLearning';
+import type { CourseCard } from '@/lib/learning-platform/types';
 
 /**
  * Restored 2026-08-04 from archive/apps-web-learning-course-platform-superseded
@@ -16,22 +15,31 @@ import type { CourseCard, CoursesResponse } from '@/lib/learning-platform/types'
  * generated lessons with per-lesson completion ticks.
  */
 export function CoursePathClient({ courseId }: { courseId: string }) {
-  const [data, setData] = useState<CoursesResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  // Same cached `/learning/courses` entry the hub already populated, so
+  // clicking through from the hub paints instantly instead of re-fetching the
+  // identical payload behind a "Loading…" line.
+  const coursesQuery = useCourses();
+  const refreshKnowledge = useRefreshKnowledge();
 
-  useEffect(() => {
-    let cancelled = false;
-    learningApi
-      .courses()
-      .then((d) => !cancelled && setData(d))
-      .catch(() => !cancelled && setError('Could not load this course.'));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const data = coursesQuery.data ?? null;
+  const refreshing = refreshKnowledge.isPending;
 
-  if (error) return <Shell><p className="text-[13px] text-muted">{error}</p></Shell>;
+  if (coursesQuery.isError && !data) {
+    return (
+      <Shell>
+        <p className="text-[13px] text-muted">
+          Could not load this course.{' '}
+          <button
+            type="button"
+            onClick={() => void coursesQuery.refetch()}
+            className="font-semibold text-teal underline underline-offset-2 hover:no-underline"
+          >
+            Try again
+          </button>
+        </p>
+      </Shell>
+    );
+  }
   if (!data) return <Shell><p className="text-[13px] text-muted">Loading…</p></Shell>;
 
   const course = data.courses.find((c) => c.id === courseId);
@@ -39,17 +47,11 @@ export function CoursePathClient({ courseId }: { courseId: string }) {
 
   if (course.locked) return <LockedCourse course={course} />;
 
-  async function onRefresh() {
-    setRefreshing(true);
-    try {
-      await learningApi.refresh();
-      const d = await learningApi.courses();
-      setData(d);
-    } catch {
-      /* non-fatal */
-    } finally {
-      setRefreshing(false);
-    }
+  // Was: refresh, then re-fetch and setState locally — which left the Learning
+  // hub's copy of the same catalogue stale. The mutation invalidates the shared
+  // key instead, so every surface reading it updates.
+  function onRefresh() {
+    refreshKnowledge.mutate();
   }
 
   return (

@@ -126,6 +126,12 @@ export function describeAction(a: AssistantAction): string {
       return 'Open a new workspace tab';
     case 'quote':
       return `Read ${a.symbols.join(', ')}`;
+    case 'marketFlow':
+      return a.ask === 'breadth'
+        ? 'Read market breadth from NSE'
+        : a.ask === 'positioning'
+          ? 'Read FII/DII derivatives positioning from NSE'
+          : 'Read FII/DII cash flow from NSE';
     case 'chartDetect':
       return DETECTORS[a.detector].label;
     case 'chartClearDrawings':

@@ -1,17 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Card, EmptyState } from '@tradew/ui';
 
 import {
-  type HoldingDto,
-  type PortfolioSummary,
-  type PositionDto,
-  fetchHoldings,
-  fetchPortfolio,
-  fetchPositions,
-  isSignedIn,
-} from '@/lib/oms';
+  useHoldings,
+  usePortfolioSummary,
+  usePositions,
+  useSignedIn,
+  useInvalidateTradingData,
+} from '@/lib/query/usePortfolio';
 import { PortfolioSubNav, type PortfolioSection } from '@/components/portfolio/PortfolioSubNav';
 import { OverviewSection } from '@/components/portfolio/sections/OverviewSection';
 import { HoldingsSection } from '@/components/portfolio/sections/HoldingsSection';
@@ -27,16 +25,19 @@ import { PerformanceSection } from '@/components/portfolio/sections/PerformanceS
  * no mock data anywhere on this page. See knowledge/Patterns for the
  * settlement-lifecycle and snapshot-performance design this is built on.
  *
- * Summary + Positions + Holdings are polled (5s) here at the top level and
- * passed down, since Overview needs Positions/Holdings-derived totals
+ * Summary + Positions + Holdings are read here at the top level and passed
+ * down, since Overview needs Positions/Holdings-derived totals
  * (PortfolioService.summary already does that server-side) and Positions/
  * Holdings need their own live prices regardless of which section is
- * active. Orders/Trade History/Performance fetch their own data inside
- * their section (different cadence, different filters) rather than being
- * threaded through this shared poll.
+ * active. Orders/Trade History/Performance read their own data inside their
+ * section (different cadence, different filters).
+ *
+ * The 5s cadence, the retry policy and the pause-when-hidden behaviour now
+ * come from the shared cache (lib/query/usePortfolio) instead of a private
+ * `setTimeout` chain here. Concretely: the dashboard's PortfolioSummary card
+ * and this page no longer both fetch `/sim/portfolio`, and navigating away and
+ * back paints from cache instead of from nothing.
  */
-const POLL_MS = 5_000;
-
 const SECTION_TITLES: Record<PortfolioSection, string> = {
   overview: 'Portfolio Summary',
   holdings: 'Holdings',
@@ -48,40 +49,28 @@ const SECTION_TITLES: Record<PortfolioSection, string> = {
 
 export function PortfolioClient() {
   const [section, setSection] = useState<PortfolioSection>('overview');
-  const [summary, setSummary] = useState<PortfolioSummary | null>(null);
-  const [positions, setPositions] = useState<PositionDto[] | null>(null);
-  const [holdings, setHoldings] = useState<HoldingDto[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const signedIn = useSignedIn();
 
-  const load = useCallback(async () => {
-    const [s, p, h] = await Promise.all([fetchPortfolio(), fetchPositions(), fetchHoldings()]);
-    setSummary(s);
-    setPositions(p);
-    setHoldings(h);
-    setError(null);
-  }, []);
+  const summaryQuery = usePortfolioSummary(signedIn);
+  const positionsQuery = usePositions(signedIn);
+  const holdingsQuery = useHoldings(signedIn);
+  const load = useInvalidateTradingData();
 
-  useEffect(() => {
-    if (!signedIn) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+  const summary = summaryQuery.data ?? null;
+  const positions = positionsQuery.data ?? null;
+  const holdings = holdingsQuery.data ?? null;
 
-    async function tick() {
-      try {
-        await load();
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not reach the trading backend');
-      } finally {
-        if (!cancelled) timer = setTimeout(tick, POLL_MS);
-      }
-    }
-    void tick();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [signedIn, load]);
+  // Report a failure only while there is genuinely nothing to show. A poll
+  // that fails against numbers already on screen is transient by construction
+  // — the retry is scheduled, and the last-known figures are still the truest
+  // thing available. Banner-on-every-blip was what made a two-second outage
+  // look like a broken account.
+  const failed = [summaryQuery, positionsQuery, holdingsQuery].find((q) => q.isError && !q.data);
+  const error = failed
+    ? failed.error instanceof Error
+      ? failed.error.message
+      : 'Could not reach the trading backend'
+    : null;
 
   if (!signedIn) {
     return (
@@ -100,9 +89,16 @@ export function PortfolioClient() {
 
       <div className="min-w-0">
         {error && (
-          <p role="alert" className="mb-3 rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
-            {error}
-          </p>
+          <div role="alert" className="mb-3 rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
+            <p>{error}</p>
+            <button
+              type="button"
+              onClick={load}
+              className="mt-1.5 font-semibold underline underline-offset-2 hover:no-underline"
+            >
+              Try again
+            </button>
+          </div>
         )}
 
         <Card title={SECTION_TITLES[section]}>
@@ -116,15 +112,4 @@ export function PortfolioClient() {
       </div>
     </div>
   );
-}
-
-
-
-/** `isSignedIn` reads localStorage, which does not exist during SSR; reading it
- *  in render would make server and client HTML disagree. Same pattern the order
- *  ticket already uses. */
-function useSignedIn(): boolean {
-  const [signedIn, setSignedIn] = useState(false);
-  useEffect(() => setSignedIn(isSignedIn()), []);
-  return signedIn;
 }

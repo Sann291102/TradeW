@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, Badge, Skeleton, EmptyState } from '@tradew/ui';
-import { NEWS_POLL_MS, fetchNews, newsTime, type NewsItem } from '@/lib/news';
+import { newsTime } from '@/lib/news';
+import { useNews } from '@/lib/query/useNews';
 
 const CATEGORY_TONE: Record<string, 'neutral' | 'brand' | 'warning'> = {
   MARKETS: 'brand',
@@ -23,31 +23,8 @@ const DASHBOARD_LIMIT = 3;
  * the full live list.
  */
 export function MarketNews() {
-  const [items, setItems] = useState<NewsItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    async function tick() {
-      try {
-        const next = await fetchNews(DASHBOARD_LIMIT);
-        if (cancelled) return;
-        setItems(next);
-        setError(null);
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load market news');
-      } finally {
-        if (!cancelled) timer = setTimeout(tick, NEWS_POLL_MS);
-      }
-    }
-    void tick();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
+  // Shares one cached request with NewsPanel and /news — see lib/query/useNews.
+  const { items, error, refetch } = useNews(DASHBOARD_LIMIT);
 
   return (
     <Card
@@ -59,9 +36,16 @@ export function MarketNews() {
       }
     >
       {error ? (
-        <p role="alert" className="rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
-          {error}
-        </p>
+        <div role="alert" className="rounded-lg bg-amber-bg px-3 py-2 text-xs leading-relaxed text-amber">
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={refetch}
+            className="mt-1.5 font-semibold underline underline-offset-2 hover:no-underline"
+          >
+            Try again
+          </button>
+        </div>
       ) : items === null ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
