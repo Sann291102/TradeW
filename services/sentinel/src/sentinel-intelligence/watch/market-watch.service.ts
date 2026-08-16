@@ -324,22 +324,22 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Trading time, including the weekday check `market-clock.ts` does not do.
+   * Trading time — a real NSE session, now including holidays.
    *
-   * `isMarketOpen()` is time-of-day only — it returns true at 11:00 on a
-   * Sunday, a gap `market-clock.spec.ts` pins deliberately because seven
-   * services key off the current semantics. Fixing it there is the
-   * clock-unification change and is out of scope here; leaving it unhandled
-   * would mean sweeping the metered candle API every weekend, so the weekday
-   * check lives locally and additively until that lands.
+   * This used to carry its own weekday check because `isMarketOpen()` was
+   * time-of-day only and returned true at 11:00 on a Sunday. It was additive
+   * and local, explicitly "until clock-unification lands". That landed on
+   * 2026-08-16: `market-clock.ts` reads the shared NSE calendar in
+   * `@tradew/market-data`, so `isMarketOpen` is false on weekends AND on
+   * holidays, and the local `getUTCDay()` arithmetic is gone rather than left
+   * as a second, weaker copy of the same rule.
    *
-   * Still holiday-blind. An NSE holiday sweeps and finds nothing, which costs
-   * cached calls rather than producing wrong data.
+   * The holiday half is the part that was actually costing something: an NSE
+   * holiday is a weekday, so the old check let every sweep through and spent
+   * metered Dhan calls on a market that never opened.
    */
   private isTradingTime(at: Date): boolean {
     if (!this.config.watchEnabled) return false;
-    const istDay = new Date(at.getTime() + IST_OFFSET_MS).getUTCDay();
-    if (istDay === 0 || istDay === 6) return false;
     return isMarketOpen(at);
   }
 
@@ -410,8 +410,6 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
     };
   }
 }
-
-const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 export interface WatchSweepResult {
   /** Why the sweep did nothing, or null when it ran. */

@@ -24,6 +24,8 @@ const TRADING = new Date('2026-08-04T05:30:00.000Z');
 const SATURDAY = new Date('2026-08-08T05:30:00.000Z');
 /** Tuesday 20:00 IST — after the close. */
 const AFTER_CLOSE = new Date('2026-08-04T14:30:00.000Z');
+/** Ganesh Chaturthi 2026 — a WEDNESDAY the NSE is shut, 11:00 IST. */
+const NSE_HOLIDAY = new Date('2026-08-26T05:30:00.000Z');
 
 function detection(strategyId: string, validated = true): StrategyDetection {
   return {
@@ -120,15 +122,37 @@ describe('watch cost controls', () => {
     expect(h.snapshot).not.toHaveBeenCalled();
   });
 
-  it('does not sweep at the weekend, which the shared market clock alone would allow', async () => {
-    // `isMarketOpen(SATURDAY)` is true — `market-clock.spec.ts` pins that gap
-    // deliberately. The watcher must not inherit it and poll all weekend.
+  it('does not sweep at the weekend', async () => {
+    // This used to need a weekday check local to the watcher, because
+    // `isMarketOpen(SATURDAY)` was true. Since clock unification (2026-08-16)
+    // the shared clock reads the NSE calendar and the local check is gone —
+    // the assertion stays because the behaviour is what matters, not where the
+    // rule lives.
     const h = harness();
     h.service.register('NIFTY', SATURDAY);
     const result = await h.service.sweep(SATURDAY);
 
     expect(result.skipped).toBe('market-closed');
     expect(h.snapshot).not.toHaveBeenCalled();
+  });
+
+  it('does not sweep on an NSE holiday that falls on a weekday', async () => {
+    // The case the old local weekday check structurally could not catch: a
+    // holiday IS a weekday, so every sweep went through and spent metered Dhan
+    // calls on a market that never opened. Only a calendar closes this.
+    const h = harness();
+    h.service.register('NIFTY', NSE_HOLIDAY);
+    const result = await h.service.sweep(NSE_HOLIDAY);
+
+    expect(result.skipped).toBe('market-closed');
+    expect(h.snapshot).not.toHaveBeenCalled();
+  });
+
+  it('reports tradingTime false on a holiday and true mid-session', async () => {
+    const h = harness();
+    expect(h.service.status(NSE_HOLIDAY).tradingTime).toBe(false);
+    expect(h.service.status(SATURDAY).tradingTime).toBe(false);
+    expect(h.service.status(TRADING).tradingTime).toBe(true);
   });
 
   it('holds the watch list to its cap, dropping the least recently asked for', async () => {
