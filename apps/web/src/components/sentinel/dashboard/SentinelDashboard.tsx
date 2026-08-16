@@ -1,12 +1,14 @@
 'use client';
 
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import type { DashboardModel } from '@/lib/sentinel/dashboardModel';
+import { engineFocusFrom } from '@/lib/sentinel/chartFocus';
 import { StatusCards } from './StatusCards';
 import { StrategyTimelineFeed, type WatchObservation } from '../StrategyTimelineFeed';
 import { StrategyConditionsPanel } from '../StrategyConditionsPanel';
 import { SentinelLiveCharts } from '../SentinelLiveCharts';
 import { SentinelChartReading } from '../SentinelChartReading';
+import { SentinelContractReading } from '../SentinelContractReading';
 import { EmotionMirror } from './EmotionMirror';
 import { MarketContextRail } from './MarketContextRail';
 
@@ -88,6 +90,21 @@ export function SentinelDashboard({
   const [observation, setObservation] = useState<WatchObservation | null>(null);
 
   /**
+   * What `/observe` read for the SELECTED MARKET, as a chart focus.
+   *
+   * This is the "selecting a market starts Sentinel watching those charts"
+   * path. It is subordinate to `observation` inside `SentinelLiveCharts` — a
+   * watch the user created is the more specific claim — but it is what makes
+   * the panel truthful in the far more common state of having no watch at all.
+   *
+   * Memoised on identity of the response's own object: `/observe` polls every
+   * 45s and produces a fresh model each time, and an unmemoised focus would
+   * hand the charts a new object every poll, restarting their candle hooks.
+   * Same class of bug as the `observationKey` guard in `StrategyTimelineFeed`.
+   */
+  const engineRead = useMemo(() => engineFocusFrom(model.contractWatch), [model.contractWatch]);
+
+  /**
    * The rules are edited where they were written. Scrolling rather than
    * routing keeps the live surface — charts, feed, sweep — mounted and
    * polling; a navigation away and back would restart every one of them.
@@ -138,7 +155,14 @@ export function SentinelDashboard({
         ceStrike={null}
         peStrike={null}
         focus={observation?.focus ?? null}
-        footer={observation ? <SentinelChartReading reading={observation.reading} /> : undefined}
+        engineRead={engineRead}
+        footer={
+          observation ? (
+            <SentinelChartReading reading={observation.reading} />
+          ) : model.contractWatch ? (
+            <SentinelContractReading watch={model.contractWatch} />
+          ) : undefined
+        }
       />
 
       {/*

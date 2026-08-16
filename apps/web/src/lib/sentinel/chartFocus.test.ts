@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { focusFromTimeline, resolveSeries, seriesNote } from './chartFocus';
+import { engineFocusFrom, focusFromTimeline, resolveSeries, seriesNote } from './chartFocus';
+import type { ContractWatch } from './types';
 import type { Timeline } from './sentinelPy';
 
 function timeline(watch: Partial<Timeline['watch']>): Timeline {
@@ -96,5 +97,75 @@ describe('focusFromTimeline', () => {
 
   it('is null with no timeline, so the charts fall back to their own selection', () => {
     expect(focusFromTimeline(null)).toBeNull();
+  });
+});
+
+/**
+ * The SECOND focus — what `/observe` read for the selected market.
+ *
+ * Every assertion here is about one property: the "Sentinel reads this" badge
+ * must be earned per panel. The panel it sits on is a chart of a specific
+ * instrument, so a badge on a series the engine did not fetch is a false
+ * statement about the engine, which is the whole class of bug this module
+ * exists to close.
+ */
+describe('engineFocusFrom', () => {
+  const watch = (over: Partial<ContractWatch> = {}): ContractWatch => ({
+    underlying: 'NIFTY',
+    expiry: '2026-08-27',
+    strike: 24_350,
+    interval: '15m',
+    index: { bars: 20, open: 24_000, last: 24_200, changePct: 0.83, direction: 'rising' },
+    ce: {
+      side: 'CE',
+      strike: 24_350,
+      series: { bars: 20, open: 100, last: 140, changePct: 40, direction: 'rising' },
+      unavailableReason: null,
+    },
+    pe: {
+      side: 'PE',
+      strike: 24_350,
+      series: { bars: 20, open: 100, last: 60, changePct: -40, direction: 'falling' },
+      unavailableReason: null,
+    },
+    alignment: 'call-side-tracking',
+    notes: [],
+    contractsReadable: true,
+    ...over,
+  });
+
+  it('is null with no contract read, so the charts keep their own selection', () => {
+    expect(engineFocusFrom(null)).toBeNull();
+    expect(engineFocusFrom(undefined)).toBeNull();
+  });
+
+  it('marks all three panels when the engine read all three', () => {
+    const f = engineFocusFrom(watch());
+    expect(f?.reads).toEqual({ index: true, ce: true, pe: true });
+    expect(f?.strike).toBe(24_350);
+    expect(f?.series.interval).toBe('15m');
+  });
+
+  it('does not mark a leg the engine failed to read', () => {
+    // The badge is the claim. A PUT chart the browser fetched, beside a PUT
+    // the engine could not fetch, must not be captioned as one Sentinel reads.
+    const f = engineFocusFrom(
+      watch({ pe: { side: 'PE', strike: 24_350, series: null, unavailableReason: 'no traded candles' } }),
+    );
+    expect(f?.reads).toEqual({ index: true, ce: true, pe: false });
+  });
+
+  it('marks nothing when the provider cannot read contracts at all', () => {
+    const f = engineFocusFrom(watch({ ce: null, pe: null, strike: null, contractsReadable: false }));
+    expect(f?.reads).toEqual({ index: true, ce: false, pe: false });
+    expect(f?.contractsReadable).toBe(false);
+  });
+
+  it('reproduces the bridge substitution on the engine’s own interval', () => {
+    // Same rule as a watch focus: the engine asking for 3m receives 5m bars,
+    // so the chart draws 5m and `substituted` carries the discrepancy.
+    const f = engineFocusFrom(watch({ interval: '3m' }));
+    expect(f?.series.interval).toBe('5m');
+    expect(f?.series.substituted).toBe(true);
   });
 });

@@ -14,6 +14,7 @@ import { extractMarketContext, type MarketContextDimension } from './deriveConte
 import { toTimelineDots, type TimelineDot } from './sessionTimeline';
 import type {
   ConfidenceBreakdown,
+  ContractWatch,
   MarketProfile,
   MarketStateSnapshot,
   MarketStateValue,
@@ -99,6 +100,16 @@ export interface DashboardModel {
   sessionPhase: MarketStateSnapshot['sessionPhase'];
   /** true when the exchange session is live (active/closing) */
   marketActive: boolean;
+  /**
+   * What the engine read on this observation — the underlying and both option
+   * legs at the at-the-money strike, on one interval.
+   *
+   * Passed through unmapped, deliberately. Every other field here is a
+   * presentation model derived from the response; this one is the response's
+   * own account of which series it read, and re-shaping it would create a
+   * second version of that claim to drift from the engine's.
+   */
+  contractWatch: ContractWatch | null;
 }
 
 // --- regime ----------------------------------------------------------------
@@ -293,5 +304,6 @@ export function buildDashboardModel(data: ObserveResponse | null, loading: boole
     }),
     sessionPhase,
     marketActive: sessionPhase === 'active' || sessionPhase === 'closing',
+    contractWatch: data?.contractWatch ?? null,
   };
 }

@@ -226,6 +226,36 @@ export class SentinelOrchestratorService {
       this.logger.warn(`could not put ${symbol} under continuous watch (non-fatal): ${(err as Error).message}`);
     }
 
+    // ---- what Sentinel is reading, per instrument ------------------------
+    //
+    // The underlying AND the two option legs at the at-the-money strike, all
+    // on `SNAPSHOT_INTERVAL`. The workspace draws three charts; until this
+    // landed only the first was read, so the other two claimed an engine that
+    // was not running.
+    //
+    // STARTED HERE, AWAITED AT THE BOTTOM. Two live HTTP reads against the
+    // market-data bridge (one per leg, each with its own 4s abort) would add
+    // seconds to an observation that runs ~1.6s if they sat on the critical
+    // path — and this is the one part of the response that nothing else
+    // consumes, so nothing below needs to wait for it. Kicking it off beside
+    // the agent work costs a floating promise and buys back its whole latency.
+    //
+    // Additive and non-fatal by construction: it contributes no signal, gates
+    // nothing, and a failure leaves `contractWatch` undefined rather than
+    // failing an observation of the underlying that is otherwise fine. The
+    // `.catch` is attached IMMEDIATELY, not at the await — an unhandled
+    // rejection between here and the bottom of this method would be an
+    // unhandled rejection in the service, not a caught one.
+    const contractWatchPromise = trackAgent(
+      'market-technical',
+      () =>
+        this.market.contracts(snapshot).catch((err) => {
+          this.logger.warn(`contract read failed for ${symbol} (non-fatal): ${(err as Error).message}`);
+          return undefined;
+        }),
+      { detail: `reading option legs at the money — ${symbol}` },
+    ).catch(() => undefined);
+
     const signals: Signal[] = [
       ...(await trackAgent(
         'market-technical',
@@ -505,6 +535,11 @@ export class SentinelOrchestratorService {
     // and whether an outcome reached the Brain. Instrumentation only — it
     // reads state that was already computed and changes nothing.
     //
+    // The contract read started right after the snapshot and has been running
+    // alongside every agent above. Collected here, at the last possible
+    // moment, so its two HTTP reads overlap the work rather than delay it.
+    const contractWatch = await contractWatchPromise;
+
     // Set SENTINEL_OBSERVATION_LOG=false to silence it.
     if (process.env.SENTINEL_OBSERVATION_LOG !== 'false') {
       const transitions = strategyLifecycles.filter((l) => l.changed);
@@ -524,6 +559,7 @@ export class SentinelOrchestratorService {
           `(${institutionalCrossValidation.agreeing}/${institutionalCrossValidation.voting},` +
           `abstain=${institutionalCrossValidation.abstaining.length})` +
           ` lifecycleChanges=[${transitions.map((t) => `${t.strategyId}→${t.state}`).join(',') || 'none'}]` +
+          ` contracts=${contractWatch ? `${contractWatch.strike ?? 'none'}@${contractWatch.alignment ?? 'unread'}` : 'unavailable'}` +
           ` sideInFocus=${sideInFocus ? sideInFocus.side : 'null'}` +
           ` events=[${events.map((e) => `${e.kind}:${e.severity}`).join(',') || 'none'}]`,
       );
@@ -555,6 +591,7 @@ export class SentinelOrchestratorService {
         narrative: behaviourRead.narrative,
         evidence: behaviourRead.evidence,
       },
+      contractWatch,
       observations: all24hObservations,
       signals,
       marketContext,

@@ -1,6 +1,14 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Candle, MarketDataProvider, OptionChainEntry } from '@tradew/types';
+import { Candle, CandleInterval, MarketDataProvider, OptionChainEntry } from '@tradew/types';
 import { MarketProfile, MarketProfileType, Signal, TrendAnalysis } from '../domain';
+import { atmStrikeFor } from '../strategy/option-context';
+import {
+  alignContracts,
+  readLeg,
+  unreadableLeg,
+  type ContractAlignment,
+  type LegRead,
+} from './contract-alignment';
 import {
   averageVolume,
   cpr,
@@ -14,6 +22,21 @@ import {
 } from './indicators';
 
 export const MARKET_DATA = 'MARKET_DATA_PROVIDER';
+
+/**
+ * The bars every Sentinel observation is computed on.
+ *
+ * Named because it is now read in two places — the underlying snapshot and the
+ * CE/PE legs beside it — and because the workspace captions its charts with
+ * it. It had been an inline `'15m'` while the browser drew a 5m index and 1m
+ * contracts, so the user and the engine were looking at different bars with
+ * nothing on screen saying so. One constant, exported, is what keeps the chart
+ * and the verdict describing the same market.
+ */
+export const SNAPSHOT_INTERVAL: CandleInterval = '15m';
+
+/** How far back a snapshot reaches. Enough bars for a 50-period EMA at 15m. */
+export const SNAPSHOT_LOOKBACK_MS = 5 * 86_400_000;
 
 export interface MarketSnapshot {
   symbol: string;
@@ -100,8 +123,8 @@ export class MarketIntelligenceService {
 
   async snapshot(symbol: string): Promise<MarketSnapshot> {
     const to = new Date();
-    const from = new Date(to.getTime() - 5 * 86_400_000);
-    const candles = await this.marketData.getCandles(symbol, '15m', from, to);
+    const from = new Date(to.getTime() - SNAPSHOT_LOOKBACK_MS);
+    const candles = await this.marketData.getCandles(symbol, SNAPSHOT_INTERVAL, from, to);
     const closes = candles.map((c) => c.close);
     const last = candles[candles.length - 1];
     const ema20Series = ema(closes, 20);
@@ -122,6 +145,93 @@ export class MarketIntelligenceService {
       breadthRatio: breadth.declines > 0 ? breadth.advances / breadth.declines : null,
       optionChain: readOptionChain(chain, last?.close ?? 0),
     });
+  }
+
+  /**
+   * Read the CE and PE legs at the at-the-money strike, on the SAME bars as
+   * the snapshot.
+   *
+   * This is the engine half of the workspace's three-chart panel. Until
+   * 2026-08-16 that panel drew an index, a call and a put while the engine
+   * read only the index; see `contract-alignment.ts` for why the premium
+   * series cannot be inferred from the underlying.
+   *
+   * ── THE INTERVAL IS NOT A CHOICE ──────────────────────────────────────
+   * `SNAPSHOT_INTERVAL` is used for all three series because comparing a 15m
+   * index move against a 1m premium move compares different amounts of time
+   * and calls the difference divergence. The whole read is only meaningful on
+   * one clock.
+   *
+   * ── HONEST DEGRADATION ────────────────────────────────────────────────
+   * Every failure here is named and none is fatal. No options market, a
+   * provider without the optional capability, a bridge that declined one leg:
+   * each produces a `ContractAlignment` that says so. The underlying's
+   * observation is unaffected — this is additional evidence, never a gate on
+   * the read the workspace already produced.
+   */
+  async contracts(snapshot: MarketSnapshot): Promise<ContractAlignment> {
+    const bars = snapshot.sessionCandles.length ? snapshot.sessionCandles : snapshot.candles;
+    const base = {
+      underlying: snapshot.symbol,
+      interval: SNAPSHOT_INTERVAL,
+      indexCandles: bars,
+    };
+
+    // The capability check, not a try/catch: a provider that cannot read
+    // contracts at all is a different state from one whose read failed, and
+    // the panel says a different thing for each.
+    if (!this.marketData.getOptionCandles || !this.marketData.getOptionExpiries) {
+      return alignContracts({
+        ...base,
+        expiry: null,
+        strike: null,
+        ce: null,
+        pe: null,
+        contractsReadable: false,
+      });
+    }
+
+    const expiries = await this.marketData.getOptionExpiries(snapshot.symbol).catch(() => [] as string[]);
+    const expiry = expiries[0] ?? null;
+    const strike = atmStrikeFor(snapshot.symbol, snapshot.lastPrice);
+
+    // No options market (a commodity, most equities) or no usable spot. Not a
+    // fault — `contractsReadable` stays true because the provider CAN read
+    // contracts, there simply are none for this instrument.
+    if (!expiry || strike == null) {
+      return alignContracts({ ...base, expiry, strike, ce: null, pe: null, contractsReadable: true });
+    }
+
+    // The window the index bars cover, so the legs are read over the same
+    // stretch of market rather than the same number of days.
+    const from = bars[0]?.timestamp ?? new Date(Date.now() - SNAPSHOT_LOOKBACK_MS);
+    const to = new Date();
+
+    const [ce, pe] = await Promise.all([
+      this.readLegCandles(snapshot.symbol, expiry, strike, 'CE', from, to),
+      this.readLegCandles(snapshot.symbol, expiry, strike, 'PE', from, to),
+    ]);
+
+    return alignContracts({ ...base, expiry, strike, ce, pe, contractsReadable: true });
+  }
+
+  /** One leg, with its failure recorded rather than thrown. */
+  private async readLegCandles(
+    symbol: string,
+    expiry: string,
+    strike: number,
+    side: 'CE' | 'PE',
+    from: Date,
+    to: Date,
+  ): Promise<LegRead> {
+    try {
+      const candles = await this.marketData.getOptionCandles!({ symbol, expiry, strike, side }, SNAPSHOT_INTERVAL, from, to);
+      return readLeg(side, strike, candles);
+    } catch (err) {
+      // One leg failing must not take the other down with it: an illiquid put
+      // at a strike whose call trades heavily is a normal, readable state.
+      return unreadableLeg(side, strike, (err as Error).message);
+    }
   }
 
   signals(s: MarketSnapshot): Signal[] {

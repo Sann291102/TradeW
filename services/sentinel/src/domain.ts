@@ -455,6 +455,27 @@ export interface CrossValidationConcept {
   weight: number;
 }
 
+/** One series' move across the bars Sentinel read. See `contractWatch`. */
+export interface ContractSeriesRead {
+  bars: number;
+  open: number;
+  last: number;
+  changePct: number;
+  direction: 'rising' | 'falling' | 'flat';
+}
+
+/**
+ * One option leg. `series: null` with a non-null `unavailableReason` is a leg
+ * Sentinel could NOT read — never the same thing as a leg that read cleanly
+ * and did not move, which is `direction: 'flat'`.
+ */
+export interface ContractLegRead {
+  side: 'CE' | 'PE';
+  strike: number;
+  series: ContractSeriesRead | null;
+  unavailableReason: string | null;
+}
+
 export interface ObserveResponse {
   /** the single synthesized, user-facing message (orchestrator only) — null when nothing warrants surfacing */
   synthesis: {
@@ -538,6 +559,50 @@ export interface ObserveResponse {
     };
     narrative: string;
     evidence: string[];
+  };
+  /**
+   * What Sentinel read on THIS observation, per instrument — the underlying
+   * and the two option legs at the at-the-money strike.
+   *
+   * Added 2026-08-16. The workspace has drawn three charts (index / CALL /
+   * PUT) since 2026-08-05 while the engine snapshotted only the underlying,
+   * so two of the three panels asserted an engine that was not running. This
+   * field is what makes the panel checkable: it names the interval every
+   * series was read on, carries each leg's own move, and reports a leg it
+   * could not read as unreadable rather than omitting it.
+   *
+   * Read `intelligence/contract-alignment.ts` before adding to this. In
+   * particular `alignment` is a small closed set and not a score: a number
+   * invites ranking strikes, and ranking contracts by attractiveness is a
+   * recommendation however it is phrased (Rule 2). Nothing here names an
+   * action, a level to act at, or a preference between the two legs as things
+   * to hold — the strongest statement available is which leg MOVED with the
+   * underlying, in the past tense, over stated bars.
+   *
+   * Structurally mirrors `ContractAlignment`, declared inline for the same
+   * reason `CrossValidationConcept` is — `domain.ts` must not depend on a
+   * module that depends on it.
+   */
+  contractWatch?: {
+    underlying: string;
+    expiry: string | null;
+    strike: number | null;
+    /** The bars EVERY series below was read on. */
+    interval: string;
+    index: ContractSeriesRead | null;
+    ce: ContractLegRead | null;
+    pe: ContractLegRead | null;
+    alignment:
+      | 'call-side-tracking'
+      | 'put-side-tracking'
+      | 'both-sides-bid'
+      | 'both-sides-decaying'
+      | 'index-flat'
+      | 'mixed'
+      | null;
+    notes: string[];
+    /** False when the data provider cannot read contract series at all. */
+    contractsReadable: boolean;
   };
   /**
    * Phase 3 — where each strategy sits in its own lifecycle.

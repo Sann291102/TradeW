@@ -59,8 +59,14 @@ export default defineConfig({
       // allowlist, so its assertions — including the pinned KNOWN-GAP ones
       // recording that the clock is day-of-week and holiday blind — never
       // executed. Added during the pre-live-validation pass: an untested clock
-      // is not something to take into a live session.
+      // is not something to take into a live session. Those KNOWN-GAP
+      // assertions were inverted on 2026-08-16 when clock unification landed.
       'src/market-clock.spec.ts',
+      // The CE/PE legs beside the underlying — the arithmetic behind the
+      // workspace's other two charts, which the engine did not read until
+      // 2026-08-16. Includes the Rule 2 guard: no note it emits may contain
+      // directive language.
+      'src/intelligence/contract-alignment.spec.ts',
       // The internal api→sentinel auth boundary: fails closed on a weak/unset
       // service token, constant-time compare (2026-08-10 assessment).
       'src/service-token-guard.spec.ts',

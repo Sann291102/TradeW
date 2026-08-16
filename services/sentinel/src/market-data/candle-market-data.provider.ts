@@ -6,8 +6,10 @@ import type {
   MarketDataProvider,
   NewsItem,
   OptionChainEntry,
+  OptionContractRef,
   Quote,
 } from '@tradew/types';
+import { istDateKey } from '@tradew/market-data';
 import { PrismaService } from '../prisma.service';
 
 /**
@@ -78,10 +80,44 @@ interface FeedSnapshot {
   commodities?: FeedQuote[];
 }
 
+/** One leg of a strike as the bridge's `/optionchain` serves it. */
+interface FeedOptionLeg {
+  ltp?: number;
+  oi?: number;
+  volume?: number;
+  iv?: number;
+}
+interface FeedOptionChain {
+  spot?: number | null;
+  strikes?: { strike: number; ce?: FeedOptionLeg | null; pe?: FeedOptionLeg | null }[];
+}
+
+/**
+ * How long a read chain is reused.
+ *
+ * Shorter than the bridge's own chain TTL would be pointless (the call would
+ * just hit that cache); longer would let OI walls go stale across a sweep. The
+ * observation cadences this serves are 45s (`/observe`) and 60s (the watch
+ * sweep), so 30s means neither is ever served a chain it has already seen
+ * twice.
+ */
+const OPTION_CACHE_TTL_MS = 30_000;
+/** Expiry lists change on expiry, not on ticks. See `getOptionExpiries`. */
+const EXPIRY_CACHE_TTL_MS = 15 * 60_000;
+
+function contractLabel(c: OptionContractRef): string {
+  return `${c.symbol} ${c.expiry} ${c.strike} ${c.side}`;
+}
+
 @Injectable()
 export class CandleMarketDataProvider implements MarketDataProvider {
   readonly name = LIVE_FEED_URL ? 'live-feed+db-candle' : 'db-candle';
   private readonly logger = new Logger(CandleMarketDataProvider.name);
+
+  /** symbol:expiry → last read chain. See OPTION_CACHE_TTL_MS. */
+  private readonly chainCache = new Map<string, { at: number; entries: OptionChainEntry[] }>();
+  /** symbol → traded expiries, nearest first. See EXPIRY_CACHE_TTL_MS. */
+  private readonly expiryCache = new Map<string, { at: number; expiries: string[] }>();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -231,16 +267,141 @@ export class CandleMarketDataProvider implements MarketDataProvider {
     };
   }
 
-  // --- not yet served by the bridge ---
-  // These used to return generated chains and headlines. Empty is the honest
-  // answer: MarketIntelligenceService already degrades the option factor to
-  // "no data" on an empty chain, and NewsIntelligenceService reports no
-  // published flow rather than inventing sentiment. Real integrations land
-  // with the Phase 4 pipeline.
+  // --- options ---------------------------------------------------------
+  //
+  // `getOptionChain` returned `[]` for every symbol from 2026-07-26 until
+  // 2026-08-16, with a comment describing that as "the honest answer" pending
+  // the Phase 4 ingestion pipeline. It was honest and it was also unnecessary:
+  // the live-feed bridge has served `/optionchain` and
+  // `/optionchain/expirylist` the whole time — the web workspace's option
+  // chain panel, its CE/PE charts and its strike pickers all read them. So the
+  // ENGINE was the only part of TradeW that could not see the option market,
+  // while the screen beside it showed a full chain.
+  //
+  // Consequences of that gap, all now closed: `snapshot.optionChain` was
+  // always null, so PCR / max pain / OI walls never reached the confidence
+  // engine's option factor, `buildOptionContext` reported `unavailable: true`
+  // on every observation, and `positioningNotes` never produced a line.
 
-  async getOptionChain(_symbol: string, _expiry?: Date): Promise<OptionChainEntry[]> {
-    return [];
+  async getOptionChain(symbol: string, expiry?: Date): Promise<OptionChainEntry[]> {
+    if (!LIVE_FEED_URL) return [];
+
+    const expiryIso = expiry ? istDateKey(expiry) : (await this.getOptionExpiries(symbol))[0];
+    if (!expiryIso) return []; // no options market for this instrument
+
+    const cacheKey = `${symbol.toUpperCase()}:${expiryIso}`;
+    const cached = this.chainCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < OPTION_CACHE_TTL_MS) return cached.entries;
+
+    const json = await this.fetchJson<FeedOptionChain>(
+      `${LIVE_FEED_URL}/optionchain?symbol=${encodeURIComponent(symbol)}&expiry=${encodeURIComponent(expiryIso)}`,
+    );
+    if (!json || !Array.isArray(json.strikes) || json.strikes.length === 0) {
+      // Rate-limited, bridge down, or genuinely no chain. All three degrade to
+      // "no chain read", never to a fabricated one — the option factor reports
+      // no data, exactly as it did when this method was a stub.
+      return cached?.entries ?? [];
+    }
+
+    const expiryDate = new Date(`${expiryIso}T00:00:00+05:30`);
+    const entries: OptionChainEntry[] = json.strikes
+      .filter((row) => Number.isFinite(row.strike))
+      .map((row) => ({
+        strike: row.strike,
+        expiry: expiryDate,
+        callOI: row.ce?.oi ?? 0,
+        putOI: row.pe?.oi ?? 0,
+        callVolume: row.ce?.volume ?? 0,
+        putVolume: row.pe?.volume ?? 0,
+        callIV: row.ce?.iv ?? undefined,
+        putIV: row.pe?.iv ?? undefined,
+        callLtp: row.ce?.ltp ?? undefined,
+        putLtp: row.pe?.ltp ?? undefined,
+      }));
+
+    this.chainCache.set(cacheKey, { at: Date.now(), entries });
+    return entries;
   }
+
+  /**
+   * Traded expiries, nearest first.
+   *
+   * Cached far longer than the chain itself: an expiry list changes when a
+   * contract expires, not tick to tick, and every chain read starts with this
+   * call. Without the cache a watch sweep over a dozen symbols would put two
+   * dozen calls into the bridge's shared Dhan queue, which enforces a 3.1s
+   * floor between option-family calls — the sweep would spend minutes waiting
+   * on a list that had not changed.
+   */
+  async getOptionExpiries(symbol: string): Promise<string[]> {
+    if (!LIVE_FEED_URL) return [];
+    const key = symbol.toUpperCase();
+    const cached = this.expiryCache.get(key);
+    if (cached && Date.now() - cached.at < EXPIRY_CACHE_TTL_MS) return cached.expiries;
+
+    const json = await this.fetchJson<{ expiries?: string[] }>(
+      `${LIVE_FEED_URL}/optionchain/expirylist?symbol=${encodeURIComponent(symbol)}`,
+    );
+    // A failed read is not "no options market" — leaving the cache alone means
+    // the next call retries instead of pinning an empty list for the TTL.
+    if (!json || !Array.isArray(json.expiries)) return cached?.expiries ?? [];
+
+    const expiries = [...json.expiries].sort();
+    this.expiryCache.set(key, { at: Date.now(), expiries });
+    return expiries;
+  }
+
+  /**
+   * Real Dhan OHLC for ONE option contract — the premium series.
+   *
+   * The bridge already sanitises these (Dhan occasionally returns the
+   * underlying's prices on an option securityId; `/candles/option` rescales
+   * against the live premium). Deliberately not re-sanitised here: two
+   * independent corrections of the same artefact is how a correctly-priced
+   * series gets scaled twice.
+   */
+  async getOptionCandles(
+    contract: OptionContractRef,
+    interval: CandleInterval,
+    from: Date,
+    to: Date,
+  ): Promise<Candle[]> {
+    if (!LIVE_FEED_URL) throw new MarketDataUnavailableError('option candles', contractLabel(contract));
+
+    const days = Math.max(1, Math.ceil((to.getTime() - from.getTime()) / 86_400_000));
+    const url =
+      `${LIVE_FEED_URL}/candles/option?symbol=${encodeURIComponent(contract.symbol)}` +
+      `&expiry=${encodeURIComponent(contract.expiry)}&strike=${contract.strike}` +
+      `&type=${contract.side}&interval=${interval}&days=${days}`;
+
+    const json = await this.fetchJson<{ candles?: FeedCandle[]; source?: string }>(url);
+    if (!json || json.source !== 'dhan' || !Array.isArray(json.candles) || !json.candles.length) {
+      // No Candle-table fallback: contract OHLC has never been backfilled, so
+      // there is no second real source to fall through to. Throwing is what
+      // makes "could not read this leg" reach the caller as a fact rather than
+      // an empty series that reads like a flat one.
+      throw new MarketDataUnavailableError(`${interval} option candles`, contractLabel(contract));
+    }
+
+    const fromMs = from.getTime();
+    const toMs = to.getTime();
+    return json.candles
+      .filter((c) => c.timestamp >= fromMs && c.timestamp <= toMs)
+      .map((c) => ({
+        timestamp: new Date(c.timestamp),
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume,
+        openInterest: c.openInterest,
+      }));
+  }
+
+  // --- not yet served by the bridge ---
+  // This used to return generated headlines. Empty is the honest answer:
+  // NewsIntelligenceService reports no published flow rather than inventing
+  // sentiment. A real integration lands with the Phase 4 pipeline.
 
   async getNews(_symbols?: string[], _sinceHours?: number): Promise<NewsItem[]> {
     return [];
