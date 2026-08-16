@@ -20,7 +20,7 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:sentinel"],
       "port": 4010,
-      "autoPort": false
+      "autoPort": true
     },
     {
       "name": "dhan-bridge",
