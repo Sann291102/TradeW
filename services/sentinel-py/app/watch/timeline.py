@@ -193,10 +193,78 @@ def _collapse(events: list[dict]) -> list[dict]:
     return collapsed
 
 
-def build_timeline(watch: dict, observations: list[dict]) -> dict[str, Any]:
+"""Measurements the sweep writes into observation metadata on every pass.
+
+These are the engine's READING of the candles it fetched — pullback depth,
+VWAP test ordinal, flip age, flag geometry, zone touches, sweep stage. The
+poller has always recorded them (app/watch/poller.py) and nothing has ever
+read them back out, so the browser could show which of the user's conditions
+were met but never what the engine actually measured to decide that.
+"""
+_READING_KEYS = ("pullback", "vwap", "flip", "flag", "zone", "liquidity")
+
+
+def _reading(observations: list[dict], usable: list[dict]) -> dict[str, Any] | None:
+    """What the engine last measured, and whether it could read the market at
+    all on its most recent pass.
+
+    The two questions are answered from DIFFERENT observations on purpose. The
+    measurements come from the newest readable sweep; the "could it read"
+    answer comes from the newest sweep of any kind. A bridge that went down
+    five minutes ago must not silently keep presenting five-minute-old levels
+    as current — the numbers stay (they are still the last thing that was
+    true) and `unreadable` says the latest attempt failed.
+
+    Only `watch-engine` passes carry measurements; `intrade-monitor` passes
+    measure a position against the user's own levels and record none of this.
+    """
+    if not observations:
+        return None
+
+    newest = observations[0]
+    skipped = (newest.get("metadata") or {}).get("skipped")
+    unreadable = str((newest.get("metadata") or {}).get("detail") or "") if skipped else None
+
+    measured = next((o for o in usable if o.get("agent") != "intrade-monitor"), None)
+    if measured is None:
+        # Nothing readable has ever been swept. Still worth returning, because
+        # "the engine has not been able to read this chart" is the answer to
+        # the only question a user asks in that state.
+        return {
+            "at": newest.get("createdAt"),
+            "candleTime": None,
+            "openingRangeHigh": None,
+            "openingRangeLow": None,
+            "measurements": {},
+            "unreadable": unreadable,
+        }
+
+    meta = measured.get("metadata") or {}
+    return {
+        "at": measured.get("createdAt"),
+        "candleTime": measured.get("candleTime"),
+        "openingRangeHigh": meta.get("openingRangeHigh"),
+        "openingRangeLow": meta.get("openingRangeLow"),
+        # Only keys the sweep actually produced a value for. A measurement is
+        # None when the concept does not apply to this instrument (no volume
+        # means no VWAP), and an absent key reads more honestly than a null.
+        "measurements": {key: meta[key] for key in _READING_KEYS if meta.get(key) is not None},
+        "unreadable": unreadable,
+    }
+
+
+def build_timeline(
+    watch: dict, observations: list[dict], strategy_rules: dict | None = None
+) -> dict[str, Any]:
     """Newest first. `observations` is expected newest-first already (the
     store orders by createdAt DESC); ordering is asserted here rather than
-    assumed so a change to the query cannot silently invert the feed."""
+    assumed so a change to the query cannot silently invert the feed.
+
+    `strategy_rules` is the saved strategy's parsed rules. Only `timeframe` is
+    read from it, and it is threaded through so the browser can draw the chart
+    on THE SAME series the sweep evaluates — a chart on 1m beside an engine
+    reading 15m is two different instruments as far as the user's eyes are
+    concerned."""
     events: list[dict] = []
 
     # A sweep that could not read the market is not an event the user needs,
@@ -248,6 +316,26 @@ def build_timeline(watch: dict, observations: list[dict]) -> dict[str, Any]:
             "state": watch["state"],
             "direction": watch.get("direction"),
             "strategyId": watch["strategyId"],
+            # The levels the USER declared when they recorded the position.
+            # Sentinel proposes none of these (app/intrade/monitor.py) — they
+            # are carried so the workspace can show the contract back to the
+            # person who wrote it, and they are named for what they mean rather
+            # than as order types, exactly as `OpenPositionRequest` does. The
+            # column names (`stopPrice`/`targetPrice`) predate the vocabulary
+            # rules; the boundary is where they are corrected, so nothing
+            # downstream has to know the old names.
+            "entryPrice": watch.get("entryPrice"),
+            "invalidationPrice": watch.get("stopPrice"),
+            "projectedPrice": watch.get("targetPrice"),
+            # The timeframe the SWEEP reads. None when the user's strategy
+            # named none, in which case the poller's own default (15m) applies
+            # — that default lives in app/watch/poller.py and is not duplicated
+            # here, so the browser is told "unspecified" rather than a second
+            # copy of a number that could drift.
+            "timeframe": (strategy_rules or {}).get("timeframe"),
         },
+        # What the engine measured off those candles, so "Sentinel is reading
+        # this chart" is a claim the user can check rather than take on trust.
+        "reading": _reading(observations, usable),
         "events": events,
     }

@@ -118,3 +118,4 @@ export class TrapIntelligenceService {
     return out;
   }
 }
+

@@ -101,4 +101,9 @@ async def timeline(watch_id: str, user_id: str = Query(..., alias="userId"), lim
     if watch is None:
         raise HTTPException(status_code=404, detail="Watch not found")
     observations = await store.list_observations(watch_id, limit)
-    return build_timeline(watch, observations)
+    # The strategy is loaded for its timeframe alone. A missing strategy is not
+    # fatal here — the watch and its history are still the truth about what was
+    # observed — so the timeline degrades to "timeframe unspecified" rather
+    # than 404ing on a soft-deleted strategy.
+    strategy = await _require_strategy(user_id, watch["strategyId"])
+    return build_timeline(watch, observations, (strategy or {}).get("rules"))
