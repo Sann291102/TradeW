@@ -4,6 +4,17 @@ node_modules/
 # builds
 dist/
 .next/
+# `.next/` does NOT match a sibling like `.next.prodbuild-aside-2026-08-11` —
+# the trailing slash anchors it to a directory named exactly `.next`. That gap is
+# why two full Next build trees are tracked in this repo today
+# (apps/web/.next.prodbuild-aside-2026-08-11{,-b}): they were moved aside rather
+# than deleted, which is the right instinct under Rule 1, and then silently
+# became committable. `npm run dev:reset` produces exactly this shape of
+# directory, so the pattern has to cover it or the next recovery adds more.
+#
+# Deliberately not un-tracking the two that are already in: gitignore does not
+# affect tracked files, and removing them is a deletion — the user's call.
+.next.*
 out/
 *.tsbuildinfo
 

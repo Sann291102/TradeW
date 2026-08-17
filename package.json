@@ -13,6 +13,8 @@
     "postinstall": "npm run build -w @tradew/types && npm run build -w @tradew/ai-core && npm run build -w @tradew/market-data",
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "//dev:reset": "Recovery for Next's `Cannot find module './NNN.js'` — a desynced dev cache in apps/web or apps/admin, which 500s every route including /login. Stop the dev servers first, run this, start them again. See scripts/dev-reset-next.mjs for why it happens and why there is no code fix.",
+    "dev:reset": "node scripts/dev-reset-next.mjs",
     "build:api": "npm run build -w @tradew/api",
     "build:web": "npm run build -w @tradew/web",
     "dev:api": "npm run start:dev -w @tradew/api",
