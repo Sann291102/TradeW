@@ -31,6 +31,13 @@ export * from './providers/simulated/simulated.feed';
 export * from './providers/dhan/dhan-binary-parser';
 export * from './providers/dhan/dhan-scrip-master';
 export * from './providers/dhan/dhan.feed';
+// Reliability layer for the Dhan REST integration. Three separable concerns,
+// all extracted from the 2026-08-17 outage: telling a fault apart from an empty
+// answer, holding the 24h-capped credential as something with a lifecycle, and
+// bounding how much upstream load one fault may cause. See each file's header.
+export * from './providers/dhan/dhan-fault';
+export * from './providers/dhan/dhan-credential';
+export * from './providers/dhan/upstream-guard';
 // Binance — crypto only, public/keyless, read-only. Unlike the Dhan provider
 // this needs no secret and no persistent subscription set, so it is consumed
 // directly by services/api rather than through the standalone feed bridge.

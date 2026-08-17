@@ -1,4 +1,9 @@
-import { BadGatewayException, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  GatewayTimeoutException,
+  Injectable,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SentinelEventDispatcher } from './sentinel-event-dispatcher.service';
 
@@ -26,6 +31,52 @@ export class SentinelApiService {
       'content-type': 'application/json',
       'x-service-token': process.env.SENTINEL_SERVICE_TOKEN ?? '',
     };
+  }
+
+  /**
+   * Ceiling on one api→sentinel call.
+   *
+   * ── WHY THIS EXISTS ───────────────────────────────────────────────────────
+   *
+   * Every hop here was a bare `fetch` with no `AbortSignal`, so a slow or hung
+   * Sentinel held an API worker and a socket for as long as it liked. Measured
+   * 2026-08-17: `/sentinel/observe` p50 2,178 ms, p95 7,703 ms, max **54,984 ms**
+   * — nothing in the chain enforced a limit, at any tier.
+   *
+   * That is a resource-exhaustion path rather than a latency annoyance. Every
+   * open workspace polls `/observe` on a 10–30 s cadence, so if observations
+   * start taking longer than the poll interval, in-flight requests accumulate
+   * instead of draining: each new poll adds a worker and a socket that the
+   * previous one has not released. The service does not slow down gracefully, it
+   * runs out of capacity — and the more users are connected, the sooner.
+   *
+   * Deliberately shorter than the browser's own patience (see
+   * `retryPolicy.ts`), so the failure is diagnosed HERE, as a named 504 from a
+   * known hop, rather than as an ambiguous client-side timeout that could mean
+   * any component in the chain.
+   */
+  private get timeoutMs(): number {
+    return Number(process.env.SENTINEL_SERVICE_TIMEOUT_MS ?? 20_000);
+  }
+
+  /**
+   * `fetch` with a ceiling, and a timeout reported as what it is.
+   *
+   * `GatewayTimeoutException` (504), not 502: the request was delivered and
+   * Sentinel simply did not finish in time. The browser's retry policy already
+   * treats 504 as transient and backs off, so a slow observation self-heals
+   * instead of latching an error card.
+   */
+  private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+    try {
+      return await fetch(url, { ...init, signal: AbortSignal.timeout(this.timeoutMs) });
+    } catch (err) {
+      const name = (err as Error)?.name;
+      if (name === 'TimeoutError' || name === 'AbortError') {
+        throw new GatewayTimeoutException(`Sentinel did not answer within ${this.timeoutMs}ms`);
+      }
+      throw new BadGatewayException(`Sentinel service unreachable: ${(err as Error).message}`);
+    }
   }
 
   async observe(
@@ -103,12 +154,10 @@ export class SentinelApiService {
       confidenceThreshold: focus?.confidenceThreshold,
     };
 
-    const res = await fetch(`${this.baseUrl}/observe`, {
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/observe`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify(body),
-    }).catch((err) => {
-      throw new BadGatewayException(`Sentinel service unreachable: ${err.message}`);
     });
     if (!res.ok) {
       // 503 from Sentinel means "no real market data for this symbol". Pass it
@@ -198,20 +247,16 @@ export class SentinelApiService {
   }
 
   private async get(path: string) {
-    const res = await fetch(`${this.baseUrl}${path}`, { headers: this.headers }).catch((err) => {
-      throw new BadGatewayException(`Sentinel service unreachable: ${err.message}`);
-    });
+    const res = await this.fetchWithTimeout(`${this.baseUrl}${path}`, { headers: this.headers });
     if (!res.ok) throw new BadGatewayException(`Sentinel service error: ${res.status}`);
     return res.json();
   }
 
   private async post(path: string, body: unknown) {
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    const res = await this.fetchWithTimeout(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify(body),
-    }).catch((err) => {
-      throw new BadGatewayException(`Sentinel service unreachable: ${err.message}`);
     });
     if (!res.ok) throw new BadGatewayException(`Sentinel service error: ${res.status}`);
     return res.json();
@@ -219,12 +264,10 @@ export class SentinelApiService {
 
   /** Real Neural Brain explanation for a Sentinel observation/module — see services/sentinel's /explain. */
   async explain(userId: string, question: string, context?: string) {
-    const res = await fetch(`${this.baseUrl}/explain`, {
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/explain`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify({ userId, question, context }),
-    }).catch((err) => {
-      throw new BadGatewayException(`Sentinel service unreachable: ${err.message}`);
     });
     if (!res.ok) throw new BadGatewayException(`Sentinel service error: ${res.status}`);
     return res.json();
@@ -232,12 +275,10 @@ export class SentinelApiService {
 
   /** Knowledge Center — query surface over the Brain's accumulated memory. */
   async brainSearch(userId: string, query: string, namespace?: string, limit?: number) {
-    const res = await fetch(`${this.baseUrl}/brain/search`, {
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/brain/search`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify({ query, userId, namespace, limit }),
-    }).catch((err) => {
-      throw new BadGatewayException(`Sentinel service unreachable: ${err.message}`);
     });
     if (!res.ok) throw new BadGatewayException(`Sentinel service error: ${res.status}`);
     return res.json();
@@ -245,21 +286,18 @@ export class SentinelApiService {
 
   /** Strategy Intelligence Framework — cross-symbol historical base rate for a pattern. */
   async brainStrategy(pattern: string) {
-    const res = await fetch(`${this.baseUrl}/brain/strategy?pattern=${encodeURIComponent(pattern)}`, {
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/brain/strategy?pattern=${encodeURIComponent(pattern)}`, {
       headers: this.headers,
-    }).catch((err) => {
-      throw new BadGatewayException(`Sentinel service unreachable: ${err.message}`);
     });
     if (!res.ok) throw new BadGatewayException(`Sentinel service error: ${res.status}`);
     return res.json();
   }
 
   async observations(userId: string, limit = 50) {
-    const res = await fetch(`${this.baseUrl}/observations?userId=${encodeURIComponent(userId)}&limit=${limit}`, {
-      headers: this.headers,
-    }).catch((err) => {
-      throw new BadGatewayException(`Sentinel service unreachable: ${err.message}`);
-    });
+    const res = await this.fetchWithTimeout(
+      `${this.baseUrl}/observations?userId=${encodeURIComponent(userId)}&limit=${limit}`,
+      { headers: this.headers },
+    );
     if (!res.ok) throw new BadGatewayException(`Sentinel service error: ${res.status}`);
     return res.json();
   }

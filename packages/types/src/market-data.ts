@@ -97,6 +97,14 @@ export interface MarketDataProvider {
    *
    * Returns [] for an instrument with no options market (a commodity, most
    * equities) — an empty list is an answer, an absent method is not.
+   *
+   * MUST THROW rather than return [] when the expiry list could not be READ.
+   * The two are different facts and the caller acts differently on each: an
+   * empty list is a property of the instrument, and a failed read is a property
+   * of the integration. Collapsing them caused the 2026-08-17 incident, where a
+   * refused Dhan credential made every implementation return [] and the UI told
+   * the user that NIFTY — India's most liquid option chain — has no option
+   * chain. See services/sentinel/src/market-data/candle-market-data.provider.ts.
    */
   getOptionExpiries?(symbol: string): Promise<string[]>;
 

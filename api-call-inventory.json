@@ -1,0 +1,208 @@
+{
+  "$schema": "internal://tradew/api-call-inventory/v1",
+  "generatedAt": "2026-08-17T11:55:00Z",
+  "generatedBy": "Forensic API/LLM/ML/workflow reliability audit (APIcallandrealiabilty.md)",
+  "repoCommit": "5004935",
+  "method": {
+    "static": "git ls-files filtered to 754 production source files (.ts/.tsx/.js/.mjs/.py), excluding archive/, .next*, node_modules, and 105 test files. Every call site grepped and hand-verified by reading the enclosing function.",
+    "runtime": "Live stack on 2026-08-17 (all 8 ports open). Evidence drawn from the pre-existing ApiCallLog table (181,541 rows, 2026-08-03 -> 2026-08-17) plus direct probes of :4010 /observe and :4600 bridge endpoints.",
+    "labels": "CONFIRMED-RUNTIME = observed executing. CONFIRMED-SOURCE = read in code, not executed during this audit. INFERRED = deduced. UNKNOWN = not determinable."
+  },
+
+  "summary": {
+    "productionSourceFiles": 754,
+    "testFiles": 105,
+    "testsPassing": 1520,
+    "distinctFrontendEndpoints": 73,
+    "frontendApiCallSites": 90,
+    "servicesApiRoutes": 190,
+    "servicesSentinelRoutes": 47,
+    "sentinelPyRoutes": 18,
+    "llmCallSitesInAppCode": 6,
+    "mlInferenceCallSites": 0,
+    "embeddingCallSites": 4,
+    "externalProviders": 15
+  },
+
+  "services": [
+    { "name": "apps/web", "kind": "next.js-14.2.20", "port": 3000, "status": "REAL", "runtime": "CONFIRMED-RUNTIME (port open)" },
+    { "name": "apps/admin", "kind": "next.js", "port": 3001, "status": "REAL", "runtime": "CONFIRMED-RUNTIME (port open)" },
+    { "name": "services/api", "kind": "nestjs", "port": 4000, "status": "REAL", "routes": 190, "runtime": "CONFIRMED-RUNTIME (healthy)" },
+    { "name": "services/sentinel", "kind": "nestjs", "port": 4010, "status": "REAL", "routes": 47, "runtime": "CONFIRMED-RUNTIME (healthy)" },
+    { "name": "services/sentinel-py", "kind": "fastapi", "port": 4011, "status": "REAL", "routes": 18, "runtime": "CONFIRMED-RUNTIME (healthy)" },
+    { "name": "services/market-data", "kind": "nestjs-ingestor", "port": 4020, "status": "REAL", "runtime": "CONFIRMED-RUNTIME (port open)" },
+    { "name": "services/market-data/scripts/live-feed-server.ts", "kind": "standalone-bridge", "port": 4600, "status": "REAL", "runtime": "CONFIRMED-RUNTIME (degraded: feedStatus=reconnecting, Dhan token expired)" },
+    { "name": "services/tradew-ai", "kind": "nestjs", "port": null, "status": "PARTIAL", "note": "Not a stub: assistant.service.ts wires DefaultAgentRuntime. Not observed running.", "runtime": "CONFIRMED-SOURCE" },
+    { "name": "services/auth", "kind": "placeholder", "status": "UNUSED", "note": "README.md only" },
+    { "name": "services/analytics", "kind": "placeholder", "status": "UNUSED", "note": "README.md only" },
+    { "name": "services/notification", "kind": "placeholder", "status": "UNUSED", "note": "README.md only" },
+    { "name": "services/trading-engine", "kind": "placeholder", "status": "UNUSED", "note": "README.md only" }
+  ],
+
+  "llmInventory": [
+    {
+      "id": "LLM-01",
+      "file": "services/sentinel/src/orchestrator/sentinel-orchestrator.service.ts",
+      "function": "polish()",
+      "line": 934,
+      "purpose": "Cosmetic prose rewrite of an already-complete deterministic draft",
+      "trigger": "POST /observe, only when decide() publishes guidance OR a composite risk warning",
+      "callsPerObserve": "0 or 1 (mutually exclusive branches; 0 in the common case)",
+      "tier": "fast",
+      "maxTokens": 260,
+      "provider": "first registered in AI_LLM_ORDER; this deployment resolves to anthropic",
+      "model": "claude-haiku-4-5-20251001 (DEFAULT_MODELS.fast)",
+      "cache": "in-process Map, 5min TTL, 500 entries",
+      "timeout": "NONE (AnthropicLlmProvider.complete has no AbortSignal)",
+      "retry": "none",
+      "fallback": "deterministic draft returned on throw",
+      "outputConsumed": true,
+      "loadBearing": false,
+      "label": "CONFIRMED-SOURCE",
+      "runtimeUpperBound": "<=72 invocations ever (SentinelObservation agent='orchestrator' count); unverifiable exactly because AiCallLog is never written from this process"
+    },
+    {
+      "id": "LLM-02",
+      "file": "services/sentinel/src/explain/explain.service.ts",
+      "function": "explain()",
+      "line": 225,
+      "purpose": "Free-text answer to a user question",
+      "trigger": "POST /explain",
+      "callsPerAction": 1,
+      "fallback": "deterministic text on throw (line 253)",
+      "timeout": "inherits provider (none for anthropic)",
+      "note": "buildWhy() — which IS on the /observe path — does NOT call the LLM",
+      "label": "CONFIRMED-SOURCE"
+    },
+    {
+      "id": "LLM-03",
+      "file": "packages/ai-core/src/news/news-event-classifier.ts",
+      "function": "classify() / classifyBatch()",
+      "line": 111,
+      "purpose": "Headline -> event-type label",
+      "callsPerAction": "1 per headline; classifyBatch concurrency 5",
+      "consumer": "services/sentinel/src/intelligence/news-intelligence.service.ts",
+      "risk": "unbounded fan-out proportional to headline count",
+      "label": "CONFIRMED-SOURCE"
+    },
+    {
+      "id": "LLM-04",
+      "file": "packages/ai-core/src/agents/impl.ts",
+      "function": "DefaultAgentRuntime.invoke",
+      "line": 63,
+      "purpose": "Tool-calling agent loop",
+      "consumer": "services/tradew-ai/src/assistant/assistant.service.ts",
+      "callsPerAction": "1 per reasoning turn; loops over tool calls",
+      "label": "CONFIRMED-SOURCE"
+    },
+    {
+      "id": "LLM-05",
+      "file": "packages/ai-core/src/brain/impl.ts",
+      "function": "DefaultNeuralBrain",
+      "line": "82, 157",
+      "registeredIn": "services/sentinel/src/app.module.ts",
+      "invokedByRequestPath": "NOT OBSERVED — registered in DI, no traced caller from any HTTP route",
+      "label": "INFERRED"
+    },
+    {
+      "id": "LLM-06",
+      "file": "packages/ai-core/src/research/impl.ts",
+      "function": "DefaultResearchEngine",
+      "line": 68,
+      "trigger": "researchTrigger.researchIfUnfamiliar(symbol) — fire-and-forget from runObservation line 188",
+      "note": "void-called, never awaited; failures swallowed by .catch(() => undefined)",
+      "label": "CONFIRMED-SOURCE"
+    }
+  ],
+
+  "mlInventory": {
+    "trainedModelInference": {
+      "count": 0,
+      "evidence": "No onnx/torch/tensorflow/sklearn/xgboost/lightgbm/transformers/numpy/pandas anywhere in 754 production files. sentinel-py pyproject.toml deps are fastapi, uvicorn, pydantic, httpx, python-dotenv, asyncpg only.",
+      "label": "CONFIRMED-SOURCE"
+    },
+    "onlineLearning": [
+      {
+        "id": "ML-01",
+        "name": "Cognition network (reward-modulated Hebbian, delta rule)",
+        "file": "packages/ai-core/src/cognition/weights.ts",
+        "line": 248,
+        "kind": "online weight update, pure TypeScript — NOT model inference",
+        "enabled": "COGNITION_ENABLED=true in this deployment",
+        "runtimeState": "Percept=1120, CognitiveEpisode=970, NeuralSynapse=0",
+        "verdict": "BROKEN — senses and records episodes but has never persisted a single learned weight",
+        "label": "CONFIRMED-RUNTIME"
+      }
+    ]
+  },
+
+  "embeddingInventory": [
+    {
+      "id": "EMB-01",
+      "file": "services/sentinel/src/brain/prisma-memory-store.ts",
+      "line": 114,
+      "function": "search()",
+      "trigger": "/observe -> explain.buildWhy -> learningReferences -> DefaultRetriever.retrieve -> memory.search",
+      "callsPerObserve": 1,
+      "provider": "nvidia-nim (AI_EMBEDDING_ORDER), NVIDIA_NIM_API_KEY set",
+      "timeout": "NONE — OpenAiCompatibleEmbeddingProvider.embed fetch has no AbortSignal",
+      "degradation": "falls back to ILIKE text match when no embedder registered",
+      "followOnDbCalls": "1 pgvector cosine query + up to 9 sequential memory.get() round trips (N+1)",
+      "label": "CONFIRMED-SOURCE"
+    },
+    {
+      "id": "EMB-02",
+      "file": "services/sentinel/src/brain/prisma-memory-store.ts",
+      "line": 67,
+      "function": "write path (document embedding)",
+      "label": "CONFIRMED-SOURCE"
+    },
+    {
+      "id": "EMB-03",
+      "file": "packages/ai-core/src/cognition/layers.ts",
+      "line": 182,
+      "function": "L2 encode",
+      "label": "CONFIRMED-SOURCE"
+    },
+    {
+      "id": "EMB-04",
+      "file": "services/sentinel/src/learning/brain-import.service.ts",
+      "line": 54,
+      "function": "book/corpus ingestion",
+      "label": "CONFIRMED-SOURCE"
+    }
+  ],
+
+  "externalProviders": [
+    { "name": "Dhan", "hosts": ["api.dhan.co", "auth.dhan.co"], "criticality": "CRITICAL", "usedFor": "candles, quotes, option chain, expiries, order APIs", "auth": "24h access token (SEBI cap)", "runtimeStatus": "FAILING — DH-901 Invalid_Authentication, token expired", "fallback": "Candle table, then simulator (Sentinel refuses simulator for candles)", "label": "CONFIRMED-RUNTIME" },
+    { "name": "Anthropic", "hosts": ["api.anthropic.com"], "criticality": "LOW", "usedFor": "LLM prose polish, explain", "timeout": "NONE", "retry": "none", "label": "CONFIRMED-SOURCE" },
+    { "name": "NVIDIA NIM", "hosts": ["integrate.api.nvidia.com"], "criticality": "LOW", "usedFor": "LLM tier + embeddings", "timeout": "300000ms (LLM only; embeddings none)", "label": "CONFIRMED-SOURCE" },
+    { "name": "NSE (public, keyless)", "hosts": ["www.nseindia.com", "archives.nseindia.com"], "criticality": "MEDIUM", "usedFor": "FII/DII, participant OI, breadth", "runtimeLatency": "p95 10016ms on /nse/breadth", "label": "CONFIRMED-RUNTIME" },
+    { "name": "Razorpay", "hosts": ["api.razorpay.com", "checkout.razorpay.com"], "criticality": "HIGH", "usedFor": "payments", "note": "raw REST + HMAC, no SDK", "label": "CONFIRMED-SOURCE" },
+    { "name": "Twelve Data", "hosts": ["api.twelvedata.com"], "criticality": "LOW", "usedFor": "FX quotes", "rateLimit": "8 req/min free tier", "label": "CONFIRMED-SOURCE" },
+    { "name": "Binance", "hosts": ["binance"], "criticality": "LOW", "usedFor": "crypto quotes", "runtimeErrorRate": "33.1% on /crypto/quotes (6770/20450)", "label": "CONFIRMED-RUNTIME" },
+    { "name": "SendGrid", "hosts": ["api.sendgrid.com"], "criticality": "MEDIUM", "usedFor": "email", "configured": false, "label": "CONFIRMED-SOURCE" },
+    { "name": "Twilio", "hosts": ["api.twilio.com"], "criticality": "LOW", "usedFor": "SMS", "label": "CONFIRMED-SOURCE" },
+    { "name": "Google OAuth", "hosts": ["oauth2.googleapis.com", "openidconnect.googleapis.com"], "criticality": "MEDIUM", "configured": false, "label": "CONFIRMED-SOURCE" },
+    { "name": "OpenAI", "hosts": ["api.openai.com"], "configured": false, "label": "CONFIRMED-SOURCE" },
+    { "name": "Voyage", "hosts": ["api.voyageai.com"], "configured": false, "label": "CONFIRMED-SOURCE" },
+    { "name": "Tavily", "hosts": ["api.tavily.com"], "configured": false, "label": "CONFIRMED-SOURCE" },
+    { "name": "Brave Search", "hosts": ["api.search.brave.com"], "configured": false, "label": "CONFIRMED-SOURCE" },
+    { "name": "Economic Times / Moneycontrol", "hosts": ["economictimes.indiatimes.com", "www.moneycontrol.com"], "usedFor": "news RSS", "label": "CONFIRMED-SOURCE" }
+  ],
+
+  "retryLayers": [
+    { "layer": "apps/web TanStack Query", "retries": 3, "backoff": "exponential 1s/2s/4s, cap 30s, +500ms jitter", "file": "apps/web/src/lib/sentinel/retryPolicy.ts" },
+    { "layer": "apps/web api() wrapper", "retries": "1, only after a successful 401 token refresh", "timeout": "NONE", "file": "apps/web/src/lib/api.ts:189" },
+    { "layer": "services/api -> services/sentinel", "retries": 0, "timeout": "NONE", "file": "services/api/src/sentinel/sentinel.service.ts:106" },
+    { "layer": "services/sentinel -> bridge", "retries": 0, "timeout": "4000ms AbortController", "file": "services/sentinel/src/market-data/candle-market-data.provider.ts:222" },
+    { "layer": "ai-core -> Anthropic", "retries": 0, "timeout": "NONE", "file": "packages/ai-core/src/providers/impl/anthropic.ts:54" },
+    { "layer": "ai-core -> NIM (LLM)", "retries": 0, "timeout": "300000ms", "file": "packages/ai-core/src/providers/impl/openai-compatible.ts:131" },
+    { "layer": "ai-core -> embeddings", "retries": 0, "timeout": "NONE", "file": "packages/ai-core/src/providers/impl/openai-compatible.ts:224" }
+  ],
+  "retryAmplification": {
+    "worstCaseMultiplier": 3,
+    "reasoning": "Only ONE layer (the browser query client) retries. Every server-side hop is retries=0, so multiplication does not stack. 3 x 1 x 1 x 1 = 3 upstream calls worst case, not 27.",
+    "label": "CONFIRMED-SOURCE"
+  }
+}

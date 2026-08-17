@@ -3,12 +3,19 @@ import { resolve } from 'node:path';
 loadEnv({ path: resolve(__dirname, '../../../.env') }); // root .env — see .env.example
 import * as http from 'node:http';
 import WebSocket = require('ws');
+import { readFileSync } from 'node:fs';
 import {
+  DhanCredential,
   DhanMarketFeed,
+  DhanUpstreamError,
   MarketTick,
+  UpstreamGuard,
   WebSocketLike,
+  classifyDhanFault,
   isBrokerAddressable,
   parseScripMaster,
+  readEnvFile,
+  type ResolvedCredential,
   type ScripMasterRow,
 } from '@tradew/market-data';
 
@@ -71,11 +78,43 @@ function isAllowedFeedOrigin(origin: string): boolean {
  * Note this changes only WHERE the token is read, not how long it lasts. Dhan
  * caps every access token at 24 hours (SEBI rule on API access management), so
  * the app key removes the file edit, not the daily renewal.
+ *
+ * ── 2026-08-17: WHY THIS IS NO LONGER A MODULE-LEVEL `let` ────────────────
+ *
+ * It used to be `let DHAN_TOKEN`, assigned once by a `resolveDhanToken()` call
+ * at the top of `main()`. Because Dhan's 24h cap is a regulatory ceiling, a
+ * process that reads the token once and runs longer than a day is GUARANTEED to
+ * end up holding a dead credential — and there was no path from "Dhan is
+ * refusing me" back to "read the token again".
+ *
+ * That is exactly what happened: 18.4h uptime, a token renewed in `.env` 20
+ * minutes earlier, api and sentinel both restarted and working, and this bridge
+ * still presenting yesterday's token — answering every Sentinel observation
+ * with an empty candle array that Sentinel reported to the user as "no real
+ * market data available for NIFTY".
+ *
+ * `DhanCredential` makes the token re-resolvable: rejected once, re-read from
+ * source on the next use. See its header for the concurrency conditions.
  */
-let DHAN_TOKEN = process.env.DHAN_ACCESS_TOKEN || '';
-let DHAN_TOKEN_SOURCE = 'env';
+const ENV_PATH = resolve(__dirname, '../../../.env');
 
-async function resolveDhanToken(): Promise<void> {
+const dhanCredential = new DhanCredential({
+  resolve: resolveDhanCredential,
+  log: (message) => console.log(message),
+});
+
+/**
+ * Read the current best credential: the operator-designated DB row if there is
+ * one, otherwise `DHAN_ACCESS_TOKEN`.
+ *
+ * Called on first use AND after every rejection, so it must genuinely re-read
+ * both sources. Note `readEnvFile` rather than `process.env`: this process's
+ * `process.env` is a snapshot taken at boot, and dotenv would not have
+ * overwritten an already-set variable anyway — so the renewed token an operator
+ * just wrote to `.env` is only visible by reading the file. That distinction is
+ * the whole difference between recovering automatically and needing a restart.
+ */
+async function resolveDhanCredential(): Promise<ResolvedCredential | null> {
   try {
     const { PrismaClient } = (await import('@prisma/client')) as typeof import('@prisma/client');
     const prisma = new PrismaClient();
@@ -99,12 +138,13 @@ async function resolveDhanToken(): Promise<void> {
       });
       // An expired stored token is worse than the env one: it is guaranteed to
       // fail on first use, so skip it rather than prefer it for being newer.
-      if (row && (!row.expiresAt || row.expiresAt.getTime() > Date.now())) {
-        DHAN_TOKEN = row.accessToken;
-        DHAN_TOKEN_SOURCE = `db:${row.source ?? 'unknown'}`;
-        const expiry = row.expiresAt ? row.expiresAt.toISOString() : 'no stated expiry';
-        console.log(`[dhan] token from BrokerCredential (${DHAN_TOKEN_SOURCE}), expires ${expiry}`);
-        return;
+      if (row?.accessToken && (!row.expiresAt || row.expiresAt.getTime() > Date.now())) {
+        return {
+          accessToken: row.accessToken,
+          source: 'db',
+          expiresAt: row.expiresAt,
+          detail: `db:${row.source ?? 'unknown'}`,
+        };
       }
       if (row) console.warn('[dhan] stored token has expired — falling back to DHAN_ACCESS_TOKEN');
     } finally {
@@ -113,7 +153,21 @@ async function resolveDhanToken(): Promise<void> {
   } catch (err) {
     console.warn(`[dhan] BrokerCredential unavailable (${err instanceof Error ? err.message : String(err)}) — using DHAN_ACCESS_TOKEN`);
   }
-  if (DHAN_TOKEN) console.log('[dhan] token from DHAN_ACCESS_TOKEN (env)');
+  // The FILE, not process.env — see the docstring above. `process.env` is kept
+  // as a second fallback for deployments that set the variable directly and
+  // ship no `.env` at all (containers, systemd).
+  const fromFile = readEnvFile(ENV_PATH, readFileSync)['DHAN_ACCESS_TOKEN'];
+  const accessToken = fromFile || process.env.DHAN_ACCESS_TOKEN || '';
+  if (!accessToken) return null;
+  return {
+    accessToken,
+    source: 'env',
+    // Dhan states no expiry on a raw token, and inventing one would make a
+    // working credential look dead. The 24h cap is enforced by Dhan refusing
+    // it, which `invalidate()` now handles.
+    expiresAt: null,
+    detail: fromFile ? `env:${ENV_PATH}` : 'env:process',
+  };
 }
 
 type InstrumentMeta = { symbol: string; displayName: string; securityId: string; exchangeSegment: 'IDX_I' | 'NSE_EQ' | 'MCX_COMM' };
@@ -458,8 +512,11 @@ function scheduleBroadcast() {
 let feedStatus = 'idle';
 let feedReason: string | undefined;
 
-function startFeed(allInstruments: InstrumentMeta[], kindOf: (meta: InstrumentMeta) => 'index' | 'stock' | 'etf' | 'commodity') {
-  const accessToken = DHAN_TOKEN;
+async function startFeed(
+  allInstruments: InstrumentMeta[],
+  kindOf: (meta: InstrumentMeta) => 'index' | 'stock' | 'etf' | 'commodity',
+) {
+  const accessToken = await dhanCredential.get();
   const clientId = process.env.DHAN_CLIENT_ID;
   if (!accessToken || !clientId) {
     console.error(
@@ -467,7 +524,7 @@ function startFeed(allInstruments: InstrumentMeta[], kindOf: (meta: InstrumentMe
     );
     process.exit(1);
   }
-  console.log(`[dhan] starting feed with token source: ${DHAN_TOKEN_SOURCE}`);
+  console.log(`[dhan] starting feed with token source: ${dhanCredential.state().source}`);
 
   const feed = new DhanMarketFeed({
     accessToken,
@@ -547,7 +604,10 @@ interface DhanChartResponse {
   volume?: number[];
 }
 
-const candleCache = new Map<string, { at: number; candles: CandleJson[] }>();
+// The candle cache is now `candleGuard` (see below): same TTL, but it also
+// coalesces concurrent identical reads and damps faults, which this plain Map
+// could not — it was written only on the success path, so the one case that most
+// needed damping had none. Kept as a named constant because the guard reads it.
 
 // App CandleInterval -> Dhan intraday interval (minutes). '1d' uses the
 // separate /charts/historical (daily) endpoint instead of /charts/intraday.
@@ -630,8 +690,82 @@ function toCandles(data: DhanChartResponse, sessionSegment?: string): CandleJson
   return sessionSegment ? candles.filter((c) => isWithinSession(c.timestamp, sessionSegment)) : candles;
 }
 
+/**
+ * One authenticated Dhan REST call, with the credential lifecycle and the fault
+ * taxonomy applied in the one place every caller goes through.
+ *
+ * Doing this per-call-site is how the old code ended up with three different
+ * opinions about what a 4xx meant. Here there is one:
+ *
+ *   · no credential            → 'auth' fault, and NO upstream call. A request
+ *                                with no token is a guaranteed 401 that spends
+ *                                rate-limit budget to learn what we know.
+ *   · Dhan refuses the token   → the credential is invalidated, so the very next
+ *                                call re-reads it from source. This is the
+ *                                automatic recovery that used to need a restart.
+ *   · anything else non-2xx    → classified, thrown as a typed fault, never
+ *                                flattened into an empty success.
+ */
+async function dhanPost(endpoint: string, body: unknown): Promise<unknown> {
+  const accessToken = await dhanCredential.get();
+  if (!accessToken) {
+    throw new DhanUpstreamError('auth', 0, dhanCredential.state().lastFault ?? 'no Dhan credential available', endpoint);
+  }
+
+  let resp: Response;
+  try {
+    resp = await fetch(`${DHAN_API}${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'access-token': accessToken,
+        'client-id': process.env.DHAN_CLIENT_ID ?? '',
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new DhanUpstreamError('upstream', 0, err instanceof Error ? err.message : String(err), endpoint);
+  }
+
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    const kind = classifyDhanFault(resp.status, detail);
+    if (kind === 'no-market') {
+      // Dhan's definitive "this security has no derivatives market under this
+      // segment". Information about the instrument, so it is returned as an
+      // answer rather than thrown — and the CALLER decides what an empty answer
+      // means for its endpoint.
+      return null;
+    }
+    if (kind === 'auth') {
+      // The load-bearing line. Marking the credential bad is what makes the
+      // next request re-read the renewed token instead of presenting the dead
+      // one forever.
+      dhanCredential.invalidate(`${resp.status} ${detail.slice(0, 160)}`);
+    }
+    console.warn(`[dhan] ${endpoint} ${resp.status} (${kind}): ${detail.slice(0, 200)}`);
+    throw new DhanUpstreamError(kind, resp.status, detail.slice(0, 300), endpoint);
+  }
+
+  return resp.json();
+}
+
+/**
+ * The breaker the guards consult: while the credential is known-dead, no key is
+ * worth attempting, because the fault is per-process rather than per-symbol.
+ * Damping it per-key would still admit one call per symbol per window.
+ */
+function credentialBreaker(): DhanUpstreamError | null {
+  if (dhanCredential.healthy) return null;
+  const state = dhanCredential.state();
+  // Only hold the breaker open while a re-resolution is deliberately being
+  // withheld. Outside that floor, let the call through: that attempt is what
+  // re-reads the credential and recovers.
+  if (state.retryingInMs === null) return null;
+  return new DhanUpstreamError('auth', 0, state.lastFault ?? 'Dhan credential unavailable', 'credential');
+}
+
 async function fetchDhanCandles(meta: InstrumentMeta, interval: string, from: Date, to: Date): Promise<CandleJson[]> {
-  const accessToken = DHAN_TOKEN;
   const isDaily = interval === '1d';
   const body: Record<string, string> = {
     securityId: meta.securityId,
@@ -642,36 +776,20 @@ async function fetchDhanCandles(meta: InstrumentMeta, interval: string, from: Da
   };
   if (!isDaily) body.interval = INTRADAY_INTERVAL[interval] ?? '5';
 
-  const endpoint = isDaily ? `${DHAN_API}/charts/historical` : `${DHAN_API}/charts/intraday`;
-  const resp = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'access-token': accessToken },
-    body: JSON.stringify(body),
-  }).catch((err) => {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[dhan] REST API request failed for ${meta.symbol}:`, message);
-    throw new Error(`Dhan historical API unreachable for ${meta.symbol}: ${message}`);
-  });
-
-  if (!resp.ok) {
-    // Rate limit, expired token, missing Data-API entitlement — every one of
-    // these is a real fault the caller must be told about, verbatim. This used
-    // to fall through to a seeded random walk that the route then labelled
-    // `source: 'dhan'`, so an option chart silently drew index-level prices for
-    // a contract worth a couple of hundred rupees and nothing on screen said
-    // so. See the no-fabricated-data rule (2026-07-26).
-    const detail = await resp.text().catch(() => '');
-    console.warn(`[dhan] historical API returned ${resp.status} for ${meta.symbol}: ${detail.slice(0, 200)}`);
-    throw new Error(
-      `Dhan historical API returned ${resp.status} for ${meta.symbol}${detail ? `: ${detail.slice(0, 200)}` : ''}`,
-    );
-  }
+  // Rate limit, expired token, missing Data-API entitlement — every one of
+  // these is a real fault the caller must be told about, verbatim, and NOT as an
+  // empty candle array. This used to fall through to a seeded random walk that
+  // the route then labelled `source: 'dhan'`, so an option chart silently drew
+  // index-level prices for a contract worth a couple of hundred rupees and
+  // nothing on screen said so. See the no-fabricated-data rule (2026-07-26).
+  // `dhanPost` now classifies and throws; see its header.
+  const data = (await dhanPost(isDaily ? '/charts/historical' : '/charts/intraday', body)) as DhanChartResponse | null;
 
   // Dhan answered. An empty series here is a genuine "no bars for this
   // contract" (illiquid strike, listed today, outside the retained window),
   // not a fault — returned as-is so the UI says "no traded history" rather
   // than "API down".
-  const data = (await resp.json()) as DhanChartResponse;
+  if (!data) return [];
   return toCandles(data, isDaily ? undefined : meta.exchangeSegment);
 }
 
@@ -772,15 +890,78 @@ const OPTION_CHAIN_MIN_GAP_MS = 3_100;
  *  without spending slots on deep-OTM strikes nobody is watching. */
 const OPTION_STREAM_STRIKES = 15;
 
+/**
+ * Depth cap on the shared option-chain FIFO.
+ *
+ * ── WHY A CAP IS NOT OPTIONAL ─────────────────────────────────────────────
+ *
+ * The queue is process-wide and enforces a 3.1s floor gap, so wait time grows
+ * linearly with queue depth while every CALLER has a fixed deadline —
+ * `SENTINEL_LIVE_FEED_TIMEOUT_MS`, 4,000 ms. Measured on 2026-08-17 with six
+ * concurrent expirylist requests for distinct symbols:
+ *
+ *   ITC 34ms · WIPRO 3,148ms · AXISBANK 6,260ms · LT 9,358ms
+ *   BEL 12,463ms · DLF 15,566ms
+ *
+ * Four of six blew past the 4s abort. And because an aborted HTTP client does
+ * NOT cancel work already queued here, those four upstream calls still ran, at
+ * 3.1s each, spending the rate-limited budget on answers nobody would read —
+ * while the next poll enqueued four more behind them. That is how a queue
+ * intended to protect the rate limit became the thing that guaranteed every
+ * concurrent user a timeout.
+ *
+ * Worse, downstream, a 4s abort was read as "this symbol has no option chain"
+ * (see `fetchExpiryList`). So the second and subsequent concurrent users were
+ * told NIFTY has no options — the exact screenshot symptom — purely because
+ * someone else asked first.
+ *
+ * Two changes fix the mechanism rather than the timing:
+ *
+ *  · REJECT INSTEAD OF ENQUEUE when the projected wait already exceeds what a
+ *    caller can wait for. A fast, honest "rate-limited, try again" beats a slow
+ *    answer nobody is still listening for, and it keeps the queue short enough
+ *    that the callers who DO get in are served inside their deadline.
+ *
+ *  · The `UpstreamGuard` in front collapses concurrent callers for the SAME key
+ *    onto one queue slot, so depth now tracks distinct symbols rather than
+ *    request count.
+ */
+const OPTION_QUEUE_MAX_WAIT_MS = Number(process.env.DHAN_OPTION_QUEUE_MAX_WAIT_MS ?? 3_500);
+
+/** How many calls are waiting on the shared FIFO right now. */
+let optionQueueDepth = 0;
+
 /** Serializes every Dhan option-chain-family call (expirylist + chain)
  *  through one FIFO queue with a floor gap between calls, regardless of how
  *  many browser tabs or symbols are asking concurrently. */
 function queueDhanCall<T>(fn: () => Promise<T>): Promise<T> {
+  // Projected wait for a slot appended right now: everything already queued
+  // must clear its own floor gap first.
+  const projectedWaitMs =
+    Math.max(0, lastOptionChainCallAt + OPTION_CHAIN_MIN_GAP_MS - Date.now()) +
+    optionQueueDepth * OPTION_CHAIN_MIN_GAP_MS;
+  if (projectedWaitMs > OPTION_QUEUE_MAX_WAIT_MS) {
+    return Promise.reject(
+      new DhanUpstreamError(
+        'rate-limit',
+        429,
+        `option-chain queue is ${optionQueueDepth} deep; a slot is ~${Math.round(projectedWaitMs)}ms away, ` +
+          `beyond the ${OPTION_QUEUE_MAX_WAIT_MS}ms a caller can wait. Shed rather than queued.`,
+        'optionchain-queue',
+      ),
+    );
+  }
+
+  optionQueueDepth++;
   const run = optionChainQueue.then(async () => {
     const wait = Math.max(0, lastOptionChainCallAt + OPTION_CHAIN_MIN_GAP_MS - Date.now());
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     lastOptionChainCallAt = Date.now();
-    return fn();
+    try {
+      return await fn();
+    } finally {
+      optionQueueDepth--;
+    }
   });
   // Keep the chain alive even when a call fails — swallow here, the caller
   // below still sees the real rejection via `run`.
@@ -791,22 +972,40 @@ function queueDhanCall<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/**
+ * Traded expiries for one underlying, or `[]` when it genuinely has no
+ * derivatives market.
+ *
+ * ── THE BUG THIS FIXES ────────────────────────────────────────────────────
+ *
+ * This used to be `if (resp.status >= 400 && resp.status < 500) return []`. The
+ * comment justified it correctly for ONE case — Dhan answers 4xx ("813 Invalid
+ * SecurityId") for a cash-only stock, which really does mean "no option chain".
+ *
+ * But 401 and 429 are also 4xx. So a dead access token, or a burst of concurrent
+ * users tripping Dhan's ~1-call-per-3s option-chain limit, reported that NIFTY
+ * has no option chain — and the route cached that answer for five minutes and
+ * served it to everyone. Downstream, `useExpiries` turned it into
+ * `status: 'unavailable'` and the watch creator printed the self-contradiction
+ * captured in the 2026-08-17 screenshots:
+ *
+ *   "NIFTY has no live option chain, so this watch will follow the underlying
+ *    itself. Indices like NIFTY, BANKNIFTY, FINNIFTY and SENSEX have one."
+ *
+ * A message that argues with itself is the signature of exactly this class of
+ * bug: code inferred a fact about the market from a failure of our own
+ * plumbing. `classifyDhanFault` now makes that inference impossible — only
+ * Dhan's genuine no-market answer reaches the `[]` return, and everything else
+ * throws a typed fault that must be handled as a fault.
+ */
 async function fetchExpiryList(u: OptionUnderlying): Promise<string[]> {
-  const resp = await fetch(`${DHAN_API}/optionchain/expirylist`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'access-token': DHAN_TOKEN, 'client-id': process.env.DHAN_CLIENT_ID! },
-    body: JSON.stringify({ UnderlyingScrip: Number(u.securityId), UnderlyingSeg: u.underlyingSeg }),
-  });
-  if (resp.status >= 400 && resp.status < 500) {
-    // Dhan's own definitive answer for a security with no derivatives market
-    // under this segment (e.g. "813 Invalid SecurityId" for a cash-only
-    // stock) — real information, not a failure: this instrument has no
-    // option chain. Distinct from a 5xx/network failure below, which is an
-    // actual "couldn't determine" the caller should not cache.
-    return [];
-  }
-  if (!resp.ok) throw new Error(`Dhan expirylist ${resp.status}`);
-  const json = (await resp.json()) as { data?: string[] };
+  const json = (await dhanPost('/optionchain/expirylist', {
+    UnderlyingScrip: Number(u.securityId),
+    UnderlyingSeg: u.underlyingSeg,
+  })) as { data?: string[] } | null;
+  // `null` is `dhanPost`'s 'no-market' verdict — the one case the old blanket
+  // 4xx branch was actually written for.
+  if (!json) return [];
   return json.data ?? [];
 }
 
@@ -830,24 +1029,75 @@ function toLegOut(raw: DhanOptionLegRaw | undefined): OptionLegOut | null {
 }
 
 async function fetchOptionChain(u: OptionUnderlying, expiry: string): Promise<{ spot: number | null; strikes: OptionStrikeOut[] }> {
-  const resp = await fetch(`${DHAN_API}/optionchain`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'access-token': DHAN_TOKEN, 'client-id': process.env.DHAN_CLIENT_ID! },
-    body: JSON.stringify({ UnderlyingScrip: Number(u.securityId), UnderlyingSeg: u.underlyingSeg, Expiry: expiry }),
-  });
-  if (resp.status >= 400 && resp.status < 500) return { spot: null, strikes: [] }; // no derivatives market — see fetchExpiryList
-  if (!resp.ok) throw new Error(`Dhan optionchain ${resp.status}`);
-  const json = (await resp.json()) as DhanOptionChainRaw;
+  const json = (await dhanPost('/optionchain', {
+    UnderlyingScrip: Number(u.securityId),
+    UnderlyingSeg: u.underlyingSeg,
+    Expiry: expiry,
+  })) as DhanOptionChainRaw | null;
+  // No derivatives market — see fetchExpiryList. A FAULT, by contrast, now
+  // throws out of `dhanPost` rather than arriving here as an empty chain.
+  if (!json) return { spot: null, strikes: [] };
   const strikes = Object.entries(json.data?.oc ?? {})
     .map(([k, v]) => ({ strike: Number(k), ce: toLegOut(v.ce), pe: toLegOut(v.pe) }))
     .sort((a, b) => a.strike - b.strike);
   return { spot: json.data?.last_price ?? null, strikes };
 }
 
+/**
+ * Load bounding for the two metered candle routes.
+ *
+ * `/optionchain` has had `optionChainInFlight` since it was written; `/candles`
+ * never did, despite being the hotter route (every Sentinel observation reads
+ * four series through it). Measured on 2026-08-17 against the running bridge:
+ * 50 concurrent identical `/candles` requests produced 50 upstream Dhan calls,
+ * and 8 sequential identical FAILING requests produced 8 more, because
+ * `candleCache.set` ran only on the success path.
+ *
+ * The TTL matches the old `CANDLE_CACHE_TTL_MS` exactly, so nothing about
+ * freshness changes — what changes is that concurrent callers now share one
+ * call, and a fault costs one call instead of one per request. See
+ * `UpstreamGuard`'s header for the full arithmetic.
+ */
+const candleGuard = new UpstreamGuard<CandleJson[]>({
+  ttlMs: CANDLE_CACHE_TTL_MS,
+  isOpen: credentialBreaker,
+});
+
+/** Reference data, so its own long TTL. Same guard, same fault damping. */
+const expiryGuard = new UpstreamGuard<string[]>({
+  ttlMs: 5 * 60_000,
+  isOpen: credentialBreaker,
+});
+
+/** How a fault is reported on the wire. See `describeFault`. */
+interface FaultOut {
+  fault: 'auth' | 'rate-limit' | 'upstream';
+  error: string;
+  /** True when only an operator can fix this — a renewed Dhan token. */
+  needsOperator: boolean;
+}
+
+/**
+ * Render a fault for a JSON route.
+ *
+ * The critical property: `fault` is present and named. Every consumer of this
+ * bridge previously had to infer "did this fail, or is there genuinely no data"
+ * from an empty array, and every one of them inferred it wrong at least once.
+ * An explicit discriminator makes the correct handling checkable rather than
+ * customary.
+ */
+function describeFault(err: unknown): FaultOut {
+  if (err instanceof DhanUpstreamError) {
+    return { fault: err.kind, error: err.message, needsOperator: err.needsOperator };
+  }
+  return { fault: 'upstream', error: err instanceof Error ? err.message : String(err), needsOperator: false };
+}
+
 async function main(): Promise<void> {
-  // Before anything touches Dhan — the REST helpers below read DHAN_TOKEN too,
-  // not just the websocket feed.
-  await resolveDhanToken();
+  // Warm the credential before anything touches Dhan. Not load-bearing any
+  // more — `dhanPost` resolves lazily and re-resolves on rejection — but it
+  // surfaces a misconfigured token at boot rather than on the first request.
+  await dhanCredential.get();
   const rows = await loadScripMaster();
   const { stocks, etfs, commodities, indexBySymbol, equityBySymbol, etfBySymbol, commodityRowBySymbol, derivativeLotSizeByUnderlying } =
     resolveUniverse(rows);
@@ -919,8 +1169,8 @@ async function main(): Promise<void> {
     };
   }
 
-  const expiryListCache = new Map<string, { at: number; expiries: string[] }>();
-  const EXPIRY_LIST_TTL_MS = 5 * 60_000; // expiry dates for a contract barely change
+  // Expiry lists are cached by `expiryGuard` (5-minute TTL, same as the Map it
+  // replaces) so a FAULT can no longer be stored as "this symbol has no options".
   const optionChainCache = new Map<string, { at: number; payload: { spot: number | null; strikes: OptionStrikeOut[] } }>();
   // Just long enough to collapse concurrent callers (the chain table and the
   // contract chart both ask for the same underlying+expiry) onto one upstream
@@ -1056,7 +1306,7 @@ async function main(): Promise<void> {
     };
   }
 
-  const feed = startFeed(ALL_INSTRUMENTS, kindOf);
+  const feed = await startFeed(ALL_INSTRUMENTS, kindOf);
 
   // Market can flip open/closed with no tick in between (e.g. right at 15:30);
   // re-broadcast on a timer too so the badge in the browser stays honest.
@@ -1107,7 +1357,24 @@ async function main(): Promise<void> {
 
     if (url.pathname === '/status') {
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ marketOpen: isMarketOpen(), feedStatus, feedReason, now: new Date().toISOString(), universe: { stocks: stocks.length, etfs: etfs.length, commodities: commodities.length } }));
+      res.end(
+        JSON.stringify({
+          marketOpen: isMarketOpen(),
+          feedStatus,
+          feedReason,
+          now: new Date().toISOString(),
+          universe: { stocks: stocks.length, etfs: etfs.length, commodities: commodities.length },
+          // ── THE FIELD THAT WOULD HAVE ENDED THE 2026-08-17 INCIDENT IN A
+          // MINUTE. The bridge was up, answering, reporting a healthy-looking
+          // status, and streaming quotes from its in-memory tick map — while
+          // every authenticated REST call was being refused for a dead token.
+          // There was nothing to look at that said so, so the fault presented as
+          // "Sentinel has no market data" and the investigation started in the
+          // wrong service.
+          credential: dhanCredential.state(),
+          upstream: { candles: candleGuard.stats(), expiries: expiryGuard.stats(), optionQueueDepth },
+        }),
+      );
       return;
     }
 
@@ -1184,11 +1451,6 @@ async function main(): Promise<void> {
         return;
       }
       const cacheKey = `${symbol}:${interval}:${days}`;
-      const cached = candleCache.get(cacheKey);
-      if (cached && Date.now() - cached.at < CANDLE_CACHE_TTL_MS) {
-        res.end(JSON.stringify({ candles: cached.candles, source: 'dhan', cached: true }));
-        return;
-      }
       const to = new Date();
       // `days=1` must mean "today's session", not "the last 24 rolling
       // hours" — the latter's `from` lands mid-afternoon on the PREVIOUS
@@ -1197,13 +1459,21 @@ async function main(): Promise<void> {
       // silently pulled in an extra full day of bars (a 1-day request
       // rendering ~2 trading sessions). Anchored to IST midnight instead.
       const from = istMidnightDaysAgo(to, days - 1);
-      fetchDhanCandles(meta, interval, from, to)
+      // Guarded: concurrent identical reads share ONE upstream call, and a
+      // fault is remembered briefly so a poll cannot re-hit Dhan per request.
+      candleGuard
+        .get(cacheKey, () => fetchDhanCandles(meta, interval, from, to))
         .then((candles) => {
-          candleCache.set(cacheKey, { at: Date.now(), candles });
           res.end(JSON.stringify({ candles, source: 'dhan' }));
         })
         .catch((err) => {
-          res.end(JSON.stringify({ candles: [], source: 'error', error: err instanceof Error ? err.message : String(err) }));
+          // `source: 'error'` is kept for wire compatibility, but the fault is
+          // now NAMED alongside it. That discriminator is what lets Sentinel
+          // say "the Dhan credential was refused" instead of inventing "the
+          // bridge is unreachable and no candles exist" — see the 2026-08-17
+          // audit. HTTP 200 is also kept deliberately: the bridge answered, and
+          // the body says precisely what went wrong upstream of it.
+          res.end(JSON.stringify({ candles: [], source: 'error', ...describeFault(err) }));
         });
       return;
     }
@@ -1233,28 +1503,27 @@ async function main(): Promise<void> {
         return;
       }
       const cacheKey = `opt:${contract.securityId}:${interval}:${days}`;
-      const cached = candleCache.get(cacheKey);
-      if (cached && Date.now() - cached.at < CANDLE_CACHE_TTL_MS) {
-        res.end(JSON.stringify({ candles: cached.candles, source: 'dhan', cached: true }));
-        return;
-      }
       const to = new Date();
       const from = new Date(to.getTime() - days * 86_400_000);
-      fetchDhanCandles(
-        {
-          symbol,
-          displayName: `${symbol} ${strike} ${type}`,
-          securityId: contract.securityId,
-          exchangeSegment: contract.exchangeSegment,
-          instrument: contract.instrument,
-        } as never,
-        interval,
-        from,
-        to,
-      )
-        .then((candles) => {
+      // Same guard as `/candles`. This route matters as much: every observation
+      // reads TWO option legs through it, so it is half of Sentinel's metered
+      // footprint and had exactly the same "failures cost a call each" hole.
+      candleGuard
+        .get(cacheKey, async () => {
+          const candles = await fetchDhanCandles(
+            {
+              symbol,
+              displayName: `${symbol} ${strike} ${type}`,
+              securityId: contract.securityId,
+              exchangeSegment: contract.exchangeSegment,
+              instrument: contract.instrument,
+            } as never,
+            interval,
+            from,
+            to,
+          );
           const live = optionLtpBySecurityId.get(contract.securityId);
-          const sanitized = candles.map((c) => {
+          return candles.map((c) => {
             if (c.close > 3000 || c.open > 3000) {
               const lastClose = candles[candles.length - 1]?.close || 1;
               const target = live && live > 0 ? live : 100;
@@ -1269,11 +1538,12 @@ async function main(): Promise<void> {
             }
             return c;
           });
-          candleCache.set(cacheKey, { at: Date.now(), candles: sanitized });
-          res.end(JSON.stringify({ candles: sanitized, source: 'dhan' }));
+        })
+        .then((candles) => {
+          res.end(JSON.stringify({ candles, source: 'dhan' }));
         })
         .catch((err) => {
-          res.end(JSON.stringify({ candles: [], source: 'error', error: err instanceof Error ? err.message : String(err) }));
+          res.end(JSON.stringify({ candles: [], source: 'error', ...describeFault(err) }));
         });
       return;
     }
@@ -1290,18 +1560,21 @@ async function main(): Promise<void> {
         res.end(JSON.stringify({ expiries: [] }));
         return;
       }
-      const cached = expiryListCache.get(symbol);
-      if (cached && Date.now() - cached.at < EXPIRY_LIST_TTL_MS) {
-        res.end(JSON.stringify({ expiries: cached.expiries }));
-        return;
-      }
-      queueDhanCall(() => fetchExpiryList(underlying))
+      // Keyed on the UPPERCASED symbol. It was keyed on the raw query value, so
+      // `?symbol=nifty` and `?symbol=NIFTY` were two entries and two upstream
+      // calls against a limit that allows one call every ~3s.
+      expiryGuard
+        .get(symbol.toUpperCase(), () => queueDhanCall(() => fetchExpiryList(underlying)))
         .then((expiries) => {
-          expiryListCache.set(symbol, { at: Date.now(), expiries });
           res.end(JSON.stringify({ expiries }));
         })
         .catch((err) => {
-          res.end(JSON.stringify({ expiries: [], error: err instanceof Error ? err.message : String(err) }));
+          // An empty list here is NOT "this symbol has no options" — that answer
+          // comes only from `fetchExpiryList` returning `[]` on the success
+          // path. The named fault is what stops the consumer concluding
+          // otherwise, which is the 2026-08-17 "NIFTY has no live option chain"
+          // bug at its source.
+          res.end(JSON.stringify({ expiries: [], ...describeFault(err) }));
         });
       return;
     }
