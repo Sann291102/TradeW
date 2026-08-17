@@ -201,7 +201,17 @@ export function loadProvidersConfigFromEnv(env: Record<string, string | undefine
       embedding: order('AI_EMBEDDING_ORDER', ['voyage', 'nvidia-nim', 'openai']),
       research: order('AI_RESEARCH_ORDER', ['tavily', 'brave', 'anthropic-web-search', 'firecrawl']),
     },
-    ...(env.ANTHROPIC_API_KEY ? { anthropic: { apiKey: env.ANTHROPIC_API_KEY } } : {}),
+    // ANTHROPIC_TIMEOUT_MS is overridable but never absent — the provider
+    // defaults it, because a completion with no ceiling defeats the caller's
+    // fallback rather than merely slowing it. See `AnthropicConfig.timeoutMs`.
+    ...(env.ANTHROPIC_API_KEY
+      ? {
+          anthropic: {
+            apiKey: env.ANTHROPIC_API_KEY,
+            ...(env.ANTHROPIC_TIMEOUT_MS ? { timeoutMs: Number(env.ANTHROPIC_TIMEOUT_MS) } : {}),
+          },
+        }
+      : {}),
     ...(env.OPENAI_API_KEY
       ? { openai: { apiKey: env.OPENAI_API_KEY, embeddingModel: env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-3-small' } }
       : {}),

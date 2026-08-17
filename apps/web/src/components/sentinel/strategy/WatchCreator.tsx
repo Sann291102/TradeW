@@ -59,9 +59,14 @@ export function WatchCreator({
   }, [symbol]);
 
   // Default to the nearest expiry once the list resolves; the user can change it.
+  //
+  // Only a CONFIRMED absence of options forces the underlying. An unreadable
+  // list must not: silently switching the watch to the underlying because the
+  // feed hiccuped starts a watch the user did not ask for, on a different
+  // instrument, without telling them — and it did exactly that on 2026-08-17.
   useEffect(() => {
     if (expiries.status === 'ready' && expiry === null) setExpiry(expiries.nearest);
-    if (expiries.status === 'unavailable') setUnderlyingOnly(true);
+    if (expiries.status === 'none') setUnderlyingOnly(true);
   }, [expiries.status, expiries.nearest, expiry]);
 
   // Default to the at-the-money strike when a ladder arrives, and drop a
@@ -75,7 +80,18 @@ export function WatchCreator({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chain.status, chain.atmIndex, chain.expiry, optionType]);
 
-  const watchingUnderlying = underlyingOnly || !hasOptions;
+  // ── WHAT COUNTS AS "WATCHING THE UNDERLYING" ──────────────────────────────
+  //
+  // This was `underlyingOnly || !hasOptions`, and `hasOptions` is false for
+  // 'loading' and 'unreadable' as well as 'none'. So while the expiry list was
+  // still in flight — or had failed — the form considered itself to be watching
+  // the underlying and enabled "Start watching". A click in that window created a
+  // watch on the index instead of the option the user was choosing, with nothing
+  // on screen having said so.
+  //
+  // Only a CONFIRMED 'none', or the user explicitly ticking the box, means the
+  // underlying. Loading and unreadable are simply not-ready.
+  const watchingUnderlying = underlyingOnly || expiries.status === 'none';
   const ready =
     strategy !== null && (watchingUnderlying || (expiry !== null && strike !== null && chain.status === 'live'));
 
@@ -111,7 +127,29 @@ export function WatchCreator({
         {expiries.status === 'loading' && <span className="text-[11px] text-faint">checking expiries…</span>}
       </div>
 
-      {expiries.status === 'unavailable' ? (
+      {expiries.status === 'unreadable' ? (
+        // NOT "this symbol has no option chain". The list could not be read, and
+        // saying otherwise is what produced the self-contradicting message in the
+        // 2026-08-17 screenshots — "NIFTY has no live option chain… Indices like
+        // NIFTY … have one" — while the actual fault was a refused credential on
+        // the market-data bridge. See `useExpiries`' ExpiryStatus docstring.
+        <p
+          role="status"
+          className="rounded-lg border border-warning bg-warning-bg px-3 py-2 text-[11.5px] leading-relaxed text-warning"
+        >
+          The option chain for {symbol} could not be read, so its expiries and strikes are unavailable right now.{' '}
+          {expiries.unreadableReason} This is a feed fault, not a statement about {symbol}.
+          <label className="mt-2 flex items-center gap-2 text-warning">
+            <input
+              type="checkbox"
+              checked={underlyingOnly}
+              onChange={(e) => setUnderlyingOnly(e.target.checked)}
+              className="h-3.5 w-3.5 accent-teal"
+            />
+            Watch {symbol} itself instead of an option
+          </label>
+        </p>
+      ) : expiries.status === 'none' ? (
         <p className="rounded-lg border border-border bg-bg px-3 py-2 text-[11.5px] leading-relaxed text-muted">
           {symbol} has no live option chain, so this watch will follow the underlying itself. Indices like NIFTY,
           BANKNIFTY, FINNIFTY and SENSEX have one.

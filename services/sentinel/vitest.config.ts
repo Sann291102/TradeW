@@ -70,6 +70,11 @@ export default defineConfig({
       // The internal api→sentinel auth boundary: fails closed on a weak/unset
       // service token, constant-time compare (2026-08-10 assessment).
       'src/service-token-guard.spec.ts',
+      // The market-data boundary, added with the 2026-08-17 outage fix. Pins the
+      // one property whose absence caused it: an upstream FAULT and an absence of
+      // DATA are different facts, and Sentinel must never report one as the
+      // other. See SENTINEL_ROOT_CAUSE_AND_PERMANENT_FIX.md.
+      'src/market-data/candle-market-data.spec.ts',
       // Detection timestamps: market-event time vs the scan's own clock. Added
       // with the autonomy pass, where the session timeline was found stamping
       // every setup with the time of the browser poll that noticed it.

@@ -9,7 +9,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify": "ts-node -T scripts/verify-parser.ts",
-    "test": "npm run verify"
+    "//test": "The scrip-master parser check kept as-is, plus the vitest suite added with the 2026-08-17 reliability layer. Both, in that order, because a broken parser makes every other failure harder to read.",
+    "test": "npm run verify && vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@tradew/types": "*"
@@ -17,6 +19,7 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "vitest": "^2.1.9"
   }
 }

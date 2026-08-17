@@ -201,7 +201,19 @@ export interface OpenAiCompatibleEmbeddingConfig {
   apiKey?: string;
   model: string;
   dimensions: number;
+  /** Ceiling on one embedding call. Defaults to `DEFAULT_EMBEDDING_TIMEOUT_MS`. */
+  timeoutMs?: number;
 }
+
+/**
+ * Default ceiling for an embedding call.
+ *
+ * Shorter than the completion default: embedding a query is a small, fast
+ * operation, and it sits on the `/observe` critical path through knowledge
+ * retrieval. A retrieval that cannot answer in this long is better degraded to
+ * the ILIKE fallback than waited on.
+ */
+const DEFAULT_EMBEDDING_TIMEOUT_MS = 15_000;
 
 /** Embeddings via the OpenAI-compatible /embeddings endpoint (OpenAI, NVIDIA NIM). */
 export class OpenAiCompatibleEmbeddingProvider implements EmbeddingProvider {
@@ -221,14 +233,31 @@ export class OpenAiCompatibleEmbeddingProvider implements EmbeddingProvider {
     if (this.name === 'nvidia-nim') {
       body.input_type = request.inputType === 'query' ? 'query' : 'passage';
     }
-    const res = await fetch(`${this.baseUrl}/embeddings`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}),
-      },
-      body: JSON.stringify(body),
-    });
+    // Timeout mirrored from the completion path in this same file (see the
+    // `chat/completions` call above). It was set there and not here, and the
+    // asymmetry mattered: embeddings sit on `/observe` via
+    // `buildWhy → learningReferences → retrieve → memory.search`, so a hung
+    // embedding request hangs an observation exactly as a hung completion does —
+    // and the ILIKE degrade path that exists to cover an embedding failure only
+    // engages on a rejection.
+    const timeoutMs = this.config.timeoutMs ?? DEFAULT_EMBEDDING_TIMEOUT_MS;
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/embeddings`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}),
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      if ((err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError') {
+        throw new Error(`${this.name} embeddings timed out after ${timeoutMs}ms (model ${this.config.model})`);
+      }
+      throw err;
+    }
     if (!res.ok) {
       throw new Error(`${this.name} embeddings failed: ${res.status} ${await res.text()}`);
     }

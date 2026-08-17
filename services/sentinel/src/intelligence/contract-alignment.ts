@@ -110,6 +110,20 @@ export interface ContractAlignment {
    * requested and failed — this one means the feature is off, not broken.
    */
   contractsReadable: boolean;
+  /**
+   * Why nothing could be read, when that is known.
+   *
+   * Added 2026-08-17. `contractsReadable: false` alone said "no contract series
+   * here" without saying whether the capability is absent or a read had failed,
+   * and the panel rendered both identically. The incident that made that matter:
+   * a refused Dhan credential produced an EMPTY EXPIRY LIST, which the caller
+   * read as "this instrument has no options market" — so the workspace told the
+   * user that NIFTY has no option chain. Carrying the reason is what lets the
+   * panel distinguish "no options market" from "we could not find out".
+   *
+   * Null when contracts were readable, or when readability was never in doubt.
+   */
+  unreadableReason: string | null;
 }
 
 /** Reduce a candle series to its session move. Null on an empty series. */
@@ -189,9 +203,18 @@ export function alignmentNotes(a: {
   alignment: AlignmentRead | null;
   strike: number | null;
   interval: string;
+  /** See `ContractAlignment.unreadableReason`. */
+  unreadableReason?: string | null;
 }): string[] {
   const notes: string[] = [];
   const { index, ce, pe, alignment, strike, interval } = a;
+
+  // Stated first and plainly. The alternative — which is what shipped — is a
+  // panel that silently omits the legs, which reads as "this instrument has no
+  // options" rather than "Sentinel could not find out".
+  if (a.unreadableReason) {
+    notes.push(`The option legs could not be read for this instrument. ${a.unreadableReason}`);
+  }
 
   if (index) {
     notes.push(`The underlying moved ${pct(index.changePct)} across ${index.bars} ${interval} bars read.`);
@@ -260,6 +283,8 @@ export function alignContracts(input: {
   ce: LegRead | null;
   pe: LegRead | null;
   contractsReadable: boolean;
+  /** See `ContractAlignment.unreadableReason`. */
+  unreadableReason?: string;
 }): ContractAlignment {
   const index = readSeries(input.indexCandles, INDEX_FLAT_BAND_PCT);
   const alignment = classifyAlignment(index, input.ce?.series ?? null, input.pe?.series ?? null);
@@ -280,7 +305,9 @@ export function alignContracts(input: {
       alignment,
       strike: input.strike,
       interval: input.interval,
+      unreadableReason: input.unreadableReason ?? null,
     }),
     contractsReadable: input.contractsReadable,
+    unreadableReason: input.unreadableReason ?? null,
   };
 }

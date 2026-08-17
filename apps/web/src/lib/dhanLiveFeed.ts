@@ -139,21 +139,79 @@ export interface DhanOptionChain {
 }
 
 /**
+ * Raised when the expiry list could not be READ, as distinct from an instrument
+ * that genuinely has no options market.
+ *
+ * ── WHY A THROW AND NOT AN EMPTY ARRAY ────────────────────────────────────
+ *
+ * `fetchDhanExpiryList` used to `return []` for every failure — a non-2xx, a
+ * network error, a named upstream fault in the body. `[]` is also the correct
+ * answer for an ETF or a commodity, so the two became one value, and every
+ * consumer that had to describe the situation to a user described the wrong one.
+ *
+ * The user-visible result, captured on 2026-08-17 while the bridge's Dhan
+ * credential was being refused:
+ *
+ *   "NIFTY has no live option chain, so this watch will follow the underlying
+ *    itself. Indices like NIFTY, BANKNIFTY, FINNIFTY and SENSEX have one."
+ *
+ * The message contradicts itself in consecutive clauses, which is what this
+ * class of bug looks like from the outside: the UI had no way to say "I could
+ * not find out", so it said the only other thing it knew how to say.
+ */
+export class ExpiryListUnreadableError extends Error {
+  constructor(
+    readonly reason: string,
+    /** True when only an operator can fix it — e.g. a renewed Dhan credential. */
+    readonly needsOperator: boolean,
+  ) {
+    super(reason);
+    this.name = 'ExpiryListUnreadableError';
+  }
+}
+
+/**
  * Real expiry dates (ISO `YYYY-MM-DD`) for an underlying's option chain, from
  * the bridge's `/optionchain/expirylist` route (proxying Dhan's Option Chain
- * API, server-side rate-limited — see live-feed-server.ts). Returns [] for
- * symbols with no options market (ETFs, commodities) or if unreachable; the
- * caller reports that as 'unavailable' rather than inventing expiries.
+ * API, server-side rate-limited — see live-feed-server.ts).
+ *
+ * Returns [] ONLY for symbols with genuinely no options market (ETFs,
+ * commodities). Throws `ExpiryListUnreadableError` when the list could not be
+ * read, so a caller can tell the two apart. See that class for why.
  */
 export async function fetchDhanExpiryList(symbol: string): Promise<string[]> {
+  let res: Response;
   try {
-    const res = await fetch(`${DHAN_LIVE_URL}/optionchain/expirylist?symbol=${encodeURIComponent(symbol)}`);
-    if (!res.ok) return [];
-    const data = (await res.json()) as { expiries?: string[] };
-    return data.expiries ?? [];
-  } catch {
-    return [];
+    res = await fetch(`${DHAN_LIVE_URL}/optionchain/expirylist?symbol=${encodeURIComponent(symbol)}`);
+  } catch (err) {
+    throw new ExpiryListUnreadableError(
+      `The market-data bridge could not be reached (${err instanceof Error ? err.message : String(err)}).`,
+      false,
+    );
   }
+  if (!res.ok) {
+    throw new ExpiryListUnreadableError(`The market-data bridge answered HTTP ${res.status}.`, false);
+  }
+  const data = (await res.json().catch(() => null)) as
+    | { expiries?: string[]; error?: string; fault?: string; needsOperator?: boolean }
+    | null;
+  if (!data) throw new ExpiryListUnreadableError('The market-data bridge returned an unreadable response.', false);
+  // The bridge names its upstream faults now (see `describeFault` in
+  // live-feed-server.ts). A named fault is never "this symbol has no options".
+  if (data.fault || data.error) {
+    throw new ExpiryListUnreadableError(
+      data.fault === 'auth'
+        ? 'The market-data feed’s broker credential was refused, so the option chain could not be read.'
+        : data.fault === 'rate-limit'
+          ? 'The option-chain feed is rate limited right now, so the chain could not be read.'
+          : `The option chain could not be read (${data.error ?? data.fault}).`,
+      data.needsOperator === true,
+    );
+  }
+  if (!Array.isArray(data.expiries)) {
+    throw new ExpiryListUnreadableError('The market-data bridge returned no expiry list.', false);
+  }
+  return data.expiries;
 }
 
 /**
