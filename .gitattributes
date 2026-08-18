@@ -1,0 +1,46 @@
+# Line endings, declared once so tooling stops deciding per-machine.
+#
+# ── WHY THIS EXISTS ────────────────────────────────────────────────────────
+#
+# `core.autocrlf=true` was set locally, but the blobs in this repository were
+# committed with CRLF — so the two disagreed. The result was that any edit made
+# by a tool writing LF (a script, a codegen pass, an agent, an editor on a
+# non-Windows machine) silently rewrote EVERY line of the file, and the change
+# arrived as a whole-file diff with the real edit buried inside it. That is not
+# a cosmetic problem: it makes review and `git blame` useless on the one commit
+# where you most need them.
+#
+# The fix is to make the repository the authority instead of each checkout:
+# LF in the object store, CRLF in the working tree on Windows. A one-time
+# renormalisation commit brought the existing blobs in line; it is listed in
+# `.git-blame-ignore-revs` so it does not pollute blame.
+
+* text=auto eol=crlf
+
+# ── EXEMPTIONS: FILES LINUX EXECUTES ───────────────────────────────────────
+#
+# These are consumed by a shell or a container at runtime, where a trailing CR
+# is a syntax error rather than whitespace — `#!/usr/bin/env bash\r` fails with
+# "bad interpreter: /bin/bash^M". They keep LF in the working tree too, so a
+# checkout that is rsync'd or built into an image stays runnable.
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+*.dockerfile    text eol=lf
+docker-entrypoint* text eol=lf
+
+# ── BINARY ─────────────────────────────────────────────────────────────────
+# Declared explicitly so no EOL conversion is ever attempted on them.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.gz  binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
