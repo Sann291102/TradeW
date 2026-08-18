@@ -3,6 +3,7 @@
 import { cn } from '@tradew/ui';
 import type { Direction, TimelineEvent, TimelineWatch } from '@/lib/sentinel/sentinelPy';
 import { formatExpiry } from '@/lib/sentinel/watchModel';
+import { watchPairLabel } from '@/lib/sentinel/watchState';
 
 /**
  * One event in the strategy feed.
@@ -124,9 +125,7 @@ function DirectionTag({ direction }: { direction: Direction }) {
  * belonging to whatever the screen happens to be showing.
  */
 function instrumentLabel(watch: TimelineWatch): string {
-  return [watch.symbol, watch.expiry ? formatExpiry(watch.expiry) : null, watch.strike, watch.optionType]
-    .filter(Boolean)
-    .join(' ');
+  return watchPairLabel(watch);
 }
 
 function timeLabel(iso: string): string {

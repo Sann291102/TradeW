@@ -1,6 +1,7 @@
 'use client';
 
 import { cn } from '@tradew/ui';
+import { watchPairLabel } from '@/lib/sentinel/watchState';
 import type { ContractWatch } from '@/lib/sentinel/strategyContract';
 
 /**
@@ -34,9 +35,15 @@ interface Props {
   onEdit?: (watchId: string) => void;
 }
 
+/**
+ * Both legs, via the one adapter that knows how a watch records them.
+ *
+ * This used to print `${symbol} ${strike} ${optionType}` — the focused leg
+ * only — which named half of a pair watch and gave no hint the other half
+ * existed. `watchPairLabel` renders a legacy single-leg row exactly as before.
+ */
 function instrument(watch: ContractWatch): string {
-  if (!watch.strike || !watch.optionType) return watch.symbol ?? '—';
-  return `${watch.symbol} ${watch.strike} ${watch.optionType}`;
+  return watchPairLabel(watch);
 }
 
 export function ActiveWatchList({

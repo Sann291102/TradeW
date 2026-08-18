@@ -95,11 +95,20 @@ export async function fetchDhanOptionCandles(
   optionType: 'CE' | 'PE',
   interval: string,
   days: number,
+  /**
+   * The securityId the caller believes this contract has, VERIFIED by the
+   * bridge rather than trusted. Supplying it turns "the chart and the engine
+   * are on the same contract" from an assumption into a checked fact: on a
+   * mismatch the bridge fails the request instead of serving another
+   * contract's bars under this label. Omitted, resolution is unchanged.
+   */
+  securityId?: string | null,
 ): Promise<DhanCandle[]> {
   const url =
     `${DHAN_LIVE_URL}/candles/option?symbol=${encodeURIComponent(symbol)}` +
     `&expiry=${encodeURIComponent(expiryIso)}&strike=${strike}&type=${optionType}` +
-    `&interval=${encodeURIComponent(interval)}&days=${days}`;
+    `&interval=${encodeURIComponent(interval)}&days=${days}` +
+    (securityId ? `&securityId=${encodeURIComponent(securityId)}` : '');
   const res = await fetch(url);
   if (!res.ok) throw new Error(`market-data bridge returned ${res.status}`);
   const data = (await res.json()) as { candles?: DhanCandle[]; source?: string; error?: string };
@@ -255,6 +264,79 @@ export async function fetchDhanOptionChain(symbol: string, expiryIso: string): P
     const data = (await res.json()) as DhanOptionChain & { error?: string };
     if (data.error || !Array.isArray(data.strikes) || data.strikes.length === 0) return null;
     return data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One listed option contract's identity, from the bridge's `/instrument/option`
+ * route — the same `optionContractIndex` (built from Dhan's scrip master) that
+ * the bridge itself uses to subscribe a leg on the websocket and to address it
+ * on the historical API.
+ *
+ * Mirrors `OptionInstrument` in `lib/sentinel/watchState.ts`.
+ */
+export interface DhanOptionInstrument {
+  securityId: string;
+  exchangeSegment: string;
+  dhanInstrument: string;
+  tradingSymbol: string;
+  displayName: string;
+  underlying: string;
+  expiry: string;
+  strike: number;
+  optionType: 'CE' | 'PE';
+  lotSize: number | null;
+  tickSize: number | null;
+}
+
+/**
+ * Resolve (underlying, expiry, strike, side) to the contract that actually
+ * trades — securityId, exchange segment, instrument class, lot and tick.
+ *
+ * ── WHY THIS IS THE EXISTING PATH AND NOT A NEW ONE ────────────────────────
+ *
+ * `/instrument/option` has existed on the bridge since the paper-execution work
+ * and is already on the web origin's proxy allowlist (`feed-proxy-routes.mjs`).
+ * `services/api`'s `resolveOptionInstrument` resolves contracts for the OMS
+ * through the very same route. The Sentinel workspace was the only surface
+ * addressing option contracts WITHOUT it, re-deriving each one from a strike
+ * number at four separate call sites. This closes that gap by reusing the
+ * resolver rather than adding a fifth derivation.
+ *
+ * Returns null for a contract the scrip master does not list, and null on any
+ * transport fault. The caller must treat null as "cannot address this leg" and
+ * refuse to start a watch on it — never as "use the strike number instead",
+ * which is the state this replaced.
+ */
+export async function fetchDhanOptionInstrument(
+  symbol: string,
+  expiryIso: string,
+  strike: number,
+  optionType: 'CE' | 'PE',
+): Promise<DhanOptionInstrument | null> {
+  const url =
+    `${DHAN_LIVE_URL}/instrument/option?symbol=${encodeURIComponent(symbol)}` +
+    `&expiry=${encodeURIComponent(expiryIso)}&strike=${strike}&type=${optionType}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { instrument?: DhanOptionInstrument | null; error?: string };
+    const instrument = data.instrument;
+    if (!instrument || !instrument.securityId) return null;
+    /**
+     * Trust the request, verify the response.
+     *
+     * The bridge resolves an expiry with a ±1 day tolerance (a scrip-master
+     * Date vs. a plain ISO day can differ by a timezone), so its echo of
+     * `expiry` may legitimately differ from what was asked. `strike` and
+     * `optionType` may not: a response naming a different side or a different
+     * strike is a resolution fault, and accepting it would put a PE token in a
+     * CE slot — the one outcome the pair selector exists to prevent.
+     */
+    if (instrument.strike !== strike || instrument.optionType !== optionType) return null;
+    return { ...instrument, expiry: expiryIso, underlying: symbol };
   } catch {
     return null;
   }

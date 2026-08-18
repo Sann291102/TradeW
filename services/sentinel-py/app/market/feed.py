@@ -76,23 +76,37 @@ async def fetch_index_candles(symbol: str, interval: str = "15m", days: int = 1)
 
 
 async def fetch_option_candles(
-    symbol: str, expiry: str, strike: float, option_type: str, interval: str = "15m", days: int = 1
+    symbol: str,
+    expiry: str,
+    strike: float,
+    option_type: str,
+    interval: str = "15m",
+    days: int = 1,
+    security_id: str | None = None,
 ) -> list[Candle]:
     """Strike-level candles — GET /candles/option on the bridge. This is what
-    a watch on (symbol, strike, CE/PE, expiry) actually reads."""
+    a watch on (symbol, strike, CE/PE, expiry) actually reads.
+
+    `security_id` is the token stored on the watch when it was created. Passing
+    it makes the bridge VERIFY its own resolution against it and fail on a
+    mismatch, instead of silently serving a different contract's bars if the
+    scrip master has been re-indexed since. Omitted for legacy rows, which
+    never held a token — resolution then falls back to (symbol, expiry, strike,
+    type), which is what those rows have always used.
+    """
+    params: dict = {
+        "symbol": symbol,
+        "expiry": expiry,
+        "strike": strike,
+        "type": option_type,
+        "interval": interval,
+        "days": days,
+    }
+    if security_id:
+        params["securityId"] = security_id
     async with httpx.AsyncClient(timeout=_timeout()) as client:
         try:
-            resp = await client.get(
-                f"{_feed_url()}/candles/option",
-                params={
-                    "symbol": symbol,
-                    "expiry": expiry,
-                    "strike": strike,
-                    "type": option_type,
-                    "interval": interval,
-                    "days": days,
-                },
-            )
+            resp = await client.get(f"{_feed_url()}/candles/option", params=params)
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise MarketDataUnavailableError(f"{interval} option candles", symbol) from exc

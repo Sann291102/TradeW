@@ -173,6 +173,11 @@ export function SentinelDashboard({
         expiry={selection.expiry}
         ceStrike={instruments.call?.strike ?? null}
         peStrike={instruments.put?.strike ?? null}
+        // The tokens travel with the strikes, so the two contract panels are
+        // verified against the exact instruments the selection resolved —
+        // rather than two more independent re-derivations from the numbers.
+        ceSecurityId={instruments.call?.instrument?.securityId ?? null}
+        peSecurityId={instruments.put?.instrument?.securityId ?? null}
         focus={observation?.focus ?? null}
         engineRead={engineRead}
         footer={

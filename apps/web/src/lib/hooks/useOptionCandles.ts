@@ -34,6 +34,8 @@ export function useOptionCandles(
   optionType: 'CE' | 'PE' | undefined,
   interval: CandleInterval,
   days: number,
+  /** The resolved contract token, when the caller has one. Verified upstream. */
+  securityId?: string | null,
 ): { candles: Candle[] | null; status: OptionCandlesStatus; reason: OptionCandlesUnavailableReason | null } {
   const [candles, setCandles] = useState<Candle[] | null>(null);
   const [status, setStatus] = useState<OptionCandlesStatus>('loading');
@@ -55,7 +57,7 @@ export function useOptionCandles(
     // enough that a stale series looks entirely plausible on screen.
     setCandles(null);
 
-    fetchDhanOptionCandles(underlyingSymbol, expiryIso, strike, optionType, interval, days)
+    fetchDhanOptionCandles(underlyingSymbol, expiryIso, strike, optionType, interval, days, securityId)
       .then((raw) => {
         if (cancelled) return;
         if (!raw.length) {
@@ -82,7 +84,7 @@ export function useOptionCandles(
     // Deliberately NOT keyed on the live price: history reloads only when the
     // contract or timeframe changes. The live price moves the last bar in the
     // chart itself (TradeChart's `liveLast`), which preserves zoom/pan.
-  }, [underlyingSymbol, expiryIso, strike, optionType, interval, days]);
+  }, [underlyingSymbol, expiryIso, strike, optionType, interval, days, securityId]);
 
   return { candles, status, reason };
 }

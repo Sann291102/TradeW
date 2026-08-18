@@ -36,19 +36,116 @@ def _timeframe_of(rules: dict) -> str:
     return rules.get("timeframe") or "15m"
 
 
+async def _leg_candles(watch: dict, leg: dict, timeframe: str):
+    """One leg's real OHLC, addressed by the securityId stored on the watch.
+
+    The token is passed to the bridge, which VERIFIES it against its own
+    scrip-master resolution and fails the request on a mismatch rather than
+    serving a different contract's bars. A legacy row has no token; it is
+    omitted and the bridge resolves by (symbol, expiry, strike, type) exactly
+    as before.
+    """
+    return await fetch_option_candles(
+        symbol=watch["symbol"],
+        expiry=watch["expiry"],
+        strike=float(leg["strike"]),
+        option_type=leg["optionType"],
+        interval=timeframe,
+        security_id=leg.get("securityId") or None,
+    )
+
+
 async def _candles_for(watch: dict, timeframe: str):
-    """A watch on a strike reads the OPTION's candles; a watch with no strike
-    reads the index. Watching the index while claiming to watch a 24300 CE
-    would misreport every level, so the two are never interchangeable."""
-    if watch.get("strike") and watch.get("optionType") and watch.get("expiry"):
-        return await fetch_option_candles(
-            symbol=watch["symbol"],
-            expiry=watch["expiry"],
-            strike=float(watch["strike"]),
-            option_type=watch["optionType"],
-            interval=timeframe,
-        )
+    """The series the strategy's RULES are evaluated against.
+
+    An option watch evaluates on its FOCUSED leg; a watch with no legs reads
+    the index. Watching the index while claiming to watch a 24300 CE would
+    misreport every level, so the two are never interchangeable.
+
+    ⚠️ This is one of two reads now. `_read_pair` below reads the opposite leg
+    as well, because Sentinel's job is to compare the two candidate expressions
+    of the underlying's move — it just does not evaluate the user's rule set
+    twice. Which leg is the stronger setup is decided from the pair in the
+    observation, never by this choice of evaluation series.
+    """
+    ce, pe, focused_side = store._legs_of(watch)
+    focused = ce if focused_side == "CE" else pe if focused_side == "PE" else (ce or pe)
+    if focused is not None and watch.get("expiry"):
+        return await _leg_candles(watch, focused, timeframe)
     return await fetch_index_candles(symbol=watch["symbol"], interval=timeframe)
+
+
+def _leg_summary(leg: dict | None, candles, error: str | None) -> dict | None:
+    """What one leg looked like on this sweep, for the observation record.
+
+    A leg that could not be read carries its reason and a null series — never
+    a zero and never the previous sweep's numbers. "Unreadable" and "did not
+    move" are different facts, and collapsing them renders a dead bridge as a
+    calm market (the same distinction `contract-alignment.ts` enforces on the
+    TypeScript side).
+    """
+    if leg is None:
+        return None
+    summary = {
+        "strike": leg["strike"],
+        "optionType": leg["optionType"],
+        # Recorded so an observation can be audited against the exact contract
+        # it was made on, after the fact and without re-resolving anything.
+        "securityId": leg.get("securityId") or None,
+        "tradingSymbol": leg.get("tradingSymbol") or None,
+    }
+    if error is not None or not candles:
+        summary["unreadable"] = error or "no candles"
+        summary["close"] = None
+        return summary
+    summary["close"] = candles[-1].close
+    summary["candleTime"] = candles[-1].timestamp.isoformat()
+    summary["bars"] = len(candles)
+    return summary
+
+
+async def _read_pair(watch: dict, timeframe: str) -> dict | None:
+    """Both legs of the pair, read for context rather than for evaluation.
+
+    Returns None for a watch with no legs. A failure on EITHER leg is recorded
+    and swallowed: this is the context Sentinel compares, not the series the
+    rules run on, and an illiquid put with no bars must not stop a sweep whose
+    call leg read fine.
+
+    Cost: one extra bridge call per option watch per sweep. The bridge caches
+    candles per (securityId, interval, days) for 60s, so at the 15s sweep
+    cadence this is one additional UPSTREAM call per minute per watch — the
+    price of being able to compare the legs at all, paid once per contract
+    rather than once per sweep.
+    """
+    ce, pe, _ = store._legs_of(watch)
+    if ce is None and pe is None:
+        return None
+    if not watch.get("expiry"):
+        return None
+
+    async def read(leg: dict | None):
+        if leg is None:
+            return None, None
+        try:
+            return await _leg_candles(watch, leg, timeframe), None
+        except MarketDataUnavailableError as exc:
+            return None, str(exc)
+        except Exception as exc:  # noqa: BLE001 - context must never fail a sweep
+            logger.warning("watch=%s pair leg read failed: %s", watch["id"], exc)
+            return None, str(exc)
+
+    ce_candles, ce_error = await read(ce)
+    pe_candles, pe_error = await read(pe)
+    return {
+        "ce": _leg_summary(ce, ce_candles, ce_error),
+        "pe": _leg_summary(pe, pe_candles, pe_error),
+        # Stated, not implied: which leg the rules were evaluated on. Without
+        # it a reader cannot tell whether a met condition came from the call or
+        # the put.
+        "focusedSide": watch.get("focusedSide"),
+        "timeframe": timeframe,
+    }
 
 
 async def _emit(watch: dict, transition: Transition) -> None:
@@ -140,6 +237,10 @@ async def sweep_once() -> int:
             rules_json = watch.get("strategyRules") or {}
             timeframe = _timeframe_of(rules_json)
             candles = await _candles_for(watch, timeframe)
+            # Both legs, for the record. Read AFTER the evaluation series so a
+            # dead pair leg cannot pre-empt the skip the focused leg would
+            # otherwise raise — the skip is the more precise statement.
+            pair = await _read_pair(watch, timeframe)
 
             # A position that is open is no longer a setup being watched for:
             # the rules that got the user in are spent, and what matters now
@@ -209,6 +310,18 @@ async def sweep_once() -> int:
                     # see where this user's sweeps stopped progressing rather
                     # than only that they did.
                     "liquidity": measure_liquidity(candles),
+                    # THE PAIR under observation: both legs, each with the
+                    # contract it was read on. This is what lets a later
+                    # analysis ask which side was actually expressing the
+                    # underlying's move — the question a single-leg watch
+                    # could not be asked at all.
+                    #
+                    # ⚠️ Recorded, not ranked. Nothing here scores the legs or
+                    # names a preferred side; that judgement belongs to the
+                    # agents evaluating live structure, momentum, volatility,
+                    # premium behaviour and liquidity, and a stored ranking
+                    # would be a recommendation by another name (Rule 2).
+                    "optionPair": pair,
                 },
             )
 

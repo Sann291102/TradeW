@@ -28,6 +28,11 @@ function watch(overrides: Partial<WatchSession> = {}): WatchSession {
     strike: '24300',
     optionType: 'CE',
     expiry: '2026-08-28',
+    ce: null,
+    pe: null,
+    focusedSide: null,
+    watchMode: 'option',
+    timeframe: null,
     state: 'IDLE',
     entryPrice: null,
     stopPrice: null,
@@ -63,7 +68,10 @@ function emptyParsed(): ParsedStrategy {
 
 describe('instrumentLabel', () => {
   it('names an option watch the way the notification does', () => {
-    expect(instrumentLabel(watch())).toBe('NIFTY 24300 CE');
+    // Includes the expiry: "NIFTY 24300 CE" names two different contracts
+    // across two series. `instrument_label()` in app/notify/dispatcher.py was
+    // widened with it at the same time, so the two still agree.
+    expect(instrumentLabel(watch())).toBe('NIFTY 28 AUG 24300 CE');
   });
 
   it('drops the option parts for a plain index watch', () => {

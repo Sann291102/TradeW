@@ -4,9 +4,10 @@ import { useEffect, useState } from 'react';
 import { Badge, Button, cn } from '@tradew/ui';
 import { ApiError } from '@/lib/api';
 import { MarketSelector } from '@/components/sentinel/MarketSelector';
-import { formatLtp, strikeOptionLabel } from '@/lib/sentinel/optionChain';
 import { useSentinelWatch } from '@/lib/sentinel/WatchContext';
 import { formatExpiry } from '@/lib/sentinel/watchModel';
+import { buildWatchRequest, validateWatchPair } from '@/lib/sentinel/watchState';
+import { StrikeCombobox } from './StrikeCombobox';
 import type { CreateWatchInput, UserStrategy, WatchSession } from '@/lib/sentinel/strategyApi';
 import { ChevronDownIcon } from '@/components/shell/icons';
 
@@ -38,9 +39,25 @@ import { ChevronDownIcon } from '@/components/shell/icons';
  * concurrent 4s polls of a bridge that serialises option calls behind a 3.1s
  * floor is what this replaced.
  *
- * The STRIKE dropdown edits whichever leg the Side toggle names. Both legs are
- * carried in the selection because the panel above draws both; picking CE and
- * setting 24200 leaves the put leg exactly where it was.
+ * ── THE PAIR, NOT A SIDE ───────────────────────────────────────────────────
+ *
+ * Until 2026-08-18 this form had ONE strike dropdown and the CE/PE toggle
+ * decided which leg it edited — so the toggle silently decided which single leg
+ * reached the engine. Sentinel cannot compare the two candidate expressions of
+ * an underlying move from one of them.
+ *
+ * Both legs are now configured side by side and both are sent. The toggle is
+ * FOCUS: it says which leg the strategy's rules are evaluated against and which
+ * card the workspace emphasises. It creates and destroys nothing, and moving it
+ * cannot lose a strike.
+ *
+ * ⚠️ Note what this form deliberately does NOT do: it does not rank the two
+ * legs, order them by attractiveness, or pre-select one from the market's
+ * direction. Which side is presenting the stronger setup is the engine's
+ * reading of live structure, momentum, volatility, premium behaviour and
+ * liquidity — a "bullish → CE" shortcut here would pre-empt exactly that
+ * evaluation, and per Rule 2 a ranked ladder of strikes is a recommendation
+ * however it is worded.
  */
 export function WatchCreator({
   strategy,
@@ -55,6 +72,8 @@ export function WatchCreator({
     selection,
     expiries,
     chain,
+    legs,
+    ladders,
     setMarket,
     setExpiry,
     setSide,
@@ -63,15 +82,12 @@ export function WatchCreator({
     setUnderlying,
   } = useSentinelWatch();
 
-  const { symbol, expiry, optionType, underlyingOnly } = selection;
-  const strike = optionType === 'CE' ? selection.callStrike : selection.putStrike;
-  const setStrike = optionType === 'CE' ? setCallStrike : setPutStrike;
+  const { symbol, expiry, focusedSide, underlyingOnly } = selection;
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const hasOptions = expiries.status === 'ready';
-  const rows = optionType === 'CE' ? chain.ce : chain.pe;
 
   // Clearing the market/expiry/strike on a market change, defaulting the
   // nearest expiry, forcing the underlying on a CONFIRMED 'none' and defaulting
@@ -98,23 +114,48 @@ export function WatchCreator({
   // Only a CONFIRMED 'none', or the user explicitly ticking the box, means the
   // underlying. Loading and unreadable are simply not-ready.
   const watchingUnderlying = underlyingOnly || expiries.status === 'none';
-  const ready =
-    strategy !== null && (watchingUnderlying || (expiry !== null && strike !== null && chain.status === 'live'));
+
+  /**
+   * Everything blocking the watch, per leg, recomputed on every render.
+   *
+   * `Date.now()` is read here rather than held in state on purpose: the chain's
+   * staleness has to be judged at the moment of the click, and a memoised
+   * timestamp would let a form that was valid thirty seconds ago stay valid.
+   * The cost is one comparison per render.
+   */
+  const problems = validateWatchPair(
+    { ...selection, underlyingOnly: watchingUnderlying },
+    ladders,
+    Date.now(),
+    new Date().toISOString().slice(0, 10),
+  );
+  const problemFor = (side: 'CE' | 'PE') => problems.filter((p) => p.side === side);
+  const pairProblems = problems.filter((p) => p.side === null);
+
+  const ready = strategy !== null && problems.length === 0;
+
+  /**
+   * The timeframe the engine will read, taken from the strategy's own parsed
+   * rules — not a control on this form. Mirrors `_timeframe_of` in
+   * `services/sentinel-py/app/watch/poller.py`, including its 15m default, so
+   * the value sent is the value the sweep would have chosen anyway rather than
+   * a second opinion the two services could drift apart on.
+   */
+  const timeframe = strategy?.rules?.timeframe || '15m';
 
   const handleStart = async () => {
     if (!strategy || !ready) return;
     setBusy(true);
     setError(null);
     try {
-      const created = await onStart({
-        strategyId: strategy.id,
-        symbol,
-        // A watch on the underlying carries none of the option fields, which
-        // is exactly how the engine tells the two apart.
-        strike: watchingUnderlying ? null : String(strike),
-        optionType: watchingUnderlying ? null : optionType,
-        expiry: watchingUnderlying ? null : expiry,
-      });
+      /**
+       * ONE builder, from the canonical selection. The form does not assemble
+       * a payload of its own — that is how the old single-`strike` body came to
+       * disagree with the pair the charts were drawing.
+       */
+      const created = await onStart(
+        buildWatchRequest({ ...selection, underlyingOnly: watchingUnderlying }, strategy.id, timeframe),
+      );
       onStarted?.(created);
     } catch (err) {
       setError(describe(err));
@@ -122,8 +163,6 @@ export function WatchCreator({
       setBusy(false);
     }
   };
-
-  const selectedLtp = strike !== null ? rows.find((r) => r.strike === strike)?.ltp ?? null : null;
 
   return (
     <div className="space-y-3">
@@ -166,10 +205,10 @@ export function WatchCreator({
             <Field label="Expiry">
               <Select
                 value={expiry ?? ''}
-                // No second `setStrike(null)` here: `selectExpiry` already
-                // drops both legs, because the 24200 of one series is a
-                // different contract from the 24200 of the next. One rule, one
-                // place.
+                // No second strike reset here: `selectExpiry` already drops
+                // BOTH legs and both their tokens, because the 24200 of one
+                // series is a different contract from the 24200 of the next.
+                // One rule, one place.
                 onChange={(v) => setExpiry(v || null)}
                 disabled={!hasOptions || underlyingOnly}
                 ariaLabel="Expiry"
@@ -183,18 +222,22 @@ export function WatchCreator({
               </Select>
             </Field>
 
-            <Field label="Side">
-              <div className="flex rounded-lg border border-border bg-bg p-0.5" role="group" aria-label="Option type">
+            <Field label="Side in focus" hint="both legs are watched">
+              <div
+                className="flex rounded-lg border border-border bg-bg p-0.5"
+                role="group"
+                aria-label="Side in focus"
+              >
                 {(['CE', 'PE'] as const).map((side) => (
                   <button
                     key={side}
                     type="button"
-                    aria-pressed={optionType === side}
+                    aria-pressed={focusedSide === side}
                     disabled={underlyingOnly}
                     onClick={() => setSide(side)}
                     className={cn(
                       'flex-1 rounded-md py-1.5 text-[12px] font-bold transition-colors duration-micro disabled:opacity-50',
-                      optionType === side
+                      focusedSide === side
                         ? side === 'CE'
                           ? 'bg-up-bg text-up'
                           : 'bg-down-bg text-down'
@@ -208,15 +251,28 @@ export function WatchCreator({
             </Field>
           </div>
 
-          <Field
-            label="Strike"
-            hint={
-              chain.status === 'live' && chain.spot != null ? `Spot ${chain.spot.toLocaleString('en-IN')}` : undefined
-            }
-          >
+          {/*
+            ── Option pair under observation ─────────────────────────────────
+
+            Two independent selectors, each bound to its own side's real ladder.
+            The section is named for what it is so the screen cannot be read as
+            "pick a side, then a strike": both contracts are configured, both
+            are sent, and the focus toggle above only says which one the rules
+            are evaluated against.
+          */}
+          <fieldset className="min-w-0" disabled={underlyingOnly}>
+            <legend className="mb-1.5 flex w-full items-baseline justify-between gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">
+                Option pair under observation
+              </span>
+              {chain.status === 'live' && chain.spot != null && (
+                <span className="truncate text-[10.5px] text-faint">Spot {chain.spot.toLocaleString('en-IN')}</span>
+              )}
+            </legend>
+
             {underlyingOnly ? (
               <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
-                Watching {symbol} itself.
+                Watching {symbol} itself — no option legs are part of this watch.
               </p>
             ) : chain.status === 'loading' ? (
               <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
@@ -227,23 +283,51 @@ export function WatchCreator({
                 No live chain for {symbol} {formatExpiry(expiry)} right now.
               </p>
             ) : (
-              <div className="flex items-center gap-2">
-                <Select
-                  value={strike ?? ''}
-                  onChange={(v) => setStrike(v ? Number(v) : null)}
-                  ariaLabel={`${optionType} strike`}
-                >
-                  {strike === null && <option value="">Select strike</option>}
-                  {rows.map((r) => (
-                    <option key={r.strike} value={r.strike}>
-                      {strikeOptionLabel(r)}
-                    </option>
-                  ))}
-                </Select>
-                <span className="shrink-0 font-mono text-[12px] font-semibold text-text">{formatLtp(selectedLtp)}</span>
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                {/*
+                  `chain.ce` and `chain.pe` — never one array with a side flag.
+                  The separation is the guarantee: a control handed only the
+                  call ladder has nothing to select a put from.
+                */}
+                <StrikeCombobox
+                  side="CE"
+                  rows={chain.ce}
+                  atmIndex={chain.atmIndex}
+                  value={selection.callStrike}
+                  onChange={setCallStrike}
+                  instrumentStatus={legs.ce.status}
+                  instrument={selection.callInstrument}
+                  focused={focusedSide === 'CE'}
+                />
+                <StrikeCombobox
+                  side="PE"
+                  rows={chain.pe}
+                  atmIndex={chain.atmIndex}
+                  value={selection.putStrike}
+                  onChange={setPutStrike}
+                  instrumentStatus={legs.pe.status}
+                  instrument={selection.putInstrument}
+                  focused={focusedSide === 'PE'}
+                />
               </div>
             )}
-          </Field>
+
+            {/*
+              Why each leg is blocking, named per leg. A single "invalid
+              selection" would leave the operator to work out which of the two
+              is at fault and in what way.
+            */}
+            {!underlyingOnly && problems.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {[...pairProblems, ...problemFor('CE'), ...problemFor('PE')].map((p) => (
+                  <li key={`${p.code}:${p.side ?? 'pair'}`} className="text-[11px] leading-snug text-warning">
+                    {p.side ? `${p.side}: ` : ''}
+                    {p.message}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </fieldset>
 
           {hasOptions && (
             <label className="flex items-center gap-2 text-[11.5px] text-muted">

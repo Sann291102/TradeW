@@ -13,8 +13,10 @@ import {
 import type { OptionType, WatchSession } from './strategyApi';
 import { useExpiries, type ExpiriesResult } from './useExpiries';
 import { useOptionChainStrikes, type OptionChainStrikes } from './useOptionChainStrikes';
+import { useOptionInstruments, type PairInstruments } from './useOptionInstruments';
 import {
   DEFAULT_SELECTION,
+  attachInstrument,
   reconcileWatchSelection,
   resolveWatchContext,
   selectExpiry,
@@ -24,6 +26,7 @@ import {
   selectionFromWatch,
   setUnderlyingOnly,
   watchMode,
+  type PairLadders,
   type ResolvedWatchContext,
   type WatchMode,
   type WatchSelection,
@@ -108,6 +111,14 @@ export interface SentinelWatchContextValue {
   expiries: ExpiriesResult;
   /** The strike ladder for the selected market + expiry — one poll, shared. */
   chain: OptionChainStrikes;
+  /**
+   * Where each leg's contract resolution stands. Read by the form to say
+   * "resolving…" / "that contract could not be resolved" per leg rather than
+   * showing one combined state for two independent lookups.
+   */
+  legs: PairInstruments;
+  /** The ladders in the shape `validateWatchPair` consumes. */
+  ladders: PairLadders;
 
   setMarket: (symbol: string) => void;
   setExpiry: (expiry: string | null) => void;
@@ -145,9 +156,21 @@ function readStored(): WatchSelection {
     return {
       symbol: parsed.symbol,
       expiry: typeof parsed.expiry === 'string' ? parsed.expiry : null,
-      optionType: parsed.optionType === 'PE' ? 'PE' : 'CE',
+      focusedSide: parsed.focusedSide === 'PE' ? 'PE' : 'CE',
       callStrike: typeof parsed.callStrike === 'number' ? parsed.callStrike : null,
       putStrike: typeof parsed.putStrike === 'number' ? parsed.putStrike : null,
+      /**
+       * Tokens are NOT restored — they are re-resolved against the live scrip
+       * master on mount.
+       *
+       * A securityId persisted before a weekend can name a contract that has
+       * since expired or been re-listed, and a stale token is worse than no
+       * token: the strike beside it still looks right, so nothing on screen
+       * reveals that the chart and the watch are addressing a dead contract.
+       * Re-resolving costs one call per leg and settles within a frame or two.
+       */
+      callInstrument: null,
+      putInstrument: null,
       underlyingOnly: parsed.underlyingOnly === true,
       selectedWatchId: null,
     };
@@ -199,7 +222,15 @@ export function SentinelWatchProvider({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const { selectedWatchId: _omit, ...persistable } = selection;
+      // Tokens are omitted alongside the watch id: both are facts about the
+      // world rather than about the operator's choice, and both are
+      // re-established on mount. See `readStored`.
+      const {
+        selectedWatchId: _omitId,
+        callInstrument: _omitCall,
+        putInstrument: _omitPut,
+        ...persistable
+      } = selection;
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persistable));
     } catch {
       // A full or disabled localStorage must not take the workspace down; the
@@ -262,6 +293,49 @@ export function SentinelWatchProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chain.status, chain.atmIndex, chain.expiry]);
 
+  /**
+   * THE contract resolution for the workspace — one per leg, both independent.
+   *
+   * Gated on the same condition as the chain read: an underlying watch has no
+   * legs to address. Note it is driven off `selection.callStrike`/`putStrike`
+   * rather than off the chain, so a leg re-resolves exactly when the operator
+   * moves it and at no other time.
+   */
+  const legs = useOptionInstruments(
+    selection.symbol,
+    selection.expiry,
+    selection.callStrike,
+    selection.putStrike,
+    !selection.underlyingOnly,
+  );
+
+  /**
+   * Fold each resolved contract into the canonical selection.
+   *
+   * `attachInstrument` is the guard, not this effect: it refuses a token that
+   * does not describe the leg it is being attached to, so a response that
+   * arrives after the operator has moved the strike is dropped rather than
+   * written. Two separate effects, one per leg, so attaching the call can never
+   * re-render a put that did not change.
+   */
+  useEffect(() => {
+    setSelection((prev) => attachInstrument(prev, 'CE', legs.ce.instrument));
+  }, [legs.ce.instrument]);
+
+  useEffect(() => {
+    setSelection((prev) => attachInstrument(prev, 'PE', legs.pe.instrument));
+  }, [legs.pe.instrument]);
+
+  /**
+   * The ladders in the shape the validator reads. Derived here so the form and
+   * anything else that needs to ask "can this pair be watched" reads ONE
+   * description of the chain rather than each assembling its own.
+   */
+  const ladders = useMemo<PairLadders>(
+    () => ({ status: chain.status, ce: chain.ce, pe: chain.pe, fetchedAt: chain.fetchedAt }),
+    [chain.status, chain.ce, chain.pe, chain.fetchedAt],
+  );
+
   const setMarket = useCallback((symbol: string) => setSelection((p) => selectMarket(p, symbol)), []);
   const setExpiry = useCallback((expiry: string | null) => setSelection((p) => selectExpiry(p, expiry)), []);
   const setSide = useCallback((side: OptionType) => setSelection((p) => selectSide(p, side)), []);
@@ -309,6 +383,8 @@ export function SentinelWatchProvider({
       instruments,
       expiries,
       chain,
+      legs,
+      ladders,
       setMarket,
       setExpiry,
       setSide,
@@ -323,6 +399,8 @@ export function SentinelWatchProvider({
       instruments,
       expiries,
       chain,
+      legs,
+      ladders,
       setMarket,
       setExpiry,
       setSide,

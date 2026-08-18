@@ -25,6 +25,7 @@
 
 import { api, ApiError } from '../api';
 import type { Direction, TimelineEvent, TimelineWatch, WatchState } from './sentinelPy';
+import type { WatchLeg } from './strategyApi';
 
 export interface TemplateSummary {
   id: string | null;
@@ -74,9 +75,14 @@ export interface ContractWatch {
   id: string;
   direction?: Direction | null;
   symbol: string | null;
+  /** LEGACY mirror of the focused leg — read through `watchLegs`, not directly. */
   strike: string | null;
   optionType: 'CE' | 'PE' | null;
   expiry: string | null;
+  /** Both legs under observation. Null on an underlying watch. */
+  ce?: WatchLeg | null;
+  pe?: WatchLeg | null;
+  focusedSide?: 'CE' | 'PE' | null;
   state: WatchState | null;
   status: string | null;
   conditions: ContractCondition[];
@@ -208,6 +214,11 @@ export function toTimelineWatch(
     strike: watch.strike,
     optionType: watch.optionType,
     expiry: watch.expiry,
+    // The pair travels through the adapter. Dropping it here would collapse a
+    // two-leg watch back to one leg at the last hop before the card.
+    ce: watch.ce ?? null,
+    pe: watch.pe ?? null,
+    focusedSide: watch.focusedSide ?? null,
     state: (watch.state ?? 'IDLE') as WatchState,
     direction: watch.direction ?? null,
     strategyId,

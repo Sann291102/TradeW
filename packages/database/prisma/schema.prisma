@@ -1872,9 +1872,48 @@ model WatchSession {
   userId     String
   strategyId String
   symbol     String
+  // ── LEGACY MIRROR ───────────────────────────────────────────────────────
+  // Before 2026-08-18 a watch named ONE leg and these were it. Rows created
+  // then still carry only these, so they cannot be dropped without losing
+  // every pre-existing watch. New rows keep them populated from the FOCUSED
+  // leg so those rows and this history stay readable by one query.
+  // Read through `watchLegs()` (apps/web) / `_legs_of()` (sentinel-py), never
+  // directly — that is what keeps this a migration shim rather than a second
+  // live single-strike path.
   strike     String?
   optionType String? // CE | PE
   expiry     String? // YYYY-MM-DD, as the Dhan bridge expects it
+  // ── THE PAIR UNDER OBSERVATION ──────────────────────────────────────────
+  // Sentinel watches the underlying, a CALL and a PUT together and decides
+  // which leg is expressing the underlying's move. It cannot do that from one
+  // leg, and it cannot do it from a strike NUMBER either — it needs the
+  // contract. `securityId` is the Dhan token the live feed subscribes and the
+  // historical API is addressed by; it is stored as a column rather than
+  // inside a JSON blob so "which contracts are we subscribed to" is answerable
+  // in SQL.
+  // Both legs are null for `watchMode = 'underlying'` and only then.
+  ceStrike          Decimal? @db.Decimal(12, 2)
+  ceSecurityId      String?
+  ceExchangeSegment String? // NSE_FNO | BSE_FNO — never assumed from the symbol
+  ceDhanInstrument  String? // OPTIDX | OPTSTK
+  ceTradingSymbol   String?
+  ceLotSize         Int?
+  ceTickSize        Decimal? @db.Decimal(10, 4)
+  peStrike          Decimal? @db.Decimal(12, 2)
+  peSecurityId      String?
+  peExchangeSegment String?
+  peDhanInstrument  String?
+  peTradingSymbol   String?
+  peLotSize         Int?
+  peTickSize        Decimal? @db.Decimal(10, 4)
+  // Which leg the strategy's rules are evaluated against. NOT which leg
+  // exists — both do. The UI's CE/PE control sets this and creates nothing.
+  focusedSide String? // CE | PE
+  watchMode   String  @default("option") // option | underlying
+  // The bars the engine reads, from the strategy's own parsed rules. Recorded
+  // on the watch so an observation can be checked against the series it was
+  // made on after the strategy has been edited.
+  timeframe String?
   state      String    @default("IDLE") // IDLE | FORMING | CONFIRMED | IN_TRADE | EXITED
   // Set when the user confirms they took the position (P4). Null while the
   // watch is still pre-entry.

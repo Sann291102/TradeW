@@ -11,12 +11,85 @@ from app.watch.timeline import build_timeline
 router = APIRouter(prefix="/watch", tags=["watch"], dependencies=[Depends(require_service_token)])
 
 
+class WatchLegRequest(BaseModel):
+    """One listed option contract, carried by IDENTITY rather than by strike.
+
+    `securityId` is the field that makes this an instrument instead of a
+    description: it is the Dhan token the live feed subscribes and the
+    historical API is addressed by. Without it every consumer re-derives the
+    contract from (symbol, expiry, strike, side) on its own, and a
+    re-derivation that finds the wrong row produces a confident, wrong chart.
+    """
+
+    strike: float
+    optionType: Literal["CE", "PE"]
+    securityId: str
+    exchangeSegment: str
+    tradingSymbol: str
+    dhanInstrument: str
+    lotSize: int | None = None
+    tickSize: float | None = None
+
+
 class CreateWatchRequest(BaseModel):
+    """The complete watch configuration.
+
+    Replaces `{symbol, strike, optionType, expiry}` — one leg, and whichever
+    one the UI's CE/PE toggle happened to be on. Sentinel observes the
+    underlying, a CALL and a PUT together and decides which leg is expressing
+    the underlying's move; it cannot do that from one of them.
+
+    `focusedSide` says which leg the strategy's rules are evaluated against. It
+    does NOT decide which legs exist — both do, always, for an option watch.
+    """
+
     strategyId: str
     symbol: str
-    strike: str | None = None
-    optionType: Literal["CE", "PE"] | None = None
     expiry: str | None = None
+    ce: WatchLegRequest | None = None
+    pe: WatchLegRequest | None = None
+    focusedSide: Literal["CE", "PE"] = "CE"
+    watchMode: Literal["option", "underlying"] = "option"
+    timeframe: str | None = None
+
+
+def _validate_pair(body: CreateWatchRequest) -> None:
+    """Refuse a request that cannot describe a real pair.
+
+    Re-checked here rather than trusted from the browser. The web form runs the
+    same rules (`validateWatchPair`), but the form is a convenience and this is
+    the boundary: a watch persisted with a mismatched leg would have Sentinel
+    observing a put while every screen said call, and nothing downstream could
+    detect it.
+    """
+    if body.watchMode == "underlying":
+        if body.ce is not None or body.pe is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="An underlying watch carries no option legs",
+            )
+        return
+
+    if not body.expiry:
+        raise HTTPException(status_code=400, detail="expiry is required for an option watch")
+    if body.ce is None or body.pe is None:
+        # Explicitly BOTH. A half-configured pair is the single-strike watch
+        # this replaced, arriving under a new field name.
+        missing = "ce" if body.ce is None else "pe"
+        raise HTTPException(
+            status_code=400,
+            detail=f"an option watch requires both legs; {missing} is missing",
+        )
+    # The guard that a CE slot cannot hold a PE contract. Third and last check
+    # of this property — the UI's ladders are separate, the bridge's resolver
+    # re-checks the side it returns, and this refuses a payload that got past
+    # both.
+    if body.ce.optionType != "CE":
+        raise HTTPException(status_code=400, detail="the ce leg must be a CE contract")
+    if body.pe.optionType != "PE":
+        raise HTTPException(status_code=400, detail="the pe leg must be a PE contract")
+    if not body.ce.securityId or not body.pe.securityId:
+        raise HTTPException(status_code=400, detail="both legs must carry a resolved securityId")
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -24,8 +97,17 @@ async def create(body: CreateWatchRequest, user_id: str = Query(..., alias="user
     strategy = await _require_strategy(user_id, body.strategyId)
     if strategy is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
+    _validate_pair(body)
     return await store.create_watch(
-        user_id, body.strategyId, body.symbol, body.strike, body.optionType, body.expiry
+        user_id=user_id,
+        strategy_id=body.strategyId,
+        symbol=body.symbol,
+        expiry=body.expiry,
+        ce=body.ce.model_dump() if body.ce else None,
+        pe=body.pe.model_dump() if body.pe else None,
+        focused_side=body.focusedSide,
+        watch_mode=body.watchMode,
+        timeframe=body.timeframe,
     )
 
 

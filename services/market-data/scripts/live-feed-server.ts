@@ -1502,6 +1502,30 @@ async function main(): Promise<void> {
         res.end(JSON.stringify({ candles: [], source: 'none', error: 'contract not found in scrip master' }));
         return;
       }
+      /**
+       * Optional caller-supplied token, VERIFIED rather than trusted.
+       *
+       * A Sentinel watch stores the securityId it was created against (see the
+       * WatchSession option-pair migration). Passing it here turns "the chart
+       * and the engine resolve the same contract" from an assumption into a
+       * checked fact: if the scrip master has since been re-indexed and this
+       * strike now resolves elsewhere, the request FAILS instead of quietly
+       * serving a different contract's bars under the caller's label.
+       *
+       * Omitting it keeps the original behaviour exactly — resolution by
+       * (symbol, expiry, strike, type) — so every existing caller is unaffected.
+       */
+      const expectedId = url.searchParams.get('securityId');
+      if (expectedId && expectedId !== contract.securityId) {
+        res.end(
+          JSON.stringify({
+            candles: [],
+            source: 'none',
+            error: `securityId mismatch: ${symbol} ${expiry} ${strike} ${type} resolves to ${contract.securityId}, caller expected ${expectedId}`,
+          }),
+        );
+        return;
+      }
       const cacheKey = `opt:${contract.securityId}:${interval}:${days}`;
       const to = new Date();
       const from = new Date(to.getTime() - days * 86_400_000);

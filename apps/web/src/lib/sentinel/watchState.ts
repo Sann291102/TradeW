@@ -1,4 +1,4 @@
-import type { OptionType, WatchSession } from './strategyApi';
+import type { OptionType, WatchLeg, WatchSession } from './strategyApi';
 
 /**
  * ONE canonical description of what the operator has pointed Sentinel at.
@@ -29,18 +29,78 @@ import type { OptionType, WatchSession } from './strategyApi';
  * do to the strike?".
  */
 
+/**
+ * The identity of ONE listed option contract, exactly as the market-data
+ * bridge resolves it out of Dhan's scrip master.
+ *
+ * ── WHY A NUMBER IS NOT AN INSTRUMENT ──────────────────────────────────────
+ *
+ * Until 2026-08-18 the selection carried `callStrike: 24200` and nothing else.
+ * A strike number is not addressable: every consumer that needed the actual
+ * contract — the candle fetch, the premium poll, the watch the engine runs —
+ * re-derived it from (symbol, expiry, strike, side) on its own. Four
+ * re-derivations of one fact is the same shape as the four copies of the
+ * selection this file was written to collapse, and it has a sharper failure
+ * mode: a re-derivation that silently finds nothing draws an empty chart, and
+ * one that finds the WRONG row draws a confident, wrong chart.
+ *
+ * These fields are the bridge's `/instrument/option` response verbatim (see
+ * `fetchDhanOptionInstrument`), which reads the same `optionContractIndex` the
+ * bridge uses to subscribe the leg on the websocket and to fetch its candles.
+ * One resolution, reused — not a parallel lookup.
+ *
+ * `optionType` is part of the identity ON PURPOSE, and is checked against the
+ * leg it is being attached to (`attachInstrument`). It is what makes a CE slot
+ * holding a PE token a detectable error rather than a silent one.
+ */
+export interface OptionInstrument {
+  /** Dhan securityId — the token the feed, the candle API and the OMS address. */
+  securityId: string;
+  /** NSE_FNO for NIFTY/BANKNIFTY/stocks, BSE_FNO for SENSEX. Never assumed. */
+  exchangeSegment: string;
+  /** OPTIDX | OPTSTK — Dhan's historical API needs the exact instrument class. */
+  dhanInstrument: string;
+  tradingSymbol: string;
+  displayName: string;
+  underlying: string;
+  /** ISO `YYYY-MM-DD`, the form the bridge and the chain both use. */
+  expiry: string;
+  strike: number;
+  optionType: 'CE' | 'PE';
+  lotSize: number | null;
+  tickSize: number | null;
+}
+
 /** What the operator chose. The only writable market/strike state in the page. */
 export interface WatchSelection {
   /** The market — the single value every consumer reads. */
   symbol: string;
   /** ISO `YYYY-MM-DD`. Null until the expiry list for `symbol` resolves. */
   expiry: string | null;
-  /** Which side "Start watching" would create a watch on. */
-  optionType: OptionType;
+  /**
+   * Which side the UI is currently HIGHLIGHTING. Not which leg exists.
+   *
+   * ⚠️ Renamed from `optionType` on 2026-08-18. Under the old name it was read
+   * as "the option type of the watch", and the form used it to decide which
+   * single strike was being edited — so the CE/PE toggle silently determined
+   * which one leg reached the engine. Both legs are configured now and both are
+   * sent; this only decides which one the panel emphasises and which one the
+   * watch's rule evaluation runs on.
+   */
+  focusedSide: OptionType;
   /** The CALL leg drawn in the CE chart. */
   callStrike: number | null;
   /** The PUT leg drawn in the PE chart. */
   putStrike: number | null;
+  /**
+   * The resolved CALL contract for `callStrike`, or null while it is still
+   * being resolved / could not be resolved. Cleared by every change that makes
+   * it a different contract (market, expiry, strike), so a stale token can
+   * never outlive the number it belongs to.
+   */
+  callInstrument: OptionInstrument | null;
+  /** The resolved PUT contract for `putStrike`. Same lifecycle as the call. */
+  putInstrument: OptionInstrument | null;
   /** True = watch the underlying itself; no option legs are part of the watch. */
   underlyingOnly: boolean;
   /**
@@ -72,6 +132,16 @@ export interface ResolvedInstrument {
   optionType: 'CE' | 'PE' | null;
   /** What the chart header prints, so the identity is visible, not implied. */
   label: string;
+  /**
+   * The listed contract this leg addresses. Null on the underlying (which has
+   * no option instrument) and on a leg whose token has not resolved yet.
+   *
+   * A consumer that needs to ADDRESS the contract reads this; one that only
+   * needs to describe it can use `strike`/`optionType`. The distinction matters
+   * because a null here means "I cannot address this yet", which is a reason to
+   * withhold a chart — not a reason to guess one.
+   */
+  instrument: OptionInstrument | null;
 }
 
 /**
@@ -91,9 +161,11 @@ export interface ResolvedWatchContext {
 export const DEFAULT_SELECTION: WatchSelection = {
   symbol: 'NIFTY',
   expiry: null,
-  optionType: 'CE',
+  focusedSide: 'CE',
   callStrike: null,
   putStrike: null,
+  callInstrument: null,
+  putInstrument: null,
   underlyingOnly: false,
   selectedWatchId: null,
 };
@@ -135,6 +207,7 @@ export function resolveWatchContext(selection: WatchSelection): ResolvedWatchCon
     strike: null,
     optionType: null,
     label: symbol,
+    instrument: null,
   };
 
   // An underlying-only watch has no legs at all — not "legs we happen not to
@@ -144,12 +217,34 @@ export function resolveWatchContext(selection: WatchSelection): ResolvedWatchCon
     return { underlying, call: null, put: null };
   }
 
-  const leg = (strike: number | null, side: 'CE' | 'PE'): ResolvedInstrument | null =>
+  /**
+   * The token is attached only when it genuinely describes THIS leg. A resolved
+   * instrument left over from a previous strike would otherwise ride along and
+   * point the chart at the contract the operator just moved away from — the
+   * stale-quote failure `useOptionQuote` documents, one level up and with a
+   * securityId behind it instead of a price.
+   */
+  const leg = (
+    strike: number | null,
+    side: 'CE' | 'PE',
+    instrument: OptionInstrument | null,
+  ): ResolvedInstrument | null =>
     strike == null
       ? null
-      : { symbol, expiry, strike, optionType: side, label: instrumentLabel(symbol, expiry, strike, side) };
+      : {
+          symbol,
+          expiry,
+          strike,
+          optionType: side,
+          label: instrumentLabel(symbol, expiry, strike, side),
+          instrument: instrumentDescribes(instrument, symbol, expiry, strike, side) ? instrument : null,
+        };
 
-  return { underlying, call: leg(callStrike, 'CE'), put: leg(putStrike, 'PE') };
+  return {
+    underlying,
+    call: leg(callStrike, 'CE', selection.callInstrument),
+    put: leg(putStrike, 'PE', selection.putInstrument),
+  };
 }
 
 /**
@@ -172,6 +267,10 @@ export function selectMarket(prev: WatchSelection, symbol: string): WatchSelecti
     expiry: null,
     callStrike: null,
     putStrike: null,
+    // The tokens belong to the PREVIOUS symbol's contracts. Carrying them would
+    // leave a securityId for a NIFTY leg attached to a SENSEX selection.
+    callInstrument: null,
+    putInstrument: null,
     underlyingOnly: false,
     selectedWatchId: null,
   };
@@ -186,7 +285,15 @@ export function selectMarket(prev: WatchSelection, symbol: string): WatchSelecti
  */
 export function selectExpiry(prev: WatchSelection, expiry: string | null): WatchSelection {
   if (expiry === prev.expiry) return prev;
-  return { ...prev, expiry, callStrike: null, putStrike: null, selectedWatchId: null };
+  return {
+    ...prev,
+    expiry,
+    callStrike: null,
+    putStrike: null,
+    callInstrument: null,
+    putInstrument: null,
+    selectedWatchId: null,
+  };
 }
 
 /**
@@ -195,13 +302,26 @@ export function selectExpiry(prev: WatchSelection, expiry: string | null): Watch
  * down and rebuilt when the operator adjusts a strike.
  */
 export function selectStrike(prev: WatchSelection, side: 'CE' | 'PE', strike: number | null): WatchSelection {
-  const key = side === 'CE' ? 'callStrike' : 'putStrike';
-  if (prev[key] === strike) return prev;
-  return { ...prev, [key]: strike, selectedWatchId: null };
+  const strikeKey = side === 'CE' ? 'callStrike' : 'putStrike';
+  const instrumentKey = side === 'CE' ? 'callInstrument' : 'putInstrument';
+  if (prev[strikeKey] === strike) return prev;
+  // The OTHER leg — its strike AND its token — is untouched. This is the
+  // property the whole pair rests on: moving the call must not disturb the put,
+  // and `...prev` alone guarantees it as long as nothing here writes a shared
+  // field. Asserted directly in watchState.test.ts.
+  return { ...prev, [strikeKey]: strike, [instrumentKey]: null, selectedWatchId: null };
 }
 
-export function selectSide(prev: WatchSelection, optionType: OptionType): WatchSelection {
-  return optionType === prev.optionType ? prev : { ...prev, optionType };
+/**
+ * Move the highlight. Nothing else — no leg is created, dropped or repointed.
+ *
+ * Under its old name (`selectSide` writing `optionType`) this was the control
+ * that decided which single strike the form edited and therefore which one leg
+ * the engine received. It is now presentation plus the choice of which leg the
+ * watch's rules evaluate on, and both legs travel regardless.
+ */
+export function selectSide(prev: WatchSelection, focusedSide: OptionType): WatchSelection {
+  return focusedSide === prev.focusedSide ? prev : { ...prev, focusedSide };
 }
 
 export function setUnderlyingOnly(prev: WatchSelection, underlyingOnly: boolean): WatchSelection {
@@ -222,15 +342,26 @@ export function setUnderlyingOnly(prev: WatchSelection, underlyingOnly: boolean)
  */
 export function watchMatchesSelection(watch: WatchSession, selection: WatchSelection): boolean {
   if (watch.symbol !== selection.symbol) return false;
-  if (watch.strike == null || watch.optionType == null) {
+
+  const legs = watchLegs(watch);
+  if (legs.ce === null && legs.pe === null) {
     // An underlying watch matches an underlying selection on the same symbol.
     return selection.underlyingOnly;
   }
   if (selection.underlyingOnly) return false;
   if (watch.expiry !== null && selection.expiry !== null && watch.expiry !== selection.expiry) return false;
-  const strike = Number(watch.strike);
-  if (!Number.isFinite(strike)) return false;
-  return watch.optionType === 'CE' ? strike === selection.callStrike : strike === selection.putStrike;
+
+  /**
+   * A leg the watch does not name cannot disagree with the screen.
+   *
+   * That is what keeps a LEGACY single-leg row matchable: it names one side, so
+   * only that side is compared. A pair watch names both, so both must agree —
+   * a watch on 24200 CE / 24300 PE is NOT the watch for a screen showing
+   * 24200 CE / 24350 PE, and presenting it as one would put another pair's
+   * events under the current pair's heading.
+   */
+  const agrees = (leg: WatchLeg | null, selected: number | null) => leg === null || leg.strike === selected;
+  return agrees(legs.ce, selection.callStrike) && agrees(legs.pe, selection.putStrike);
 }
 
 /**
@@ -252,29 +383,71 @@ export function watchMatchesSelection(watch: WatchSession, selection: WatchSelec
  * does, and the operator can still move either leg afterwards.
  */
 export function selectionFromWatch(prev: WatchSelection, watch: WatchSession): WatchSelection {
-  const strike = watch.strike == null ? null : Number(watch.strike);
-  const hasLeg = watch.optionType != null && strike != null && Number.isFinite(strike);
+  const legs = watchLegs(watch);
 
-  if (!hasLeg) {
+  if (legs.ce === null && legs.pe === null) {
     return {
       ...prev,
       symbol: watch.symbol,
       expiry: null,
       callStrike: null,
       putStrike: null,
+      callInstrument: null,
+      putInstrument: null,
       underlyingOnly: true,
       selectedWatchId: watch.id,
     };
   }
 
+  const expiry = watch.expiry ?? prev.expiry;
+  const toInstrument = (leg: WatchLeg | null): OptionInstrument | null =>
+    leg === null || expiry === null
+      ? null
+      : {
+          securityId: leg.securityId,
+          exchangeSegment: leg.exchangeSegment,
+          dhanInstrument: leg.dhanInstrument,
+          tradingSymbol: leg.tradingSymbol,
+          displayName: leg.tradingSymbol,
+          underlying: watch.symbol,
+          expiry,
+          strike: leg.strike,
+          optionType: leg.optionType,
+          lotSize: leg.lotSize,
+          tickSize: leg.tickSize,
+        };
+
+  /**
+   * A LEGACY row names one leg, so the other has no strike to adopt.
+   *
+   * The pre-2026-08-18 version mirrored the named leg onto BOTH, because the
+   * panel had to draw two charts out of one number and an ATM-width pair was
+   * the least-wrong guess available. With a real pair on new watches that guess
+   * is no longer needed, and making it would overwrite a put the operator had
+   * deliberately chosen with a copy of the call — the exact overwrite this
+   * change exists to remove.
+   *
+   * So the unnamed leg is KEPT — but only while it still describes a contract
+   * that exists in the new context. A watch on BANKNIFTY adopted while the
+   * screen is on NIFTY must not leave a NIFTY strike sitting in the put slot of
+   * a BANKNIFTY selection: the number would look plausible, resolve to no
+   * instrument, and block the form with a fault the operator did not cause. The
+   * same applies across an expiry change, where 24200 is a different contract.
+   */
+  const sameContext = watch.symbol === prev.symbol && expiry === prev.expiry;
+  const keptStrike = (strike: number | null) => (sameContext ? strike : null);
+  const keptInstrument = (instrument: OptionInstrument | null) => (sameContext ? instrument : null);
+
   return {
     ...prev,
     symbol: watch.symbol,
-    expiry: watch.expiry ?? prev.expiry,
-    optionType: watch.optionType as OptionType,
+    expiry,
+    focusedSide: (legs.focusedSide ?? prev.focusedSide) as OptionType,
     underlyingOnly: false,
-    callStrike: strike as number,
-    putStrike: strike as number,
+    callStrike: legs.ce ? legs.ce.strike : keptStrike(prev.callStrike),
+    putStrike: legs.pe ? legs.pe.strike : keptStrike(prev.putStrike),
+    callInstrument: legs.ce ? toInstrument(legs.ce) : keptInstrument(prev.callInstrument),
+    putInstrument: legs.pe ? toInstrument(legs.pe) : keptInstrument(prev.putInstrument),
     selectedWatchId: watch.id,
   };
 }
@@ -304,4 +477,347 @@ export function reconcileWatchSelection(selection: WatchSelection, watches: Watc
   // A live watch outranks a closed one — a finished setup on the same contract
   // is history, not what the feed should present as current.
   return (matching.find((w) => w.state !== 'EXITED') ?? matching[0]).id;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE PAIR: instrument attachment, the request, and what blocks it
+//
+// Everything below exists because Sentinel observes THREE series together — the
+// underlying, a call and a put — and has to be able to say which of the two
+// legs is expressing the underlying's move. It cannot do that from one leg, and
+// it cannot do it from two strike numbers either: it needs two addressable
+// contracts. See `OptionInstrument` for why a number is not an address.
+//
+// ⚠️ Nothing here decides WHICH side is better. The pair is configured and both
+// legs are handed to the engine; ranking them is the engine's evaluation of
+// live structure, momentum, volatility, premium behaviour and liquidity, and
+// hard-coding "bullish → CE" here would pre-empt exactly the judgement the
+// agents exist to make. See ARCHITECTURE.md §4 and Rule 2.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Does this token describe exactly this contract?
+ *
+ * Every field is compared, including `optionType`. That comparison is the guard
+ * against the failure the brief names outright — "do not allow a CE control to
+ * accidentally select a PE instrument or vice versa". The controls are
+ * separate, the ladders are separate, and this is the third check: even if a PE
+ * token reached the call slot, it would not be treated as describing the call.
+ */
+export function instrumentDescribes(
+  instrument: OptionInstrument | null,
+  symbol: string,
+  expiry: string | null,
+  strike: number | null,
+  side: 'CE' | 'PE',
+): boolean {
+  if (!instrument || expiry === null || strike === null) return false;
+  return (
+    instrument.underlying === symbol &&
+    instrument.expiry === expiry &&
+    instrument.strike === strike &&
+    instrument.optionType === side
+  );
+}
+
+/**
+ * Attach a resolved contract to one leg.
+ *
+ * Refuses a token that does not describe the leg it is being attached to, and
+ * refuses to touch the OTHER leg. Returning `prev` unchanged on a mismatch is
+ * deliberate: the resolver is asynchronous, so a response for the strike the
+ * operator has already moved away from can and does arrive late. Writing it
+ * would silently re-point the leg at the contract they abandoned.
+ */
+export function attachInstrument(
+  prev: WatchSelection,
+  side: 'CE' | 'PE',
+  instrument: OptionInstrument | null,
+): WatchSelection {
+  const key = side === 'CE' ? 'callInstrument' : 'putInstrument';
+  const strike = side === 'CE' ? prev.callStrike : prev.putStrike;
+
+  if (instrument === null) return prev[key] === null ? prev : { ...prev, [key]: null };
+  if (!instrumentDescribes(instrument, prev.symbol, prev.expiry, strike, side)) return prev;
+  if (prev[key]?.securityId === instrument.securityId) return prev;
+  return { ...prev, [key]: instrument };
+}
+
+/** One leg of the request, as it goes on the wire. */
+export type WatchLegRequest = WatchLeg;
+
+/**
+ * The complete watch configuration. Mirrors `CreateWatchInput` and is the
+ * ONLY thing "Start watching" sends — there is no `selectedStrike` field and
+ * no single-leg shorthand for the request to fall back to.
+ */
+export interface WatchPairRequest {
+  strategyId: string;
+  symbol: string;
+  expiry: string | null;
+  ce: WatchLegRequest | null;
+  pe: WatchLegRequest | null;
+  focusedSide: OptionType;
+  watchMode: WatchMode;
+  timeframe: string;
+}
+
+function legRequest(instrument: OptionInstrument | null): WatchLegRequest | null {
+  if (!instrument) return null;
+  return {
+    strike: instrument.strike,
+    optionType: instrument.optionType,
+    securityId: instrument.securityId,
+    exchangeSegment: instrument.exchangeSegment,
+    tradingSymbol: instrument.tradingSymbol,
+    dhanInstrument: instrument.dhanInstrument,
+    lotSize: instrument.lotSize,
+    tickSize: instrument.tickSize,
+  };
+}
+
+/**
+ * Build the request from the canonical selection.
+ *
+ * The legs are read out of `resolveWatchContext`, not off the selection
+ * directly, so they pass through the same `instrumentDescribes` filter the
+ * charts do. One consequence worth stating: a leg whose token is stale is
+ * absent here rather than wrong, and `validateWatchPair` then refuses the
+ * request. Absent-and-refused beats present-and-mismatched.
+ */
+export function buildWatchRequest(
+  selection: WatchSelection,
+  strategyId: string,
+  timeframe: string,
+): WatchPairRequest {
+  const mode = watchMode(selection);
+  const resolved = resolveWatchContext(selection);
+  return {
+    strategyId,
+    symbol: selection.symbol,
+    expiry: mode === 'underlying' ? null : selection.expiry,
+    ce: mode === 'underlying' ? null : legRequest(resolved.call?.instrument ?? null),
+    pe: mode === 'underlying' ? null : legRequest(resolved.put?.instrument ?? null),
+    focusedSide: selection.focusedSide,
+    watchMode: mode,
+    timeframe,
+  };
+}
+
+// ── validation ──────────────────────────────────────────────────────────────
+
+/** Every distinct reason the pair cannot be watched, each with its own message. */
+export type WatchProblemCode =
+  | 'no-expiry'
+  | 'expired'
+  | 'chain-loading'
+  | 'chain-unavailable'
+  | 'chain-stale'
+  | 'strike-missing'
+  | 'strike-not-listed'
+  | 'instrument-unresolved'
+  | 'instrument-mismatch';
+
+export interface WatchProblem {
+  code: WatchProblemCode;
+  /** The leg it concerns, or null for a problem with the pair as a whole. */
+  side: 'CE' | 'PE' | null;
+  message: string;
+}
+
+/**
+ * How old a chain read may be before the pair is refused.
+ *
+ * `useOptionChainStrikes` polls every 4s, so 30s is roughly seven missed
+ * cycles — comfortably past a transient hiccup and well short of a session.
+ * The point is not the exact number: it is that a watch is never started
+ * against a ladder that may no longer list the strikes it is validating.
+ */
+export const CHAIN_STALE_MS = 30_000;
+
+/** What the validator needs to know about the live ladders. */
+export interface PairLadders {
+  status: 'loading' | 'live' | 'unavailable';
+  ce: { strike: number }[];
+  pe: { strike: number }[];
+  /** Epoch ms of the last successful read; null when there has never been one. */
+  fetchedAt: number | null;
+}
+
+/**
+ * Can this pair be watched right now, and if not, exactly why?
+ *
+ * Returns EVERY problem rather than the first, because the two legs fail
+ * independently and a form that reveals one fault at a time makes the operator
+ * fix the call, click, and discover the put. Each code maps to its own sentence
+ * in `WatchCreator` — "24337 is not a listed strike" and "the chain has not
+ * loaded" are different problems with different fixes, and a single "invalid
+ * selection" would hide which one it is.
+ *
+ * An underlying watch has nothing to validate here: it names no contracts, so
+ * none of these can be wrong about it.
+ */
+export function validateWatchPair(
+  selection: WatchSelection,
+  ladders: PairLadders,
+  now: number,
+  todayIso: string,
+): WatchProblem[] {
+  if (watchMode(selection) === 'underlying') return [];
+
+  const problems: WatchProblem[] = [];
+  const push = (code: WatchProblemCode, side: 'CE' | 'PE' | null, message: string) =>
+    problems.push({ code, side, message });
+
+  if (selection.expiry === null) {
+    push('no-expiry', null, 'Choose an expiry before starting the watch.');
+    return problems;
+  }
+  if (selection.expiry < todayIso) {
+    // A contract that has already expired has no live premium and no future
+    // bars. Starting a watch on it would produce an observation feed that can
+    // never advance, which reads as a broken engine rather than a dead contract.
+    push('expired', null, `The ${selection.expiry} contracts have expired. Choose a later expiry.`);
+    return problems;
+  }
+
+  if (ladders.status === 'loading') {
+    push('chain-loading', null, 'The option chain is still loading.');
+    return problems;
+  }
+  if (ladders.status === 'unavailable') {
+    push('chain-unavailable', null, `No live option chain for ${selection.symbol} ${selection.expiry} right now.`);
+    return problems;
+  }
+  if (ladders.fetchedAt === null || now - ladders.fetchedAt > CHAIN_STALE_MS) {
+    push(
+      'chain-stale',
+      null,
+      'The option chain has not refreshed recently, so these strikes cannot be confirmed as still listed.',
+    );
+    return problems;
+  }
+
+  const checkLeg = (side: 'CE' | 'PE') => {
+    const strike = side === 'CE' ? selection.callStrike : selection.putStrike;
+    const instrument = side === 'CE' ? selection.callInstrument : selection.putInstrument;
+    const rows = side === 'CE' ? ladders.ce : ladders.pe;
+    const word = side === 'CE' ? 'call' : 'put';
+
+    if (strike === null) {
+      push('strike-missing', side, `Select a ${word} strike.`);
+      return;
+    }
+    // The ladder is per side, so this is also the check that a strike listed
+    // only on the opposite side cannot be watched on this one.
+    if (!rows.some((r) => r.strike === strike)) {
+      push('strike-not-listed', side, `${strike} ${side} is not in the live option chain for this expiry.`);
+      return;
+    }
+    if (!instrument) {
+      push('instrument-unresolved', side, `The ${strike} ${side} contract could not be resolved to an instrument.`);
+      return;
+    }
+    if (!instrumentDescribes(instrument, selection.symbol, selection.expiry, strike, side)) {
+      // The token on file describes a different contract from the one selected.
+      // Sending it would start a watch on an instrument the operator can see
+      // they did not choose — the single worst outcome available here.
+      push(
+        'instrument-mismatch',
+        side,
+        `The resolved instrument for the ${word} leg does not match ${strike} ${side}.`,
+      );
+    }
+  };
+
+  checkLeg('CE');
+  checkLeg('PE');
+  return problems;
+}
+
+/** Both legs valid and addressable — the only state "Start watching" allows. */
+export function canStartWatch(
+  selection: WatchSelection,
+  ladders: PairLadders,
+  now: number,
+  todayIso: string,
+): boolean {
+  return validateWatchPair(selection, ladders, now, todayIso).length === 0;
+}
+
+// ── reading a watch back ────────────────────────────────────────────────────
+
+/**
+ * The pair a watch names, however that watch was recorded.
+ *
+ * THE ONE PLACE that knows a pre-2026-08-18 row carries a single leg in
+ * `strike`/`optionType` instead of `ce`/`pe`. Every consumer — the feed, the
+ * cards, the timeline, the price poll, the reconciler — reads legs through
+ * here, so the legacy shape is a shim with one call site's worth of surface
+ * rather than a second single-strike code path living on in the UI.
+ *
+ * `legacy` is reported rather than hidden: a row that names one leg genuinely
+ * says nothing about the other, and a caller that renders it as a complete pair
+ * would be inventing the missing half.
+ */
+export interface LegBearing {
+  symbol?: string | null;
+  expiry?: string | null;
+  /** LEGACY mirror columns. */
+  strike?: string | number | null;
+  optionType?: OptionType | null;
+  ce?: WatchLeg | null;
+  pe?: WatchLeg | null;
+  focusedSide?: OptionType | null;
+}
+
+export function watchLegs(watch: LegBearing): {
+  ce: WatchLeg | null;
+  pe: WatchLeg | null;
+  focusedSide: OptionType | null;
+  legacy: boolean;
+} {
+  if (watch.ce || watch.pe) {
+    return { ce: watch.ce ?? null, pe: watch.pe ?? null, focusedSide: watch.focusedSide ?? null, legacy: false };
+  }
+
+  const strike = watch.strike == null ? null : Number(watch.strike);
+  if (watch.optionType == null || strike == null || !Number.isFinite(strike)) {
+    return { ce: null, pe: null, focusedSide: null, legacy: false };
+  }
+
+  // Reconstructed from the legacy columns. The instrument fields are empty
+  // strings rather than invented ids: the row never held a token, and a
+  // fabricated securityId would be indistinguishable from a resolved one.
+  const leg: WatchLeg = {
+    strike,
+    optionType: watch.optionType,
+    securityId: '',
+    exchangeSegment: '',
+    tradingSymbol: '',
+    dhanInstrument: '',
+    lotSize: null,
+    tickSize: null,
+  };
+  return {
+    ce: watch.optionType === 'CE' ? leg : null,
+    pe: watch.optionType === 'PE' ? leg : null,
+    focusedSide: watch.optionType,
+    legacy: true,
+  };
+}
+
+/**
+ * How a watch names itself on screen: `NIFTY 18 AUG 24200 CE / 24300 PE`.
+ *
+ * Replaces the `[symbol, strike, optionType].join(' ')` expression that was
+ * repeated in five components, each of which could only ever print one leg.
+ */
+export function watchPairLabel(watch: LegBearing): string {
+  const legs = watchLegs(watch);
+  const symbol = watch.symbol ?? '—';
+  if (!legs.ce && !legs.pe) return symbol;
+  const tag = expiryTag(watch.expiry ?? null);
+  const sides = [legs.ce, legs.pe].filter((l): l is WatchLeg => l !== null).map((l) => `${l.strike} ${l.optionType}`);
+  return [symbol, tag, sides.join(' / ')].filter(Boolean).join(' ');
 }

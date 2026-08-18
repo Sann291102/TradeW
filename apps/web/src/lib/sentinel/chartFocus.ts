@@ -1,6 +1,7 @@
 import type { CandleInterval } from '@tradew/types';
 import type { ContractWatch } from './types';
 import type { Timeline, WatchState } from './sentinelPy';
+import { watchLegs } from './watchState';
 
 /**
  * Which chart Sentinel is reading, and on which series.
@@ -65,7 +66,6 @@ const MINUTES_FOR: Record<CandleInterval, number> = {
   '1h': 60,
   '1d': 1440,
 };
-
 export interface ResolvedSeries {
   /** The interval the bridge will actually serve — what to draw. */
   interval: CandleInterval;
@@ -112,8 +112,24 @@ export function resolveSeries(timeframe: string | null | undefined): ResolvedSer
 export interface ChartFocus {
   watchId: string;
   symbol: string;
+  /**
+   * The FOCUSED leg — the one the watch's rule set is evaluated against.
+   * Retained because "the engine read a contract that is not on screen" is
+   * still a question about one contract.
+   */
   strike: number | null;
   optionType: 'CE' | 'PE' | null;
+  /**
+   * BOTH legs the watch observes, added 2026-08-18.
+   *
+   * A sentinel-py watch used to name one contract, so exactly one panel could
+   * be marked as read. `_read_pair` in the poller now reads both legs on every
+   * sweep — the evaluation still runs on the focused one, but both series are
+   * genuinely fetched and recorded — so both panels can be marked, and marking
+   * only one would understate what the engine reads.
+   */
+  ceStrike: number | null;
+  peStrike: number | null;
   expiry: string | null;
   state: WatchState;
   series: ResolvedSeries;
@@ -127,13 +143,19 @@ export interface ChartFocus {
 export function focusFromTimeline(timeline: Timeline | null): ChartFocus | null {
   if (!timeline) return null;
   const { watch } = timeline;
-  const strike = watch.strike == null ? null : Number(watch.strike);
+  // Through the one adapter that knows how a watch records its legs, so a
+  // legacy single-leg row and a pair row both resolve here.
+  const legs = watchLegs(watch);
+  const focusedSide = legs.focusedSide ?? watch.optionType;
+  const focusedLeg = focusedSide === 'PE' ? legs.pe : legs.ce;
 
   return {
     watchId: watch.id,
     symbol: watch.symbol,
-    strike: strike != null && Number.isFinite(strike) ? strike : null,
-    optionType: watch.optionType,
+    strike: focusedLeg?.strike ?? null,
+    optionType: focusedLeg?.optionType ?? null,
+    ceStrike: legs.ce?.strike ?? null,
+    peStrike: legs.pe?.strike ?? null,
     expiry: watch.expiry,
     state: watch.state,
     series: resolveSeries(watch.timeframe),

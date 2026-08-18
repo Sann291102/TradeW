@@ -20,7 +20,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { SentinelLiveCharts } from './SentinelLiveCharts';
-import { resolveSeries, type EngineChartFocus } from '@/lib/sentinel/chartFocus';
+import { resolveSeries, type ChartFocus, type EngineChartFocus } from '@/lib/sentinel/chartFocus';
 
 function engineRead(over: Partial<EngineChartFocus> = {}): EngineChartFocus {
   return {
@@ -149,5 +149,97 @@ describe('the series claim', () => {
     // A 3m request comes back as 5m bars with no error anywhere in the chain.
     const html = render({ engineRead: engineRead({ series: resolveSeries('3m') }) });
     expect(html).toContain('no 3m series');
+  });
+});
+
+/** How many panels claim the engine is reading them. */
+const badgeCount = (html: string) => html.split('Sentinel reads this').length - 1;
+
+/** A sentinel-py watch focus that names BOTH legs, as a pair watch now does. */
+function pairFocus(over: Partial<ChartFocus> = {}): ChartFocus {
+  return {
+    watchId: 'w1',
+    symbol: 'NIFTY',
+    strike: 24_200,
+    optionType: 'CE',
+    ceStrike: 24_200,
+    peStrike: 24_100,
+    expiry: '2026-08-18',
+    state: 'FORMING',
+    series: resolveSeries('15m'),
+    ...over,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. The charts resolve to exactly the two contracts the operator selected
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('8 — the pair on screen is the pair that was chosen', () => {
+  it('draws two DIFFERENT contracts at once', () => {
+    // The case a single-strike model could not represent at all: the operator
+    // watching a 24200 call against a 24100 put.
+    const html = render({ ceStrike: 24_200, peStrike: 24_100 });
+    expect(html).toContain('24200 CALL');
+    expect(html).toContain('24100 PUT');
+  });
+
+  it('moves one leg without moving the other', () => {
+    const html = render({ ceStrike: 24_450, peStrike: 24_100 });
+    expect(html).toContain('24450 CALL');
+    expect(html).toContain('24100 PUT');
+    expect(html).not.toContain('24200 CALL');
+  });
+
+  it('draws a leg with no strike as unselected — never as the at-the-money', () => {
+    // The regression that made the strike controls look dead for a week: a null
+    // leg silently became whatever the panel's own chain poll resolved to.
+    //
+    // Asserted on the HEADER rather than the empty-state body: this renderer
+    // runs no effects, so the candle hook is still in its initial 'loading'
+    // state and the body is a skeleton. The header is drawn from props, and it
+    // is where a fabricated contract would show up — the unselected call names
+    // no strike at all while the put names its own.
+    const html = render({ ceStrike: null, peStrike: 24_100 });
+    expect(html).toContain('24100 PUT');
+    expect(html).toContain('Nifty 50 CALL');
+    expect(html).not.toMatch(/\d{5} CALL/);
+  });
+
+  it('marks BOTH legs as read for a pair watch, since the sweep reads both', () => {
+    const html = render({
+      ceStrike: 24_200,
+      peStrike: 24_100,
+      focus: pairFocus(),
+    });
+    expect(badgeCount(html)).toBe(2);
+  });
+
+  it('marks NEITHER leg when the watch is on a different pair', () => {
+    // A watch on 24350/24250 is not the watch for a screen showing 24200/24100,
+    // and captioning it as one would present another pair's evaluation as this
+    // pair's.
+    const html = render({
+      ceStrike: 24_200,
+      peStrike: 24_100,
+      focus: pairFocus({ ceStrike: 24_350, peStrike: 24_250 }),
+    });
+    expect(badgeCount(html)).toBe(0);
+  });
+
+  it('marks only the leg that matches when the watch shares one of the two', () => {
+    const html = render({
+      ceStrike: 24_200,
+      peStrike: 24_100,
+      focus: pairFocus({ ceStrike: 24_200, peStrike: 24_250 }),
+    });
+    expect(badgeCount(html)).toBe(1);
+  });
+
+  it('marks the index — and no leg — for an underlying watch', () => {
+    const html = render({
+      focus: pairFocus({ ceStrike: null, peStrike: null, strike: null, optionType: null }),
+    });
+    expect(badgeCount(html)).toBe(1);
   });
 });

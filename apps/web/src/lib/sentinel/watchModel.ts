@@ -5,6 +5,7 @@ import type {
   WatchSession,
   WatchState,
 } from './strategyApi';
+import { watchPairLabel } from './watchState';
 
 /**
  * Pure, framework-free helpers for the Sentinel strategy/watch workspace.
@@ -69,10 +70,15 @@ export const WATCH_STATE_META: Record<WatchState, WatchStateMeta> = {
 /**
  * How the user's own watch is named back to them, matching
  * `instrument_label()` in app/notify/dispatcher.py so a notification and the
- * panel refer to the same thing in the same words.
+ * panel refer to the same thing in the same words. Both were widened to the
+ * PAIR on 2026-08-18, together, so they still agree.
  */
-export function instrumentLabel(watch: Pick<WatchSession, 'symbol' | 'strike' | 'optionType'>): string {
-  return [watch.symbol, watch.strike, watch.optionType].filter(Boolean).join(' ');
+export function instrumentLabel(
+  watch: Pick<WatchSession, 'symbol' | 'strike' | 'optionType' | 'expiry'> & Partial<Pick<WatchSession, 'ce' | 'pe'>>,
+): string {
+  // Both legs, via the one adapter that knows how a watch records them. This
+  // used to print the focused leg alone, which named half of a pair watch.
+  return watchPairLabel(watch);
 }
 
 /** `2026-08-28` → `28 Aug`. Returns the input unchanged if it isn't ISO. */

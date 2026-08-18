@@ -71,14 +71,61 @@ export type OptionType = 'CE' | 'PE';
 
 export type PositionDirection = 'LONG' | 'SHORT';
 
+/**
+ * One listed option contract on a watch, carried by IDENTITY rather than by
+ * strike number.
+ *
+ * Mirrors `OptionInstrument` in `watchState.ts` and the columns
+ * `app/watch/store.py` writes. The securityId is the field that makes this an
+ * instrument instead of a description: it is what the Dhan feed subscribes,
+ * what the historical API is addressed by, and what proves the CE chart and the
+ * CE leg of the watch are the same contract rather than two independent
+ * re-derivations that happen to agree today.
+ */
+export interface WatchLeg {
+  strike: number;
+  optionType: OptionType;
+  securityId: string;
+  exchangeSegment: string;
+  tradingSymbol: string;
+  dhanInstrument: string;
+  lotSize: number | null;
+  tickSize: number | null;
+}
+
+export type WatchMode = 'option' | 'underlying';
+
 export interface WatchSession {
   id: string;
   userId: string;
   strategyId: string;
   symbol: string;
+  /**
+   * ⚠️ LEGACY MIRROR — do not read these two directly.
+   *
+   * Before 2026-08-18 a watch named ONE leg, and these were it. Rows created
+   * then still carry only these, so they cannot be dropped without losing
+   * every pre-existing watch. New rows keep them populated from the FOCUSED
+   * leg purely so those older readers and this history stay coherent.
+   *
+   * `watchLegs()` in `watchState.ts` is the one place that knows about this
+   * shim: it returns the pair from `ce`/`pe` when present and reconstructs a
+   * single-leg pair from these when not. Every consumer goes through it, which
+   * is what keeps "legacy row" a migration detail rather than a second live
+   * code path.
+   */
   strike: string | null;
   optionType: OptionType | null;
   expiry: string | null;
+  /** The CALL leg under observation. Null on an underlying watch. */
+  ce: WatchLeg | null;
+  /** The PUT leg under observation. Null on an underlying watch. */
+  pe: WatchLeg | null;
+  /** Which leg the engine evaluates the strategy rules against. */
+  focusedSide: OptionType | null;
+  watchMode: WatchMode;
+  /** The bars the engine reads, from the strategy's own rules. */
+  timeframe: string | null;
   state: WatchState;
   /**
    * The user's own declared numbers, present only once they have marked a
@@ -97,12 +144,32 @@ export interface WatchSession {
   updatedAt: string;
 }
 
+/**
+ * The complete watch configuration "Start watching" sends.
+ *
+ * ── WHAT THIS REPLACED, AND WHY IT IS NOT OPTIONAL ─────────────────────────
+ *
+ * This used to be `{ strategyId, symbol, strike, optionType, expiry }` — one
+ * numeric strike and the side the CE/PE toggle happened to be on. Sentinel
+ * cannot compare the two candidate expressions of an underlying move from one
+ * of them, so the pair is now the unit: both legs travel, both with their own
+ * resolved instrument, and `focusedSide` says which one the rules run on
+ * WITHOUT deciding which one exists.
+ *
+ * `ce`/`pe` are null only for `watchMode: 'underlying'`, where there are
+ * genuinely no legs — never for "we could not resolve one". A leg that failed
+ * to resolve blocks the request instead of travelling as null; see
+ * `validateWatchPair`.
+ */
 export interface CreateWatchInput {
   strategyId: string;
   symbol: string;
-  strike?: string | null;
-  optionType?: OptionType | null;
-  expiry?: string | null;
+  expiry: string | null;
+  ce: WatchLeg | null;
+  pe: WatchLeg | null;
+  focusedSide: OptionType;
+  watchMode: WatchMode;
+  timeframe: string;
 }
 
 export interface OpenPositionInput {

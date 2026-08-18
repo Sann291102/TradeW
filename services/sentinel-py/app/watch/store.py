@@ -11,15 +11,83 @@ from app.strategy.store import _aware, _naive, _now, _pool_or_raise
 from app.core.timefmt import iso_utc
 
 
+def _leg_of(row, prefix: str, option_type: str) -> dict | None:
+    """One leg of the pair, or None when the watch does not carry it.
+
+    Keyed off `securityId` rather than off the strike: a row with a strike and
+    no token is not an addressable leg, and returning it as one would put the
+    caller back to re-deriving the contract from the number — the exact thing
+    the token columns exist to stop.
+    """
+    security_id = row[f"{prefix}SecurityId"]
+    strike = row[f"{prefix}Strike"]
+    if not security_id or strike is None:
+        return None
+    return {
+        "strike": float(strike),
+        "optionType": option_type,
+        "securityId": security_id,
+        "exchangeSegment": row[f"{prefix}ExchangeSegment"] or "",
+        "tradingSymbol": row[f"{prefix}TradingSymbol"] or "",
+        "dhanInstrument": row[f"{prefix}DhanInstrument"] or "",
+        "lotSize": int(row[f"{prefix}LotSize"]) if row[f"{prefix}LotSize"] is not None else None,
+        "tickSize": float(row[f"{prefix}TickSize"]) if row[f"{prefix}TickSize"] is not None else None,
+    }
+
+
+def _legs_of(watch: dict) -> tuple[dict | None, dict | None, str | None]:
+    """The pair a watch names, however it was recorded.
+
+    THE ONE PLACE on this side that knows a pre-2026-08-18 row carries a single
+    leg in `strike`/`optionType` instead of `ce`/`pe`. The poller and the
+    contract builder read legs through here, so the legacy shape stays a
+    migration shim rather than a second live single-strike path.
+
+    A reconstructed legacy leg has an EMPTY securityId — the row never held one,
+    and inventing a token would make it indistinguishable from a resolved leg.
+    """
+    if watch.get("ce") or watch.get("pe"):
+        return watch.get("ce"), watch.get("pe"), watch.get("focusedSide")
+
+    strike, option_type = watch.get("strike"), watch.get("optionType")
+    if strike is None or option_type is None:
+        return None, None, None
+    try:
+        leg = {
+            "strike": float(strike),
+            "optionType": option_type,
+            "securityId": "",
+            "exchangeSegment": "",
+            "tradingSymbol": "",
+            "dhanInstrument": "",
+            "lotSize": None,
+            "tickSize": None,
+        }
+    except (TypeError, ValueError):
+        return None, None, None
+    return (leg if option_type == "CE" else None, leg if option_type == "PE" else None, option_type)
+
+
 def _watch_to_dict(row) -> dict:
+    ce = _leg_of(row, "ce", "CE")
+    pe = _leg_of(row, "pe", "PE")
     return {
         "id": row["id"],
         "userId": row["userId"],
         "strategyId": row["strategyId"],
         "symbol": row["symbol"],
+        # LEGACY MIRROR — see the WatchSession comment in schema.prisma. Kept
+        # populated from the focused leg so pre-2026-08-18 rows and new ones
+        # read the same way. Consumers go through `_legs_of`, never these.
         "strike": row["strike"],
         "optionType": row["optionType"],
         "expiry": row["expiry"],
+        # THE PAIR. Both legs, each with its own instrument identity.
+        "ce": ce,
+        "pe": pe,
+        "focusedSide": row["focusedSide"],
+        "watchMode": row["watchMode"],
+        "timeframe": row["timeframe"],
         "state": row["state"],
         "entryPrice": float(row["entryPrice"]) if row["entryPrice"] is not None else None,
         "stopPrice": float(row["stopPrice"]) if row["stopPrice"] is not None else None,
@@ -41,27 +109,71 @@ async def create_watch(
     user_id: str,
     strategy_id: str,
     symbol: str,
-    strike: str | None,
-    option_type: str | None,
     expiry: str | None,
+    ce: dict | None,
+    pe: dict | None,
+    focused_side: str,
+    watch_mode: str,
+    timeframe: str | None,
 ) -> dict:
+    """Persist a watch on an option PAIR (or on the underlying).
+
+    Both legs are written with their full instrument identity. The legacy
+    `strike`/`optionType` columns are written too, mirrored from the FOCUSED
+    leg — not as a second source of truth, but so a row created today is still
+    legible to the pre-pair readers and to the history beside it. `_legs_of`
+    prefers `ce`/`pe` whenever they exist, so the mirror is never read back on
+    a row that has the real thing.
+    """
     pool = _pool_or_raise()
     now = _now()
+    focused = ce if focused_side == "CE" else pe
+
+    def field(leg: dict | None, key: str):
+        return leg.get(key) if leg else None
+
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO "WatchSession"
-                ("id", "userId", "strategyId", "symbol", "strike", "optionType", "expiry", "state", "createdAt", "updatedAt")
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 'IDLE', $8, $8)
+                ("id", "userId", "strategyId", "symbol", "strike", "optionType", "expiry",
+                 "ceStrike", "ceSecurityId", "ceExchangeSegment", "ceDhanInstrument",
+                 "ceTradingSymbol", "ceLotSize", "ceTickSize",
+                 "peStrike", "peSecurityId", "peExchangeSegment", "peDhanInstrument",
+                 "peTradingSymbol", "peLotSize", "peTickSize",
+                 "focusedSide", "watchMode", "timeframe",
+                 "state", "createdAt", "updatedAt")
+            VALUES ($1, $2, $3, $4, $5, $6, $7,
+                    $8, $9, $10, $11, $12, $13, $14,
+                    $15, $16, $17, $18, $19, $20, $21,
+                    $22, $23, $24,
+                    'IDLE', $25, $25)
             RETURNING *
             """,
             str(uuid.uuid4()),
             user_id,
             strategy_id,
             symbol,
-            strike,
-            option_type,
+            None if focused is None else str(focused["strike"]),
+            None if focused is None else focused["optionType"],
             expiry,
+            field(ce, "strike"),
+            field(ce, "securityId"),
+            field(ce, "exchangeSegment"),
+            field(ce, "dhanInstrument"),
+            field(ce, "tradingSymbol"),
+            field(ce, "lotSize"),
+            field(ce, "tickSize"),
+            field(pe, "strike"),
+            field(pe, "securityId"),
+            field(pe, "exchangeSegment"),
+            field(pe, "dhanInstrument"),
+            field(pe, "tradingSymbol"),
+            field(pe, "lotSize"),
+            field(pe, "tickSize"),
+            focused_side if watch_mode == "option" else None,
+            watch_mode,
+            timeframe,
             now,
         )
     return _watch_to_dict(row)

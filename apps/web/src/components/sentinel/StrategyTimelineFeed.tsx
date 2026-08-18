@@ -2,14 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { CandleLoader } from '@tradew/ui';
 import { ApiError, fetchTimeline } from '@/lib/sentinel/sentinelPy';
 import type { Timeline, TimelineEvent, TimelineReading, WatchState } from '@/lib/sentinel/sentinelPy';
 import { focusFromTimeline, type ChartFocus } from '@/lib/sentinel/chartFocus';
 import { sentinelKeys } from '@/lib/sentinel/queryKeys';
+import { faultMessage } from '@/lib/sentinel/faults';
 import { pollIntervalMs } from '@/lib/sentinel/retryPolicy';
 import { useWatchSessions } from '@/lib/sentinel/useStrategyWorkspace';
 import { useSentinelWatch } from '@/lib/sentinel/WatchContext';
-import { instrumentLabel } from '@/lib/sentinel/watchState';
+import { instrumentLabel, watchPairLabel } from '@/lib/sentinel/watchState';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { StrategyFocusPanel } from './StrategyFocusPanel';
 import { TimelineEventCard } from './TimelineEventCard';
@@ -106,7 +108,7 @@ export function StrategyTimelineFeed({
    * traffic here: on `/sentinel` that entry is already warm and already
    * polling.
    */
-  const { watches, loading } = useWatchSessions();
+  const { watches, loading, fault, reconnecting, refresh } = useWatchSessions();
 
   /**
    * WHICH watch is displayed is canonical state, not feed-local state.
@@ -173,6 +175,12 @@ export function StrategyTimelineFeed({
     ? [
       timeline.watch.id,
       timeline.watch.symbol,
+      // BOTH legs. With only the focused one here, moving the opposite leg
+      // would not change the key, so the charts would keep the previous
+      // contract's focus until some unrelated field happened to move.
+      timeline.watch.ce?.strike,
+      timeline.watch.pe?.strike,
+      timeline.watch.focusedSide,
       timeline.watch.strike,
       timeline.watch.optionType,
       timeline.watch.expiry,
@@ -231,18 +239,76 @@ export function StrategyTimelineFeed({
    */
   const currentInstrument = selection.underlyingOnly
     ? selection.symbol
-    : instrumentLabel(
-        selection.symbol,
-        selection.expiry,
-        selection.optionType === 'CE' ? selection.callStrike : selection.putStrike,
-        selection.optionType,
-      );
+    : // BOTH legs, because both are under observation. Naming only the focused
+      // one here would tell the operator no watch covers "NIFTY 24200 CALL"
+      // while the thing actually not covered is the pair.
+      [
+        instrumentLabel(selection.symbol, selection.expiry, selection.callStrike, 'CE'),
+        selection.putStrike === null ? null : `${selection.putStrike} PUT`,
+      ]
+        .filter(Boolean)
+        .join(' / ');
 
-  if (loading) return null;
+  /**
+   * ── WHY THIS IS NO LONGER `if (loading) return null` ───────────────────────
+   *
+   * It rendered NOTHING — not an empty card, nothing at all. `Shell` carries
+   * the "Strategy Feed" heading, so while the watch list was in flight the
+   * dashboard band showed a card, a card, and a hole where this panel belongs.
+   * A request that never settles (sentinel-py down behind a timeout, a stalled
+   * poll) is then indistinguishable from a feature that does not exist, which
+   * is exactly how it was reported: "the strategy feed is missing".
+   *
+   * The shell is now always rendered and the BODY says which state it is in.
+   */
+  if (loading) {
+    return (
+      <Shell>
+        <Empty>Checking which strategies you have running…</Empty>
+      </Shell>
+    );
+  }
+
+  /**
+   * ⚠️ A FEED FAULT IS NOT AN EMPTY FEED.
+   *
+   * `useWatchSessions` has always returned `fault`/`reconnecting`, and this
+   * component ignored both. So when `/sentinel-py/watch` failed, `watches` fell
+   * back to `[]` and the panel said "Start watching a strategy to see live
+   * updates" — instructing the user to create a watch when the truth was that
+   * the service could not be reached, and hiding the running watches they may
+   * already have had.
+   *
+   * Same class of bug as the 2026-08-17 "NIFTY has no live option chain"
+   * message that contradicted itself while the real fault was a refused
+   * credential: the UI had no way to say "I could not find out", so it said the
+   * only other thing it knew how to say. `SentinelStrategyWorkspace` already
+   * distinguishes these three states for the same query; this panel now does
+   * too, in the same words.
+   */
+  if (fault) {
+    return (
+      <Shell>
+        <div className="rounded-xl border border-border bg-bg px-3 py-4 text-center">
+          <p className="text-[12px] leading-relaxed text-muted">{faultMessage(fault, 'your watches')}</p>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            className="mt-2 text-[11.5px] font-semibold text-teal hover:underline"
+          >
+            Try again
+          </button>
+        </div>
+      </Shell>
+    );
+  }
 
   if (watches.length === 0) {
     return (
       <Shell>
+        {/* Transient failures keep the last loaded list, so this line can
+            legitimately appear above a real empty state. */}
+        {reconnecting && <Retrying subject="your watches" />}
         <Empty>Start watching a strategy to see live updates.</Empty>
       </Shell>
     );
@@ -288,17 +354,20 @@ export function StrategyTimelineFeed({
             {selectedId === null && <option value="">No watch on this instrument</option>}
             {watches.map((w) => (
               <option key={w.id} value={w.id}>
-                {[w.symbol, w.strike, w.optionType].filter(Boolean).join(' ')} ({STATE_WORD[w.state]})
+                {watchPairLabel(w)} ({STATE_WORD[w.state]})
               </option>
             ))}
           </select>
         }
       >
+        {/* The list on screen is the last one that loaded; say so rather than
+            presenting stale rows as current. */}
+        {reconnecting && <Retrying subject="your watches" />}
         {isClosed && timeline && (
           <div className="mb-3 rounded-xl border border-border bg-hover p-3.5">
             <p className="text-[12px] font-bold text-text">Trade Complete</p>
             <p className="mt-1 text-[11.5px] text-muted">
-              {[timeline.watch.symbol, timeline.watch.strike, timeline.watch.optionType].filter(Boolean).join(' ')} —
+              {watchPairLabel(timeline.watch)} —
               this watch is closed. The events below are its final history.
             </p>
           </div>
@@ -366,6 +435,20 @@ function Shell({ children, selector }: { children: React.ReactNode; selector?: R
       </div>
       {children}
     </section>
+  );
+}
+
+/**
+ * Same wording as `SentinelStrategyWorkspace`'s, deliberately: both describe
+ * the SAME query failing, and two different sentences for one fault reads as
+ * two different problems.
+ */
+function Retrying({ subject }: { subject: string }) {
+  return (
+    <p role="status" aria-live="polite" className="mb-2 flex items-center gap-1.5 text-[11px] text-amber">
+      <CandleLoader size="sm" decorative />
+      Reconnecting — showing the last loaded copy of {subject}.
+    </p>
   );
 }
 

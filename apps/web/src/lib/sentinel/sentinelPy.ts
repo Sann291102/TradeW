@@ -29,6 +29,8 @@ export type TimelineEventKind =
   | 'invalidation_reached'
   | 'projected_level_reached';
 
+import type { WatchLeg } from './strategyApi';
+
 export interface TimelineEvent {
   id: string;
   at: string;
@@ -54,9 +56,18 @@ export interface TimelineEvent {
 export interface TimelineWatch {
   id: string;
   symbol: string;
+  /** LEGACY mirror of the focused leg — read through `watchLegs`, not directly. */
   strike: string | null;
   optionType: 'CE' | 'PE' | null;
   expiry: string | null;
+  /**
+   * Both legs under observation, as `app/watch/timeline.py` reports them.
+   * Optional because a legacy row carries neither; `watchLegs` reconstructs a
+   * single-leg pair from the mirror columns in that case.
+   */
+  ce?: WatchLeg | null;
+  pe?: WatchLeg | null;
+  focusedSide?: 'CE' | 'PE' | null;
   state: WatchState;
   direction: Direction | null;
   strategyId: string;

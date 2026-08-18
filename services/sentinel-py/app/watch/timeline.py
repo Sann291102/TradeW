@@ -310,9 +310,17 @@ def build_timeline(
         "watch": {
             "id": watch["id"],
             "symbol": watch["symbol"],
+            # LEGACY MIRROR of the focused leg — see schema.prisma.
             "strike": watch.get("strike"),
             "optionType": watch.get("optionType"),
             "expiry": watch.get("expiry"),
+            # Both legs under observation, so the chart focus this payload
+            # drives names the PAIR rather than whichever half the mirror
+            # happened to carry.
+            "ce": watch.get("ce"),
+            "pe": watch.get("pe"),
+            "focusedSide": watch.get("focusedSide"),
+            "watchMode": watch.get("watchMode"),
             "state": watch["state"],
             "direction": watch.get("direction"),
             "strategyId": watch["strategyId"],

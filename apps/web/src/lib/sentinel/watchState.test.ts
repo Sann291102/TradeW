@@ -19,6 +19,20 @@ function selection(over: Partial<WatchSelection> = {}): WatchSelection {
   return { ...DEFAULT_SELECTION, expiry: '2026-08-18', callStrike: 24200, putStrike: 24300, ...over };
 }
 
+/** One resolved leg, shaped as the backend returns it. */
+function leg(strike: number, optionType: 'CE' | 'PE') {
+  return {
+    strike,
+    optionType,
+    securityId: `${optionType}-${strike}`,
+    exchangeSegment: 'NSE_FNO',
+    tradingSymbol: `NIFTY 18AUG ${strike} ${optionType}`,
+    dhanInstrument: 'OPTIDX',
+    lotSize: 75,
+    tickSize: 0.05,
+  } as const;
+}
+
 function watch(over: Partial<WatchSession> = {}): WatchSession {
   return {
     id: 'w1',
@@ -28,6 +42,13 @@ function watch(over: Partial<WatchSession> = {}): WatchSession {
     strike: '24200',
     optionType: 'CE',
     expiry: '2026-08-18',
+    // A LEGACY-shaped row by default: only the mirror columns. Overridden with
+    // `ce`/`pe` in the pair tests, so both shapes stay covered.
+    ce: null,
+    pe: null,
+    focusedSide: null,
+    watchMode: 'option',
+    timeframe: null,
     state: 'FORMING',
     entryPrice: null,
     stopPrice: null,
@@ -158,7 +179,7 @@ describe('selectStrike', () => {
 describe('selectSide and setUnderlyingOnly', () => {
   it('changing the side leaves both strikes alone', () => {
     const next = selectSide(selection(), 'PE');
-    expect(next.optionType).toBe('PE');
+    expect(next.focusedSide).toBe('PE');
     expect(next.callStrike).toBe(24200);
     expect(next.putStrike).toBe(24300);
   });
@@ -179,7 +200,7 @@ describe('watchMatchesSelection', () => {
     // The panel draws both legs, so a put watch on the selected put strike is
     // genuinely the watch for what is on screen.
     const w = watch({ id: 'p1', optionType: 'PE', strike: '24300' });
-    expect(reconcileWatchSelection(selection({ optionType: 'CE' }), [w])).toBe('p1');
+    expect(reconcileWatchSelection(selection({ focusedSide: 'CE' }), [w])).toBe('p1');
   });
 
   it('does not match a watch on a different strike', () => {
@@ -236,25 +257,47 @@ describe('selectionFromWatch', () => {
     expect(next).toMatchObject({
       symbol: 'BANKNIFTY',
       expiry: '2026-08-18',
-      optionType: 'CE',
+      focusedSide: 'CE',
       callStrike: 52000,
       underlyingOnly: false,
       selectedWatchId: 'w1',
     });
   });
 
-  it('pins BOTH legs to the watch strike so the pair comparison survives', () => {
-    // The panel's purpose is the leg Sentinel reads beside its opposite at the
-    // SAME strike. Leaving the put on a different one compares two contracts
-    // that were never a pair.
-    const next = selectionFromWatch(selection(), watch({ strike: '24400' }));
+  // ⚠️ BEHAVIOUR REVERSED 2026-08-18, deliberately.
+  //
+  // This block previously asserted that adopting a watch pinned BOTH legs to
+  // the watch's single strike. That was the least-wrong guess available while a
+  // watch could only name one leg and the panel had to draw two charts from it.
+  // A watch now carries a real pair, so mirroring would overwrite a put the
+  // operator had deliberately chosen with a copy of the call — the overwrite
+  // the dual-strike work exists to remove. The assertions are inverted rather
+  // than deleted: a deleted test cannot fail if someone restores the mirror.
+  it('adopts only the legs the watch actually names', () => {
+    const next = selectionFromWatch(selection(), watch({ strike: '24400', optionType: 'CE' }));
     expect(next.callStrike).toBe(24400);
-    expect(next.putStrike).toBe(24400);
+    // The watch says nothing about a put, so the operator's put survives.
+    expect(next.putStrike).toBe(24300);
   });
 
-  it('pins both legs on a watch from another market too', () => {
+  it('adopts both legs of a pair watch', () => {
+    const next = selectionFromWatch(
+      selection(),
+      watch({ ce: leg(24400, 'CE'), pe: leg(24150, 'PE'), focusedSide: 'PE' }),
+    );
+    expect(next.callStrike).toBe(24400);
+    expect(next.putStrike).toBe(24150);
+    expect(next.callInstrument?.securityId).toBe('CE-24400');
+    expect(next.putInstrument?.securityId).toBe('PE-24150');
+    expect(next.focusedSide).toBe('PE');
+  });
+
+  it('drops an unnamed leg carried over from a DIFFERENT market', () => {
+    // A NIFTY put strike left sitting in a BANKNIFTY selection looks plausible,
+    // resolves to no instrument, and blocks the form with a fault the operator
+    // never caused.
     const next = selectionFromWatch(selection(), watch({ symbol: 'BANKNIFTY', strike: '52000' }));
-    expect(next).toMatchObject({ symbol: 'BANKNIFTY', callStrike: 52000, putStrike: 52000 });
+    expect(next).toMatchObject({ symbol: 'BANKNIFTY', callStrike: 52000, putStrike: null });
   });
 
   it('makes an underlying watch an underlying selection with no legs', () => {

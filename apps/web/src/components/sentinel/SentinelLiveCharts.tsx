@@ -129,6 +129,8 @@ export function SentinelLiveCharts({
   expiry: selectedExpiry = null,
   ceStrike,
   peStrike,
+  ceSecurityId = null,
+  peSecurityId = null,
   focus = null,
   engineRead = null,
   footer = null,
@@ -145,6 +147,18 @@ export function SentinelLiveCharts({
   /** The canonical CE/PE legs. Null is genuinely unselected, never "use ATM". */
   ceStrike: number | null;
   peStrike: number | null;
+  /**
+   * The resolved contract tokens for those legs, when the selection has them.
+   *
+   * Passed to the candle fetch, which hands them to the bridge to VERIFY
+   * against its own scrip-master resolution. That is what makes "these two
+   * charts are the exact two contracts the operator chose" a checked fact
+   * rather than a claim resting on two independent lookups agreeing. Optional
+   * because a legacy watch has no token; resolution then falls back to
+   * (symbol, expiry, strike, side) exactly as before.
+   */
+  ceSecurityId?: string | null;
+  peSecurityId?: string | null;
   /**
    * The watch under observation. Null is the standing market read; a focus
    * makes this "here is what Sentinel is reading, on the bars it reads it on".
@@ -225,6 +239,22 @@ export function SentinelLiveCharts({
     drawnStrike != null &&
     reading.strike === drawnStrike;
 
+  /**
+   * Per-leg version of the same question, for a focus that names BOTH legs.
+   *
+   * `readsContract` compares against `reading.strike`, which is the ONE strike
+   * the focus is about — correct while a watch named one contract, and wrong
+   * the moment it names a pair: the put panel would be asked whether the CALL
+   * leg's strike matches it, and never be marked. This compares each leg to its
+   * own side of the focus.
+   */
+  const readsLeg = (focusStrike: number | null, drawnStrike: number | null): boolean =>
+    reading != null &&
+    reading.symbol === chartSymbol &&
+    focusStrike != null &&
+    drawnStrike != null &&
+    focusStrike === drawnStrike;
+
   // One series for every panel when either engine has reported. Both read the
   // index and the contracts on the SAME timeframe (`_candles_for` in the
   // poller passes one interval to both; `MarketIntelligenceService.contracts`
@@ -265,6 +295,7 @@ export function SentinelLiveCharts({
     'CE',
     optionInterval,
     optionDays,
+    ceSecurityId,
   );
   const { candles: peCandles, status: peCandlesStatus, reason: peReason } = useOptionCandles(
     chartSymbol,
@@ -273,6 +304,7 @@ export function SentinelLiveCharts({
     'PE',
     optionInterval,
     optionDays,
+    peSecurityId,
   );
   const { quote: ceQuote } = useOptionQuote(chartSymbol, expiry ?? undefined, effectiveCe ?? undefined, 'CE');
   const { quote: peQuote } = useOptionQuote(chartSymbol, expiry ?? undefined, effectivePe ?? undefined, 'PE');
@@ -332,9 +364,13 @@ export function SentinelLiveCharts({
    */
   const reads: { index: boolean; ce: boolean; pe: boolean } = focus
     ? {
-        index: focus.symbol === chartSymbol && (focus.strike == null || !focus.optionType),
-        ce: focus.optionType === 'CE' && readsContract(effectiveCe),
-        pe: focus.optionType === 'PE' && readsContract(effectivePe),
+        index: focus.symbol === chartSymbol && focus.ceStrike == null && focus.peStrike == null,
+        // BOTH legs, since 2026-08-18: `_read_pair` in the sweep fetches the
+        // call and the put on every pass. Each is still marked only when the
+        // leg the watch names is the leg drawn here, so a watch on a different
+        // strike does not caption this chart as one Sentinel reads.
+        ce: readsLeg(focus.ceStrike, effectiveCe),
+        pe: readsLeg(focus.peStrike, effectivePe),
       }
     : {
         index: (engineRead?.reads.index ?? false) && engineRead?.symbol === chartSymbol,

@@ -3,6 +3,7 @@
 import { cn } from '@tradew/ui';
 import type { Timeline } from '@/lib/sentinel/sentinelPy';
 import { useStrategyPerformance } from '@/lib/query/useSentinel';
+import { watchPairLabel } from '@/lib/sentinel/watchState';
 
 /**
  * The focus panel: ONE watch, answering "why is this happening?".
@@ -48,7 +49,9 @@ export function StrategyFocusPanel({ timeline }: Props) {
   const performance = useStrategyPerformance(watch.strategyId).data ?? null;
 
   const state = STATE_LABEL[watch.state] ?? STATE_LABEL.IDLE;
-  const instrument = [watch.symbol, watch.strike, watch.optionType].filter(Boolean).join(' ');
+  // The PAIR, not the focused leg alone — the panel heads a surface that
+  // reports on both contracts.
+  const instrument = watchPairLabel(watch);
   const mandatory = conditions.filter((c) => c.mandatory);
   const metCount = mandatory.filter((c) => c.met).length;
 

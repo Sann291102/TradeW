@@ -102,9 +102,18 @@ def _watch_summary(watch: dict, timeline: dict) -> dict:
     return {
         "id": watch["id"],
         "symbol": watch.get("symbol"),
+        # LEGACY MIRROR of the focused leg — see schema.prisma. Kept so the
+        # older cards keep rendering; `ce`/`pe` below are what a pair-aware
+        # reader uses.
         "strike": watch.get("strike"),
         "optionType": watch.get("optionType"),
         "expiry": watch.get("expiry"),
+        # The pair under observation. Both legs travel to the UI so a card can
+        # name what is actually being watched rather than half of it.
+        "ce": watch.get("ce"),
+        "pe": watch.get("pe"),
+        "focusedSide": watch.get("focusedSide"),
+        "watchMode": watch.get("watchMode"),
         "state": watch.get("state"),
         "status": watch.get("status"),
         # The lifecycle checklist the Active Watches card renders. Deliberately

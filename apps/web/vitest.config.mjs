@@ -109,6 +109,19 @@ export default defineConfig({
       // failed silently for a week when the dashboard passed literal null
       // strikes and the engine's own at-the-money pick decided what was drawn.
       'src/components/sentinel/SentinelLiveCharts.test.tsx',
+      // The two strike selectors. The property under test is the one that makes
+      // them a PAIR rather than one control with a side switch: a control can
+      // only return a strike from the ladder it was given, so a CE box cannot
+      // reach a PE contract by any path — default list, search, or typed input.
+      // Asserted with deliberately ASYMMETRIC ladders, because two identical
+      // ladders let every cross-side bug pass.
+      'src/components/sentinel/strategy/StrikeCombobox.test.tsx',
+      // The Strategy Feed's four states. It used to render NOTHING while its
+      // watch list was in flight — a hole in the dashboard band, reported as
+      // 'the strategy feed is missing' — and to present a FAILED watch query as
+      // an empty one, telling the user to start a watch when the service could
+      // not be reached.
+      'src/components/sentinel/strategyFeedStates.test.tsx',
     ],
     environment: 'node',
     // The strategy components are rendered with renderToStaticMarkup, which

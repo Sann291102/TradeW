@@ -14,11 +14,30 @@ export interface OptionChainStrikes {
   pe: StrikeRow[];
   /** index of the at-the-money strike within `ce`/`pe` (they share strikes), or -1 */
   atmIndex: number;
+  /**
+   * Epoch ms of the last SUCCESSFUL read, or null if there has never been one.
+   *
+   * Exists so "these strikes are still listed" can be checked before a watch is
+   * started against them. `status: 'live'` alone cannot answer that: the state
+   * keeps its last good ladder across a failed poll (deliberately — a blank
+   * dropdown mid-session reads as "the market stopped"), so a ladder can be
+   * both live-looking and minutes old. `validateWatchPair` refuses the pair
+   * past `CHAIN_STALE_MS`.
+   */
+  fetchedAt: number | null;
 }
 
 const REFRESH_MS = 4_000;
 
-const EMPTY: OptionChainStrikes = { status: 'loading', expiry: null, spot: null, ce: [], pe: [], atmIndex: -1 };
+const EMPTY: OptionChainStrikes = {
+  status: 'loading',
+  expiry: null,
+  spot: null,
+  ce: [],
+  pe: [],
+  atmIndex: -1,
+  fetchedAt: null,
+};
 
 /**
  * Live CE/PE strike + LTP ladders for the selected market.
@@ -107,6 +126,9 @@ export function useOptionChainStrikes(
           ce,
           pe,
           atmIndex,
+          // Stamped only on a real ladder. The failure branches above leave it
+          // at null, so "never read" and "read a while ago" stay distinct.
+          fetchedAt: Date.now(),
         });
       } catch {
         if (!cancelled) {

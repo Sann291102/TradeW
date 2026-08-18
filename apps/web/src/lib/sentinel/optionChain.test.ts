@@ -3,10 +3,16 @@ import type { DhanOptionChain } from '@/lib/dhanLiveFeed';
 import {
   ceRows,
   peRows,
+  filterStrikes,
   formatLtp,
+  isListedStrike,
   nearestStrikeIndex,
   pickNearestExpiry,
+  resolveTypedStrike,
   strikeOptionLabel,
+  strikeWindow,
+  STRIKE_WINDOW_SIZE,
+  type StrikeRow,
 } from './optionChain';
 
 function leg(ltp: number) {
@@ -123,5 +129,113 @@ describe('formatLtp / strikeOptionLabel', () => {
   it('builds a compact "strike · ltp" label', () => {
     expect(strikeOptionLabel({ strike: 24350, ltp: 128.75 })).toBe('24350 · 128.75');
     expect(strikeOptionLabel({ strike: 24400, ltp: null })).toBe('24400 · —');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The default six-strike window, pinned to the example in the brief.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A NIFTY-shaped ladder in 50-point steps, ascending, as the bridge returns. */
+function ladder(from: number, to: number, step = 50): StrikeRow[] {
+  const rows: StrikeRow[] = [];
+  for (let s = from; s <= to; s += step) rows.push({ strike: s, ltp: 100 });
+  return rows;
+}
+
+describe('strikeWindow', () => {
+  it('offers exactly the six strikes the brief names at spot 24500', () => {
+    // "If market is at 24500 I need these strikes dropdowns can be selected
+    //  24350,24400,24450,24500,24550,24600" — three below the ATM, the ATM,
+    // two above.
+    const rows = ladder(24000, 25000);
+    const atm = rows.findIndex((r) => r.strike === 24500);
+    expect(strikeWindow(rows, atm).map((r) => r.strike)).toEqual([24350, 24400, 24450, 24500, 24550, 24600]);
+  });
+
+  it('gives BOTH sides the same window — the brief specified one list for CE and PE', () => {
+    const ce = ladder(24000, 25000);
+    const pe = ladder(24000, 25000);
+    const atm = ce.findIndex((r) => r.strike === 24500);
+    expect(strikeWindow(ce, atm).map((r) => r.strike)).toEqual(strikeWindow(pe, atm).map((r) => r.strike));
+  });
+
+  it('slides at the ladder edges rather than returning a short list', () => {
+    const rows = ladder(24000, 25000);
+    expect(strikeWindow(rows, 0)).toHaveLength(STRIKE_WINDOW_SIZE);
+    expect(strikeWindow(rows, 0).map((r) => r.strike)).toEqual([24000, 24050, 24100, 24150, 24200, 24250]);
+    expect(strikeWindow(rows, rows.length - 1)).toHaveLength(STRIKE_WINDOW_SIZE);
+    expect(strikeWindow(rows, rows.length - 1).map((r) => r.strike)).toEqual([
+      24750, 24800, 24850, 24900, 24950, 25000,
+    ]);
+  });
+
+  it('never pads a short ladder with strikes that do not trade', () => {
+    const rows = ladder(24000, 24150);
+    expect(strikeWindow(rows, 1)).toEqual(rows);
+  });
+
+  it('falls back to the middle of the ladder for an unresolved ATM index', () => {
+    const rows = ladder(24000, 25000);
+    expect(strikeWindow(rows, -1)).toHaveLength(STRIKE_WINDOW_SIZE);
+    expect(strikeWindow([], -1)).toEqual([]);
+  });
+});
+
+describe('filterStrikes', () => {
+  const rows = ladder(24000, 25000);
+
+  it('matches on any run of digits, not just a prefix', () => {
+    expect(filterStrikes(rows, '445').map((r) => r.strike)).toEqual([24450]);
+    expect(filterStrikes(rows, '244').map((r) => r.strike)).toContain(24400);
+  });
+
+  it('ignores separators and stray characters a trader might type', () => {
+    expect(filterStrikes(rows, '24,450').map((r) => r.strike)).toEqual([24450]);
+    expect(filterStrikes(rows, '24450 CE').map((r) => r.strike)).toEqual([24450]);
+  });
+
+  it('returns nothing for an empty query — the caller shows the default window', () => {
+    expect(filterStrikes(rows, '')).toEqual([]);
+    expect(filterStrikes(rows, '  ')).toEqual([]);
+  });
+});
+
+describe('resolveTypedStrike', () => {
+  const rows = ladder(24000, 25000);
+
+  it('accepts a strike that is genuinely listed', () => {
+    const r = resolveTypedStrike(rows, '24450');
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.row.strike).toBe(24450);
+  });
+
+  it('REJECTS an unlisted strike rather than snapping to the nearest', () => {
+    // 24337 sits between 24300 and 24350. Silently choosing either would put
+    // the watch on a contract the operator never picked.
+    const r = resolveTypedStrike(rows, '24337');
+    expect(r).toEqual({ ok: false, reason: 'not-listed' });
+  });
+
+  it('separates "not a number", "nothing typed" and "no ladder loaded"', () => {
+    expect(resolveTypedStrike(rows, 'abc')).toEqual({ ok: false, reason: 'not-a-number' });
+    expect(resolveTypedStrike(rows, '')).toEqual({ ok: false, reason: 'empty' });
+    expect(resolveTypedStrike([], '24450')).toEqual({ ok: false, reason: 'no-ladder' });
+  });
+
+  it('resolves against the side it was given — a CE ladder cannot yield a PE-only strike', () => {
+    const ce = ladder(24000, 24500);
+    const pe = ladder(24000, 25000);
+    expect(resolveTypedStrike(ce, '24900')).toEqual({ ok: false, reason: 'not-listed' });
+    expect(resolveTypedStrike(pe, '24900').ok).toBe(true);
+  });
+});
+
+describe('isListedStrike', () => {
+  it('is false for null and for a strike absent from the ladder', () => {
+    const rows = ladder(24000, 24200);
+    expect(isListedStrike(rows, null)).toBe(false);
+    expect(isListedStrike(rows, 24337)).toBe(false);
+    expect(isListedStrike(rows, 24100)).toBe(true);
   });
 });

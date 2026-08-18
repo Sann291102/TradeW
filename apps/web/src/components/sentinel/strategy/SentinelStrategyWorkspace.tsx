@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Badge, Button } from '@tradew/ui';
+import { Badge, Button, CandleLoader } from '@tradew/ui';
 import { faultMessage } from '@/lib/sentinel/faults';
 import { useUserStrategies, useWatchSessions } from '@/lib/sentinel/useStrategyWorkspace';
 import { useWatchPrices } from '@/lib/sentinel/useWatchPrices';
@@ -175,7 +175,7 @@ export function SentinelStrategyWorkspace() {
                     <WatchCard
                       watch={watch}
                       strategies={strategiesState.strategies}
-                      price={prices[watch.id] ?? null}
+                      price={prices[watch.id]?.focused ?? null}
                       action={
                         <div className="flex items-center gap-2">
                           <Button
@@ -200,12 +200,12 @@ export function SentinelStrategyWorkspace() {
                     <WatchCard
                       watch={watch}
                       strategies={strategiesState.strategies}
-                      price={prices[watch.id] ?? null}
+                      price={prices[watch.id]?.focused ?? null}
                       action={
                         enteringWatchId === watch.id ? (
                           <PositionEntryForm
                             watch={watch}
-                            livePrice={prices[watch.id] ?? null}
+                            livePrice={prices[watch.id]?.focused ?? null}
                             onSubmit={async (id, input) => {
                               const updated = await watchesState.markEntered(id, input);
                               setEnteringWatchId(null);
@@ -283,7 +283,7 @@ export function SentinelStrategyWorkspace() {
 function Retrying({ subject }: { subject: string }) {
   return (
     <p role="status" aria-live="polite" className="mb-2 flex items-center gap-1.5 text-[11px] text-amber">
-      <span aria-hidden className="h-2.5 w-2.5 animate-spin rounded-full border border-border border-t-amber" />
+      <CandleLoader size="sm" decorative />
       Reconnecting — showing the last loaded copy of {subject}.
     </p>
   );

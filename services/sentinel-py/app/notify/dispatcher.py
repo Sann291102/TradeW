@@ -35,6 +35,38 @@ def _service_token() -> str:
     return os.environ.get("SENTINEL_PY_SERVICE_TOKEN", "")
 
 
+_MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+
+
+def _expiry_tag(iso: str | None) -> str:
+    """`2026-08-18` becomes `18 AUG`, matching `expiryTag()` in apps/web.
+
+    Formatted by hand rather than with strftime: `%b` is locale-dependent, and
+    a service running under a non-English locale would emit a month name the
+    web app never produces, silently breaking the "same thing in the same
+    words" guarantee this module and `watchModel.instrumentLabel` share.
+    """
+    if not iso or len(iso) != 10 or iso[4] != "-" or iso[7] != "-":
+        return ""
+    try:
+        month = int(iso[5:7])
+        day = iso[8:10]
+    except ValueError:
+        return ""
+    if not 1 <= month <= 12:
+        return ""
+    return f"{day} {_MONTHS[month - 1]}"
+
+
+def _legs_of(watch: dict):
+    # Imported lazily: app.watch.store imports the strategy store's pool, and a
+    # module-level import here would make the notify module depend on it at
+    # import time for one helper.
+    from app.watch.store import _legs_of as legs_of
+
+    return legs_of(watch)
+
+
 def instrument_label(watch: dict) -> str:
     """Names the user's OWN declared watch so they can tell which of several
     fired. This is identification, not a direction Sentinel derived: the user
@@ -42,12 +74,26 @@ def instrument_label(watch: dict) -> str:
     invariant the TS event contract protects (Gotchas/2026-08-11 — a CE
     direction fabricated onto signals that carried none) is about Sentinel
     RECOVERING a side from data that had none, which is not what this is."""
-    parts = [watch["symbol"]]
-    if watch.get("strike"):
-        parts.append(str(watch["strike"]))
-    if watch.get("optionType"):
-        parts.append(watch["optionType"])
-    return " ".join(parts)
+    ce, pe, _ = _legs_of(watch)
+    if ce is None and pe is None:
+        return watch["symbol"]
+    # The expiry is part of the name. "NIFTY 24200 CE" is two different
+    # contracts with two different premiums across two series, and an alert that
+    # cannot be told apart from last week's is not an identification. The web
+    # side added this to its feed labels first; both were widened to the pair
+    # together, so they still produce the same string.
+    tag = _expiry_tag(watch.get("expiry"))
+    # BOTH legs, since 2026-08-18. A watch names an option PAIR, and an alert
+    # that printed only the focused leg would tell the user their strategy fired
+    # on "NIFTY 24200 CE" while the watch they created — and the workspace they
+    # are about to open — is a pair. `watchPairLabel` in apps/web renders the
+    # same string, so the notification and the panel keep agreeing.
+    legs = " / ".join(
+        f"{int(leg['strike']) if float(leg['strike']).is_integer() else leg['strike']} {leg['optionType']}"
+        for leg in (ce, pe)
+        if leg is not None
+    )
+    return " ".join(part for part in (watch["symbol"], tag, legs) if part)
 
 
 def build_payload(watch: dict, transition: Transition, strategy_name: str, trading_day: str) -> dict:
@@ -70,8 +116,17 @@ def build_payload(watch: dict, transition: Transition, strategy_name: str, tradi
         "watchSessionId": watch["id"],
         "strategyId": watch["strategyId"],
         "symbol": watch["symbol"],
+        # LEGACY MIRROR of the focused leg, kept so existing notification rows
+        # and their readers stay coherent.
         "strike": watch.get("strike"),
         "optionType": watch.get("optionType"),
+        "ce": watch.get("ce"),
+        "pe": watch.get("pe"),
+        "focusedSide": watch.get("focusedSide"),
+        # The pair the alert is actually about.
+        "ce": watch.get("ce"),
+        "pe": watch.get("pe"),
+        "focusedSide": watch.get("focusedSide"),
         "state": transition.current.value,
         "previousState": transition.previous.value,
         "tier": transition.tier.value,
