@@ -65,3 +65,8 @@ services/sentinel/data/
 *.tfvars
 !*.tfvars.example
 crash.log
+
+# Azure deployment bundles — build artifacts, not sources. The deploy zip runs
+# to hundreds of MB (past GitHub's 100MB hard limit), so it can never be
+# committed; regenerate it from the build rather than tracking it.
+tradew-azure-*.zip

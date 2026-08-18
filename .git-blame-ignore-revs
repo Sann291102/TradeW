@@ -1,0 +1,11 @@
+# Revisions to skip in `git blame` — mechanical, content-preserving changes
+# whose only effect is to attribute every line to themselves.
+#
+# Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub honours this file automatically.)
+
+# chore: declare line endings in .gitattributes and renormalise
+# 100 blobs converted CRLF -> LF. Verified content-identical with
+# `git diff --cached --ignore-cr-at-eol`.
+e77ba8a20107d153a02e8e7ca7a3fe393decc77a
