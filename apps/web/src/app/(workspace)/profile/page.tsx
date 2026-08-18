@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { useSessionStore } from '@/lib/store/sessionStore';
+import { CandleLoader } from '@tradew/ui';
 
 /**
  * Profile page (Milestone 4, Step 1). Identity (`profile?.email` etc.) now
@@ -57,7 +58,11 @@ export default function ProfilePage() {
   }, [sessionStatus]);
 
   if (sessionStatus === 'idle' || sessionStatus === 'loading') {
-    return <main className="min-h-screen p-6 max-w-3xl mx-auto"><p className="text-slate-400">Loading…</p></main>;
+    return (
+      <main className="flex min-h-screen max-w-3xl mx-auto items-center justify-center p-6">
+        <CandleLoader size="md" label="Restoring your session" />
+      </main>
+    );
   }
 
   if (sessionStatus === 'unauthenticated') {
@@ -81,7 +86,8 @@ export default function ProfilePage() {
       <div><p className="text-emerald-400 text-sm font-semibold">TradeW</p><h1 className="text-3xl font-bold">Profile & Preferences</h1></div>
       <div className="flex gap-2">
         <button onClick={() => router.push('/trade')} className="px-3 py-2 rounded bg-slate-800 border border-slate-700">Back to trade</button>
-        <button onClick={handleLogout} disabled={loggingOut} className="px-3 py-2 rounded bg-slate-800 border border-slate-700 text-red-400 disabled:opacity-50">
+        <button onClick={handleLogout} disabled={loggingOut} className="flex items-center gap-2 px-3 py-2 rounded bg-slate-800 border border-slate-700 text-red-400 disabled:opacity-50">
+          {loggingOut && <CandleLoader size="sm" decorative />}
           {loggingOut ? 'Signing out…' : 'Log out'}
         </button>
       </div>

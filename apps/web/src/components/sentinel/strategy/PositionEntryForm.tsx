@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, cn } from '@tradew/ui';
+import { Button, cn, CandleLoader } from '@tradew/ui';
 import { ApiError } from '@/lib/api';
 import type { OpenPositionInput, PositionDirection, WatchSession } from '@/lib/sentinel/strategyApi';
 import { plannedRatio, validatePosition } from '@/lib/sentinel/watchModel';
@@ -144,6 +144,7 @@ export function PositionEntryForm({
 
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={handleSubmit} disabled={busy}>
+          {busy && <CandleLoader size="sm" decorative />}
           {busy ? 'Saving…' : 'Confirm position'}
         </Button>
         <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>

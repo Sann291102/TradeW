@@ -1,5 +1,6 @@
 'use client';
 
+import { CandleLoader } from '@tradew/ui';
 import type { SentinelUnavailable } from '@/lib/sentinel/faults';
 
 /**
@@ -38,7 +39,7 @@ export function SentinelConnectionBanner({
       aria-live="polite"
       className="mb-4 flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-xl border border-amber bg-amber-bg px-3.5 py-2.5"
     >
-      <Spinner />
+      <CandleLoader size="sm" decorative />
       <span className="text-[12.5px] font-semibold text-amber">Sentinel reconnecting…</span>
       <span className="text-[11.5px] text-muted">{reason(fault)}</span>
       {typeof updatedAt === 'number' && updatedAt > 0 && (
@@ -83,11 +84,3 @@ function agoLabel(at: number): string {
   return `${hours} hour${hours === 1 ? '' : 's'} ago`;
 }
 
-function Spinner() {
-  return (
-    <span
-      aria-hidden
-      className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-border border-t-amber"
-    />
-  );
-}

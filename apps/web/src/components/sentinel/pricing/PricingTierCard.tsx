@@ -1,6 +1,6 @@
 'use client';
 
-import { buttonClasses, cn } from '@tradew/ui';
+import { buttonClasses, cn, CandleLoader } from '@tradew/ui';
 import { CheckIcon } from '@/components/shell/icons';
 
 export interface PricingTier {
@@ -100,6 +100,7 @@ export function PricingTierCard({
           (disabled || busy) && 'cursor-not-allowed opacity-60',
         )}
       >
+        {busy && <CandleLoader size="sm" decorative />}
         {busy ? 'Starting…' : ctaLabel}
       </button>
     </div>

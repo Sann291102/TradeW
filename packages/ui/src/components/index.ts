@@ -11,6 +11,7 @@ export { StatCard, type StatCardProps } from './StatCard';
 export { Panel, type PanelProps } from './Panel';
 export { Sparkline, type SparklineProps } from './Sparkline';
 export { Skeleton } from './Skeleton';
+export { CandleLoader, type CandleLoaderProps, type CandleLoaderSize } from './CandleLoader';
 export { EmptyState, type EmptyStateProps } from './EmptyState';
 export { IconButton, type IconButtonProps } from './IconButton';
 export { Surface, ELEVATION_SHADOW, type SurfaceProps, type SurfaceElevation } from './Surface';

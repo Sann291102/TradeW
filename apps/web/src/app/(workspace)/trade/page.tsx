@@ -1,4 +1,5 @@
 import { Suspense } from 'react';
+import { CandleLoader } from '@tradew/ui';
 import { TradeWorkspace } from '@/components/trade/TradeWorkspace';
 import { getStrategies } from '@/lib/learning/catalog';
 
@@ -21,7 +22,7 @@ export default function TradePage() {
   // down, so `?strategy=<id>` (arrived at from the Learning Hub's Apply action)
   // resolves without a client fetch. See lib/learning/catalog.ts.
   return (
-    <Suspense fallback={<div className="p-4 text-sm text-faint">Loading…</div>}>
+    <Suspense fallback={<CandleLoader size="sm" className="m-4" label="Loading page" />}>
       <TradeWorkspace strategies={getStrategies()} />
     </Suspense>
   );

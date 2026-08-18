@@ -1,4 +1,5 @@
 import { Suspense } from 'react';
+import { CandleLoader } from '@tradew/ui';
 import { MarketsWorkspace } from '@/components/markets/MarketsWorkspace';
 
 /**
@@ -8,7 +9,7 @@ import { MarketsWorkspace } from '@/components/markets/MarketsWorkspace';
  */
 export default function MarketsPage() {
   return (
-    <Suspense fallback={<div className="p-4 text-sm text-faint">Loading…</div>}>
+    <Suspense fallback={<CandleLoader size="sm" className="m-4" label="Loading page" />}>
       <MarketsWorkspace />
     </Suspense>
   );

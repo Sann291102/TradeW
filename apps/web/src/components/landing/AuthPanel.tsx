@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { API_URL, api, setSession } from '@/lib/api';
 import { useSessionStore } from '@/lib/store/sessionStore';
+import { CandleLoader } from '@tradew/ui';
 
 /**
  * Sign-in / sign-up, embedded in the landing page.
@@ -234,8 +235,9 @@ export function AuthPanel() {
           <button
             type="submit"
             disabled={busy}
-            className="w-full rounded-xl bg-teal px-4 py-3 text-fsXs font-semibold text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-teal px-4 py-3 text-fsXs font-semibold text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
           >
+            {busy && <CandleLoader size="sm" decorative />}
             {busy
               ? mode === 'signup'
                 ? 'Creating account…'
@@ -321,8 +323,9 @@ export function AuthPanel() {
               <button
                 type="submit"
                 disabled={busy}
-                className="w-full rounded-xl bg-teal px-4 py-3 text-fsXs font-semibold text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-teal px-4 py-3 text-fsXs font-semibold text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
               >
+                {busy && <CandleLoader size="sm" decorative />}
                 {busy ? 'Sending…' : 'Send code'}
               </button>
               {methods && !methods.phone && (
@@ -359,8 +362,9 @@ export function AuthPanel() {
               <button
                 type="submit"
                 disabled={busy}
-                className="w-full rounded-xl bg-teal px-4 py-3 text-fsXs font-semibold text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-teal px-4 py-3 text-fsXs font-semibold text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
               >
+                {busy && <CandleLoader size="sm" decorative />}
                 {busy ? 'Verifying…' : 'Verify and continue'}
               </button>
               <button

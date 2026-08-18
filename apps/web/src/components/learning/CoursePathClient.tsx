@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Card, Badge, cn } from '@tradew/ui';
+import { Card, Badge, cn, CandleLoader } from '@tradew/ui';
 import { useCourses, useRefreshKnowledge } from '@/lib/query/useLearning';
 import type { CourseCard } from '@/lib/learning-platform/types';
 
@@ -71,8 +71,9 @@ export function CoursePathClient({ courseId }: { courseId: string }) {
             type="button"
             onClick={onRefresh}
             disabled={refreshing}
-            className="rounded-lg border border-amber/40 bg-amber/5 px-3 py-1.5 text-[11.5px] font-semibold text-amber transition-colors hover:bg-amber/10 disabled:opacity-60"
+            className="inline-flex items-center gap-2 rounded-lg border border-amber/40 bg-amber/5 px-3 py-1.5 text-[11.5px] font-semibold text-amber transition-colors hover:bg-amber/10 disabled:opacity-60"
           >
+            {refreshing && <CandleLoader size="sm" decorative />}
             {refreshing ? 'Refreshing…' : 'Refresh Knowledge'}
           </button>
         )}
