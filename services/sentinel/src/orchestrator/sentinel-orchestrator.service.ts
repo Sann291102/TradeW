@@ -166,8 +166,15 @@ export class SentinelOrchestratorService {
     let response!: ObserveResponse;
     await runAgentRun(
       { system: 'sentinel', trigger: 'observe', symbol: request.symbol ?? 'NIFTY', userId: request.userId },
-      async () => {
+      async (runId) => {
         response = await this.runObservation(request);
+        // The run's own id, echoed to the caller. `runAgentRun` has always
+        // passed it to this callback and always written it to AgentRun; it was
+        // simply never returned, so a caller holding a response could not name
+        // the run behind it. The paper-execution loop records this on every
+        // ExecutionIntent, which is what makes "which Sentinel run produced
+        // this order?" a foreign key rather than a timestamp search.
+        response.runId = runId;
         return {
           surfaced: response.synthesis !== null,
           confidence: response.confidence?.score,
@@ -592,6 +599,29 @@ export class SentinelOrchestratorService {
         evidence: behaviourRead.evidence,
       },
       contractWatch,
+      // Opt-in only (see ObserveRequest.includeOptionChain). `undefined` when
+      // not asked for so the field is absent from the wire entirely; `null`
+      // when asked for and the instrument published no chain — a caller that
+      // requested the chain must be able to tell "you didn't ask" from "there
+      // wasn't one", because the second is a reason not to execute.
+      optionChain: request.includeOptionChain
+        ? snapshot.optionChain
+          ? {
+              frontExpiry: snapshot.optionChain.frontExpiry.toISOString(),
+              entries: snapshot.optionChain.entries.map((e) => ({
+                strike: e.strike,
+                callOI: e.callOI,
+                putOI: e.putOI,
+                callVolume: e.callVolume,
+                putVolume: e.putVolume,
+                callIV: e.callIV,
+                putIV: e.putIV,
+                callLtp: e.callLtp,
+                putLtp: e.putLtp,
+              })),
+            }
+          : null
+        : undefined,
       observations: all24hObservations,
       signals,
       marketContext,

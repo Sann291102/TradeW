@@ -52,6 +52,7 @@ import { StrategyEngineService } from './intelligence/strategy-engine.service';
 import { TrapIntelligenceService } from './intelligence/trap-intelligence.service';
 import { CandleMarketDataProvider } from './market-data/candle-market-data.provider';
 import { MarketCloseAnalysisService } from './market-close/market-close-analysis.service';
+import { ExecutionEvaluationService } from './execution/execution-evaluation.service';
 import { SentinelOrchestratorService } from './orchestrator/sentinel-orchestrator.service';
 import { PrismaService } from './prisma.service';
 import { MarketStateMachineService } from './state-machine/state-machine.service';
@@ -199,6 +200,10 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
     AdaptiveCalibrationService,
     ComplianceService,
     SentinelOrchestratorService,
+    // Reads the orchestrator; never replaces or wraps it. Adds the three-strike
+    // evaluation the paper-execution loop needs and the observe contract must
+    // not carry — see execution/strike-candidates.ts.
+    ExecutionEvaluationService,
     ExplainService,
 
     // ---- Persistent Knowledge Brain (Sentinel Brain Phase 1) ----

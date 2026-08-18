@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.strategy.store import _aware, _naive, _now, _pool_or_raise
+from app.core.timefmt import iso_utc
 
 
 def _watch_to_dict(row) -> dict:
@@ -29,8 +30,10 @@ def _watch_to_dict(row) -> dict:
         else (row["reachedMilestones"] or []),
         "lastNotifiedAt": _aware(row["lastNotifiedAt"]),
         "cooldownUntil": _aware(row["cooldownUntil"]),
-        "createdAt": row["createdAt"].isoformat(),
-        "updatedAt": row["updatedAt"].isoformat(),
+        # iso_utc, not .isoformat(): these columns are naive UTC and a bare
+        # isoformat emits no offset, which a browser then parses as LOCAL.
+        "createdAt": iso_utc(row["createdAt"]),
+        "updatedAt": iso_utc(row["updatedAt"]),
     }
 
 
@@ -162,7 +165,7 @@ async def list_observations(watch_session_id: str, limit: int = 50) -> list[dict
             "id": r["id"],
             "watchSessionId": r["watchSessionId"],
             "agent": r["agent"],
-            "candleTime": r["candleTime"].isoformat() if r["candleTime"] else None,
+            "candleTime": iso_utc(r["candleTime"]),
             "ruleEvaluations": json.loads(r["ruleEvaluations"])
             if isinstance(r["ruleEvaluations"], str)
             else r["ruleEvaluations"],
@@ -173,7 +176,7 @@ async def list_observations(watch_session_id: str, limit: int = 50) -> list[dict
             "metadata": json.loads(r["metadata"])
             if isinstance(r["metadata"], str)
             else r["metadata"],
-            "createdAt": r["createdAt"].isoformat(),
+            "createdAt": iso_utc(r["createdAt"]),
         }
         for r in rows
     ]

@@ -107,6 +107,24 @@ export interface OptionChainRead {
   /** the strike carrying the most put OI below spot */
   putOIWall: number | null;
   strikesAnalysed: number;
+  /**
+   * The expiry every entry below belongs to. `readOptionChain` already narrows
+   * to the front expiry before computing anything (mixing expiries makes both
+   * PCR and max pain meaningless) — this names the one it picked, so a reader
+   * never has to infer it from the entries.
+   */
+  frontExpiry: Date;
+  /**
+   * The front-expiry strikes themselves, ascending.
+   *
+   * Exposed because the aggregates above answer "what is positioning doing?"
+   * and cannot answer "what does one specific contract cost right now?" — the
+   * question strike-candidate evaluation is made of. Carrying them here rather
+   * than re-reading the chain keeps the observation on ONE chain read: a second
+   * fetch would be a second point in time, so a candidate's premium could
+   * disagree with the PCR computed beside it.
+   */
+  entries: OptionChainEntry[];
 }
 
 /**
@@ -503,6 +521,8 @@ export function readOptionChain(chain: OptionChainEntry[], spot: number): Option
     callOIWall,
     putOIWall,
     strikesAnalysed: strikes.length,
+    frontExpiry,
+    entries: strikes,
   };
 }
 

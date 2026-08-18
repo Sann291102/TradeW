@@ -56,6 +56,21 @@ export default defineConfig({
       'src/sim/performance.spec.ts',
       // Position Management "Convert product type" merge math.
       'src/sim/position-convert.spec.ts',
+      // Sentinel paper execution. Two pure modules, both load-bearing:
+      //
+      //  · identity — the idempotency guarantee. One Sentinel decision must
+      //    never open two paper positions because a poll repeated or a replica
+      //    raced, and the key deliberately EXCLUDES the Sentinel run id (a
+      //    fresh uuid per call would mint a new key every tick).
+      //  · policy   — the risk gate, including the PAPER-only refusal that
+      //    holds even against a row this application did not write.
+      'src/paper-execution/execution-identity.spec.ts',
+      'src/paper-execution/execution-policy.spec.ts',
+      //  · account   — WHOSE account an agent may trade. Pins the two bypasses
+      //    that would let an agent trade a real person's money without consent:
+      //    labelling a real account SYSTEM_PAPER to skip the consent check, and
+      //    marking it USER_PAPER without ever asking.
+      'src/paper-execution/execution-account.spec.ts',
       // Who is allowed to use a paid capability, and until when.
       // Active pricing served to every surface. Asserts across the API boundary
       // that no route can produce a withdrawn annual Sentinel term.

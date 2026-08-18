@@ -76,4 +76,57 @@ describe('isAllowedAdminRoute — everything else is denied', () => {
     expect(isAllowedAdminRoute('GET', seg('/stream'))).toBe(false);
     expect(isAllowedAdminRoute('GET', seg('/knowledge/stream'))).toBe(false);
   });
+
+  describe('Sentinel paper execution', () => {
+    it('allows the execution reads the console renders', () => {
+      expect(isAllowedAdminRoute('GET', seg('/execution/profiles'))).toBe(true);
+      expect(isAllowedAdminRoute('GET', seg('/execution/intents'))).toBe(true);
+      expect(isAllowedAdminRoute('GET', seg('/execution/stats'))).toBe(true);
+      expect(isAllowedAdminRoute('GET', seg('/execution/trace/some-intent-id'))).toBe(true);
+      expect(isAllowedAdminRoute('GET', seg('/execution/trace-by-order/some-order-id'))).toBe(true);
+    });
+
+    it('allows the arm and run writes, and only as POST', () => {
+      expect(isAllowedAdminRoute('POST', seg('/execution/profiles/abc/enabled'))).toBe(true);
+      expect(isAllowedAdminRoute('POST', seg('/execution/profiles/abc/run'))).toBe(true);
+      // Arming a profile decides whether an autonomous agent may place orders.
+      // It must never be reachable as a read, and the reads must never be
+      // reachable as writes.
+      expect(isAllowedAdminRoute('GET', seg('/execution/profiles/abc/enabled'))).toBe(false);
+      expect(isAllowedAdminRoute('GET', seg('/execution/profiles/abc/run'))).toBe(false);
+      // `POST /execution/intents` stays denied: an intent is produced by a
+      // Sentinel decision, never posted by an operator. (`POST
+      // /execution/profiles` WAS denied here too until account binding landed
+      // on 2026-08-18 — it is now the profile create/rebind route and is
+      // asserted allowed in the account-binding test below.)
+      expect(isAllowedAdminRoute('POST', seg('/execution/intents'))).toBe(false);
+      expect(isAllowedAdminRoute('POST', seg('/execution/stats'))).toBe(false);
+    });
+
+    it('allows the account-binding reads and writes', () => {
+      expect(isAllowedAdminRoute('GET', seg('/execution/accounts'))).toBe(true);
+      expect(isAllowedAdminRoute('GET', seg('/execution/profiles/abc/authorization'))).toBe(true);
+      expect(isAllowedAdminRoute('POST', seg('/execution/accounts/user-id/agent-trading'))).toBe(true);
+      expect(isAllowedAdminRoute('POST', seg('/execution/profiles'))).toBe(true);
+    });
+
+    it('will not let the consent grant be reached as a read, or listed as a write', () => {
+      // Granting a user's account to an autonomous agent is a write and only a
+      // write; and the account LIST must never be a POST target.
+      expect(isAllowedAdminRoute('GET', seg('/execution/accounts/user-id/agent-trading'))).toBe(false);
+      expect(isAllowedAdminRoute('POST', seg('/execution/accounts'))).toBe(false);
+      expect(isAllowedAdminRoute('POST', seg('/execution/profiles/abc/authorization'))).toBe(false);
+    });
+
+    it('does not forward an execution route the console has no rule for', () => {
+      // Deny-by-default has to hold for this namespace too — a future admin
+      // endpoint under /execution must stay unreachable until listed.
+      expect(isAllowedAdminRoute('GET', seg('/execution'))).toBe(false);
+      expect(isAllowedAdminRoute('POST', seg('/execution/run-all'))).toBe(false);
+      expect(isAllowedAdminRoute('GET', seg('/execution/profiles/abc'))).toBe(false);
+      // The wildcard is one segment, not a path.
+      expect(isAllowedAdminRoute('GET', seg('/execution/trace/a/b'))).toBe(false);
+      expect(isAllowedAdminRoute('POST', seg('/execution/profiles/a/b/enabled'))).toBe(false);
+    });
+  });
 });

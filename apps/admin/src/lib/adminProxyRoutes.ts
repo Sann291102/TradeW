@@ -80,6 +80,29 @@ export const ADMIN_PROXY_ROUTES: RouteRule[] = [
   { method: 'POST', segments: ['cognition', 'proposals', '*', 'resolve'] },
   { method: 'POST', segments: ['cognition', 'run'] },
 
+  // --- Sentinel paper execution ---------------------------------------------
+  // Reads for the Orders & OMS execution views and the per-order trace.
+  { method: 'GET', segments: ['execution', 'profiles'] },
+  { method: 'GET', segments: ['execution', 'intents'] },
+  { method: 'GET', segments: ['execution', 'stats'] },
+  { method: 'GET', segments: ['execution', 'trace', '*'] },
+  { method: 'GET', segments: ['execution', 'trace-by-order', '*'] },
+  // The two writes. Arming a profile is the switch that decides whether an
+  // autonomous agent may place orders, so it is listed here individually and
+  // audited upstream (`execution.profile.enabled`) — never reachable through a
+  // wildcard. Neither route can place an order directly; there is no such route.
+  { method: 'POST', segments: ['execution', 'profiles', '*', 'enabled'] },
+  { method: 'POST', segments: ['execution', 'profiles', '*', 'run'] },
+  // Account binding. `accounts` returns TradeW accounts a USER_PAPER profile
+  // may target and carries no credential field — the upstream handler does not
+  // even select passwordHash/googleId. The two writes are the consent grant and
+  // the profile binding itself; both are audited upstream with the acting
+  // operator, and neither can place an order.
+  { method: 'GET', segments: ['execution', 'accounts'] },
+  { method: 'GET', segments: ['execution', 'profiles', '*', 'authorization'] },
+  { method: 'POST', segments: ['execution', 'accounts', '*', 'agent-trading'] },
+  { method: 'POST', segments: ['execution', 'profiles'] },
+
   // --- Knowledge workspace (read-only vault) --------------------------------
   { method: 'GET', segments: ['knowledge', 'tree'] },
   { method: 'GET', segments: ['knowledge', 'file'] },

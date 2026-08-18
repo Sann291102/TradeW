@@ -1,9 +1,14 @@
 import { Body, Controller, Get, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiExcludeEndpoint, ApiProperty, ApiPropertyOptional, ApiSecurity, ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsEmail, IsIn, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { AdminAccessGuard } from './admin-access.guard';
 import { AdminService } from './admin.service';
 import { CognitionService } from '../cognition/cognition.service';
+import { ExecutionAccountService } from '../paper-execution/execution-account.service';
+import { ExecutionProfileService } from '../paper-execution/execution-profile.service';
+import { ExecutionQueryService } from '../paper-execution/execution-query.service';
+import { ExecutionTraceService } from '../paper-execution/execution-trace.service';
+import { PaperExecutionService } from '../paper-execution/paper-execution.service';
 import { SECURITY } from '../swagger/swagger.setup';
 import { TelemetryService } from '../telemetry/telemetry.service';
 
@@ -47,6 +52,105 @@ class ResolveProposalDto {
   @IsOptional()
   @IsString()
   resolution?: string;
+}
+
+class SetProfileEnabledDto {
+  @ApiProperty({ description: 'True lets this execution profile trade on the next pass, false stops it.' })
+  @IsBoolean()
+  enabled!: boolean;
+}
+
+class SetAgentPaperTradingDto {
+  @ApiProperty({
+    description:
+      'True permits an execution profile to place PAPER orders in this user’s own paper account; false revokes it. ' +
+      'Never a credential — the account is referenced by internal id throughout.',
+  })
+  @IsBoolean()
+  enabled!: boolean;
+}
+
+/**
+ * Create or rebind an execution profile.
+ *
+ * There is deliberately NO `environment` field: the server writes PAPER and the
+ * enum has no other member, so an environment supplied by a caller would be a
+ * value that cannot be honoured. And there is no credential field of any kind —
+ * the account is identified by `accountUserId`, an internal id.
+ */
+class UpsertExecutionProfileDto {
+  @ApiProperty({ description: 'Unique profile name, e.g. sentinel-alpha-nifty-vivek.' })
+  @IsString()
+  name!: string;
+
+  @ApiProperty({ description: 'Sentinel agent identity, e.g. sentinel-alpha.' })
+  @IsString()
+  agent!: string;
+
+  @ApiProperty({ description: 'Underlying to trade, e.g. NIFTY. Must be in the permitted market list.' })
+  @IsString()
+  symbol!: string;
+
+  @ApiProperty({ description: 'The TradeW user whose PAPER account this profile trades. Internal id, never an email/password.' })
+  @IsString()
+  accountUserId!: string;
+
+  @ApiProperty({
+    enum: ['SYSTEM_PAPER', 'USER_PAPER'],
+    description:
+      'SYSTEM_PAPER = a dedicated non-loginable machine account. USER_PAPER = a real TradeW user’s own paper account, ' +
+      'which additionally requires that user’s recorded consent.',
+  })
+  @IsIn(['SYSTEM_PAPER', 'USER_PAPER'])
+  accountScope!: 'SYSTEM_PAPER' | 'USER_PAPER';
+
+  @ApiPropertyOptional({ description: 'Registry strategy id to pin. Omit to let Sentinel choose (auto mode).' })
+  @IsOptional()
+  @IsString()
+  strategyId?: string;
+
+  @ApiPropertyOptional({ description: 'Human-readable strategy name, for the console.' })
+  @IsOptional()
+  @IsString()
+  strategyName?: string;
+
+  @ApiPropertyOptional({ description: 'Order size in lots; multiplied by the contract’s own lot size at submission.' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  lots?: number;
+
+  @ApiPropertyOptional({ description: 'Confidence floor, 70-100. May only be stricter than Sentinel’s own 70.' })
+  @IsOptional()
+  @IsInt()
+  @Min(70)
+  @Max(100)
+  minConfidence?: number;
+
+  @ApiPropertyOptional({ description: 'Concurrent open positions this profile may hold.' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxOpenPositions?: number;
+
+  @ApiPropertyOptional({ description: 'Executions this profile may make per IST day.' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxOrdersPerDay?: number;
+
+  @ApiPropertyOptional({ description: 'Stop trading for the day once realized P&L falls below minus this. Stored positive.' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  maxLossPerDay?: number;
+
+  @ApiPropertyOptional({ description: 'IST minute-of-day to flatten at, e.g. 910 for 15:10.' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1439)
+  squareOffMinute?: number;
 }
 
 class RunPassDto {
@@ -94,6 +198,11 @@ export class AdminController {
     private readonly admin: AdminService,
     private readonly telemetry: TelemetryService,
     private readonly cognition: CognitionService,
+    private readonly executionQuery: ExecutionQueryService,
+    private readonly executionTrace: ExecutionTraceService,
+    private readonly paperExecution: PaperExecutionService,
+    private readonly executionAccounts: ExecutionAccountService,
+    private readonly executionProfiles: ExecutionProfileService,
   ) {}
 
   // -------------------------------------------------------------- overview
@@ -261,8 +370,10 @@ export class AdminController {
     @Query('status') status?: string,
     @Query('userId') userId?: string,
     @Query('hours') hours?: string,
+    /** 'sentinel' | 'user' — filters on whether an execution intent exists. */
+    @Query('source') source?: string,
   ) {
-    return this.admin.orders({ limit: Number(limit), status, userId, hours: Number(hours) });
+    return this.admin.orders({ limit: Number(limit), status, userId, hours: Number(hours), source });
   }
 
   @Get('orders/stats')
@@ -273,6 +384,119 @@ export class AdminController {
   @Get('trades')
   trades(@Query('limit') limit?: string, @Query('hours') hours?: string) {
     return this.admin.trades(Number(limit) || 100, Number(hours) || 24);
+  }
+
+  // ------------------------------------------------- Sentinel paper execution
+  //
+  // The operator surface for the execution loop. Reads are unrestricted within
+  // this already twice-authenticated controller; the two WRITES below are the
+  // only ways an operator can change what the loop does, and both are
+  // deliberately coarse — enable/disable a profile, or run one pass by hand.
+  // There is no endpoint that places an order directly, by design: the console
+  // observes and configures, it never trades. See paper-execution.module.ts.
+
+  @Get('execution/profiles')
+  listExecutionProfiles() {
+    return this.executionQuery.profiles();
+  }
+
+  @Get('execution/intents')
+  executionIntents(
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+    @Query('profileId') profileId?: string,
+    @Query('hours') hours?: string,
+  ) {
+    return this.executionQuery.intents({
+      limit: Number(limit) || 100,
+      status,
+      profileId,
+      hours: Number(hours) || 24,
+    });
+  }
+
+  @Get('execution/stats')
+  executionStats(@Query('hours') hours?: string) {
+    return this.executionQuery.stats(Number(hours) || 24);
+  }
+
+  /** The full backward+forward provenance of one intent. */
+  @Get('execution/trace/:intentId')
+  executionTraceByIntent(@Param('intentId') intentId: string) {
+    return this.executionTrace.byIntentId(intentId);
+  }
+
+  /** Same trace, entered from an order id — what the Orders table links to. */
+  @Get('execution/trace-by-order/:orderId')
+  executionTraceByOrder(@Param('orderId') orderId: string) {
+    return this.executionTrace.byOrderId(orderId);
+  }
+
+  /**
+   * Turn one profile on or off.
+   *
+   * The env flag `PAPER_EXECUTION_ENABLED` still gates the scheduler, so this
+   * alone cannot start the loop — enabling is deliberately two acts in two
+   * places (see ExecutionSchedulerService).
+   */
+  @Post('execution/profiles/:id/enabled')
+  setExecutionProfileEnabled(@Param('id') id: string, @Body() body: SetProfileEnabledDto) {
+    return this.admin.setExecutionProfileEnabled(id, body.enabled);
+  }
+
+  /**
+   * Run one profile's pass immediately, instead of waiting for the timer.
+   *
+   * This is the same `runProfile` the scheduler calls — not a test double and
+   * not a shortcut past any check. An operator triggering it gets exactly the
+   * behaviour the loop would have had on its next tick, including every policy
+   * gate and the idempotency key, so a hand-run during an active decision
+   * window correctly reports `duplicate` rather than opening a second position.
+   */
+  @Post('execution/profiles/:id/run')
+  runExecutionProfile(@Param('id') id: string) {
+    return this.paperExecution.runProfile(id);
+  }
+
+  // ---- Account binding ----------------------------------------------------
+  //
+  // The workflow §14 describes: pick a real TradeW account, grant it agent
+  // paper trading, bind a profile to it, arm, run. No endpoint here accepts or
+  // returns a credential — accounts are addressed by internal id throughout,
+  // and `eligibleAccounts` does not even SELECT `passwordHash`/`googleId`.
+
+  /** TradeW accounts a USER_PAPER profile may be bound to. No credentials. */
+  @Get('execution/accounts')
+  listExecutionAccounts(@Query('q') q?: string, @Query('limit') limit?: string) {
+    return this.executionAccounts.eligibleAccounts({ q, limit: Number(limit) || 50 });
+  }
+
+  /**
+   * Grant or revoke a user's consent to agent paper trading.
+   *
+   * The switch that lets an autonomous agent trade in a real person's account,
+   * so it is audited with the acting operator (`AdminAccessGuard` puts them on
+   * `req.user.sub`) in the same transaction as the flag.
+   */
+  @Post('execution/accounts/:userId/agent-trading')
+  setAgentPaperTrading(
+    @Param('userId') userId: string,
+    @Body() body: SetAgentPaperTradingDto,
+    @Req() req: { user?: { sub?: string } },
+  ) {
+    return this.executionAccounts.setAgentPaperTrading(userId, body.enabled, req.user?.sub ?? 'unknown');
+  }
+
+  /** Create a profile, or rebind an existing one to a different account/policy. */
+  @Post('execution/profiles')
+  upsertExecutionProfile(@Body() body: UpsertExecutionProfileDto, @Req() req: { user?: { sub?: string } }) {
+    return this.executionProfiles.upsert(body, req.user?.sub ?? 'unknown');
+  }
+
+  /** "Would this profile be allowed to trade right now?" — no side effects. */
+  @Get('execution/profiles/:id/authorization')
+  executionProfileAuthorization(@Param('id') id: string) {
+    return this.executionProfiles.authorization(id);
   }
 
   // ----------------------------------------------------------------- users

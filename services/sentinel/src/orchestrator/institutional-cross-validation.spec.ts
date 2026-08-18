@@ -21,7 +21,7 @@ function input(over: Partial<CrossValidationInput> = {}): CrossValidationInput {
   return {
     leadingBias: 'bullish',
     signals: [signal({ name: 'ema_trend' })],
-    optionChain: { pcr: 1.4, maxPain: 24000, callOIWall: null, putOIWall: null, strikesAnalysed: 20 },
+    optionChain: { pcr: 1.4, maxPain: 24000, callOIWall: null, putOIWall: null, strikesAnalysed: 20, frontExpiry: new Date('2026-08-20T00:00:00Z'), entries: [] },
     historical: {
       patternName: 'orb_retest',
       symbol: 'NIFTY',
@@ -72,7 +72,7 @@ describe('buildInstitutionalCrossValidation', () => {
     // Option positioning against the technical read is exactly what a trader
     // reading only price would miss.
     const cv = buildInstitutionalCrossValidation(
-      input({ optionChain: { pcr: 0.5, maxPain: 24000, callOIWall: null, putOIWall: null, strikesAnalysed: 20 } }),
+      input({ optionChain: { pcr: 0.5, maxPain: 24000, callOIWall: null, putOIWall: null, strikesAnalysed: 20, frontExpiry: new Date('2026-08-20T00:00:00Z'), entries: [] } }),
     );
     expect(cv.dissenting).toContain('option-chain');
     expect(cv.summary).toContain('Dissenting');
@@ -80,7 +80,7 @@ describe('buildInstitutionalCrossValidation', () => {
 
   it('reads a pinned spot as neutral regardless of PCR', () => {
     const cv = buildInstitutionalCrossValidation(
-      input({ lastPrice: 24001, optionChain: { pcr: 1.8, maxPain: 24000, callOIWall: null, putOIWall: null, strikesAnalysed: 20 } }),
+      input({ lastPrice: 24001, optionChain: { pcr: 1.8, maxPain: 24000, callOIWall: null, putOIWall: null, strikesAnalysed: 20, frontExpiry: new Date('2026-08-20T00:00:00Z'), entries: [] } }),
     );
     const oc = cv.dimensions.find((d) => d.id === 'option-chain')!;
     expect(oc.stance).toBe('neutral');
@@ -161,7 +161,7 @@ describe('buildInstitutionalCrossValidation', () => {
         signals: [],
         historical: null,
         behaviour: { read: 'continuation', direction: 'bullish', strength: 0.5 },
-        optionChain: { pcr: 0.5, maxPain: 24000, callOIWall: null, putOIWall: null, strikesAnalysed: 20 },
+        optionChain: { pcr: 0.5, maxPain: 24000, callOIWall: null, putOIWall: null, strikesAnalysed: 20, frontExpiry: new Date('2026-08-20T00:00:00Z'), entries: [] },
       }),
     );
     // structure bullish @0.5 vs option-chain bearish @0.85 → not a tie; assert

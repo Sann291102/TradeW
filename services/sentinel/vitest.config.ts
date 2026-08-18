@@ -83,6 +83,13 @@ export default defineConfig({
       // and the deferred, idempotent corpus warm-up that lets the background
       // watch reason without a human calling `/intelligence/reason` first.
       'src/sentinel-intelligence/sentinel-intelligence.spec.ts',
+      // The three-strike evaluation behind the paper-execution loop. Pure over
+      // an option chain — no Nest, no network. Pins the two properties whose
+      // absence would be silently expensive: a CALL's in-the-money strike sits
+      // BELOW spot (getting it backwards selects the opposite exposure to the
+      // published read), and an UNPRICED leg is never confused with one priced
+      // at zero.
+      'src/execution/strike-candidates.spec.ts',
     ],
     environment: 'node',
     // Deterministic and clock-injected throughout: a slow test is a real hang,
