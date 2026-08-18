@@ -103,6 +103,12 @@ export default defineConfig({
       // asserted, including that the reference mock's position-size
       // recommendation never appears.
       'src/components/sentinel/StrategyConditionsPanel.test.tsx',
+      // The one invariant the whole workspace is built on: the contract the
+      // operator selected is the contract the charts draw, and the "Sentinel
+      // reads this" badge appears only where the engine actually read it. Both
+      // failed silently for a week when the dashboard passed literal null
+      // strikes and the engine's own at-the-money pick decided what was drawn.
+      'src/components/sentinel/SentinelLiveCharts.test.tsx',
     ],
     environment: 'node',
     // The strategy components are rendered with renderToStaticMarkup, which

@@ -5,11 +5,11 @@ import Link from 'next/link';
 import { useSentinel, type SentinelUnavailable } from '@/lib/sentinel/useSentinel';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { buildDashboardModel } from '@/lib/sentinel/dashboardModel';
-import { DEFAULT_MARKET, findMarket } from '@/lib/sentinel/markets';
+import { findMarket } from '@/lib/sentinel/markets';
+import { SentinelWatchProvider, useSentinelWatch } from '@/lib/sentinel/WatchContext';
 import type { StrategyMode } from '@/lib/sentinel/types';
-import { MarketSelector } from '@/components/sentinel/MarketSelector';
-import { OptionChainPanel } from '@/components/sentinel/OptionChainPanel';
 import { SentinelConnectionBanner } from '@/components/sentinel/SentinelConnectionBanner';
+import { WatchContextBadge } from '@/components/sentinel/WatchContextBadge';
 import { SentinelDashboard } from '@/components/sentinel/dashboard/SentinelDashboard';
 import { SentinelStrategyWorkspace } from '@/components/sentinel/strategy/SentinelStrategyWorkspace';
 
@@ -42,9 +42,32 @@ import { SentinelStrategyWorkspace } from '@/components/sentinel/strategy/Sentin
  *     different service and are still perfectly readable. (`unavailable`)
  *
  * The word "reload" appears nowhere in either path, by design.
+ *
+ * ── ONE MARKET CONTEXT, OWNED ABOVE THIS COMPONENT ─────────────────────────
+ *
+ * `symbol` used to be `useState(DEFAULT_MARKET)` here, driving `/observe` and
+ * feeding a `MarketSelector` in the toolbar — while "Watch market" further down
+ * the page held a SECOND, unrelated copy behind its own `MarketSelector`, and
+ * the charts read a THIRD from their own option-chain poll. Selecting a market
+ * up here changed the observation and nothing else.
+ *
+ * The selection now lives in `SentinelWatchProvider`, and this component reads
+ * it like every other consumer. The toolbar's two duplicate controls are gone;
+ * the space reports the canonical selection (`WatchContextBadge`) instead of
+ * offering a competing way to set it. See `lib/sentinel/WatchContext.tsx` for
+ * the root cause and the full ownership map.
  */
 export function SentinelWorkspace() {
-  const [symbol, setSymbol] = useState(DEFAULT_MARKET);
+  return (
+    <SentinelWatchProvider>
+      <SentinelWorkspaceInner />
+    </SentinelWatchProvider>
+  );
+}
+
+function SentinelWorkspaceInner() {
+  const { selection } = useSentinelWatch();
+  const symbol = selection.symbol;
   const [strategyMode] = useState<StrategyMode>('auto');
   const { data, unavailable, reconnecting, loading, refreshing, updatedAt } = useSentinel(symbol, {
     strategyMode,
@@ -53,12 +76,9 @@ export function SentinelWorkspace() {
 
   const market = findMarket(symbol);
 
-  const controls = (
-    <>
-      <OptionChainPanel symbol={symbol} />
-      <MarketSelector value={symbol} onChange={setSymbol} />
-    </>
-  );
+  // The readout, not a second set of pickers. `WatchCreator` is where the
+  // market, expiry, side and strike are chosen — one editor, one source.
+  const controls = <WatchContextBadge />;
 
   // No observation, nothing cached, and nothing invented in its place — each
   // fault named for what it actually is.

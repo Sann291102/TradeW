@@ -49,6 +49,11 @@ export function useOptionCandles(
     let cancelled = false;
     setStatus('loading');
     setReason(null);
+    // The previous CONTRACT's bars are not this contract's bars. Cleared before
+    // the fetch so a strike or expiry change can never leave the old series
+    // available to draw — the premium scale of two adjacent strikes is close
+    // enough that a stale series looks entirely plausible on screen.
+    setCandles(null);
 
     fetchDhanOptionCandles(underlyingSymbol, expiryIso, strike, optionType, interval, days)
       .then((raw) => {

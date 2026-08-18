@@ -9,7 +9,6 @@ import { useCandles } from '@/lib/hooks/useCandles';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { useOptionCandles } from '@/lib/hooks/useOptionCandles';
 import { useOptionQuote } from '@/lib/hooks/useOptionQuote';
-import { useOptionChainStrikes } from '@/lib/sentinel/useOptionChainStrikes';
 import { findMarket } from '@/lib/sentinel/markets';
 import { seriesNote, type ChartFocus, type EngineChartFocus } from '@/lib/sentinel/chartFocus';
 import { fmt, pct } from '@/lib/format';
@@ -88,17 +87,29 @@ function sanitizeOptionCandles(candles: Candle[] | null, liveLtp?: number): Cand
  * "here's what kind of day this is" is immediately followed by "here's what
  * that looks like right now."
  *
- * Strikes are whatever the user picked in OptionChainPanel (lifted to page
- * state and passed down as `ceStrike`/`peStrike`); before a pick is made this
- * falls back to the ATM strike from its own chain poll, same default
- * OptionChainPanel itself uses. Every series is real Dhan OHLC via the same
- * hooks the Trade workspace's ChartPanel uses — no simulated fallback, so an
- * unreachable bridge or an illiquid contract says so instead of drawing
- * placeholder candles.
+ * ── THIS COMPONENT DOES NOT CHOOSE ITS OWN INSTRUMENTS ─────────────────────
+ *
+ * `symbol`/`expiry`/`ceStrike`/`peStrike` come from the canonical
+ * `WatchSelection` (`lib/sentinel/WatchContext.tsx`). It used to run its own
+ * `useOptionChainStrikes` poll and fall back to the nearest expiry and the ATM
+ * strike whenever the props were null — and the dashboard passed literal nulls
+ * from 2026-08-16, so it ALWAYS fell back. The panel therefore drew whichever
+ * contracts its own poll resolved to, which had nothing to do with what the
+ * operator had selected, and the strike controls appeared dead.
+ *
+ * The default now lives where the selection lives: the provider fills empty
+ * legs from the real chain's at-the-money row once, and every consumer reads
+ * that one answer. A leg that is still null here is genuinely unselected and is
+ * drawn as such — never quietly replaced with a contract nothing chose.
+ *
+ * Every series is real Dhan OHLC via the same hooks the Trade workspace's
+ * ChartPanel uses — no simulated fallback, so an unreachable bridge or an
+ * illiquid contract says so instead of drawing placeholder candles.
  *
  * ── TWO FOCUSES, IN PRECEDENCE ORDER ───────────────────────────────────────
  * Both answer the same question — "which series is Sentinel actually reading?"
- * — for two different engines, and both replace this component's defaults.
+ * — for two different engines. They supply the SERIES and the badges. They no
+ * longer supply the instrument: see "what is drawn / what is read" below.
  *
  *   1. `focus` (a watch the user created in services/sentinel-py). The most
  *      specific claim available: one contract, one timeframe, one panel marked
@@ -115,6 +126,7 @@ function sanitizeOptionCandles(candles: Candle[] | null, liveLtp?: number): Cand
 export function SentinelLiveCharts({
   symbol,
   marketName,
+  expiry: selectedExpiry = null,
   ceStrike,
   peStrike,
   focus = null,
@@ -123,7 +135,14 @@ export function SentinelLiveCharts({
 }: {
   symbol: string;
   marketName: string;
-  /** User-selected strikes from OptionChainPanel; null defaults to ATM. */
+  /**
+   * The canonical expiry. Null means the expiry list has not resolved yet (or
+   * the selection is on the underlying), and the contract panels say so rather
+   * than resolving a nearest expiry of their own — two components resolving
+   * "nearest" independently is how they end up on two different series.
+   */
+  expiry?: string | null;
+  /** The canonical CE/PE legs. Null is genuinely unselected, never "use ATM". */
   ceStrike: number | null;
   peStrike: number | null;
   /**
@@ -164,15 +183,47 @@ export function SentinelLiveCharts({
   const indexHeight = fullScreen ? 620 : 415;
   const optionHeight = fullScreen ? 300 : 192;
 
-  // A watch is the more specific claim, so it wins; `/observe`'s read of the
-  // selected market is the fallback, and this component's own defaults are the
-  // last resort (neither engine has said anything yet).
+  /**
+   * ── "WHAT IS DRAWN" AND "WHAT IS READ" ARE DIFFERENT QUESTIONS ───────────
+   *
+   * DRAWN is the canonical selection, always. It used to be
+   * `reading?.symbol ?? symbol` / `reading?.strike ?? ceStrike`, which let the
+   * `/observe` engine's own at-the-money resolution override the operator's
+   * pick — so even after the strike controls were reconnected, selecting the
+   * 24400 call would still have drawn 24200 whenever the engine had reported.
+   * The invariant this panel has to satisfy is that the chart shows what was
+   * selected; an engine that read something else is a fact to STATE, not a
+   * reason to redraw.
+   *
+   * READ is whichever engine reported, and it supplies only two things: the
+   * SERIES (so the bars beneath the operator's contract are the bars the engine
+   * evaluates — the 2026-08-16 rule) and the per-panel "Sentinel reads this"
+   * badges, which are now conditional on the engine's contract actually being
+   * the one on screen.
+   *
+   * A watch is the more specific claim and still wins over `/observe`; adopting
+   * a watch also repoints the canonical selection at its instrument, so the two
+   * agree by construction rather than by luck.
+   */
   const reading = focus ?? engineRead ?? null;
 
-  // The focus owns the market too: a watch on BANKNIFTY must not be drawn
-  // against whatever the market selector happens to be showing.
-  const chartSymbol = reading?.symbol ?? symbol;
-  const chartName = reading ? findMarket(reading.symbol).name : marketName;
+  const chartSymbol = symbol;
+  const chartName = marketName;
+
+  /**
+   * Is the contract the engine reported the same contract this panel is
+   * drawing? Only then does the badge belong on it.
+   *
+   * This is the explicit form of the distinction the three-strike design
+   * requires: the operator's watch context and the engine's own candidate
+   * resolution are allowed to differ, and when they do the screen has to say
+   * which is which rather than let a badge imply they are one thing.
+   */
+  const readsContract = (drawnStrike: number | null): boolean =>
+    reading != null &&
+    reading.symbol === chartSymbol &&
+    drawnStrike != null &&
+    reading.strike === drawnStrike;
 
   // One series for every panel when either engine has reported. Both read the
   // index and the contracts on the SAME timeframe (`_candles_for` in the
@@ -194,22 +245,18 @@ export function SentinelLiveCharts({
   const { quotes: liveIndices } = useDhanLiveFeed();
   const liveIndex = liveIndices?.find((q) => q.symbol === chartSymbol) ?? null;
 
-  // Independent chain poll (nearest expiry + ATM fallback) — decoupled from
-  // OptionChainPanel's own poll, same as every other panel on this page
-  // fetching what it needs rather than threading a shared cache through.
-  const chain = useOptionChainStrikes(chartSymbol, true);
+  // The canonical selection, never a nearest-expiry poll of this component's
+  // own — two components resolving "nearest" independently is what made the
+  // panel and the controls disagree in the first place.
+  const expiry = selectedExpiry;
 
-  // The reading engine's own expiry wins: it is the contract being read, and
-  // the nearest expiry resolved here may not be it.
-  const expiry = reading?.expiry ?? chain.expiry;
-
-  // The reading engine pins BOTH legs to its own strike. That is the
-  // comparison the panel exists for — the leg Sentinel is reading beside its
-  // opposite, so "which side is actually moving with the index" is one glance
-  // rather than two screens. A watch with no strike is an index watch; it
-  // falls through to the user's own pick and then ATM, exactly as before.
-  const effectiveCe = reading?.strike ?? ceStrike ?? chain.ce[chain.atmIndex]?.strike ?? null;
-  const effectivePe = reading?.strike ?? peStrike ?? chain.pe[chain.atmIndex]?.strike ?? null;
+  // Both legs come from the selection. Adopting a watch writes ITS strike into
+  // both, which preserves the pair comparison this panel exists for — the leg
+  // Sentinel is reading beside its opposite, so "which side is actually moving
+  // with the index" is one glance rather than two screens — while leaving the
+  // operator free to move either leg afterwards.
+  const effectiveCe = ceStrike;
+  const effectivePe = peStrike;
 
   const { candles: ceCandles, status: ceCandlesStatus, reason: ceReason } = useOptionCandles(
     chartSymbol,
@@ -248,7 +295,9 @@ export function SentinelLiveCharts({
     if (strike == null) {
       return {
         title: side === 'CE' ? 'No call strike selected' : 'No put strike selected',
-        detail: `Select a ${side} strike from Option Chain to watch it here.`,
+        // Names the one control that sets it. The Option Chain button this used
+        // to point at was the duplicate that was removed on 2026-08-18.
+        detail: `Choose an expiry and a ${side} strike under "Watch market" to draw it here.`,
       };
     }
     if (reason === 'api-unreachable') {
@@ -283,11 +332,30 @@ export function SentinelLiveCharts({
    */
   const reads: { index: boolean; ce: boolean; pe: boolean } = focus
     ? {
-        index: focus.strike == null || !focus.optionType,
-        ce: focus.strike != null && focus.optionType === 'CE',
-        pe: focus.strike != null && focus.optionType === 'PE',
+        index: focus.symbol === chartSymbol && (focus.strike == null || !focus.optionType),
+        ce: focus.optionType === 'CE' && readsContract(effectiveCe),
+        pe: focus.optionType === 'PE' && readsContract(effectivePe),
       }
-    : (engineRead?.reads ?? { index: false, ce: false, pe: false });
+    : {
+        index: (engineRead?.reads.index ?? false) && engineRead?.symbol === chartSymbol,
+        ce: (engineRead?.reads.ce ?? false) && readsContract(effectiveCe),
+        pe: (engineRead?.reads.pe ?? false) && readsContract(effectivePe),
+      };
+
+  /**
+   * The engine reported a contract, and it is not the one on screen.
+   *
+   * The honest case rather than the error case: `/observe` resolves its own
+   * at-the-money pair, and the operator is free to watch a different strike.
+   * Saying which contract Sentinel actually read is the whole point — it is the
+   * difference between "Sentinel is reading this chart" and "Sentinel is
+   * reading this market, at a strike you did not pick", and only one of those
+   * is true at a time.
+   */
+  const engineContract =
+    reading && reading.symbol === chartSymbol && reading.strike != null ? reading.strike : null;
+  const engineReadElsewhere =
+    engineContract != null && engineContract !== effectiveCe && engineContract !== effectivePe;
 
   const indexLabel = String(indexInterval);
   const optionLabel = String(optionInterval);
@@ -324,9 +392,12 @@ export function SentinelLiveCharts({
       </div>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:grid-rows-2">
+        {/* The instrument, not just the market's display name: the panel's
+            whole contract is that what is drawn is what was selected, and that
+            is only checkable if the identity is on screen. */}
         <div className="lg:col-start-1 lg:row-span-2">
           <ChartTile
-            title={chartName}
+            title={`${chartName} · ${chartSymbol}`}
             badge="IDX"
             interval={indexLabel}
             reading={reads.index}
@@ -397,6 +468,25 @@ export function SentinelLiveCharts({
           which is precisely the state this panel used to be in. */}
       {reading && (
         <p className="mt-3 text-[10.5px] leading-relaxed text-teal">{seriesNote(reading.series)}</p>
+      )}
+
+      {/*
+        The operator is watching a strike the engine did not read.
+
+        A normal, expected state — `/observe` resolves its own at-the-money
+        pair and the operator may deliberately watch a different one, and the
+        three-strike evaluation resolves its candidates from the real chain
+        independently of both. What is NOT acceptable is leaving it implied:
+        without this line, a chart of the 24400 call sitting under the heading
+        "What Sentinel is reading" claims an evaluation of a contract nothing
+        evaluated. The badges above are already withheld from those panels;
+        this says why.
+      */}
+      {engineReadElsewhere && (
+        <p className="mt-1.5 text-[10.5px] leading-relaxed text-amber">
+          Sentinel read the {engineContract} strike for {chartSymbol} on this observation, which is not the contract
+          drawn above. The option panels show the strikes you selected; they are not the ones being evaluated.
+        </p>
       )}
 
       {/* Said only when it is true and only when it is useful: the provider

@@ -8,6 +8,8 @@ import { focusFromTimeline, type ChartFocus } from '@/lib/sentinel/chartFocus';
 import { sentinelKeys } from '@/lib/sentinel/queryKeys';
 import { pollIntervalMs } from '@/lib/sentinel/retryPolicy';
 import { useWatchSessions } from '@/lib/sentinel/useStrategyWorkspace';
+import { useSentinelWatch } from '@/lib/sentinel/WatchContext';
+import { instrumentLabel } from '@/lib/sentinel/watchState';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { StrategyFocusPanel } from './StrategyFocusPanel';
 import { TimelineEventCard } from './TimelineEventCard';
@@ -105,18 +107,29 @@ export function StrategyTimelineFeed({
    * polling.
    */
   const { watches, loading } = useWatchSessions();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Default the selection to a live watch, and keep it pointing at something
-  // that still exists. The user's own choice outranks every poll after it.
+  /**
+   * WHICH watch is displayed is canonical state, not feed-local state.
+   *
+   * It used to be a `useState` here, defaulted to any live watch. That made the
+   * feed's instrument independent of everything else on the page: the feed
+   * could report NIFTY 24350 CE while the market control said SENSEX and the
+   * charts drew a third contract, because each had picked its own. Selecting a
+   * watch now REPOINTS the whole workspace at that watch's instrument
+   * (`adoptWatch`), and changing the market/expiry/strike re-resolves which
+   * watch — if any — describes what is on screen (`syncWatches`).
+   */
+  const { selection, adoptWatch, syncWatches } = useSentinelWatch();
+  const selectedId = selection.selectedWatchId;
+
+  /**
+   * Reconcile against the real list whenever it changes. `syncWatches` returns
+   * the same selection object when nothing moved, so the 10s re-poll does not
+   * churn the workspace.
+   */
   useEffect(() => {
-    if (watches.length === 0) return;
-    setSelectedId((current) =>
-      current !== null && watches.some((w) => w.id === current)
-        ? current
-        : (watches.find((w) => w.state !== 'EXITED')?.id ?? watches[0]?.id ?? null),
-    );
-  }, [watches]);
+    syncWatches(watches);
+  }, [watches, syncWatches]);
 
   const timelineQuery = useQuery({
     queryKey: sentinelKeys.timeline(userId, selectedId ?? ''),
@@ -211,6 +224,20 @@ export function StrategyTimelineFeed({
   const selected = watches.find((w) => w.id === selectedId) ?? null;
   const isClosed = timeline?.watch.state === 'EXITED';
 
+  /**
+   * What the workspace is pointed at right now, named the same way the charts
+   * and the toolbar name it. Used only for the "no watch here" empty state, so
+   * that sentence names a contract rather than saying "this instrument".
+   */
+  const currentInstrument = selection.underlyingOnly
+    ? selection.symbol
+    : instrumentLabel(
+        selection.symbol,
+        selection.expiry,
+        selection.optionType === 'CE' ? selection.callStrike : selection.putStrike,
+        selection.optionType,
+      );
+
   if (loading) return null;
 
   if (watches.length === 0) {
@@ -238,10 +265,27 @@ export function StrategyTimelineFeed({
            */
           <select
             value={selectedId ?? ''}
-            onChange={(e) => setSelectedId(e.target.value)}
+            /*
+             * Selecting here adopts the watch as the CANONICAL selection, so
+             * the charts, `/observe`, the watch-market controls and the toolbar
+             * readout all move to that instrument together. Publishing a
+             * feed-local id instead is what let the feed name one contract
+             * while the rest of the page was on another.
+             */
+            onChange={(e) => {
+              const next = watches.find((w) => w.id === e.target.value);
+              if (next) adoptWatch(next);
+            }}
             className="max-w-[190px] truncate rounded-lg border border-border bg-bg px-2 py-1 text-[11px] text-text"
             aria-label="Select which watch to display"
           >
+            {/*
+              Present only while no watch describes what is on screen. Without
+              it a `<select>` whose value is '' silently displays its first
+              option, so the feed would LOOK like it was reporting that watch
+              while showing nothing for it.
+            */}
+            {selectedId === null && <option value="">No watch on this instrument</option>}
             {watches.map((w) => (
               <option key={w.id} value={w.id}>
                 {[w.symbol, w.strike, w.optionType].filter(Boolean).join(' ')} ({STATE_WORD[w.state]})
@@ -266,7 +310,21 @@ export function StrategyTimelineFeed({
           </p>
         )}
 
-        {error === 'notFound' || visible.length === 0 ? (
+        {selectedId === null ? (
+          /*
+           * Watches exist, but none of them is on the instrument currently
+           * selected. Said plainly rather than falling through to "conditions
+           * not yet met", which would claim a watch is running on this contract
+           * when the running watch is on a different one. The previous watch is
+           * NOT stopped — it keeps evaluating in services/sentinel-py, and
+           * picking it in the selector above brings the whole workspace back to
+           * its instrument.
+           */
+          <Empty>
+            No watch is running on {currentInstrument}. Start one under &ldquo;Watch market&rdquo;, or pick another
+            watch above to follow it instead.
+          </Empty>
+        ) : error === 'notFound' || visible.length === 0 ? (
           <Empty>
             {error === 'notFound'
               ? 'Start watching a strategy to see live updates.'

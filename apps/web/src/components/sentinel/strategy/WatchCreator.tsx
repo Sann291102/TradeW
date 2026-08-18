@@ -5,10 +5,9 @@ import { Badge, Button, cn } from '@tradew/ui';
 import { ApiError } from '@/lib/api';
 import { MarketSelector } from '@/components/sentinel/MarketSelector';
 import { formatLtp, strikeOptionLabel } from '@/lib/sentinel/optionChain';
-import { useExpiries } from '@/lib/sentinel/useExpiries';
-import { useOptionChainStrikes } from '@/lib/sentinel/useOptionChainStrikes';
+import { useSentinelWatch } from '@/lib/sentinel/WatchContext';
 import { formatExpiry } from '@/lib/sentinel/watchModel';
-import type { CreateWatchInput, OptionType, UserStrategy, WatchSession } from '@/lib/sentinel/strategyApi';
+import type { CreateWatchInput, UserStrategy, WatchSession } from '@/lib/sentinel/strategyApi';
 import { ChevronDownIcon } from '@/components/shell/icons';
 
 /**
@@ -16,13 +15,32 @@ import { ChevronDownIcon } from '@/components/shell/icons';
  * "Start watching".
  *
  * The pickers are the existing live Dhan bridge, not a new data path — the
- * same expiry list and option chain the Option Chain panel reads. The one
- * addition is that the expiry is CHOSEN here rather than resolved to the
- * nearest, because a watch may deliberately be on a later series.
+ * same expiry list and option chain the charts read. The one addition is that
+ * the expiry is CHOSEN here rather than resolved to the nearest, because a
+ * watch may deliberately be on a later series.
  *
  * A symbol with no options market is not a dead end: the underlying itself can
  * be watched, which is what `strike`/`optionType`/`expiry` being nullable in
  * the API is for.
+ *
+ * ── THIS IS THE SOURCE OF TRUTH FOR THE WHOLE WORKSPACE ────────────────────
+ *
+ * Every control here writes the canonical `WatchSelection`
+ * (`lib/sentinel/WatchContext.tsx`) rather than local state, so choosing a
+ * market, expiry, side or strike moves the three charts, `/observe`, the
+ * Strategy Feed and the toolbar readout together. It previously held its own
+ * private copy of all four behind its own `MarketSelector`, which is why this
+ * section and the (now removed) toolbar controls could sit on different markets
+ * at the same time.
+ *
+ * `chain` and `expiries` are read from the same context: they are ONE poll for
+ * the page. Do not re-add a local `useOptionChainStrikes` here — three
+ * concurrent 4s polls of a bridge that serialises option calls behind a 3.1s
+ * floor is what this replaced.
+ *
+ * The STRIKE dropdown edits whichever leg the Side toggle names. Both legs are
+ * carried in the selection because the panel above draws both; picking CE and
+ * setting 24200 leaves the put leg exactly where it was.
  */
 export function WatchCreator({
   strategy,
@@ -33,52 +51,40 @@ export function WatchCreator({
   onStart: (input: CreateWatchInput) => Promise<WatchSession>;
   onStarted?: (watch: WatchSession) => void;
 }) {
-  const [symbol, setSymbol] = useState('NIFTY');
-  const [expiry, setExpiry] = useState<string | null>(null);
-  const [optionType, setOptionType] = useState<OptionType>('CE');
-  const [strike, setStrike] = useState<number | null>(null);
-  const [underlyingOnly, setUnderlyingOnly] = useState(false);
+  const {
+    selection,
+    expiries,
+    chain,
+    setMarket,
+    setExpiry,
+    setSide,
+    setCallStrike,
+    setPutStrike,
+    setUnderlying,
+  } = useSentinelWatch();
+
+  const { symbol, expiry, optionType, underlyingOnly } = selection;
+  const strike = optionType === 'CE' ? selection.callStrike : selection.putStrike;
+  const setStrike = optionType === 'CE' ? setCallStrike : setPutStrike;
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const expiries = useExpiries(symbol);
   const hasOptions = expiries.status === 'ready';
-  // Only fetch a chain once an expiry is settled, and never for a watch on the
-  // underlying — the ladder would be unused network traffic against a
-  // rate-limited upstream.
-  const chain = useOptionChainStrikes(symbol, hasOptions && !underlyingOnly, expiry);
   const rows = optionType === 'CE' ? chain.ce : chain.pe;
 
-  // A new market means a new chain: nothing about the previous selection
-  // carries over, and a NIFTY strike on BANKNIFTY would be nonsense.
+  // Clearing the market/expiry/strike on a market change, defaulting the
+  // nearest expiry, forcing the underlying on a CONFIRMED 'none' and defaulting
+  // the ATM strike all moved into the provider — they are facts about the
+  // canonical selection, not about this form, and the charts need them applied
+  // whether or not this form is on screen. The 2026-08-17 rule survives the
+  // move intact: only a confirmed absence of options forces the underlying, an
+  // unreadable list never does.
+  //
+  // What stays local is this form's own transient state: the submit error.
   useEffect(() => {
-    setExpiry(null);
-    setStrike(null);
-    setUnderlyingOnly(false);
     setError(null);
   }, [symbol]);
-
-  // Default to the nearest expiry once the list resolves; the user can change it.
-  //
-  // Only a CONFIRMED absence of options forces the underlying. An unreadable
-  // list must not: silently switching the watch to the underlying because the
-  // feed hiccuped starts a watch the user did not ask for, on a different
-  // instrument, without telling them — and it did exactly that on 2026-08-17.
-  useEffect(() => {
-    if (expiries.status === 'ready' && expiry === null) setExpiry(expiries.nearest);
-    if (expiries.status === 'none') setUnderlyingOnly(true);
-  }, [expiries.status, expiries.nearest, expiry]);
-
-  // Default to the at-the-money strike when a ladder arrives, and drop a
-  // selection that the new ladder does not contain.
-  useEffect(() => {
-    if (chain.status !== 'live') return;
-    setStrike((current) => {
-      if (current !== null && rows.some((r) => r.strike === current)) return current;
-      return rows[chain.atmIndex]?.strike ?? null;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chain.status, chain.atmIndex, chain.expiry, optionType]);
 
   // ── WHAT COUNTS AS "WATCHING THE UNDERLYING" ──────────────────────────────
   //
@@ -123,7 +129,7 @@ export function WatchCreator({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">Watch</span>
-        <MarketSelector value={symbol} onChange={setSymbol} />
+        <MarketSelector value={symbol} onChange={setMarket} />
         {expiries.status === 'loading' && <span className="text-[11px] text-faint">checking expiries…</span>}
       </div>
 
@@ -143,7 +149,7 @@ export function WatchCreator({
             <input
               type="checkbox"
               checked={underlyingOnly}
-              onChange={(e) => setUnderlyingOnly(e.target.checked)}
+              onChange={(e) => setUnderlying(e.target.checked)}
               className="h-3.5 w-3.5 accent-teal"
             />
             Watch {symbol} itself instead of an option
@@ -160,10 +166,11 @@ export function WatchCreator({
             <Field label="Expiry">
               <Select
                 value={expiry ?? ''}
-                onChange={(v) => {
-                  setExpiry(v || null);
-                  setStrike(null);
-                }}
+                // No second `setStrike(null)` here: `selectExpiry` already
+                // drops both legs, because the 24200 of one series is a
+                // different contract from the 24200 of the next. One rule, one
+                // place.
+                onChange={(v) => setExpiry(v || null)}
                 disabled={!hasOptions || underlyingOnly}
                 ariaLabel="Expiry"
               >
@@ -184,7 +191,7 @@ export function WatchCreator({
                     type="button"
                     aria-pressed={optionType === side}
                     disabled={underlyingOnly}
-                    onClick={() => setOptionType(side)}
+                    onClick={() => setSide(side)}
                     className={cn(
                       'flex-1 rounded-md py-1.5 text-[12px] font-bold transition-colors duration-micro disabled:opacity-50',
                       optionType === side
@@ -243,7 +250,7 @@ export function WatchCreator({
               <input
                 type="checkbox"
                 checked={underlyingOnly}
-                onChange={(e) => setUnderlyingOnly(e.target.checked)}
+                onChange={(e) => setUnderlying(e.target.checked)}
                 className="h-3.5 w-3.5 accent-teal"
               />
               Watch {symbol} itself instead of an option

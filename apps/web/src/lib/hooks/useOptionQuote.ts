@@ -94,6 +94,18 @@ export function useOptionQuote(
 
     let cancelled = false;
     setStatus('loading');
+    /**
+     * Drop the previous contract's quote before loading this one's.
+     *
+     * Distinct from the `!leg` branch below, which deliberately KEEPS the last
+     * value when a row momentarily vanishes from the chain for the SAME
+     * contract. Here the contract itself changed, and holding the old number
+     * leaks one strike's price into another's panel: `SentinelLiveCharts` feeds
+     * this LTP to `sanitizeOptionCandles`, which rescales the whole series
+     * against it, so a stale quote does not merely mislabel the last price — it
+     * silently re-prices every bar of the new contract's chart.
+     */
+    setQuote(null);
 
     const load = async () => {
       const chain = await loadChainShared(underlyingSymbol, expiryIso);

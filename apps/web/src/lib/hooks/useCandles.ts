@@ -55,6 +55,16 @@ export function useCandles(
     let cancelled = false;
     setStatus('loading');
     setReason(null);
+    // Drop the PREVIOUS instrument's bars before fetching the new one's.
+    //
+    // Without this the hook keeps returning the old symbol's series — merged
+    // with the NEW symbol's live tick by `mergeLiveCandle` below — for as long
+    // as the fetch is in flight. Callers that gate on `status` never draw it,
+    // but the returned value is genuinely two instruments spliced together, and
+    // a chart that switches market must not have that array available to
+    // render at all. The 60s refresh timer calls `load()` directly and does not
+    // clear, so a settled series is never blanked by a routine refetch.
+    setCandles(null);
 
     async function load() {
       if (!symbol) {

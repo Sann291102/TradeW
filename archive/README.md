@@ -218,3 +218,26 @@ from `lib/sentinel/indicators.ts`).
   consumer, and the module is pure and independently tested. `chartFocus.ts`'s
   `DAYS_FOR` table used to be documented as mirroring this card's tabs; that
   comment now records that the table owns the mapping outright.
+
+**Added 2026-08-18 — duplicate market/strike selectors removed from the Sentinel
+toolbar:** `web-sentinel-toolbar-option-chain-panel-2026-08-18.tsx.txt` — the
+`apps/web/src/components/sentinel/OptionChainPanel.tsx` toolbar control (a
+compact button expanding CE and PE strike dropdowns for the selected market's
+nearest expiry). The `MarketSelector` beside it was NOT archived — that
+component is still in the tree and still used, by `WatchCreator`; only the
+duplicate *instance* in the toolbar was removed.
+- **Why:** the page carried four independent copies of "which market/strike am
+  I on" (`SentinelWorkspace`'s `useState`, this panel's own `ceStrike`/`peStrike`,
+  `WatchCreator`'s full private copy behind a second `MarketSelector`, and
+  `SentinelLiveCharts`' own nearest-expiry/ATM chain poll). This panel's picks
+  had reached nothing at all since commit 5c651e2 (2026-08-11), which dropped
+  the charts from the page along with the `onSelectionChange` wiring; commit
+  5349103 put the charts back with `ceStrike={null} peStrike={null}` hardcoded
+  and the wiring was never restored. So the operator had two market dropdowns
+  that never agreed and a strike picker connected to nothing.
+- **Replaced by:** one canonical `WatchSelection`
+  (`apps/web/src/lib/sentinel/watchState.ts` + `WatchContext.tsx`), edited in the
+  "Watch market" section and read by the charts, `/observe`, the Strategy Feed
+  and the new `WatchContextBadge` readout that now occupies the freed toolbar
+  space. The chain poll behind this panel is gone with it — the provider makes
+  exactly one option-chain read for the whole page.

@@ -2,6 +2,7 @@
 
 import { cn } from '@tradew/ui';
 import type { Direction, TimelineEvent, TimelineWatch } from '@/lib/sentinel/sentinelPy';
+import { formatExpiry } from '@/lib/sentinel/watchModel';
 
 /**
  * One event in the strategy feed.
@@ -113,8 +114,19 @@ function DirectionTag({ direction }: { direction: Direction }) {
   );
 }
 
+/**
+ * The full contract identity, expiry included.
+ *
+ * The expiry was previously omitted, which left "NIFTY 24200 CE" ambiguous
+ * across series — two different contracts with different premiums print the
+ * same line. Every feed item names the instrument it is actually about, taken
+ * from the engine's own record of the watch, so an event can never be read as
+ * belonging to whatever the screen happens to be showing.
+ */
 function instrumentLabel(watch: TimelineWatch): string {
-  return [watch.symbol, watch.strike, watch.optionType].filter(Boolean).join(' ');
+  return [watch.symbol, watch.expiry ? formatExpiry(watch.expiry) : null, watch.strike, watch.optionType]
+    .filter(Boolean)
+    .join(' ');
 }
 
 function timeLabel(iso: string): string {

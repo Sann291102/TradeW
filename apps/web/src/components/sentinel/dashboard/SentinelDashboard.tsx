@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import type { DashboardModel } from '@/lib/sentinel/dashboardModel';
 import { engineFocusFrom } from '@/lib/sentinel/chartFocus';
+import { useSentinelWatch } from '@/lib/sentinel/WatchContext';
 import { StatusCards } from './StatusCards';
 import { StrategyTimelineFeed, type WatchObservation } from '../StrategyTimelineFeed';
 import { StrategyConditionsPanel } from '../StrategyConditionsPanel';
@@ -83,9 +84,21 @@ export function SentinelDashboard({
   strategyWorkspace?: ReactNode;
 }) {
   /**
-   * The watch the user has selected in the feed, and what the engine last
-   * read off it. Held here because this is the only component that renders
-   * both the feed (which owns the selector) and the charts.
+   * The canonical market/strike selection — the same object `WatchCreator`
+   * writes, `useSentinel` observes and `WatchContextBadge` reports.
+   *
+   * The charts used to be handed `ceStrike={null} peStrike={null}` literals and
+   * fell back to their own option-chain poll, which is why the strike controls
+   * appeared not to work. They now draw the selection, and nothing else.
+   */
+  const { selection, instruments } = useSentinelWatch();
+
+  /**
+   * What the engine last read off the selected watch. The SELECTION of that
+   * watch is no longer held here — it lives in the canonical state, so the
+   * feed, the charts and the market controls cannot disagree about which watch
+   * is current. This is only the timeline/reading payload that comes back for
+   * it, which the conditions panel and the reading footer render.
    */
   const [observation, setObservation] = useState<WatchObservation | null>(null);
 
@@ -148,12 +161,18 @@ export function SentinelDashboard({
         the watch's market/strike and to the engine's own timeframe, and the
         reading footer appears beneath it. See the header comment for why the
         old `{observation && …}` gate was the wrong lever.
+
+        `expiry`/`ceStrike`/`peStrike` come from the canonical selection. They
+        were literal `null`s from 2026-08-16 until 2026-08-18, which left the
+        component resolving its own nearest expiry and ATM strikes — so the
+        strike the operator picked and the contract on screen were unrelated.
       */}
       <SentinelLiveCharts
         symbol={symbol}
         marketName={marketName}
-        ceStrike={null}
-        peStrike={null}
+        expiry={selection.expiry}
+        ceStrike={instruments.call?.strike ?? null}
+        peStrike={instruments.put?.strike ?? null}
         focus={observation?.focus ?? null}
         engineRead={engineRead}
         footer={
