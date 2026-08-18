@@ -79,7 +79,18 @@ async function proxy(request: NextRequest, path: string[]): Promise<NextResponse
   const text = await res.text();
   return new NextResponse(text, {
     status: res.status,
-    headers: { 'content-type': res.headers.get('content-type') ?? 'application/json' },
+    headers: {
+      'content-type': res.headers.get('content-type') ?? 'application/json',
+      // services/api answers every admin read with `Cache-Control: no-store`.
+      // Rebuilding the response here dropped it, so what reached the browser
+      // carried NO cache directive at all — measured, not assumed. Every page
+      // on this console is a `usePolling` loop over these exact URLs, and a
+      // polled URL with no directive and no validator is one heuristic-freshness
+      // decision away from a console that repaints the same rows forever while
+      // the operator watches the metric cards move. Restated explicitly rather
+      // than forwarded, so the guarantee holds even if upstream stops sending it.
+      'cache-control': 'no-store',
+    },
   });
 }
 
