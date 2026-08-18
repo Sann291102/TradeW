@@ -140,7 +140,29 @@ export interface ChartPanelProps extends DockPanelContentProps {
    *  applied to the underlying's chart, not to a single contract's premium
    *  chart, where a strike line would be meaningless. */
   priceLines?: ChartPriceLine[];
+  /**
+   * Grow the chart to fill the panel's available height instead of drawing it
+   * at a fixed 280px.
+   *
+   * ── WHY THIS IS OPT-IN ────────────────────────────────────────────────────
+   *
+   * `TradeChart` wraps lightweight-charts, which sizes imperatively and needs a
+   * NUMBER, not a CSS length — so "fill the parent" has to be measured and
+   * passed down rather than expressed as `height: 100%`. Measuring only works
+   * when an ancestor actually constrains the height; in an auto-height parent
+   * the measurement and the content would chase each other.
+   *
+   * The Trade page constrains it (grid row → flex column → `flex-1`), so it
+   * opts in. The dock (`panel-registry`) does not, and keeps the fixed height
+   * it has always had. Hence a prop rather than a behaviour change.
+   */
+  fillHeight?: boolean;
 }
+
+/** Chart height for callers that do not opt into `fillHeight`. */
+const DEFAULT_CHART_HEIGHT = 280;
+/** Floor for the measured height, so a mid-layout reading cannot collapse it. */
+const MIN_FILLED_CHART_HEIGHT = 260;
 
 export default function ChartPanel({
   className,
@@ -152,6 +174,7 @@ export default function ChartPanel({
   initialExpiryLabel,
   initialView,
   priceLines,
+  fillHeight = false,
 }: ChartPanelProps) {
   const [view, setView] = useState<View>(initialView ?? 'charts');
   const [tf, setTf] = useState<(typeof TIMEFRAMES)[number]>('15m');
@@ -233,7 +256,37 @@ export default function ChartPanel({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [maximized]);
-  const chartHeight = maximized ? Math.max(320, viewportH - 180) : 280;
+  /**
+   * The chart's own box, measured.
+   *
+   * lightweight-charts takes a pixel height, not a CSS length, so filling the
+   * panel means observing the space the flex layout gave us and handing that
+   * number down. The observed element is `relative` with the chart absolutely
+   * positioned inside it (see the Charts view below) — that is what keeps this
+   * from oscillating: an `absolute` child contributes nothing to its parent's
+   * height, so the measurement cannot be moved by the thing it sizes.
+   */
+  const chartAreaRef = useRef<HTMLDivElement | null>(null);
+  const [measuredChartH, setMeasuredChartH] = useState(0);
+  useEffect(() => {
+    if (!fillHeight) return;
+    const el = chartAreaRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(([entry]) => {
+      const h = Math.round(entry.contentRect.height);
+      // Only react to real movement. Sub-pixel jitter from the surrounding
+      // layout would otherwise re-render the chart on every frame.
+      setMeasuredChartH((prev) => (Math.abs(prev - h) > 1 ? h : prev));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fillHeight, view]);
+
+  const chartHeight = maximized
+    ? Math.max(320, viewportH - 180)
+    : fillHeight && measuredChartH > 0
+      ? Math.max(MIN_FILLED_CHART_HEIGHT, measuredChartH)
+      : DEFAULT_CHART_HEIGHT;
 
   // Arriving here is a client-side navigation (router.push from the Option
   // Chain's "Open chart" action) — this component doesn't remount, so local
@@ -519,44 +572,61 @@ export default function ChartPanel({
               </div>
             </div>
           )}
-          {/* `relative` anchors the expand control to the chart's own corner. */}
-          <div className="relative flex flex-1 items-center justify-center">
+          {/* `relative` anchors the expand control to the chart's own corner.
+              Under `fillHeight` it does a second job: it is the measured box
+              (see chartAreaRef), and the chart sits `absolute inset-0` inside
+              it so the content can never push the box it is measured against.
+              Without `fillHeight` the layout is exactly as it was — the chart
+              stays in flow at its fixed height. */}
+          <div
+            ref={chartAreaRef}
+            className={cn(
+              'relative flex items-center justify-center',
+              fillHeight ? 'min-h-0 flex-1' : 'flex-1',
+            )}
+          >
             <ChartExpandButton expanded={maximized} onToggle={() => setMaximized((m) => !m)} />
-            {contract ? (
-              contractCandles ? (
-                <TradeChart candles={contractCandles} height={chartHeight} liveLast={contractLtp ?? undefined} fitKey={`${q.symbol}|${contractKey}|${tf}`} intervalMinutes={TF_MINUTES[tf]} aria-label={`${q.symbol} ${contract.strike} ${contract.optionType} chart`} />
-              ) : optionCandlesStatus === 'loading' ? (
+            {/* `absolute inset-0` is doing the load-bearing work: it gives the
+                chart a definite box AND takes it out of flow, so it cannot
+                contribute to the height of the element being measured above.
+                The expand button stays clickable over it on its own `z-20`. */}
+            <div className={cn(fillHeight && !maximized && 'absolute inset-0')}>
+              {contract ? (
+                contractCandles ? (
+                  <TradeChart candles={contractCandles} height={chartHeight} liveLast={contractLtp ?? undefined} fitKey={`${q.symbol}|${contractKey}|${tf}`} intervalMinutes={TF_MINUTES[tf]} aria-label={`${q.symbol} ${contract.strike} ${contract.optionType} chart`} />
+                ) : optionCandlesStatus === 'loading' ? (
+                  <div className="w-full animate-pulse rounded bg-hover" style={{ height: chartHeight }} />
+                ) : (
+                  <DataUnavailable
+                    title="No traded history for this contract"
+                    detail={`Dhan has no traded candles for ${q.symbol} ${contract.strike} ${contract.optionType}. Nothing is drawn — this panel no longer derives a Black-Scholes shape to fill the gap.`}
+                  />
+                )
+              ) : candles ? (
+                <TradeChart
+                  candles={candles}
+                  height={chartHeight}
+                  liveLast={liveMatch?.ltp}
+                  fitKey={`${q.symbol}|${tf}`}
+                  intervalMinutes={TF_MINUTES[tf]}
+                  priceLines={priceLines}
+                  drawings={drawings}
+                  aria-label={`${q.symbol} ${tf} chart`}
+                />
+              ) : candlesStatus === 'loading' ? (
                 <div className="w-full animate-pulse rounded bg-hover" style={{ height: chartHeight }} />
+              ) : candlesReason === 'api-unreachable' ? (
+                <DataUnavailable
+                  title="Market data API not connected"
+                  detail="The Dhan live-feed bridge (port 4600) is not reachable, so no real candles could be loaded. Start it and reload — no simulated series will be drawn in the meantime."
+                />
               ) : (
                 <DataUnavailable
-                  title="No traded history for this contract"
-                  detail={`Dhan has no traded candles for ${q.symbol} ${contract.strike} ${contract.optionType}. Nothing is drawn — this panel no longer derives a Black-Scholes shape to fill the gap.`}
+                  title="No history available"
+                  detail={`Dhan returned no candles for ${q.symbol} at ${tf}. Try a different timeframe, or check that this symbol is covered by the feed.`}
                 />
-              )
-            ) : candles ? (
-              <TradeChart
-                candles={candles}
-                height={chartHeight}
-                liveLast={liveMatch?.ltp}
-                fitKey={`${q.symbol}|${tf}`}
-                intervalMinutes={TF_MINUTES[tf]}
-                priceLines={priceLines}
-                drawings={drawings}
-                aria-label={`${q.symbol} ${tf} chart`}
-              />
-            ) : candlesStatus === 'loading' ? (
-              <div className="w-full animate-pulse rounded bg-hover" style={{ height: chartHeight }} />
-            ) : candlesReason === 'api-unreachable' ? (
-              <DataUnavailable
-                title="Market data API not connected"
-                detail="The Dhan live-feed bridge (port 4600) is not reachable, so no real candles could be loaded. Start it and reload — no simulated series will be drawn in the meantime."
-              />
-            ) : (
-              <DataUnavailable
-                title="No history available"
-                detail={`Dhan returned no candles for ${q.symbol} at ${tf}. Try a different timeframe, or check that this symbol is covered by the feed.`}
-              />
-            )}
+              )}
+            </div>
           </div>
           <p className="pt-2 text-center text-[10px] text-faint">
             {contract

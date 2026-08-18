@@ -161,7 +161,14 @@ export function TradeWorkspace({ strategies = [] }: { strategies?: Strategy[] })
           column below the `lg` breakpoint — same responsive approach already
           used for the Sentinel/News pair further down this page. */}
       <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-[1fr_360px]">
-        <div className="min-w-0 space-y-4">
+        {/* A FLEX column, not `space-y-4`.
+            `items-stretch` already stretched this div to the row height, but a
+            block container passes none of that on: ChartPanel kept its own
+            intrinsic height and the leftover showed as dead space under the
+            chart whenever the right column (ticket + blotter) was taller — which
+            it normally is. As a flex column the height reaches the panel, and
+            `flex-1` below lets it take what is left after the strategy overlay. */}
+        <div className="flex min-w-0 flex-col gap-4">
           <ChartPanel
             symbol={symbol}
             contract={contract}
@@ -186,6 +193,13 @@ export function TradeWorkspace({ strategies = [] }: { strategies?: Strategy[] })
             initialView={initialView}
             priceLines={strategyPriceLines}
             trailingControls={<><LayoutMenu /><ClosedPanelsMenu /></>}
+            /* Fill the column instead of drawing at a fixed 280px. `min-h-0`
+               lets the panel shrink below its content so its own body scrolls
+               rather than the page; the min-height is a floor for narrow
+               viewports, where the grid collapses to one column and there is no
+               right-hand column to match. */
+            className="min-h-[480px] flex-1"
+            fillHeight
           />
 
           {strategy && (
