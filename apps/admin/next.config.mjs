@@ -15,6 +15,8 @@
  */
 const nextConfig = {
   reactStrictMode: true,
+  allowedDevOrigins: ['*.trycloudflare.com'],
 };
 
 export default nextConfig;
+

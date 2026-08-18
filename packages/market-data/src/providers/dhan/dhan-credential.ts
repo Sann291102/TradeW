@@ -252,7 +252,7 @@ export class DhanCredential {
         // for a value that has not changed.
         if (this.rejectedToken !== null && resolved.accessToken === this.rejectedToken) {
           this.lastFailedAttemptAt = this.now();
-          this.log('[dhan] source still holds the refused credential — needs an operator to renew it');
+          this.log('[dhan] credential unchanged (awaiting token update in .env)');
           return null;
         }
 

@@ -162,6 +162,8 @@ const nextConfig = {
   // Do not advertise the framework version to scanners.
   poweredByHeader: false,
 
+  allowedDevOrigins: ['*.trycloudflare.com'],
+
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];
   },
