@@ -113,6 +113,29 @@ model User {
   // requires both: a valid user JWT whose user row has `isAdmin`, and the
   // operator token. Leaking either one alone is not sufficient.
   isAdmin              Boolean               @default(false)
+  // ---- Agent paper-trading consent --------------------------------------
+  // When set, this user's PAPER account may be bound to a USER_PAPER
+  // ExecutionProfile, letting Sentinel place paper orders that land in this
+  // user's own order book, positions and P&L.
+  //
+  // A TIMESTAMP, not a boolean, for the same reason `phoneVerifiedAt` is: the
+  // question an auditor asks is "when was this account opened to an autonomous
+  // agent, and by whom", and a boolean cannot answer either half. Null means
+  // never granted — the default for every account, including the three that
+  // already exist.
+  //
+  // Revoking sets this back to null. It is read on EVERY execution pass rather
+  // than cached on the profile, for the reason `User.isAdmin` is re-read per
+  // request: a grant that outlives its revocation is not a grant, it is a leak.
+  //
+  // This is a consent record. It is NOT a credential, and nothing in this
+  // feature ever reads `passwordHash`, `googleId` or a broker credential.
+  agentPaperTradingEnabledAt DateTime?
+  // The operator who granted it, for the audit trail. Free text (an operator
+  // email), not an FK — operators live in `OperatorAccount`, a different
+  // identity space from `User`, and an FK across the two would imply they are
+  // the same kind of principal.
+  agentPaperTradingGrantedBy String?
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
   orders               Order[]
@@ -138,6 +161,10 @@ model User {
   holdings             Holding[]
   holdingSettlements   HoldingSettlement[]
   portfolioSnapshots   PortfolioSnapshot[]
+  // Execution profiles whose PAPER account is this user. Non-empty only for the
+  // system-owned Sentinel accounts the seed creates — a human trader's account
+  // is never bound to a profile. See ExecutionProfile.
+  executionProfiles    ExecutionProfile[]  @relation("ExecutionProfileAccount")
 }
 
 model RefreshToken {
@@ -331,6 +358,19 @@ model Order {
   // DAY validity: end of the current session, set at placement. IOC: not used
   // (resolved immediately at placement time).
   expiresAt DateTime?
+
+  // Set only for an order the Sentinel paper-execution loop produced — the
+  // ExecutionIntent this order is the submission of. Null for every order a
+  // human placed, which is what makes "was this order agent-generated?" a
+  // structural question rather than a heuristic over timestamps or account
+  // names. Unique because one intent submits exactly one order: that
+  // constraint IS the idempotency guarantee at the order layer, alongside
+  // ExecutionIntent.idempotencyKey at the decision layer (see that model).
+  //
+  // Nullable and additive on purpose — every existing order predates this
+  // column and must keep working untouched.
+  executionIntentId String?          @unique
+  executionIntent   ExecutionIntent? @relation(fields: [executionIntentId], references: [id])
 
   user       User       @relation(fields: [userId], references: [id])
   instrument Instrument @relation(fields: [instrumentId], references: [id])
@@ -1881,4 +1921,331 @@ model WatchObservation {
 
   @@index([watchSessionId])
   @@index([createdAt])
+}
+
+// ============================================================================
+// SENTINEL PAPER EXECUTION
+//
+// The execution capability attached to the EXISTING Sentinel — not a second
+// Sentinel, not a second order book, and not a second matching engine.
+// services/sentinel reasons; services/api/src/paper-execution turns a reasoning
+// outcome that already cleared Sentinel's own publication gate into an
+// ExecutionIntent, validates it, and submits it through the SAME OrderService a
+// human order goes through. Everything downstream of that call — margin,
+// matching, fills, positions, P&L, settlement — is the existing paper engine,
+// untouched.
+//
+// WHY THIS DOES NOT CONTRADICT "AI SERVICES NEVER PLACE TRADES" (CLAUDE.md
+// Rule 2, ARCHITECTURE.md). That rule governs the USER's order flow: Sentinel
+// must never recommend a trade to a trader, and must never sit as a gate in the
+// path between a trader and their order. Both still hold, structurally:
+//
+//   · services/sentinel gained no ability to write an order. It has no Prisma
+//     binding to Order/Trade/Position and no client to the OMS. It returns the
+//     same non-directive ObserveResponse it always has.
+//   · Nothing here is reachable from a user's order path. The execution loop
+//     reads Sentinel; the order ticket does not read the execution loop.
+//   · Every order this produces belongs to a dedicated system-owned paper
+//     account, never a real trader's account (see ExecutionProfile.account).
+//
+// What is new is that Sentinel's reasoning can now be scored against a filled
+// paper order instead of only against a screenshot of a chart.
+// ============================================================================
+
+// The ONLY execution environment that exists. Live money is not "disabled
+// here", it is UNREPRESENTABLE: there is no enum member to route to, so no
+// config change, no environment variable and no compromised admin session can
+// move this loop onto real capital. Adding a LIVE member would be a schema
+// migration and a code review — the correct size of decision for that step,
+// rather than a boolean someone can flip.
+enum ExecutionEnvironment {
+  PAPER
+}
+
+// WHOSE paper account a profile trades. Orthogonal to `ExecutionEnvironment`,
+// which answers "paper or live" (and only ever answers PAPER).
+//
+// SYSTEM_PAPER — a dedicated account created by
+//   `scripts/create-execution-profile.ts`, with no password hash and no Google
+//   identity, so no person can sign in to it. This was the only mode until
+//   2026-08-18 and remains the DEFAULT, which is what makes the column additive:
+//   every pre-existing profile keeps its exact behaviour without a data fix.
+//
+// USER_PAPER — an ordinary TradeW user's own paper account. The resulting
+//   Order/Trade/Position rows carry that user's `userId`, so they appear in the
+//   user's own app through `/sim/orders` and `/sim/positions` with no
+//   synchronisation layer: those endpoints already scope by `req.user.sub`
+//   against these same tables. That is the entire mechanism — there is no
+//   mirroring, no copy and no admin-side ledger.
+//
+// The distinction is NOT cosmetic. A USER_PAPER profile trades on an account a
+// real person also trades on manually, so it additionally requires that
+// person's recorded consent (`User.agentPaperTradingEnabledAt`) and a stricter
+// authorization path. See ExecutionAccountService.
+enum ExecutionAccountScope {
+  SYSTEM_PAPER
+  USER_PAPER
+}
+
+// The INTENT's lifecycle, deliberately NOT a copy of OrderStatus. The order's
+// own status stays the single authority on the order (OrderStatus already
+// models PENDING/OPEN/TRIGGER_PENDING/FILLED/REJECTED/…); this tracks the
+// decision that produced it, which has states an order does not have — a
+// decision can be REJECTED by risk policy before any order exists at all.
+//
+// PROPOSED  — built from a Sentinel observation, not yet validated.
+// REJECTED  — failed profile/risk/account validation. No order was created.
+// SUBMITTED — handed to OrderService; `order` is set from here on.
+// FILLED    — the order filled and a position exists.
+// CLOSED    — the position was flattened; an ExecutionOutcome exists.
+// FAILED    — submission raised (unresolvable contract, no market data, OMS
+//             rejection). Distinct from REJECTED: REJECTED is this loop's own
+//             discipline, FAILED is the world saying no.
+enum ExecutionIntentStatus {
+  PROPOSED
+  REJECTED
+  SUBMITTED
+  FILLED
+  CLOSED
+  FAILED
+}
+
+// Where a candidate strike sits relative to spot, for the favoured side. ITM
+// and OTM are one strike step in each direction from ATM — the three contracts
+// a desk actually compares for the same directional read.
+enum StrikeCandidateRole {
+  ITM
+  ATM
+  OTM
+}
+
+// One (agent, strategy, market, account, environment, policy) binding.
+//
+// THIS MODEL EXISTS SO THE AGENT-TO-ACCOUNT MAPPING IS NEVER HARD-CODED. Adding
+// a second or third Sentinel agent on a different market against a different
+// paper account is a row in this table, not a branch in the execution service.
+// The first end-to-end loop is proven with exactly one enabled row.
+model ExecutionProfile {
+  id   String @id @default(uuid())
+  // Operator-facing identity, e.g. 'sentinel-alpha-nifty'.
+  name String @unique
+  // Which Sentinel agent identity this profile runs as. Recorded on every
+  // intent, so a filled order names the agent that produced it.
+  agent String
+  // Registry strategy id to pin, or null to let Sentinel choose (its own
+  // 'auto' strategy mode). Passed straight through to the observe call.
+  strategyId   String?
+  strategyName String?
+  // The underlying this profile trades, e.g. 'NIFTY'. One market per profile.
+  symbol String
+
+  // ---- The paper account -------------------------------------------------
+  // A real User row with a real PaperWallet — the EXISTING account model, not a
+  // parallel one. Deliberately not a human trader's account: this user is
+  // created by the seed script with no password credential, so it cannot log in.
+  accountUserId String
+  account       User   @relation("ExecutionProfileAccount", fields: [accountUserId], references: [id])
+
+  // Whose account `accountUserId` is. Defaults to SYSTEM_PAPER so every profile
+  // that existed before 2026-08-18 keeps its behaviour with no backfill.
+  //
+  // This column does not GRANT anything — it declares intent, and
+  // `ExecutionAccountService` checks that the declaration matches the account's
+  // actual shape. A profile claiming SYSTEM_PAPER against a loginable human
+  // account is refused, and so is USER_PAPER against an account that never
+  // consented. Trusting the column alone would make the scope a label rather
+  // than a boundary.
+  accountScope ExecutionAccountScope @default(SYSTEM_PAPER)
+
+  environment ExecutionEnvironment @default(PAPER)
+  // Off by default. A profile that has never been deliberately enabled by an
+  // operator must never trade, including immediately after a fresh seed.
+  enabled     Boolean              @default(false)
+
+  // ---- Execution policy --------------------------------------------------
+  // Order size in LOTS, multiplied by the contract's own lotSize at submission
+  // — storing a raw quantity would silently break the moment an exchange
+  // revises a lot size.
+  lots        Int         @default(1)
+  productType ProductType @default(NRML)
+  orderType   OrderType   @default(MARKET)
+
+  // ---- Risk policy -------------------------------------------------------
+  // Sentinel's own publication gate is the first authority on whether a read
+  // surfaces at all; this is a SECOND, independent floor the execution layer
+  // applies on top. It can only ever be stricter.
+  minConfidence    Int     @default(70)
+  maxOpenPositions Int     @default(1)
+  maxOrdersPerDay  Int     @default(6)
+  // Stop trading for the IST day once realized P&L on this account is below
+  // -maxLossPerDay. Stored positive, compared against a negative.
+  maxLossPerDay    Decimal @default(25000) @db.Decimal(14, 2)
+  // Flatten any position this profile owns at/after this IST minute-of-day
+  // (910 = 15:10). Options carried past the close are not a paper engine's
+  // strength, and a position that never closes never produces an outcome.
+  squareOffMinute  Int     @default(910)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  intents ExecutionIntent[]
+
+  @@index([enabled])
+  @@index([symbol])
+}
+
+// One decision, with the full provenance needed to answer "why did this order
+// exist?" without joining on timestamps or matching text.
+model ExecutionIntent {
+  id        String           @id @default(uuid())
+  profileId String
+  profile   ExecutionProfile @relation(fields: [profileId], references: [id])
+
+  // ---- IDEMPOTENCY -------------------------------------------------------
+  // The deterministic identity of this DECISION. Derived (see
+  // deriveIdempotencyKey) from profile + Sentinel run + symbol + side + strike
+  // + expiry + the decision's own minute — never from a clock read at insert
+  // time, which would mint a new key on every retry and defeat the mechanism.
+  //
+  // UNIQUE is the enforcement, not a convention. Polling, SSE reconnects, agent
+  // retries, a restart mid-submit and two API replicas racing all converge on
+  // the same key, and Postgres rejects the second write. The execution service
+  // catches that violation and returns the FIRST intent, so a duplicate
+  // decision is a no-op rather than a second position.
+  idempotencyKey String @unique
+
+  status      ExecutionIntentStatus @default(PROPOSED)
+  environment ExecutionEnvironment  @default(PAPER)
+
+  // ---- Sentinel provenance ----------------------------------------------
+  // AgentRun.runId for the observation that produced this. A plain reference,
+  // not an FK: AgentRun rows are telemetry and are pruned on a retention
+  // schedule (TelemetryService), and an intent must outlive its telemetry.
+  sentinelRunId String?
+  agent         String
+  strategyId    String?
+  strategyName  String?
+
+  // ---- What was decided --------------------------------------------------
+  symbol         String
+  // Underlying spot at the moment of decision.
+  underlyingSpot Decimal?  @db.Decimal(12, 2)
+  side           OrderSide
+  optionType     String    // 'CE' | 'PE' — mirrors SideInFocus.side
+  bias           String    // 'bullish' | 'bearish'
+  strike         Decimal   @db.Decimal(12, 2)
+  expiry         DateTime
+  // The canonical contract symbol handed to OrderService —
+  // UNDERLYING:YYYYMMDD:STRIKE:CE|PE. Stored so the trace shows exactly what
+  // was submitted, not a reconstruction of it.
+  contractSymbol String
+  lots           Int
+  quantity       Int
+  productType    ProductType
+  orderType      OrderType
+
+  // ---- Evidence ----------------------------------------------------------
+  // Sentinel's confidence for this observation (0-100) and its rationale.
+  // Copied, not referenced: the observation is ephemeral, this is the record.
+  confidence Int
+  rationale  String[] @default([])
+  // The four-condition publication gate's conditions[], corroborating sources
+  // and conflicts.
+  publication Json?
+  // SideInFocus.optionContext — PCR, max pain, OI walls, ATM/focus strike.
+  optionContext Json?
+  // Everything the decision was made against that has no column of its own:
+  // market profile, strategy matches, risk read, market state.
+  marketSnapshot Json?
+
+  // Why an intent never became an order. Set for REJECTED (policy) and FAILED
+  // (submission raised). Null otherwise.
+  rejectReason String?
+
+  decidedAt   DateTime  @default(now())
+  submittedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // The order this intent produced. One intent, at most one order — enforced by
+  // Order.executionIntentId being @unique on the other side.
+  order      Order?
+  candidates ExecutionStrikeCandidate[]
+  outcome    ExecutionOutcome?
+
+  @@index([profileId, decidedAt])
+  @@index([status])
+  @@index([symbol, decidedAt])
+  @@index([sentinelRunId])
+}
+
+// One of the three candidate strikes evaluated for a decision, INCLUDING the
+// two that were not selected. Storing the rejected candidates is the point:
+// "why this strike" is only answerable if the alternatives and the reason each
+// lost are on the record. Written whether or not the intent was submitted.
+model ExecutionStrikeCandidate {
+  id       String          @id @default(uuid())
+  intentId String
+  intent   ExecutionIntent @relation(fields: [intentId], references: [id], onDelete: Cascade)
+
+  role       StrikeCandidateRole
+  strike     Decimal             @db.Decimal(12, 2)
+  optionType String              // 'CE' | 'PE'
+  // Live premium read from the option chain at decision time. Null when the
+  // chain carried no price for this leg — itself a valid reason for a candidate
+  // to lose, and never to be confused with a premium of zero.
+  premium      Decimal? @db.Decimal(12, 2)
+  openInterest BigInt?
+  volume       BigInt?
+  impliedVol   Float?
+  // Distance from spot in points, signed toward the favoured side.
+  moneyness    Decimal? @db.Decimal(12, 2)
+
+  selected Boolean @default(false)
+  // Did this candidate pass every hard check (priced, liquid enough, inside the
+  // profile's premium band)? A candidate can be tradable and still lose.
+  tradable Boolean @default(false)
+  // Why it was or was not selected, in the evaluator's own words.
+  reason   String
+  // The individual checks that ran, so a rejection is inspectable rather than a
+  // single sentence: [{ id, label, passed, detail }].
+  checks   Json    @default("[]")
+
+  createdAt DateTime @default(now())
+
+  @@unique([intentId, role])
+  @@index([intentId])
+}
+
+// The realized result of one execution, recorded once the position closes.
+// Deliberately minimal and provenance-shaped: this is what a future learning
+// pipeline will read, NOT the learning pipeline itself.
+model ExecutionOutcome {
+  id       String          @id @default(uuid())
+  intentId String          @unique
+  intent   ExecutionIntent @relation(fields: [intentId], references: [id], onDelete: Cascade)
+
+  entryPrice  Decimal  @db.Decimal(12, 2)
+  exitPrice   Decimal? @db.Decimal(12, 2)
+  quantity    Int
+  // Realized P&L net of the charges the paper engine actually applied.
+  realizedPnl Decimal  @db.Decimal(14, 2)
+  charges     Decimal  @default(0) @db.Decimal(14, 2)
+  // 'WIN' | 'LOSS' | 'SCRATCH' — derived from realizedPnl, stored so the
+  // learning read does not re-derive it inconsistently.
+  result      String
+  // How the position ended: 'TARGET' | 'STOP' | 'SQUARE_OFF' | 'INVALIDATED' |
+  // 'MANUAL'. Square-off is the common one for an intraday paper loop.
+  exitReason  String
+  // Set when Sentinel's own read went invalid before the exit — the single most
+  // useful column for judging whether the decision or the market was wrong.
+  invalidationReason String?
+  holdingSeconds     Int?
+
+  entryAt   DateTime
+  exitAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([result])
 }

@@ -17,6 +17,7 @@ import { KnowledgeCenterService } from './brain/knowledge-center.service';
 import { StrategyIntelligenceService } from './brain/strategy-intelligence.service';
 import { ComplianceService } from './compliance/compliance.service';
 import { ObserveRequest, TradeSummary } from './domain';
+import { ExecutionEvaluationService } from './execution/execution-evaluation.service';
 import { ExplainService } from './explain/explain.service';
 import { ContinuousImprovementService } from './improvement/continuous-improvement.service';
 import { StrategyEngineService } from './intelligence/strategy-engine.service';
@@ -69,6 +70,7 @@ function constantTimeEquals(a: string, b: string): boolean {
 export class AppController {
   constructor(
     private readonly orchestrator: SentinelOrchestratorService,
+    private readonly executionEvaluation: ExecutionEvaluationService,
     private readonly compliance: ComplianceService,
     private readonly explainSvc: ExplainService,
     private readonly knowledgeCenter: KnowledgeCenterService,
@@ -94,6 +96,44 @@ export class AppController {
       // No real market data. 503 (not 500) so the caller can tell "Sentinel is
       // disconnected from its data source" from "Sentinel crashed", and the
       // message reaches the workspace verbatim instead of a generic error.
+      if (err instanceof MarketDataUnavailableError) {
+        throw new ServiceUnavailableException(err.message);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * The execution-facing read of one observation: everything `/observe`
+   * produces, plus the three-strike evaluation.
+   *
+   * SEPARATE FROM `/observe` ON PURPOSE. `/observe`'s response is proxied
+   * verbatim to `apps/web`, and a selected strike shown to a trader is a
+   * directive (CLAUDE.md Rule 2). This route selects one contract out of three,
+   * so it is reachable only by `services/api`'s paper-execution loop holding
+   * the service token, and its output is rendered only in the admin console.
+   *
+   * It is a READ. Sentinel still cannot place an order — this service has no
+   * binding to Order/Trade/Position and no client to the OMS. The caller
+   * decides what, if anything, to do with the evaluation.
+   */
+  @UseGuards(ServiceTokenGuard)
+  @Post('execution/evaluate')
+  async evaluateForExecution(
+    @Body() body: { symbol: string; userId: string; strategyId?: string | null; minConfidence?: number },
+  ) {
+    try {
+      return await this.executionEvaluation.evaluate({
+        symbol: body.symbol,
+        userId: body.userId,
+        strategyId: body.strategyId ?? null,
+        minConfidence: body.minConfidence,
+      });
+    } catch (err) {
+      // Same 503-not-500 distinction `/observe` makes: "Sentinel is
+      // disconnected from its data source" is a different operational fact from
+      // "Sentinel crashed", and the execution loop must treat only the second
+      // as a fault worth alerting on.
       if (err instanceof MarketDataUnavailableError) {
         throw new ServiceUnavailableException(err.message);
       }

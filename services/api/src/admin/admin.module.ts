@@ -6,6 +6,7 @@ import { AdminService } from './admin.service';
 import { OperatorController } from './operator/operator.controller';
 import { OperatorService } from './operator/operator.service';
 import { CognitionModule } from '../cognition/cognition.module';
+import { PaperExecutionModule } from '../paper-execution/paper-execution.module';
 
 /**
  * The admin portal's backend.
@@ -37,7 +38,11 @@ import { CognitionModule } from '../cognition/cognition.module';
  * this module rather than a separate one.
  */
 @Module({
-  imports: [CognitionModule],
+  // `PaperExecutionModule` is imported for the same reason and in the same
+  // direction as `CognitionModule`: the console READS the execution loop and
+  // configures it, the loop never reads the console. Nothing in
+  // paper-execution imports anything from here.
+  imports: [CognitionModule, PaperExecutionModule],
   controllers: [AdminController, OperatorController],
   providers: [AdminService, AdminGuard, AdminAccessGuard, OperatorService],
 })

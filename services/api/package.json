@@ -10,8 +10,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed": "npm run seed -w @tradew/database",
+    "verify:paper-execution": "ts-node --transpile-only -P tsconfig.json scripts/verify-paper-execution.ts",
+    "verify:user-binding": "ts-node --transpile-only -P tsconfig.json scripts/verify-user-account-binding.ts",
     "prisma:generate": "prisma generate --schema ../../packages/database/prisma/schema.prisma",
-    "prisma:migrate": "prisma migrate dev --schema ../../packages/database/prisma/schema.prisma"
+    "prisma:migrate": "prisma migrate dev --schema ../../packages/database/prisma/schema.prisma",
+    "verify:admin-routes": "ts-node --transpile-only -P tsconfig.json scripts/verify-admin-routes.ts"
   },
   "prisma": {
     "schema": "../../packages/database/prisma/schema.prisma"

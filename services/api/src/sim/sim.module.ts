@@ -41,5 +41,15 @@ import { EodSummaryService } from './eod-summary.service';
     PerformanceService,
     EodSummaryService,
   ],
+  // Exported for `PaperExecutionModule`, which submits agent-generated paper
+  // orders through this exact `OrderService` rather than reimplementing one.
+  // These are the same singletons the trader-facing controllers use — that is
+  // the point: an agent order and a human order traverse one code path, one
+  // margin model and one matching engine, so they cannot diverge.
+  //
+  // Exporting does NOT make this module aware of execution. The dependency
+  // arrow runs PaperExecutionModule -> SimModule and must never reverse; see
+  // that module's docstring.
+  exports: [OrderService, PositionService, MarketPriceService],
 })
 export class SimModule {}

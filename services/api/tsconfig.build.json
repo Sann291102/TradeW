@@ -1,4 +1,24 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*.spec.ts", "vitest.config.ts"]
+  // `scripts` is excluded, and that exclusion is load-bearing rather than tidy.
+  //
+  // TypeScript infers `rootDir` as the common ancestor of every INPUT file, and
+  // the verification harnesses under `scripts/` import
+  // `../../sentinel/src/execution/strike-candidates` on purpose — they exercise
+  // the real evaluator rather than a copy of it. Including them therefore drags
+  // `services/sentinel` into this package's compilation, the common ancestor
+  // becomes `services/`, and every output silently moves from `dist/main.js` to
+  // `dist/api/src/main.js`.
+  //
+  // Nothing errors when that happens. `nest build` exits 0, and the deployment
+  // command (`node dist/main`) goes on serving whatever stale `dist/main.js`
+  // was left behind by the last correct build — so the API answers requests
+  // with code that is hours old and 404s routes that plainly exist in source.
+  // That cost a real debugging session on 2026-08-18.
+  //
+  // These harnesses are dev tooling run through ts-node; they are not shipped,
+  // so excluding them is correct on its own merits and pins `rootDir` to `src/`
+  // as a side effect. Do not remove this entry to "fix" a scripts type error —
+  // fix the script, or run `tsc` over it separately.
+  "exclude": ["node_modules", "test", "dist", "scripts", "**/*.spec.ts", "vitest.config.ts"]
 }

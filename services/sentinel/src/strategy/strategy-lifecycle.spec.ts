@@ -193,6 +193,11 @@ describe('option context — Phase 3', () => {
     callOIWall: 24600,
     putOIWall: 24400,
     strikesAnalysed: 21,
+    frontExpiry: new Date('2026-08-20T00:00:00Z'),
+    // These tests exercise `buildOptionContext`, which reads only the
+    // aggregates above; the per-strike rows are what strike-candidate
+    // evaluation consumes and are covered by its own spec.
+    entries: [],
   };
 
   function snapshot(over: Partial<MarketSnapshot> = {}): MarketSnapshot {

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import asyncpg
 
 from app.strategy.schemas import ParsedStrategy
+from app.core.timefmt import iso_utc
 
 _pool: asyncpg.Pool | None = None
 
@@ -88,8 +89,10 @@ def _row_to_dict(row: asyncpg.Record) -> dict:
         "rawInput": row["rawInput"],
         "inputType": row["inputType"],
         "status": row["status"],
-        "createdAt": row["createdAt"].isoformat(),
-        "updatedAt": row["updatedAt"].isoformat(),
+        # See app/core/timefmt.py — a bare isoformat on these naive-UTC
+        # columns drops the offset and shifts the instant in the browser.
+        "createdAt": iso_utc(row["createdAt"]),
+        "updatedAt": iso_utc(row["updatedAt"]),
     }
 
 

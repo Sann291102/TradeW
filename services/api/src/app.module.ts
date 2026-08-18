@@ -28,6 +28,7 @@ import { KnowledgeModule } from './knowledge/knowledge.module';
 import { NotificationModule } from './notification/notification.module';
 import { TelemetryModule } from './telemetry/telemetry.module';
 import { AdminModule } from './admin/admin.module';
+import { PaperExecutionModule } from './paper-execution/paper-execution.module';
 import { CognitionModule } from './cognition/cognition.module';
 import { ControlModule } from './control/control.module';
 import { HealthController } from './health.controller';
@@ -91,6 +92,13 @@ import { HealthController } from './health.controller';
     // no passes unless COGNITION_ENABLED=true — so importing it costs a roster
     // and nothing else. Placed before AdminModule because the console reads it.
     CognitionModule,
+    // Sentinel's paper-execution capability. Like CognitionModule, importing it
+    // costs a roster and nothing else: the scheduler starts no timers unless
+    // PAPER_EXECUTION_ENABLED=true, and even then only profiles explicitly
+    // armed by an operator can trade. Placed before AdminModule because the
+    // console reads it. Removing this line disables agent execution entirely
+    // and changes no trader-facing behaviour.
+    PaperExecutionModule,
     AdminModule,
     // The Admin Control Plane boundary. Signed, replay-protected, narrow.
     // Remove this line to disable remote control of this deployment entirely.

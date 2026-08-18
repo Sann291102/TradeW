@@ -416,10 +416,22 @@ export class AdminService {
   // `executedAt` — neither has a `createdAt`. Domain-accurate names, and worth
   // stating because every other table here uses `createdAt` and the difference
   // is silent at runtime if it slips through as an untyped `where` object.
-  async orders(params: { limit?: number; status?: string; userId?: string; hours?: number }) {
+  /**
+   * `source` filters on the PRESENCE of an execution intent, not on an account
+   * name or a text convention: `Order.executionIntentId` is set only by the
+   * paper-execution loop and null for every human order, so "was this
+   * agent-generated?" is a structural question with an exact answer.
+   *
+   *   'sentinel' → executionIntentId is not null
+   *   'user'     → executionIntentId is null
+   *   undefined  → everything (the pre-existing behaviour, unchanged)
+   */
+  async orders(params: { limit?: number; status?: string; userId?: string; hours?: number; source?: string }) {
     const where: Record<string, unknown> = { placedAt: { gte: this.since(params.hours, 24) } };
     if (params.status) where.status = params.status;
     if (params.userId) where.userId = params.userId;
+    if (params.source === 'sentinel') where.executionIntentId = { not: null };
+    if (params.source === 'user') where.executionIntentId = null;
     return this.prisma.order.findMany({
       where,
       orderBy: { placedAt: 'desc' },
@@ -427,6 +439,25 @@ export class AdminService {
       include: {
         user: { select: { id: true, email: true } },
         instrument: { select: { symbol: true, displayName: true, type: true } },
+        // The provenance the Orders table renders inline. A nested select
+        // rather than a second query per row: an agent-order list would
+        // otherwise be N+1 against the intent table on every 8-second poll.
+        executionIntent: {
+          select: {
+            id: true,
+            agent: true,
+            symbol: true,
+            optionType: true,
+            bias: true,
+            strike: true,
+            confidence: true,
+            status: true,
+            environment: true,
+            strategyName: true,
+            profile: { select: { name: true } },
+            outcome: { select: { result: true, realizedPnl: true } },
+          },
+        },
       },
     });
   }
@@ -507,6 +538,37 @@ export class AdminService {
       },
     });
     return user;
+  }
+
+  /**
+   * Arm or disarm one execution profile.
+   *
+   * Audited like `setAdmin` and for the same reason: this is the switch that
+   * decides whether an autonomous agent may place orders, so "who turned it on,
+   * and when" has to survive in a table rather than in a log line that ages out.
+   *
+   * `environment` is echoed back deliberately — an operator arming a profile
+   * should see PAPER in the response confirming what they just armed.
+   */
+  async setExecutionProfileEnabled(id: string, enabled: boolean) {
+    const profile = await this.prisma.executionProfile.update({
+      where: { id },
+      data: { enabled },
+      select: { id: true, name: true, agent: true, symbol: true, environment: true, enabled: true },
+    });
+    await this.prisma.auditEvent.create({
+      data: {
+        eventType: enabled ? 'execution.profile.enabled' : 'execution.profile.disabled',
+        metadata: {
+          profileId: profile.id,
+          profileName: profile.name,
+          agent: profile.agent,
+          symbol: profile.symbol,
+          environment: profile.environment,
+        },
+      },
+    });
+    return profile;
   }
 
   // -------------------------------------------------------------- health
