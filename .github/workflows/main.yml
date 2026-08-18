@@ -3,10 +3,29 @@
 
 name: Build and deploy Node.js app to Azure Web App - tradew
 
+# ── DEPLOY IS MANUAL-ONLY (gated 2026-08-18) ────────────────────────────────
+#
+# This used to run on every push to `main`, which made "merge a branch" and
+# "deploy to the production Azure Web App" the same action. Two problems with
+# that, both real rather than theoretical:
+#
+#   1. There is NO migration step below. The job goes checkout -> npm install
+#      -> build -> test -> azure/webapps-deploy. So a merge carrying a Prisma
+#      migration shipped code whose client expected tables production did not
+#      have, and every query touching them failed at runtime. Schema has to be
+#      applied deliberately, before the code that depends on it.
+#   2. It contradicted the decision already recorded in `deploy.yml`, which was
+#      gated to manual-only on 2026-08-16 for exactly this reason. Having one
+#      deploy path gated and another firing automatically meant the gate was
+#      advisory.
+#
+# `ci.yml` still runs the test suites on every push and pull request, including
+# `main`, so merging is still verified — it just no longer deploys.
+#
+# To deploy: run this workflow from the Actions tab (Run workflow), AFTER
+# applying migrations with `npm run migrate:deploy -w @tradew/database` against
+# the target database.
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
