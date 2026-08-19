@@ -130,8 +130,117 @@ export const CONCEPTS: ConceptSeed[] = [
     ordinal: 40,
     tags: ['PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities'],
   },
+  {
+    conceptKey: 'cf.net-change-before-fx',
+    statement: 'CF',
+    label: 'Net increase/(decrease) in cash before exchange differences',
+    isSubtotal: true,
+    ordinal: 45,
+    // The line that CFO + CFI + CFF must equal. The FX effect is applied AFTER
+    // it, so validating the three activity totals against the post-FX figure
+    // would fail for every company with foreign operations.
+    tags: ['IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges'],
+  },
+  { conceptKey: 'cf.fx-effect', statement: 'CF', label: 'Effect of exchange rate changes on cash', ordinal: 48, tags: ['EffectOfExchangeRateChangesOnCashAndCashEquivalents'] },
   { conceptKey: 'cf.net-change', statement: 'CF', label: 'Net increase/(decrease) in cash', isSubtotal: true, ordinal: 50, tags: ['IncreaseDecreaseInCashAndCashEquivalents'] },
+  { conceptKey: 'cf.closing-balance', statement: 'CF', label: 'Cash and cash equivalents at period end', ordinal: 55, tags: ['CashAndCashEquivalentsCashFlowStatement'] },
+  { conceptKey: 'cf.interest-paid', statement: 'CF', label: 'Interest paid', parentKey: 'cf.operating', sign: -1, ordinal: 13, tags: ['InterestPaidClassifiedAsOperatingActivities'] },
+  { conceptKey: 'cf.tax-paid', statement: 'CF', label: 'Income taxes paid', parentKey: 'cf.operating', sign: -1, ordinal: 14, tags: ['IncomeTaxesPaidRefundClassifiedAsOperatingActivities'] },
+  { conceptKey: 'cf.borrowings.proceeds', statement: 'CF', label: 'Proceeds from borrowings', parentKey: 'cf.financing', ordinal: 60, tags: ['ProceedsFromBorrowingsClassifiedAsFinancingActivities'] },
+  { conceptKey: 'cf.borrowings.repaid', statement: 'CF', label: 'Repayment of borrowings', parentKey: 'cf.financing', sign: -1, ordinal: 61, tags: ['RepaymentsOfBorrowingsClassifiedAsFinancingActivities'] },
+  { conceptKey: 'cf.lease-payments', statement: 'CF', label: 'Payment of lease liabilities', parentKey: 'cf.financing', sign: -1, ordinal: 62, tags: ['PaymentsOfLeaseLiabilitiesClassifiedAsFinancingActivities'] },
+  { conceptKey: 'cf.dividends-paid', statement: 'CF', label: 'Dividends paid', parentKey: 'cf.financing', sign: -1, ordinal: 63, tags: ['DividendsPaidClassifiedAsFinancingActivities'] },
+  { conceptKey: 'cf.ppe.proceeds', statement: 'CF', label: 'Proceeds from sale of property, plant and equipment', parentKey: 'cf.investing', ordinal: 41, tags: ['ProceedsFromSalesOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities'] },
+  { conceptKey: 'cf.interest-received', statement: 'CF', label: 'Interest received', parentKey: 'cf.investing', ordinal: 42, tags: ['InterestReceivedClassifiedAsInvestingActivities'] },
+
+  // ── Per-share and comprehensive-income detail ────────────────────────────
+  { conceptKey: 'pl.eps.basic.continuing', statement: 'PL', label: 'Basic EPS (continuing operations)', ordinal: 231, tags: ['BasicEarningsLossPerShareFromContinuingOperations'] },
+  { conceptKey: 'pl.eps.diluted.continuing', statement: 'PL', label: 'Diluted EPS (continuing operations)', ordinal: 241, tags: ['DilutedEarningsLossPerShareFromContinuingOperations'] },
+  { conceptKey: 'pl.eps.basic.discontinued', statement: 'PL', label: 'Basic EPS (discontinued operations)', ordinal: 232, tags: ['BasicEarningsLossPerShareFromDiscontinuedOperations'] },
+  { conceptKey: 'pl.eps.diluted.discontinued', statement: 'PL', label: 'Diluted EPS (discontinued operations)', ordinal: 242, tags: ['DilutedEarningsLossPerShareFromDiscontinuedOperations'] },
+  { conceptKey: 'pl.discontinued.pbt', statement: 'PL', label: 'Profit from discontinued operations before tax', ordinal: 188, tags: ['ProfitLossFromDiscontinuedOperationsBeforeTax'] },
+  { conceptKey: 'pl.discontinued.tax', statement: 'PL', label: 'Tax on discontinued operations', sign: -1, ordinal: 189, tags: ['TaxExpenseOfDiscontinuedOperations'] },
+  { conceptKey: 'pl.oci.not-reclassified', statement: 'PL', label: 'OCI — items not reclassified to P&L', parentKey: 'pl.oci', ordinal: 211, tags: ['AmountOfItemThatWillNotBeReclassifiedToProfitAndLoss'] },
+  { conceptKey: 'pl.oci.not-reclassified.tax', statement: 'PL', label: 'Tax on items not reclassified', parentKey: 'pl.oci', sign: -1, ordinal: 212, tags: ['IncomeTaxRelatingToItmesThatWillNotBeReclassifiedToProfitOrLoss'] },
+  { conceptKey: 'pl.oci.reclassified', statement: 'PL', label: 'OCI — items to be reclassified to P&L', parentKey: 'pl.oci', ordinal: 213, tags: ['AmountOfItemThatWillBeReclassifiedToProfitAndLoss'] },
+  { conceptKey: 'pl.oci.reclassified.tax', statement: 'PL', label: 'Tax on items to be reclassified', parentKey: 'pl.oci', sign: -1, ordinal: 214, tags: ['IncomeTaxRelatingToItmesThatWillBeReclassifiedToProfitOrLoss'] },
+  { conceptKey: 'pl.comprehensive.owners', statement: 'PL', label: 'Comprehensive income attributable to owners', ordinal: 221, tags: ['ComprehensiveIncomeForThePeriodAttributableToOwnersOfParent'] },
+  { conceptKey: 'pl.comprehensive.minorities', statement: 'PL', label: 'Comprehensive income attributable to non-controlling interests', ordinal: 222, tags: ['ComprehensiveIncomeForThePeriodAttributableToOwnersOfParentNonControllingInterests'] },
+  { conceptKey: 'pl.regulatory-deferral', statement: 'PL', label: 'Net movement in regulatory deferral account balances', ordinal: 178, tags: ['NetMovementInRegulatoryDeferralAccountBalancesRelatedToProfitOrLossAndTheRelatedDeferredTaxMovement'] },
+
+  // ── Ratios the filer computes itself ─────────────────────────────────────
+  // Kept as filed rather than recomputed: these are the company's own numbers,
+  // and a divergence between theirs and ours is a signal worth being able to see.
+  { conceptKey: 'ratio.debt-equity', statement: 'PL', label: 'Debt / equity (as filed)', ordinal: 300, tags: ['DebtEquityRatio'] },
+  { conceptKey: 'ratio.debt-service-coverage', statement: 'PL', label: 'Debt service coverage (as filed)', ordinal: 301, tags: ['DebtServiceCoverageRatio'] },
+  { conceptKey: 'ratio.interest-service-coverage', statement: 'PL', label: 'Interest service coverage (as filed)', ordinal: 302, tags: ['InterestServiceCoverageRatio'] },
 ];
+
+/**
+ * Tags that are DISAGGREGATIONS of lines already in the statement.
+ *
+ * Segment figures are the whole problem here. In a quarterly filing they sit in
+ * dimensioned contexts and the parser drops them automatically. In an ANNUAL
+ * filing — verified 2026-08-19 on RELIANCE — several appear in the plain `OneD`
+ * context with no dimension at all, so nothing structural distinguishes
+ * `SegmentRevenue` from `RevenueFromOperations`.
+ *
+ * Mapping `SegmentRevenue` to revenue would double-count; storing it unmapped
+ * inside the P&L leaves a number in the statement that looks like a company
+ * total and is one segment's. Neither is acceptable, so these are excluded from
+ * statements entirely and counted instead. Segments deserve their own model
+ * (the plan's Quarters tab calls for segment trends); until that exists, the
+ * honest state is "not stored" rather than "stored somewhere misleading". The
+ * source document is hashed and re-fetchable, so nothing is unrecoverable.
+ */
+export const EXCLUDED_TAGS = new Set([
+  'SegmentRevenue',
+  'SegmentRevenueFromOperations',
+  'InterSegmentRevenue',
+  'SegmentProfitLossBeforeTaxAndFinanceCosts',
+  'SegmentProfitBeforeTax',
+  'SegmentFinanceCosts',
+  'SegmentAssets',
+  'SegmentLiabilities',
+  'OtherUnallocableExpenditureNetOffUnAllocableIncome',
+]);
+
+/**
+ * Which statement an UNMAPPED tag belongs to.
+ *
+ * Without this every unrecognised tag defaulted to the P&L, which put ~40
+ * cash-flow lines per annual filing — `ProceedsFromBorrowings...`,
+ * `AdjustmentsForDepreciation...`, every `...ClassifiedAsInvestingActivities` —
+ * inside the profit and loss statement. They carried no concept key so no
+ * subtotal was corrupted, but they were in the wrong statement, and the moment
+ * a mapping was added for one it would have been filed there for real.
+ *
+ * Pattern-based because the Ind-AS taxonomy names cash-flow concepts
+ * systematically: the activity classification is in the tag itself.
+ */
+export function inferStatement(tag: string): 'PL' | 'BS' | 'CF' {
+  if (
+    /ClassifiedAs(Operating|Investing|Financing)Activities$/.test(tag) ||
+    /^CashFlows/.test(tag) ||
+    /^AdjustmentsFor/.test(tag) ||
+    /^OtherAdjustments/.test(tag) ||
+    /CashAndCashEquivalents/.test(tag) ||
+    /^ProceedsFrom/.test(tag) ||
+    /^PaymentsOf/.test(tag) ||
+    /^PaymentsTo/.test(tag) ||
+    /^PurchaseOf/.test(tag) ||
+    /^CashReceiptsFrom/.test(tag) ||
+    /^CashPayments/.test(tag) ||
+    /^DividendsReceivedClassified/.test(tag) ||
+    /^InterestPaidClassified/.test(tag) ||
+    /^InterestReceivedClassified/.test(tag) ||
+    /^IncomeTaxesPaid/.test(tag)
+  ) {
+    return 'CF';
+  }
+  if (/^(Assets|Liabilities|Equity|EquityAndLiabilities|Noncurrent|Current)/.test(tag)) return 'BS';
+  return 'PL';
+}
 
 /** Which statement a tag belongs to — used to split one document into statements. */
 export const TAG_TO_STATEMENT: Map<string, 'PL' | 'BS' | 'CF'> = new Map(

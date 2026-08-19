@@ -28,6 +28,9 @@ export default defineConfig({
       // months of profit as one quarter: the xbrli:context period is not always
       // the fact's period.
       'src/connectors/xbrl.parser.spec.ts',
+      // Where an unmapped tag is filed, and which tags are excluded outright —
+      // both written in response to defects found in real ingested output.
+      'src/connectors/concept-seed.spec.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,

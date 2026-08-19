@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma.service';
 import { FILING_DATASETS, FILING_DATASET_IDS, FilingDatasetId } from '../catalogue/filing-datasets';
 import { EquityListConnector } from '../connectors/equity-list.connector';
+import { StatementsConnector } from '../connectors/statements.connector';
 
 /**
  * Claims due ingestion jobs and runs them.
@@ -31,11 +32,28 @@ import { EquityListConnector } from '../connectors/equity-list.connector';
  * instant take DIFFERENT rows rather than blocking on each other.
  *
  * ── HANDLER COVERAGE ───────────────────────────────────────────────────────
- * Phase 2 wires the first real handler: `nse.equity-list`, which builds the
- * company identity spine. The remaining datasets are still no-ops — they are
- * enabled one at a time, each with its own parser and its own tests, rather
- * than all at once behind a single "ingest everything" switch.
+ * `HANDLED_DATASETS` is the list of datasets that actually do something, and
+ * only those get job rows. Registering the rest would fill the queue with work
+ * that resolves to a no-op, and the dispatcher would spend its per-tick budget
+ * claiming and releasing jobs that ingest nothing — starving the ones that do.
+ *
+ * Datasets are enabled one at a time, each with its own parser and tests,
+ * rather than all at once behind an "ingest everything" switch.
  */
+
+/**
+ * Datasets with a real handler AND a scope the scheduler can enumerate.
+ *
+ * `nse.bhavcopy` is deliberately absent despite having a handler: it is
+ * date-scoped, so its jobs are one per trading session rather than one per
+ * company, and enumerating them belongs to a calendar-driven registration
+ * rather than this symbol-driven one.
+ */
+const HANDLED_DATASETS: FilingDatasetId[] = [
+  'nse.equity-list',
+  'nse.financial-results',
+  'nse.financial-results-annual',
+];
 
 /** How long a claim is held before it is considered abandoned. */
 const CLAIM_TTL_MS = Number(process.env.COMPANY_DATA_CLAIM_TTL_MS ?? 120_000);
@@ -76,6 +94,7 @@ export class IngestionSchedulerService implements OnModuleInit, OnModuleDestroy 
   constructor(
     private readonly prisma: PrismaService,
     private readonly equityList: EquityListConnector,
+    private readonly statements: StatementsConnector,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -105,8 +124,10 @@ export class IngestionSchedulerService implements OnModuleInit, OnModuleDestroy 
    * the market.
    */
   async registerJobs(scopes: string[]): Promise<number> {
-    const rows = FILING_DATASET_IDS.flatMap((id) => {
+    const rows = HANDLED_DATASETS.flatMap((id) => {
       const dataset = FILING_DATASETS[id];
+      // Date-scoped datasets are not enumerable from a symbol list.
+      if (dataset.scope === 'date') return [];
       const targets = dataset.scope === 'market' ? ['market'] : scopes;
       return targets.map((scope) => ({
         jobKey: id,
@@ -253,6 +274,22 @@ export class IngestionSchedulerService implements OnModuleInit, OnModuleDestroy 
             `+${result.companiesCreated} companies, +${result.listingsCreated} listings, ` +
             `${result.listingsUpdated} updated, ${result.instrumentsLinked} instrument links, ` +
             `${result.aliasConflicts} alias conflicts`,
+        );
+      }
+      return;
+    }
+
+    if (job.jobKey === 'nse.financial-results' || job.jobKey === 'nse.financial-results-annual') {
+      const period = job.jobKey === 'nse.financial-results-annual' ? 'Annual' : 'Quarterly';
+      // Only the most recent filings per run. Deep history is backfilled by a
+      // dedicated sweep, not by making every scheduled tick fetch a decade of
+      // documents for one company while every other company waits.
+      const result = await this.statements.syncCompany(job.scope, period, 4);
+      if (result.statementsWritten > 0 || result.filingsSeen > 0) {
+        this.logger.log(
+          `${job.scope} ${period}: ${result.statementsWritten} statements, ` +
+            `${result.lineItemsWritten} lines, ${result.unmappedTags} unmapped, ` +
+            `${result.reconciliationFailures} failed reconciliation`,
         );
       }
       return;

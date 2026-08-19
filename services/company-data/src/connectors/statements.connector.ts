@@ -3,7 +3,14 @@ import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import { SourceFetcherService } from '../ingestion/source-fetcher.service';
 import { FILING_DATASETS } from '../catalogue/filing-datasets';
-import { CONCEPTS, SOURCE_VOCABULARY, TAG_TO_CONCEPT, TAG_TO_STATEMENT } from './concept-seed';
+import {
+  CONCEPTS,
+  EXCLUDED_TAGS,
+  inferStatement,
+  SOURCE_VOCABULARY,
+  TAG_TO_CONCEPT,
+  TAG_TO_STATEMENT,
+} from './concept-seed';
 import {
   fiscalQuarterOf,
   fiscalYearOf,
@@ -256,7 +263,8 @@ export class StatementsConnector {
     sourceRecordId: string,
     row: FilingRow,
   ) {
-    const out = { statements: 0, lineItems: 0, unmapped: 0, failures: 0, skipped: 0 };
+    const out: { statements: number; lineItems: number; unmapped: number; failures: number; skipped: number; excludedTags?: number } =
+      { statements: 0, lineItems: 0, unmapped: 0, failures: 0, skipped: 0 };
 
     const frequency = frequencyFromPeriod(column.periodStart, column.periodEnd);
     if (!frequency) {
@@ -286,12 +294,24 @@ export class StatementsConnector {
     // P&L bucket, where it is stored with a null concept and counted — never
     // silently dropped, and never allowed to affect a subtotal.
     const buckets = new Map<'PL' | 'BS' | 'CF', { tag: string; value: number }[]>();
+    let excluded = 0;
     for (const fact of column.facts) {
-      const statement = TAG_TO_STATEMENT.get(fact.tag) ?? 'PL';
+      // Disaggregations of lines already present. In an annual filing several
+      // segment tags appear in a plain context with no dimension, so nothing
+      // structural separates SegmentRevenue from RevenueFromOperations.
+      if (EXCLUDED_TAGS.has(fact.tag)) {
+        excluded += 1;
+        continue;
+      }
+      // An unmapped tag is routed by pattern, not defaulted to the P&L. The
+      // default put ~40 cash-flow lines per annual filing inside the profit and
+      // loss statement.
+      const statement = TAG_TO_STATEMENT.get(fact.tag) ?? inferStatement(fact.tag);
       const list = buckets.get(statement) ?? [];
       list.push(fact);
       buckets.set(statement, list);
     }
+    if (excluded > 0) out.excludedTags = (out.excludedTags ?? 0) + excluded;
 
     for (const [statementType, facts] of buckets) {
       if (facts.length === 0) continue;
@@ -364,7 +384,9 @@ export class StatementsConnector {
     // Only genuine balance-sheet concepts. An instant context can also carry
     // stray facts; anything not mapped to a BS concept is left out rather than
     // padding a balance sheet with unrelated numbers.
-    const facts = instant.facts.filter((f) => (TAG_TO_STATEMENT.get(f.tag) ?? null) === 'BS');
+    const facts = instant.facts.filter(
+      (f) => !EXCLUDED_TAGS.has(f.tag) && (TAG_TO_STATEMENT.get(f.tag) ?? inferStatement(f.tag)) === 'BS',
+    );
     if (facts.length === 0) return out;
 
     const statement = await this.prisma.financialStatement.upsert({
@@ -460,6 +482,33 @@ export class StatementsConnector {
       const other = byKey.get('pl.revenue.other');
       if (income != null && revenue != null && other != null) {
         checks.push({ check: 'profit-and-loss.income-sum', expected: income, observed: revenue + other });
+      }
+    }
+
+    if (statementType === 'CF') {
+      const operating = byKey.get('cf.operating');
+      const investing = byKey.get('cf.investing');
+      const financing = byKey.get('cf.financing');
+      const beforeFx = byKey.get('cf.net-change-before-fx');
+      const netChange = byKey.get('cf.net-change');
+      const fx = byKey.get('cf.fx-effect');
+
+      // CFO + CFI + CFF must equal the change in cash BEFORE exchange
+      // differences. Checking it against the post-FX figure instead would fail
+      // for every company with foreign operations — the FX effect is applied
+      // after the three activity totals, not inside them.
+      if (operating != null && investing != null && financing != null && beforeFx != null) {
+        checks.push({
+          check: 'cash-flow.activities-sum',
+          expected: beforeFx,
+          observed: operating + investing + financing,
+        });
+      }
+
+      // …and that figure plus the exchange effect must equal the reported net
+      // change. Two checks rather than one so a failure says WHICH half broke.
+      if (beforeFx != null && netChange != null) {
+        checks.push({ check: 'cash-flow.fx-bridge', expected: netChange, observed: beforeFx + (fx ?? 0) });
       }
     }
 
