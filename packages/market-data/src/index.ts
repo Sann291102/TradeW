@@ -51,3 +51,4 @@ export * from './providers/twelvedata/twelvedata.client';
 export * from './cache/in-memory-quote-cache';
 export * from './rate-limit/token-bucket';
 export * from './registry';
+export { dhanBucketStart } from './providers/dhan/dhan-bar-bucket';

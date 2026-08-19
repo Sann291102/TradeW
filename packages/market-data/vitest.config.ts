@@ -16,6 +16,11 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: [
+      // Daily-bar bucketing. Dhan stamps daily bars at IST midnight, so the
+      // naive conversion filed every session one calendar day early and put
+      // trading sessions on Sundays. Found by auditing the table, not by a
+      // test — these are the assertions that would have caught it.
+      'src/providers/dhan/dhan-bar-bucket.spec.ts',
       // The 2026-08-17 Sentinel outage, as executable regressions: credential
       // lifecycle under Dhan's 24h regulatory cap, fault-vs-absence
       // classification, and the load bounding that stops one dead credential
