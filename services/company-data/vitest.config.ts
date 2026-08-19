@@ -21,6 +21,9 @@ export default defineConfig({
       // The company universe's front door: 2,553 rows whose misparse would be
       // invisible downstream.
       'src/connectors/equity-list.parser.spec.ts',
+      // Daily bars for the whole market. Pins the trap that would otherwise be
+      // invisible: the bhavcopy filename is not the session date.
+      'src/connectors/bhavcopy.parser.spec.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,

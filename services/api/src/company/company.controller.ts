@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/auth.guard';
 import { SECURITY } from '../swagger/swagger.setup';
 import { CompanyService } from './company.service';
+import { CHART_RANGES, ChartRange, CompanyMarketService } from './company-market.service';
 
 /**
  * Company identity for the research surface.
@@ -16,7 +17,10 @@ import { CompanyService } from './company.service';
 @UseGuards(AuthGuard)
 @Controller('company')
 export class CompanyController {
-  constructor(private readonly companies: CompanyService) {}
+  constructor(
+    private readonly companies: CompanyService,
+    private readonly market: CompanyMarketService,
+  ) {}
 
   /** Free-text search across name, symbol and ISIN. Exact matches rank first. */
   @Get('search')
@@ -44,5 +48,25 @@ export class CompanyController {
   @Get(':id')
   byId(@Param('id') id: string) {
     return this.companies.byId(id);
+  }
+
+  /**
+   * Price snapshot: last close, day change, 52-week range, average volume.
+   *
+   * Every figure carries its own status and the session it describes, so a
+   * consumer can never render an end-of-day close as a live price.
+   */
+  @Get(':id/snapshot')
+  snapshot(@Param('id') id: string) {
+    return this.market.snapshot(id);
+  }
+
+  /** Daily OHLCV for a range, oldest first. */
+  @Get(':id/chart')
+  chart(@Param('id') id: string, @Query('range') range?: string) {
+    // Unknown ranges fall back to 1y rather than 400ing: the range is a display
+    // preference, and an unrecognised one is not worth failing a page render.
+    const chosen = (range && range in CHART_RANGES ? range : '1y') as ChartRange;
+    return this.market.chart(id, chosen);
   }
 }

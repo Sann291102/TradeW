@@ -104,7 +104,9 @@ describe('catalogue invariants', () => {
   it('every dataset builds an https URL on its declared host', () => {
     for (const id of FILING_DATASET_IDS) {
       const dataset = FILING_DATASETS[id];
-      const url = new URL(buildUrl(dataset, dataset.scope === 'symbol' ? 'RELIANCE' : undefined));
+      const scope =
+        dataset.scope === 'symbol' ? 'RELIANCE' : dataset.scope === 'date' ? '2026-08-18' : undefined;
+      const url = new URL(buildUrl(dataset, scope));
       expect(url.protocol).toBe('https:');
       expect(url.hostname).toBe(dataset.host);
     }
@@ -155,5 +157,34 @@ describe('isAllowedDocumentUrl', () => {
     expect(isAllowedDocumentUrl('file:///etc/passwd')).toBe(false);
     expect(isAllowedDocumentUrl('not a url')).toBe(false);
     expect(isAllowedDocumentUrl('')).toBe(false);
+  });
+});
+
+describe('buildUrl — date datasets', () => {
+  const bhavcopy = FILING_DATASETS['nse.bhavcopy'];
+
+  it('reformats an ISO day into the DDMMYYYY the archive expects', () => {
+    expect(buildUrl(bhavcopy, '2026-08-18')).toBe(
+      'https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_18082026.csv',
+    );
+  });
+
+  it('requires a date', () => {
+    expect(() => buildUrl(bhavcopy)).toThrow(InvalidScopeError);
+  });
+
+  it('refuses anything that is not an ISO calendar day', () => {
+    for (const scope of ['18-08-2026', '20260818', '2026-8-8', 'RELIANCE', '../etc/passwd', '2026-08-18T00:00:00Z']) {
+      expect(() => buildUrl(bhavcopy, scope)).toThrow(InvalidScopeError);
+    }
+  });
+
+  it('refuses a well-shaped but impossible date', () => {
+    // The pattern only proves the digits sit in the right places. Without the
+    // round-trip check, 2026-02-31 would build a URL for a day that does not
+    // exist and the 404 would look like a market holiday.
+    for (const scope of ['2026-02-31', '2026-13-01', '2026-00-10']) {
+      expect(() => buildUrl(bhavcopy, scope)).toThrow(InvalidScopeError);
+    }
   });
 });

@@ -22,10 +22,11 @@
  *
  * ── SCOPE: WHAT A DATASET IS ADDRESSED BY ──────────────────────────────────
  * `'market'` datasets take no argument and describe the whole exchange (the
- * equity list). `'symbol'` datasets take exactly one NSE symbol. Nothing takes a
- * free-form string: `buildUrl` percent-encodes the symbol and the symbol is
- * validated against `SYMBOL_PATTERN` first, so a scope value can never
- * introduce a path segment or a query parameter of its own.
+ * equity list). `'symbol'` datasets take exactly one NSE symbol. `'date'`
+ * datasets take one calendar day (`YYYY-MM-DD`) and describe one session.
+ * Nothing takes a free-form string: every scope value is validated against a
+ * pattern BEFORE it is encoded, so it can never introduce a path segment or a
+ * query parameter of its own.
  *
  * ── VERIFIED, NOT ASSUMED ──────────────────────────────────────────────────
  * Every entry below was probed live on 2026-08-19 and returned real data for
@@ -44,9 +45,10 @@ export type FilingDatasetId =
   | 'nse.board-meetings'
   | 'nse.financial-results'
   | 'nse.shareholding'
-  | 'nse.annual-reports';
+  | 'nse.annual-reports'
+  | 'nse.bhavcopy';
 
-export type DatasetScope = 'market' | 'symbol';
+export type DatasetScope = 'market' | 'symbol' | 'date';
 
 /** What kind of thing comes back — decides which parser may touch it. */
 export type DatasetFormat = 'json' | 'csv' | 'xbrl';
@@ -98,6 +100,9 @@ const FILINGS_BASE = 'https://www.nseindia.com/companies-listing';
  * surface.
  */
 export const SYMBOL_PATTERN = /^[A-Z0-9&\- ]{1,32}$/;
+
+/** Date scopes, as ISO calendar days. Reformatted per-dataset by the builder. */
+export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export const FILING_DATASETS: Record<FilingDatasetId, FilingDataset> = {
   /**
@@ -238,6 +243,45 @@ export const FILING_DATASETS: Record<FilingDatasetId, FilingDataset> = {
     historical: true,
     carriesProse: false,
   },
+
+  /**
+   * One session's full equity bhavcopy: OHLC, volume, turnover and delivery
+   * for every traded security.
+   *
+   * THE SOURCE THAT MAKES A 52-WEEK RANGE AFFORDABLE. One file per trading day
+   * covers the entire market (~3,400 rows, ~390 KB), so a year of history for
+   * every listed company is ~250 requests rather than one request per company.
+   * It is also keyless, so it does not depend on the broker token — which
+   * expires every 24 hours by SEBI rule and cannot be renewed without a human
+   * completing a browser 2FA consent.
+   *
+   * Plain CSV deliberately, not the UDiFF `BhavCopy_NSE_CM_*.csv.zip` on the
+   * same host: that one is a ZIP, and adding an archive dependency to read a
+   * file that is also published uncompressed is a cost with no return.
+   *
+   * ⚠ THE FILENAME IS NOT THE SESSION DATE. Verified 2026-08-19:
+   * `sec_bhavdata_full_16082026.csv` — a SUNDAY — returns HTTP 200 with 3,296
+   * rows whose DATE1 is 14-Aug-2026, the previous Friday. Saturday 404s;
+   * Sunday does not. Keying bars by the requested date would therefore invent a
+   * Sunday session holding a duplicate of Friday's bars, and every 52-week high
+   * or low computed afterwards would be drawn from a series with phantom days
+   * in it. The parser reads DATE1 and the caller must honour it.
+   */
+  'nse.bhavcopy': {
+    id: 'nse.bhavcopy',
+    describes: "One session's equity bhavcopy — OHLC, volume, turnover, delivery — for the whole market",
+    scope: 'date',
+    host: 'nsearchives.nseindia.com',
+    format: 'csv',
+    // Scope arrives validated as YYYY-MM-DD; NSE wants DDMMYYYY.
+    path: (s) => `https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_${s}.csv`,
+    referer: 'https://www.nseindia.com/all-reports',
+    // Once per session. The scheduler drives history by enqueueing dates, not
+    // by polling this faster.
+    cadenceMs: DAY,
+    historical: true,
+    carriesProse: false,
+  },
 };
 
 /** Every dataset id, for iteration. Ordered as declared. */
@@ -280,6 +324,21 @@ export function buildUrl(dataset: FilingDataset, scope?: string): string {
       throw new InvalidScopeError(`Dataset ${dataset.id} is market-wide and takes no symbol (received "${scope}")`);
     }
     return dataset.path('');
+  }
+
+  if (dataset.scope === 'date') {
+    if (!scope) throw new InvalidScopeError(`Dataset ${dataset.id} requires a date`);
+    if (!DATE_PATTERN.test(scope)) {
+      throw new InvalidScopeError(`Refusing to build a URL for non-date scope "${scope}"`);
+    }
+    const [y, m, d] = scope.split('-');
+    // Reject 2026-13-45 as well as the wrong shape: the pattern only proves
+    // the digits are in the right places.
+    const asDate = new Date(`${scope}T00:00:00Z`);
+    if (Number.isNaN(asDate.getTime()) || asDate.toISOString().slice(0, 10) !== scope) {
+      throw new InvalidScopeError(`Refusing to build a URL for impossible date "${scope}"`);
+    }
+    return dataset.path(`${d}${m}${y}`);
   }
 
   if (!scope) throw new InvalidScopeError(`Dataset ${dataset.id} requires a symbol`);
