@@ -18,11 +18,21 @@ import { derived, eod, Sourced, unavailable } from './sourced';
  * when the screener needs to filter on it across the whole market at once
  * (plan §K, `DerivedMetric`), and not before.
  *
- * ── WHAT IT WILL NOT DO ────────────────────────────────────────────────────
- * No market cap. It needs a share count, which lives in the XBRL filings and
- * arrives with the statement pipeline. Returning an approximation would be the
- * `price * 670` this whole effort exists to delete, and an approximation
- * wearing a provenance envelope is worse than one without — it looks checked.
+ * ── MARKET CAP, AND WHY IT TOOK A STATEMENT PIPELINE ───────────────────────
+ * Market cap is shares × price, and the share count is the hard half. It is not
+ * in the equity list (face value and paid-up value are both PER SHARE), and the
+ * NSE quote endpoint that would carry it answers 403. It comes from the filings:
+ *
+ *   shares = PaidUpValueOfEquityShareCapital / FaceValueOfEquityShareCapital
+ *
+ * both in rupees, so the quotient is a count.
+ *
+ * THE COUNT MUST COME FROM THE LATEST FILING. RELIANCE's paid-up capital reads
+ * ₹6,766 cr in the FY2024 filing and ₹13,532 cr in the most recent one — the
+ * 1:1 bonus issue doubled the share count from 676.6 cr to 1,353.2 cr. Taking
+ * "a" filing rather than the newest would halve or double the market cap of
+ * every company that has issued bonus shares, and the number would look
+ * perfectly plausible.
  */
 
 const DAY_MS = 86_400_000;
@@ -40,6 +50,9 @@ export interface CompanyMarketSnapshot {
   fiftyTwoWeekPosition: Sourced<number>;
   averageVolume20d: Sourced<number>;
   lastVolume: Sourced<number>;
+  /** Shares × last close. Null until the company's filings have been ingested. */
+  marketCap: Sourced<number>;
+  sharesOutstanding: Sourced<number>;
   /** Sessions held in the last 52 weeks — how much history the figures rest on. */
   sessionsAvailable: number;
 }
@@ -113,6 +126,8 @@ export class CompanyMarketService {
         fiftyTwoWeekPosition: none,
         averageVolume20d: none,
         lastVolume: none,
+        marketCap: none,
+        sharesOutstanding: await this.sharesOutstanding(companyId),
       };
     }
 
@@ -139,6 +154,8 @@ export class CompanyMarketService {
         fiftyTwoWeekPosition: none,
         averageVolume20d: none,
         lastVolume: none,
+        marketCap: none,
+        sharesOutstanding: await this.sharesOutstanding(companyId),
       };
     }
 
@@ -165,6 +182,7 @@ export class CompanyMarketService {
       volumeWindow.reduce((sum, c) => sum + Number(c.volume), 0) / (volumeWindow.length || 1);
 
     const span = high - low;
+    const shares = await this.sharesOutstanding(companyId);
 
     return {
       ...base,
@@ -203,7 +221,72 @@ export class CompanyMarketService {
         flags: volumeWindow.length < 20 ? [`only ${volumeWindow.length} sessions available`] : undefined,
       }),
       lastVolume: eod(Number(latest.volume), session),
+      sharesOutstanding: shares,
+      marketCap:
+        shares.value == null
+          ? unavailable('share count needs the company\'s filings to be ingested')
+          : derived(Math.round(shares.value * lastClose), {
+              periodEnd: session,
+              // Both inputs are named, because a market cap is only as current
+              // as its share count and the count is as old as the last filing.
+              flags: [
+                `${shares.value.toLocaleString('en-IN')} shares from the filing dated ` +
+                  `${shares.effectiveAt?.slice(0, 10) ?? 'unknown'}, at the ${session.toISOString().slice(0, 10)} close`,
+                ...(shares.flags ?? []),
+              ],
+            }),
     };
+  }
+
+  /**
+   * Shares outstanding, from the most recent filing that reports both halves.
+   *
+   * Ordered by period end descending and taking the FIRST usable pair — see the
+   * class comment for why "most recent" is load-bearing rather than tidy.
+   */
+  private async sharesOutstanding(companyId: string): Promise<Sourced<number>> {
+    const statements = await this.prisma.financialStatement.findMany({
+      where: { companyId, lineItems: { some: { conceptKey: 'equity.paid-up-capital' } } },
+      orderBy: { periodEnd: 'desc' },
+      take: 6,
+      select: {
+        periodEnd: true,
+        announcedAt: true,
+        lineItems: {
+          where: { conceptKey: { in: ['equity.paid-up-capital', 'equity.face-value'] } },
+          select: { conceptKey: true, value: true },
+        },
+      },
+    });
+
+    for (const statement of statements) {
+      const paidUp = statement.lineItems.find((l) => l.conceptKey === 'equity.paid-up-capital');
+      const faceValue = statement.lineItems.find((l) => l.conceptKey === 'equity.face-value');
+      if (!paidUp || !faceValue) continue;
+
+      const face = Number(faceValue.value);
+      // A zero or absent face value would divide to Infinity and render as a
+      // market cap of ₹Infinity crore rather than as the missing datum it is.
+      if (!Number.isFinite(face) || face <= 0) continue;
+
+      const shares = Number(paidUp.value) / face;
+      if (!Number.isFinite(shares) || shares <= 0) continue;
+
+      const ageDays = (Date.now() - statement.periodEnd.getTime()) / DAY_MS;
+      return {
+        value: Math.round(shares),
+        status: 'filing',
+        source: { provider: 'NSE results XBRL', tier: 1 },
+        effectiveAt: statement.periodEnd.toISOString(),
+        frequency: 'quarterly',
+        // A share count older than about two quarters may predate a bonus,
+        // split or buyback, and the market cap derived from it would be wrong
+        // by exactly that factor.
+        ...(ageDays > 200 ? { flags: [`share count is ${Math.floor(ageDays)} days old`] } : {}),
+      };
+    }
+
+    return unavailable('no filing reports paid-up capital and face value');
   }
 
   /** Daily OHLCV for a range, oldest first — the shape a chart consumes. */

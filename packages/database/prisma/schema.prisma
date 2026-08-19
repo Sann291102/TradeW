@@ -2430,8 +2430,9 @@ model SourceRecord {
   company   Company? @relation(fields: [companyId], references: [id])
 
   qualityResults      DataQualityResult[]
-  identifiedCompanies Company[]           @relation("CompanyIdentitySource")
-  identifiedListings  SecurityListing[]   @relation("ListingSource")
+  identifiedCompanies Company[]            @relation("CompanyIdentitySource")
+  identifiedListings  SecurityListing[]    @relation("ListingSource")
+  statements          FinancialStatement[]
 
   /// Re-fetching identical bytes must not create a second row.
   @@unique([dataSourceId, sourceUrl, contentHash])
@@ -2629,6 +2630,7 @@ model Company {
   listings      SecurityListing[]
   aliases       CompanyAlias[]
   sourceRecords SourceRecord[]
+  statements    FinancialStatement[]
 
   @@index([active])
   @@index([name])
@@ -2730,4 +2732,215 @@ model CompanyAlias {
   @@unique([kind, normalized])
   @@index([normalized])
   @@index([companyId])
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Company Intelligence — Phase 3: financial statements
+//
+// Design: knowledge/Plans/2026-08-19 - Company Intelligence Platform §D/§F/§G.
+// Source shape verified 2026-08-19, see the XBRL section of
+// knowledge/API/2026-08-19 - NSE corporate filings and XBRL fundamentals.
+//
+// WHY KEY/VALUE AND NOT TWO HUNDRED COLUMNS
+// A wide `ProfitAndLoss` table with a column per line reads better in a query
+// and is the wrong shape here. Filers use the shared in-bse-fin Ind-AS
+// taxonomy, but they use DIFFERENT SUBSETS of it: a bank files line items a
+// manufacturer never touches, and a company with discontinued operations files
+// tags most companies omit entirely. A wide table needs a migration every time
+// a filer uses a tag we had not seen, and 2,550 companies will keep finding
+// them. Key/value absorbs that as data.
+//
+// The cost is that a line item is only as meaningful as its `conceptKey`, which
+// is why `FinancialConcept` exists as a real table rather than a convention.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One statement, for one company, for one period, on one basis.
+///
+/// A single filed document produces SEVERAL of these. A quarterly results XBRL
+/// carries both the three-month column and the cumulative year-to-date column,
+/// which are different periods and therefore different statements. An annual
+/// filing carries P&L, balance sheet and cash flow for one period, which are
+/// different statement types and therefore also different rows.
+model FinancialStatement {
+  id        String  @id @default(uuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  /// 'PL' | 'BS' | 'CF'
+  statementType String
+
+  /// 'STANDALONE' | 'CONSOLIDATED'
+  ///
+  /// Never inferred. The filing asserts it in
+  /// `NatureOfReportStandaloneConsolidated`, and NSE serves the two bases as
+  /// separate documents, so the distinction arrives for free. A series that
+  /// silently mixed them would show a parent-only revenue beside a group
+  /// revenue and call the difference growth.
+  consolidation String
+
+  /// 'Q' (3 months) | 'H' (6) | '9M' | 'A' (12).
+  ///
+  /// Derived from the period length, not from the document's label. The label
+  /// on the cumulative column of a Q3 filing still says "Third quarter".
+  frequency String
+
+  /// THE AUTHORITATIVE PERIOD — from the DateOfStartOfReportingPeriod /
+  /// DateOfEndOfReportingPeriod FACTS, not from the xbrli:context.
+  ///
+  /// Verified 2026-08-19: RELIANCE's Q3 FY25 filing declares context `FourD`
+  /// as 2024-10-01 → 2024-12-31 while its reporting-period facts say
+  /// 2024-04-01 → 2024-12-31, and the values confirm the facts (₹3,96,645 cr
+  /// of revenue against ₹1,28,260 cr for the quarter — nine months over three).
+  /// Trusting the context stores nine months of profit as one quarter, and
+  /// nothing errors.
+  periodStart DateTime
+  periodEnd   DateTime
+
+  /// Indian fiscal year the period ends in: Apr-Mar, labelled by the ending
+  /// calendar year (Jan-Mar 2025 is FY2025).
+  fiscalYear    Int
+  /// 1-4 for quarterly periods, null for cumulative and annual ones.
+  fiscalQuarter Int?
+
+  /// When the filing was disseminated by the exchange. Distinct from the period
+  /// it covers — results for a quarter arrive weeks after it ends, and a "most
+  /// recent results" query means this column, not periodEnd.
+  announcedAt DateTime?
+
+  /// From the filing. 'Audited' | 'Unaudited' — a research page showing an
+  /// unaudited figure beside an audited one without saying so is withholding
+  /// the more important half.
+  auditStatus String?
+
+  currency String @default("INR")
+
+  /// Power of ten the source used. NSE's Ind-AS XBRL publishes absolute rupees
+  /// (scale 0), which removes the commonest source of silent 100x errors —
+  /// recorded anyway so a future source with a different convention cannot be
+  /// mistaken for this one.
+  unitScale Int @default(0)
+
+  /// A restatement arrives as a NEW row rather than an overwrite; the original
+  /// is retained (CLAUDE.md Rule 1). The filing flags it (`revisedData`,
+  /// `oldNewFlag`), so this is read, not guessed.
+  restated Boolean @default(false)
+
+  /// 'passed' | 'failed' | 'not-applicable' | 'pending'.
+  ///
+  /// Set by the validators. A balance sheet that does not balance is stored
+  /// with 'failed' and rendered AS FLAGGED — never silently displayed as
+  /// though it reconciled, and never dropped, because a filing that does not
+  /// reconcile is itself a finding.
+  reconciliationStatus String @default("pending")
+
+  sourceRecordId String?
+  sourceRecord   SourceRecord? @relation(fields: [sourceRecordId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lineItems FinancialLineItem[]
+
+  /// One statement per (company, type, basis, frequency, period, revision).
+  /// Re-ingesting the same filing is therefore a no-op, and a genuine
+  /// restatement is a different row rather than a conflict.
+  @@unique([companyId, statementType, consolidation, frequency, periodEnd, restated])
+  @@index([companyId, statementType, periodEnd])
+  @@index([companyId, fiscalYear])
+  @@index([reconciliationStatus])
+}
+
+/// One line of one statement.
+model FinancialLineItem {
+  id          String             @id @default(uuid())
+  statementId String
+  statement   FinancialStatement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+
+  /// Canonical key from `FinancialConcept` — 'revenue.operating', 'assets.total'.
+  /// NULL when the source tag has no mapping yet: the value is kept with its
+  /// raw tag and raised as a coverage finding, so unmapped tags are measurable
+  /// instead of silently lost.
+  conceptKey String?
+
+  /// Exactly as the filer tagged it, always retained. When a mapping turns out
+  /// to be wrong, re-deriving from this beats re-fetching a document the
+  /// exchange may have moved.
+  rawTag String
+
+  value Decimal @db.Decimal(24, 4)
+
+  /// 1 for a filed figure. Below 1 for anything we computed because the filing
+  /// omitted it — a derived EBITDA must never be presentable as a filed one.
+  confidence Float @default(1)
+
+  @@unique([statementId, rawTag])
+  @@index([statementId, conceptKey])
+  @@index([conceptKey])
+}
+
+/// The canonical chart of accounts.
+///
+/// A real table rather than a TypeScript enum because it drives three things at
+/// once: what the UI renders and in what order, what the validators check, and
+/// what `ConceptMapping` is allowed to point at. A concept that is not here
+/// cannot be mapped to, which is what stops the vocabulary drifting.
+model FinancialConcept {
+  conceptKey String @id
+
+  /// 'PL' | 'BS' | 'CF'
+  statement String
+  label     String
+
+  /// Parent in the presentation tree, for indented rendering and for checking
+  /// that children sum to their subtotal.
+  parentKey String?
+
+  /// +1 when a positive value increases the subtotal, -1 when it reduces it
+  /// (expenses, tax, outflows). Applied ONCE, at normalisation, so every
+  /// consumer can add without knowing the accounting convention.
+  sign Int @default(1)
+
+  /// True for totals the filing itself reports (Assets, ProfitBeforeTax).
+  /// Validators check these against the sum of their children.
+  isSubtotal Boolean @default(false)
+
+  /// Presentation order within the statement.
+  ordinal Int @default(0)
+
+  mappings ConceptMapping[]
+
+  @@index([statement, ordinal])
+}
+
+/// Source tag → canonical concept.
+///
+/// Every normalisation rule is a ROW, not a branch in a parser: reviewable,
+/// diffable, and testable without running an ingest. `validFrom` means a
+/// taxonomy revision adds a mapping rather than rewriting history — the old
+/// rule stays true for the documents it was applied to.
+model ConceptMapping {
+  id String @id @default(uuid())
+
+  /// Which source's vocabulary this belongs to — 'nse-xbrl-in-bse-fin'.
+  /// Two sources can spell the same concept differently and must not collide.
+  sourceVocabulary String
+
+  /// The tag as it appears in the document, without namespace prefix.
+  rawTag String
+
+  conceptKey String
+  concept    FinancialConcept @relation(fields: [conceptKey], references: [conceptKey])
+
+  /// Power-of-ten adjustment to reach absolute currency units. 0 for NSE's
+  /// Ind-AS XBRL, which publishes absolute rupees.
+  scale Int @default(0)
+
+  validFrom DateTime @default(now())
+
+  createdAt DateTime @default(now())
+
+  @@unique([sourceVocabulary, rawTag, validFrom])
+  @@index([sourceVocabulary, rawTag])
+  @@index([conceptKey])
 }

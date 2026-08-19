@@ -5,9 +5,10 @@ import { SourceFetcherService } from './ingestion/source-fetcher.service';
 import { IngestionSchedulerService } from './ingestion/ingestion-scheduler.service';
 import { EquityListConnector } from './connectors/equity-list.connector';
 import { BhavcopyConnector } from './connectors/bhavcopy.connector';
+import { StatementsConnector } from './connectors/statements.connector';
 
 @Module({
   controllers: [HealthController],
-  providers: [PrismaService, SourceFetcherService, IngestionSchedulerService, EquityListConnector, BhavcopyConnector],
+  providers: [PrismaService, SourceFetcherService, IngestionSchedulerService, EquityListConnector, BhavcopyConnector, StatementsConnector],
 })
 export class AppModule {}

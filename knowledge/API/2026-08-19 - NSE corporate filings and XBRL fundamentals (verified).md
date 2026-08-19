@@ -62,7 +62,7 @@ Results XBRL sample:
   There is no crore/lakh/million ambiguity to detect, which removes the single
   most common source of silent 100× errors. Normalisation still records the
   scale, but it is reading a fact rather than inferring one.
-- Periods live in `xbrli:context`, never in a label:
+- Facts carry a `contextRef`; contexts carry an entity and a period:
   ```xml
   <xbrli:context id="OneD"><xbrli:entity>
     <xbrli:identifier scheme="http://www.nseindia.com/NSESymbol">RELIANCE</xbrli:identifier>
@@ -70,12 +70,48 @@ Results XBRL sample:
     <xbrli:startDate>2024-10-01</xbrli:startDate><xbrli:endDate>2024-12-31</xbrli:endDate>
   </xbrli:period></xbrli:context>
   ```
-  **`periodStart`/`periodEnd` MUST come from the context a fact references**, not
-  from `fromDate`/`toDate` on the listing row and never from `relatingTo`
-  ("Third Quarter"). One document carries several contexts — quarter, year-to-date,
-  prior-year comparatives — so a fact without its resolved context is meaningless.
-  The identifier scheme also confirms the NSE symbol inside the document itself,
-  which is a free identity cross-check.
+  The identifier scheme confirms the NSE symbol inside the document itself — a
+  free identity cross-check. **But see the next section before trusting that
+  period.**
+
+### ⚠ THE CONTEXT PERIOD IS NOT ALWAYS THE FACT'S PERIOD
+
+The most dangerous thing on this feed, and it is silent.
+
+A quarterly filing carries two dimensionless statement columns. Verified on
+RELIANCE's Q3 FY25 filing (`INDAS_117298_1348254_16012025082021.xml`):
+
+| Context | `<xbrli:period>` says | `DateOfStartOfReportingPeriod` fact says | RevenueFromOperations |
+|---|---|---|---|
+| `OneD` | 2024-10-01 → 2024-12-31 | 2024-10-01 | ₹1,28,260 cr |
+| `FourD` | **2024-10-01 → 2024-12-31** | **2024-04-01** | ₹3,96,645 cr |
+
+`FourD`'s declared context period is **wrong**. The column is the nine-month
+year-to-date figure — 3,96,645 / 1,28,260 = 3.09, which is nine months over
+three — while its `<xbrli:period>` claims the same three months as `OneD`.
+
+**So the authoritative period is the `DateOfStartOfReportingPeriod` /
+`DateOfEndOfReportingPeriod` FACTS resolved within each context, not the
+context's own `<xbrli:period>`.** A parser that trusts the context — which is
+what the XBRL specification would lead you to do, and what an earlier draft of
+this note wrongly recommended — stores nine months of revenue and profit as one
+quarter. Nothing errors. Every margin still computes. The number is simply ~3×
+too big, on every cumulative column of every quarterly filing.
+
+Treat a disagreement between the two as a data-quality finding, prefer the
+facts, and never silently accept the context.
+
+Other context notes:
+- `ReportingQuarter` ("Third quarter") appears only on the quarter column, which
+  is a second way to tell the two apart.
+- `NatureOfReportStandaloneConsolidated` is carried per context ("Standalone"),
+  so consolidation is asserted inside the document and never has to be inferred
+  from the listing row.
+- 46 contexts in that one file; only **three are dimensionless** (`OneD`,
+  `FourD`, `OneI` for the instant). The rest carry a `dimension=` — segments,
+  expense breakdowns, OCI categories. **Facts in dimensioned contexts are
+  disaggregations and must not be read as statement lines**; summing them into
+  the P&L double-counts.
 
 ### The constraint that shapes the UI
 

@@ -24,6 +24,10 @@ export default defineConfig({
       // Daily bars for the whole market. Pins the trap that would otherwise be
       // invisible: the bhavcopy filename is not the session date.
       'src/connectors/bhavcopy.parser.spec.ts',
+      // Financial statements. Pins the defect that would otherwise file nine
+      // months of profit as one quarter: the xbrli:context period is not always
+      // the fact's period.
+      'src/connectors/xbrl.parser.spec.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,

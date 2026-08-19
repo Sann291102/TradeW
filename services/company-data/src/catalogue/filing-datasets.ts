@@ -44,6 +44,7 @@ export type FilingDatasetId =
   | 'nse.corporate-actions'
   | 'nse.board-meetings'
   | 'nse.financial-results'
+  | 'nse.financial-results-annual'
   | 'nse.shareholding'
   | 'nse.annual-reports'
   | 'nse.bhavcopy';
@@ -212,6 +213,29 @@ export const FILING_DATASETS: Record<FilingDatasetId, FilingDataset> = {
     // Results cluster into a few weeks a year. The scheduler tightens this
     // during results season rather than the catalogue guessing a single number.
     cadenceMs: 6 * HOUR,
+    historical: true,
+    carriesProse: false,
+  },
+
+  /**
+   * The same listing, annual periods.
+   *
+   * A SEPARATE ENTRY rather than a `period` argument on the entry above. The
+   * catalogue's whole guarantee is that a caller names a dataset and never
+   * composes a URL — the moment one query parameter becomes caller-supplied,
+   * that guarantee is a convention rather than a control, and the next
+   * parameter is easier to add than this comment is to write.
+   */
+  'nse.financial-results-annual': {
+    id: 'nse.financial-results-annual',
+    describes: 'Filed ANNUAL results index, each row carrying its XBRL document URL',
+    scope: 'symbol',
+    host: 'www.nseindia.com',
+    format: 'json',
+    path: (s) => `https://www.nseindia.com/api/corporates-financial-results?index=equities&symbol=${s}&period=Annual`,
+    referer: `${FILINGS_BASE}/corporate-filings-financial-results`,
+    // Annual filings land once a year. Daily is about noticing, not change.
+    cadenceMs: DAY,
     historical: true,
     carriesProse: false,
   },
