@@ -2288,3 +2288,248 @@ model ExecutionOutcome {
 
   @@index([result])
 }
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Company Intelligence — Phase 1: provenance and ingestion foundation
+//
+// Design: knowledge/Plans/2026-08-19 - Company Intelligence Platform
+// (architecture plan) §D/§E/§R. Source verification:
+// knowledge/API/2026-08-19 - NSE corporate filings and XBRL fundamentals.
+//
+// These four models carry NO company data. They exist so that when company data
+// starts arriving (Phase 2+), every row of it can already answer "where did this
+// come from, when, and was it checked" — because provenance retrofitted after
+// the fact is provenance that is missing for the rows that matter most.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// An upstream we are allowed to read from.
+///
+/// A row here is an OPERATIONAL record (is it enabled, how fast may we call it,
+/// what does its licence say) — it is deliberately NOT the catalogue of *what*
+/// may be fetched. That catalogue lives in code as a closed allowlist, for the
+/// reason given at length in services/api/src/nse/nse-datasets.ts: a URL that
+/// can be composed from a database row is one bad row away from being an SSRF
+/// primitive, and adding a dataset should require a code review.
+///
+/// So: code decides what is reachable, this table decides whether and how fast.
+model DataSource {
+  id  String @id @default(uuid())
+  /// Stable programmatic key — 'nse-filings', 'nse-archives', 'dhan', 'rss-news'.
+  key String @unique
+
+  name String
+  /// 1 = official/exchange/regulator, 2 = free or licensed provider,
+  /// 3 = secondary research source. Precedence when two sources disagree runs
+  /// by this tier first (plan §G), so it is a correctness field, not a label.
+  tier Int
+
+  baseUrl String?
+
+  /// What the terms actually permit, in plain words, written by whoever added
+  /// the source. Present because "is this legal to use in production" is a
+  /// question that gets asked months later by someone who was not in the room,
+  /// and the answer must not have to be reconstructed from a chat log.
+  licenseNote String?
+
+  /// Politeness budget, enforced by a shared token bucket at call time. Null
+  /// means "no explicit limit known" — which is NOT the same as unlimited and
+  /// is treated by the limiter as a conservative default.
+  rateLimitPerMin Int?
+
+  /// Kill switch. An upstream that starts refusing us (NSE has form here — see
+  /// the verified 403 on quote-equity) is disabled operationally rather than by
+  /// a deploy.
+  enabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sourceRecords SourceRecord[]
+  jobs          IngestionJob[]
+
+  @@index([enabled])
+}
+
+/// One fetch of one artefact — the provenance envelope.
+///
+/// Written BEFORE anything is derived from it, and never updated in place. Every
+/// canonical row created later points back here, so any number on screen traces
+/// to a URL, an instant, and a hash of exactly the bytes that produced it. This
+/// is the whole mechanism behind "Source: NSE filing · Retrieved 2 hours ago"
+/// being a true statement rather than a decorative one (plan §R).
+///
+/// Also the incrementality substrate: a fetch whose contentHash we already hold
+/// is recorded as `unchanged` and stops there, so re-running a job re-parses
+/// nothing.
+model SourceRecord {
+  id           String     @id @default(uuid())
+  dataSourceId String
+  dataSource   DataSource @relation(fields: [dataSourceId], references: [id])
+
+  /// Which catalogue entry produced this — 'nse.financial-results',
+  /// 'nse.shareholding', 'nse.equity-list'. Matches the code-side allowlist id.
+  datasetKey String
+
+  /// What this artefact is about. Deliberately loose strings for now: `Company`
+  /// does not exist until Phase 2, and a nullable FK to a table that is not
+  /// there yet would be a lie. Phase 2 adds `companyId` alongside these and
+  /// backfills it from `subjectIsin` — the ISIN is the join key that makes that
+  /// backfill deterministic rather than a name-matching guess.
+  subjectSymbol String?
+  subjectIsin   String?
+
+  sourceUrl  String
+  httpStatus Int?
+
+  /// When WE read it.
+  retrievedAt DateTime @default(now())
+
+  /// When the SOURCE says the content is from — a filing's broadcast time, a
+  /// session date. Distinct from retrievedAt on purpose: reading yesterday's
+  /// FII/DII file at 11am today does not make the data 11am-fresh, and the
+  /// freshness label the UI shows is computed from this, not from retrievedAt.
+  effectiveAt DateTime?
+
+  /// Conditional-request bookkeeping. Present so a weekly document sweep costs
+  /// a 304 rather than a re-download.
+  etag         String?
+  lastModified String?
+
+  /// SHA-256 of the raw bytes. The change-detector and the dedupe key.
+  contentHash String
+  contentType String?
+  contentSize Int?
+
+  /// Where the raw bytes were kept, when they were kept. Null means we retained
+  /// only the parsed result. Raw retention matters for filings specifically:
+  /// when a parser turns out to be wrong, reprocessing must not require asking
+  /// NSE for a document it may no longer serve.
+  rawPath String?
+
+  /// 'ok' | 'unchanged' | 'failed'. A failed fetch is RECORDED, not discarded —
+  /// "we tried and could not read it" is a different fact from "we never
+  /// looked", and only one of them justifies showing stale data.
+  status String
+  error  String?
+
+  createdAt DateTime @default(now())
+
+  qualityResults DataQualityResult[]
+
+  /// Re-fetching identical bytes must not create a second row.
+  @@unique([dataSourceId, sourceUrl, contentHash])
+  @@index([datasetKey, retrievedAt])
+  @@index([subjectIsin])
+  @@index([subjectSymbol])
+  @@index([status, retrievedAt])
+}
+
+/// A unit of recurring ingestion work, and its checkpoint.
+///
+/// One row per (jobKey, scope) — 'nse.announcements' × 'RELIANCE',
+/// 'nse.equity-list' × 'market'. The plan sketched a separate
+/// `IngestionCheckpoint` table; merged here instead, because it would have been
+/// strictly 1:1 with this row and every read would have joined it. The scope-
+/// keyed job IS the checkpoint.
+///
+/// Scheduling is claim-based: the dispatcher takes rows whose `nextRunAt` has
+/// passed and marks them running. Combined with the existing JobLease leader
+/// election (services/api/src/common/leader-election.ts), two replicas cannot
+/// run the same job — the same correctness argument recorded in the production
+/// readiness audit, where two matching engines double-filled one order.
+model IngestionJob {
+  id String @id @default(uuid())
+
+  /// Catalogue entry to run.
+  jobKey String
+  /// What to run it for — a symbol, or 'market' for whole-market datasets.
+  scope  String
+
+  dataSourceId String?
+  dataSource   DataSource? @relation(fields: [dataSourceId], references: [id])
+
+  // ---- Checkpoint: how this job avoids redoing work (plan §H) ----
+  /// Opaque per-connector position — a date window, a page token.
+  cursor          String?
+  /// Highest upstream id already ingested; the announcements feed is polled
+  /// this way rather than by re-reading 3,341 rows every fifteen minutes.
+  lastSeenId      String?
+  /// Hash of the last payload, so an unchanged whole-market file is a no-op.
+  lastContentHash String?
+
+  // ---- Scheduling ----
+  intervalMs    Int
+  nextRunAt     DateTime  @default(now())
+  lastRunAt     DateTime?
+  lastSuccessAt DateTime?
+
+  /// 'idle' | 'running' | 'failed' | 'disabled'
+  state String @default("idle")
+
+  // ---- Claim (crash-safe, replaces a service-wide leader lease) ----
+  /// Which worker process holds this job right now. Random per boot, never the
+  /// hostname — a platform that gives two containers the same hostname must not
+  /// let them believe they share a claim.
+  ///
+  /// Per-JOB claiming rather than the service-wide JobLease used elsewhere in
+  /// the repo, because ingestion jobs are mutually independent: a leader lease
+  /// would make every replica but one idle, when what we actually want is many
+  /// replicas each working on different symbols. The correctness property that
+  /// JobLease exists to protect (never two writers on the same work) is kept —
+  /// it is just enforced per row, by an atomic conditional UPDATE, instead of
+  /// per service.
+  claimedBy String?
+
+  /// Hard deadline on the claim. Past this instant the job is claimable again
+  /// even if `state` still reads 'running' — which is exactly the crash case:
+  /// a worker that dies mid-run cannot reset its own row, so a claim that is
+  /// merely a boolean would strand the job forever.
+  claimExpiresAt DateTime?
+
+  /// Drives backoff and the circuit breaker (plan §O). Reset on success.
+  consecutiveFailures Int     @default(0)
+  lastError           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([jobKey, scope])
+  @@index([state, nextRunAt])
+  @@index([claimExpiresAt])
+  @@index([jobKey])
+}
+
+/// One validation check against one entity.
+///
+/// Exists from Phase 1 rather than arriving with the validators in Phase 3, so
+/// that a check can never be added without somewhere honest to put a failure.
+/// Severity 'error' blocks publish; 'warn' publishes with a UI flag. The point
+/// is that a balance sheet which does not reconcile is SHOWN AS FLAGGED — never
+/// silently rendered as though it did (plan §G, brief §9).
+model DataQualityResult {
+  id String @id @default(uuid())
+
+  /// Table-ish name of what was checked — 'FinancialStatement', 'Shareholding'.
+  entity   String
+  entityId String
+
+  /// Check identifier — 'balance-sheet.identity', 'shareholding.sums-to-100'.
+  check    String
+  /// 'error' | 'warn' | 'info'
+  severity String
+  passed   Boolean
+
+  /// Numbers behind the verdict: expected, observed, tolerance, delta. Present
+  /// so a failure can be argued with, not just believed.
+  detail Json?
+
+  sourceRecordId String?
+  sourceRecord   SourceRecord? @relation(fields: [sourceRecordId], references: [id])
+
+  observedAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([severity, passed, observedAt])
+  @@index([check, observedAt])
+}
