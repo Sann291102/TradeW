@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma.service';
 import { FILING_DATASETS, FILING_DATASET_IDS, FilingDatasetId } from '../catalogue/filing-datasets';
+import { EquityListConnector } from '../connectors/equity-list.connector';
 
 /**
  * Claims due ingestion jobs and runs them.
@@ -29,11 +30,11 @@ import { FILING_DATASETS, FILING_DATASET_IDS, FilingDatasetId } from '../catalog
  * `FOR UPDATE SKIP LOCKED` does the rest: two workers claiming at the same
  * instant take DIFFERENT rows rather than blocking on each other.
  *
- * ── PHASE 1 SCOPE ──────────────────────────────────────────────────────────
- * The dispatcher is real; the handlers are not. Every job currently resolves to
- * a no-op that records the attempt. That is deliberate — this phase proves the
- * claiming, checkpointing, backoff and idempotency work before any parser
- * exists to blame when something looks wrong.
+ * ── HANDLER COVERAGE ───────────────────────────────────────────────────────
+ * Phase 2 wires the first real handler: `nse.equity-list`, which builds the
+ * company identity spine. The remaining datasets are still no-ops — they are
+ * enabled one at a time, each with its own parser and its own tests, rather
+ * than all at once behind a single "ingest everything" switch.
  */
 
 /** How long a claim is held before it is considered abandoned. */
@@ -72,7 +73,10 @@ export class IngestionSchedulerService implements OnModuleInit, OnModuleDestroy 
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly equityList: EquityListConnector,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     if (process.env.COMPANY_DATA_INGESTION_ENABLED !== 'true') {
@@ -224,6 +228,36 @@ export class IngestionSchedulerService implements OnModuleInit, OnModuleDestroy 
       this.logger.warn(`Disabled job ${job.jobKey}/${job.scope}: not in catalogue`);
       return;
     }
+
+    if (job.jobKey === 'nse.equity-list') {
+      const result = await this.equityList.sync(job.lastContentHash);
+      if (result.status === 'failed') {
+        // Thrown, not swallowed: runOne's catch is what records the failure,
+        // applies backoff and leaves the previous checkpoint in place. A
+        // handler that returned quietly here would mark the run successful and
+        // advance nextRunAt as though the market had been read.
+        throw new Error('EQUITY_L.csv fetch failed');
+      }
+      if (result.contentHash) {
+        // Checkpoint AFTER a successful reconcile. Storing the hash before
+        // would mean a crash mid-reconcile leaves a hash claiming the file is
+        // processed, and the next run skips it.
+        await this.prisma.ingestionJob.update({
+          where: { id: job.id },
+          data: { lastContentHash: result.contentHash },
+        });
+      }
+      if (result.status === 'ok') {
+        this.logger.log(
+          `equity-list: parsed ${result.parsed} (${result.skipped} skipped), ` +
+            `+${result.companiesCreated} companies, +${result.listingsCreated} listings, ` +
+            `${result.listingsUpdated} updated, ${result.instrumentsLinked} instrument links, ` +
+            `${result.aliasConflicts} alias conflicts`,
+        );
+      }
+      return;
+    }
+
     this.logger.debug(`(no-op) ${job.jobKey}/${job.scope}`);
   }
 }

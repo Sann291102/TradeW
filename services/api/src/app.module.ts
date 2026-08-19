@@ -9,6 +9,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { EntitlementsModule } from './entitlements/entitlements.module';
 import { InstrumentsModule } from './instruments/instruments.module';
+import { CompanyModule } from './company/company.module';
 import { MarketDataModule } from './market-data/market-data.module';
 import { SimModule } from './sim/sim.module';
 import { DisciplineModule } from './discipline/discipline.module';
@@ -71,6 +72,7 @@ import { HealthController } from './health.controller';
     AuthModule,
     EntitlementsModule,
     InstrumentsModule,
+    CompanyModule,
     MarketDataModule,
     CryptoModule,
     NewsModule,

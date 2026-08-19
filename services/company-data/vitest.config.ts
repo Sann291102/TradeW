@@ -18,6 +18,9 @@ export default defineConfig({
       // Upstream refusal detection — NSE refuses with HTML under HTTP 200, so
       // "did this succeed" cannot be decided on status alone.
       'src/ingestion/refusal.spec.ts',
+      // The company universe's front door: 2,553 rows whose misparse would be
+      // invisible downstream.
+      'src/connectors/equity-list.parser.spec.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,

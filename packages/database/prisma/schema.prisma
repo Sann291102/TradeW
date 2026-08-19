@@ -255,6 +255,10 @@ model Instrument {
   updatedAt DateTime   @updatedAt
   quotes             Quote[]
   candles            Candle[]
+  // Company-identity side of the house. Nullable on the other end: an
+  // instrument may have no listing row (indices, ETFs), and a listing may have
+  // no instrument (a company NSE lists but the broker's scrip master omits).
+  listings           SecurityListing[]
   orders             Order[]
   trades             Trade[]
   positions          Position[]
@@ -2415,13 +2419,26 @@ model SourceRecord {
 
   createdAt DateTime @default(now())
 
-  qualityResults DataQualityResult[]
+  /// Phase 2: the company this artefact is about, once resolvable.
+  ///
+  /// Still nullable, and that is permanent rather than transitional — a
+  /// whole-market file (EQUITY_L.csv) is about every company and therefore
+  /// about none in particular, and an artefact whose subject could not be
+  /// resolved must be storable rather than dropped. `subjectIsin` remains the
+  /// raw claim; this is the resolved conclusion.
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
+
+  qualityResults      DataQualityResult[]
+  identifiedCompanies Company[]           @relation("CompanyIdentitySource")
+  identifiedListings  SecurityListing[]   @relation("ListingSource")
 
   /// Re-fetching identical bytes must not create a second row.
   @@unique([dataSourceId, sourceUrl, contentHash])
   @@index([datasetKey, retrievedAt])
   @@index([subjectIsin])
   @@index([subjectSymbol])
+  @@index([companyId])
   @@index([status, retrievedAt])
 }
 
@@ -2532,4 +2549,185 @@ model DataQualityResult {
   @@index([entity, entityId])
   @@index([severity, passed, observedAt])
   @@index([check, observedAt])
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Company Intelligence — Phase 2: company identity
+//
+// Design: knowledge/Plans/2026-08-19 - Company Intelligence Platform §D.
+//
+// THE PROBLEM THIS SOLVES
+// `Instrument` is a TRADABLE THING: a symbol the broker can be told to buy. It
+// is the right model for that and stays unchanged. But a research page asks a
+// different question — "what is this company" — and the two are not the same
+// object. One company can be listed on NSE and BSE under different symbols;
+// one symbol can be reassigned to a different company after a delisting; and
+// plenty of `Instrument` rows (index constituents, ETFs) have no company behind
+// them at all.
+//
+// Conflating them is what produces `if RELIANCE ...` code: with no company
+// entity, per-company facts have nowhere to live except a branch in a
+// component. So identity gets its own spine, joined to the tradable world by
+// ISIN — the only identifier both sides actually agree on.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A listed issuer.
+///
+/// One row per company, NOT per listing and NOT per tradable symbol. Everything
+/// a research page says about "the company" — sector, description, statements,
+/// shareholding, filings — hangs here, so that a dual-listed company is one
+/// subject with two listings rather than two half-populated subjects.
+model Company {
+  id String @id @default(uuid())
+
+  /// Display name, as the exchange spells it. Deliberately the exchange's
+  /// spelling rather than a prettified one: it is what a user typing into
+  /// search will have seen, and a "nicer" name we invent is a name no source
+  /// can corroborate.
+  name String
+
+  /// What kind of security the primary listing actually is, derived from the
+  /// ISIN prefix — the one classification available with no extra source:
+  ///   INE -> 'EQUITY'   (ordinary company equity; 2,551 of 2,553 rows)
+  ///   IN9 -> 'EQUITY_VARIANT' (partly-paid shares, depository receipts)
+  ///   INF -> 'FUND'     (mutual fund / ETF units — NOT a company)
+  ///
+  /// It exists to stop a fund being rendered with a P&L. `EQUITY_L.csv`
+  /// contains no INF rows today, so no fund SHOULD reach this table; the value
+  /// is stored anyway because "should" is not an invariant and the failure is
+  /// silent — an ETF with an invented balance sheet looks exactly like a
+  /// company with a real one.
+  kind String @default("EQUITY")
+
+  // ---- Classification. Null until a source provides it. ----
+  //
+  // NOT populated from EQUITY_L.csv, which carries no sector at all. The
+  // announcements and board-meeting feeds DO carry an industry string
+  // (`smIndustry`, e.g. "Refineries"), which is the intended Phase 4 source.
+  // Left null rather than guessed: an unclassified company is a fact, a
+  // wrongly classified one is a bug that propagates into peer comparison.
+  sector   String?
+  industry String?
+
+  description String?
+  website     String?
+  irUrl       String?
+
+  /// Soft delete, never a row removal — a delisted company keeps its filings,
+  /// and Order/Trade history may reference its instruments forever.
+  /// Same reasoning as `Instrument.active`, and CLAUDE.md Rule 1.
+  active Boolean @default(true)
+
+  /// Provenance of the identity record itself.
+  sourceRecordId String?
+  sourceRecord   SourceRecord? @relation("CompanyIdentitySource", fields: [sourceRecordId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  listings      SecurityListing[]
+  aliases       CompanyAlias[]
+  sourceRecords SourceRecord[]
+
+  @@index([active])
+  @@index([name])
+  @@index([sector, industry])
+}
+
+/// One company's listing of one security on one exchange.
+///
+/// The join between the identity world (`Company`) and the tradable world
+/// (`Instrument`), and the reason neither has to know about the other's
+/// lifecycle: an instrument can be imported, deactivated or re-imported by the
+/// scrip-master sync without touching company identity, and vice versa.
+model SecurityListing {
+  id        String  @id @default(uuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  /// 'NSE' | 'BSE'
+  exchange String
+  /// Exchange ticker. NOT globally unique — the same symbol can exist on both
+  /// exchanges for different companies, which is exactly why the unique key
+  /// below is (exchange, symbol) and not symbol alone.
+  symbol   String
+  /// The identifier that is actually global. This is the join key to
+  /// `Instrument.isin` and to every filing feed, all of which carry ISIN.
+  isin     String
+
+  /// NSE series: EQ (2,297) | BE (228) | BZ (28). BZ in particular means the
+  /// security is under surveillance/trade-to-trade — a research page that
+  /// renders it identically to an EQ name is withholding something the user
+  /// would want. Kept so that decision is available, not so it is forced.
+  series String?
+
+  listedOn DateTime?
+
+  /// From EQUITY_L.csv. Face value is per share; paid-up value equals it for a
+  /// fully paid share and is lower for a partly paid one.
+  ///
+  /// NEITHER OF THESE IS A SHARE COUNT, and market cap needs a share count.
+  /// The free route to that is the XBRL pair
+  /// PaidUpValueOfEquityShareCapital / FaceValueOfEquityShareCapital, which
+  /// arrives with the statement pipeline. Recorded here to be explicit that
+  /// market cap is NOT derivable from this table alone — the current research
+  /// page's `price * 670` is what filling the gap with a guess looks like.
+  faceValue   Decimal? @db.Decimal(12, 2)
+  paidUpValue Decimal? @db.Decimal(12, 2)
+
+  /// The company's main listing, used when a page must pick one price.
+  isPrimary Boolean @default(true)
+  active    Boolean @default(true)
+
+  /// Link to the tradable instrument, when one exists. NULLABLE and expected to
+  /// be null often: NSE lists ~2,553 companies while the broker's scrip master
+  /// carries whatever segments are enabled. A listing without an instrument is
+  /// a company we can research but not price — which is a real, displayable
+  /// state, not an error.
+  instrumentId String?
+  instrument   Instrument? @relation(fields: [instrumentId], references: [id])
+
+  sourceRecordId String?
+  sourceRecord   SourceRecord? @relation("ListingSource", fields: [sourceRecordId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([exchange, symbol])
+  @@index([isin])
+  @@index([companyId])
+  @@index([instrumentId])
+}
+
+/// Every string that should resolve to a company.
+///
+/// Search has to answer for a name, an NSE symbol, a BSE code, an ISIN and a
+/// former name, and all of them must land on ONE canonical record (brief §25).
+/// A table makes that a single indexed lookup and makes a former name
+/// permanently resolvable — when a company renames, the old name becomes an
+/// alias rather than disappearing, so a stale bookmark or an old filing still
+/// finds it.
+model CompanyAlias {
+  id        String  @id @default(uuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  /// 'name' | 'symbol' | 'isin' | 'bse-code' | 'former-name'
+  kind String
+  /// The literal string as the source spells it.
+  value String
+  /// Upper-cased, whitespace-collapsed form — what lookups actually match on.
+  /// Stored rather than computed per query so the unique constraint can enforce
+  /// "one company per identifier" instead of merely hoping for it.
+  normalized String
+
+  createdAt DateTime @default(now())
+
+  /// The invariant that makes resolution deterministic: a given identifier
+  /// cannot point at two companies. A source that would violate it is a
+  /// genuine conflict to surface, not a row to overwrite silently.
+  @@unique([kind, normalized])
+  @@index([normalized])
+  @@index([companyId])
 }
