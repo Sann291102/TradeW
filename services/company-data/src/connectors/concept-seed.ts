@@ -68,17 +68,25 @@ export const CONCEPTS: ConceptSeed[] = [
   { conceptKey: 'pl.expense.total', statement: 'PL', label: 'Total expenses', sign: -1, isSubtotal: true, ordinal: 110, tags: ['Expenses'] },
 
   { conceptKey: 'pl.pbt.before-exceptional', statement: 'PL', label: 'Profit before exceptional items and tax', isSubtotal: true, ordinal: 120, tags: ['ProfitBeforeExceptionalItemsAndTax'] },
-  { conceptKey: 'pl.exceptional', statement: 'PL', label: 'Exceptional items', ordinal: 130, tags: ['ExceptionalItemsBeforeTax'] },
-  { conceptKey: 'pl.pbt', statement: 'PL', label: 'Profit before tax', isSubtotal: true, ordinal: 140, tags: ['ProfitBeforeTax'] },
+  { conceptKey: 'pl.exceptional', statement: 'PL', label: 'Exceptional items', ordinal: 130, tags: ['ExceptionalItemsBeforeTax', 'ExceptionalItems'] },
+  // `ProfitLossFromOrdinaryActivitiesBeforeTax` is the banking schedule's name
+  // for the same line. Attached to the same concept so a bank and a
+  // manufacturer produce one comparable series rather than two.
+  { conceptKey: 'pl.pbt', statement: 'PL', label: 'Profit before tax', isSubtotal: true, ordinal: 140, tags: ['ProfitBeforeTax', 'ProfitLossFromOrdinaryActivitiesBeforeTax'] },
 
   { conceptKey: 'pl.tax.current', statement: 'PL', label: 'Current tax', parentKey: 'pl.tax.total', sign: -1, ordinal: 150, tags: ['CurrentTax'] },
   { conceptKey: 'pl.tax.deferred', statement: 'PL', label: 'Deferred tax', parentKey: 'pl.tax.total', sign: -1, ordinal: 160, tags: ['DeferredTax'] },
   { conceptKey: 'pl.tax.total', statement: 'PL', label: 'Total tax expense', sign: -1, isSubtotal: true, ordinal: 170, tags: ['TaxExpense'] },
 
-  { conceptKey: 'pl.pat.continuing', statement: 'PL', label: 'Profit from continuing operations', ordinal: 180, tags: ['ProfitLossForPeriodFromContinuingOperations'] },
+  { conceptKey: 'pl.pat.continuing', statement: 'PL', label: 'Profit from continuing operations', ordinal: 180, tags: ['ProfitLossForPeriodFromContinuingOperations', 'ProfitLossFromOrdinaryActivitiesAfterTax'] },
   { conceptKey: 'pl.pat.discontinued', statement: 'PL', label: 'Profit from discontinued operations', ordinal: 190, tags: ['ProfitLossFromDiscontinuedOperationsAfterTax'] },
   { conceptKey: 'pl.associates', statement: 'PL', label: 'Share of profit of associates and JVs', ordinal: 195, tags: ['ShareOfProfitLossOfAssociatesAndJointVenturesAccountedForUsingEquityMethod'] },
-  { conceptKey: 'pl.pat', statement: 'PL', label: 'Net profit for the period', isSubtotal: true, ordinal: 200, tags: ['ProfitLossForPeriod'] },
+  // NOTE THE SPELLING. Banks file `ProfitLossForThePeriod`; everyone else
+  // files `ProfitLossForPeriod`. One word apart, same line, and a mapping
+  // that covers only one of them silently leaves every bank without a net
+  // profit — which is precisely how HDFCBANK first arrived with 5 mapped
+  // lines out of 37 and a reconciliation status of 'not-applicable'.
+  { conceptKey: 'pl.pat', statement: 'PL', label: 'Net profit for the period', isSubtotal: true, ordinal: 200, tags: ['ProfitLossForPeriod', 'ProfitLossForThePeriod'] },
   // Consolidated filings split the group result between the parent's owners and
   // minorities. A page that shows group PAT where it means owners' PAT
   // overstates what accrues to the shareholder it is being shown to.
@@ -174,6 +182,48 @@ export const CONCEPTS: ConceptSeed[] = [
   { conceptKey: 'ratio.debt-equity', statement: 'PL', label: 'Debt / equity (as filed)', ordinal: 300, tags: ['DebtEquityRatio'] },
   { conceptKey: 'ratio.debt-service-coverage', statement: 'PL', label: 'Debt service coverage (as filed)', ordinal: 301, tags: ['DebtServiceCoverageRatio'] },
   { conceptKey: 'ratio.interest-service-coverage', statement: 'PL', label: 'Interest service coverage (as filed)', ordinal: 302, tags: ['InterestServiceCoverageRatio'] },
+
+  // ── Banking schedule ─────────────────────────────────────────────────────
+  //
+  // Banks and NBFCs file a DIFFERENT Ind-AS schedule. There is no revenue from
+  // operations, no cost of materials and no total-expenses line; income is
+  // interest earned plus other income, and the profit bridge runs through
+  // operating profit before provisions. Without these, every bank ingested with
+  // five mapped lines out of thirty-seven and no reconciliation to run —
+  // visible only because unmapped tags are counted rather than dropped.
+  { conceptKey: 'pl.bank.interest-earned', statement: 'PL', label: 'Interest earned', ordinal: 11, tags: ['InterestEarned'] },
+  { conceptKey: 'pl.bank.interest-advances', statement: 'PL', label: 'Interest on advances and bills', parentKey: 'pl.bank.interest-earned', ordinal: 12, tags: ['InterestOrDiscountOnAdvancesOrBills'] },
+  { conceptKey: 'pl.bank.interest-investments', statement: 'PL', label: 'Income on investments', parentKey: 'pl.bank.interest-earned', ordinal: 13, tags: ['RevenueOnInvestments'] },
+  { conceptKey: 'pl.bank.interest-rbi', statement: 'PL', label: 'Interest on balances with RBI and inter-bank funds', parentKey: 'pl.bank.interest-earned', ordinal: 14, tags: ['InterestOnBalancesWithReserveBankOfIndiaAndOtherInterBankFunds'] },
+  { conceptKey: 'pl.bank.interest-other', statement: 'PL', label: 'Other interest income', parentKey: 'pl.bank.interest-earned', ordinal: 15, tags: ['OtherInterest'] },
+  { conceptKey: 'pl.bank.interest-expended', statement: 'PL', label: 'Interest expended', sign: -1, ordinal: 16, tags: ['InterestExpended'] },
+  { conceptKey: 'pl.bank.employee-cost', statement: 'PL', label: 'Employee cost', parentKey: 'pl.bank.operating-expenses', sign: -1, ordinal: 71, tags: ['EmployeesCost'] },
+  { conceptKey: 'pl.bank.other-operating-expenses', statement: 'PL', label: 'Other operating expenses', parentKey: 'pl.bank.operating-expenses', sign: -1, ordinal: 101, tags: ['OtherOperatingExpenses'] },
+  { conceptKey: 'pl.bank.operating-expenses', statement: 'PL', label: 'Operating expenses', sign: -1, isSubtotal: true, ordinal: 105, tags: ['OperatingExpenses'] },
+  { conceptKey: 'pl.bank.expenditure-excl-provisions', statement: 'PL', label: 'Expenditure excluding provisions and contingencies', sign: -1, isSubtotal: true, ordinal: 106, tags: ['ExpenditureExcludingProvisionsAndContingencies'] },
+  { conceptKey: 'pl.bank.operating-profit', statement: 'PL', label: 'Operating profit before provisions and contingencies', isSubtotal: true, ordinal: 115, tags: ['OperatingProfitBeforeProvisionAndContingencies'] },
+  { conceptKey: 'pl.bank.provisions', statement: 'PL', label: 'Provisions other than tax and contingencies', sign: -1, ordinal: 118, tags: ['ProvisionsOtherThanTaxAndContingencies'] },
+  { conceptKey: 'pl.extraordinary', statement: 'PL', label: 'Extraordinary items', ordinal: 135, tags: ['ExtraordinaryItems'] },
+  { conceptKey: 'pl.pat.after-minorities', statement: 'PL', label: 'Profit after tax, minority interest and associates', ordinal: 207, tags: ['ProfitLossAfterTaxesMinorityInterestAndShareOfProfitLossOfAssociates'] },
+
+  // Separate concepts rather than extra tags on `pl.eps.basic`: two line items
+  // sharing one concept inside a single statement would make the validator's
+  // lookup keep whichever it read last.
+  { conceptKey: 'pl.eps.basic.before-extraordinary', statement: 'PL', label: 'Basic EPS (before extraordinary items)', ordinal: 233, tags: ['BasicEarningsPerShareBeforeExtraordinaryItems'] },
+  { conceptKey: 'pl.eps.basic.after-extraordinary', statement: 'PL', label: 'Basic EPS (after extraordinary items)', ordinal: 234, tags: ['BasicEarningsPerShareAfterExtraordinaryItems'] },
+  { conceptKey: 'pl.eps.diluted.before-extraordinary', statement: 'PL', label: 'Diluted EPS (before extraordinary items)', ordinal: 243, tags: ['DilutedEarningsPerShareBeforeExtraordinaryItems'] },
+  { conceptKey: 'pl.eps.diluted.after-extraordinary', statement: 'PL', label: 'Diluted EPS (after extraordinary items)', ordinal: 244, tags: ['DilutedEarningsPerShareAfterExtraordinaryItems'] },
+
+  // Asset quality and capital — the figures a bank is actually judged on, and
+  // meaningless for a manufacturer. Kept as filed.
+  { conceptKey: 'bank.gross-npa', statement: 'PL', label: 'Gross non-performing assets', ordinal: 310, tags: ['GrossNonPerformingAssets'] },
+  { conceptKey: 'bank.net-npa', statement: 'PL', label: 'Net non-performing assets', ordinal: 311, tags: ['NonPerformingAssets'] },
+  { conceptKey: 'bank.gross-npa-pct', statement: 'PL', label: 'Gross NPA %', ordinal: 312, tags: ['PercentageOfGrossNpa'] },
+  { conceptKey: 'bank.net-npa-pct', statement: 'PL', label: 'Net NPA %', ordinal: 313, tags: ['PercentageOfNpa'] },
+  { conceptKey: 'bank.return-on-assets', statement: 'PL', label: 'Return on assets (as filed)', ordinal: 314, tags: ['ReturnOnAssets'] },
+  { conceptKey: 'bank.cet1-ratio', statement: 'PL', label: 'CET1 ratio', ordinal: 315, tags: ['CET1Ratio'] },
+  { conceptKey: 'bank.additional-tier1-ratio', statement: 'PL', label: 'Additional Tier 1 ratio', ordinal: 316, tags: ['AdditionalTier1Ratio'] },
+  { conceptKey: 'bank.govt-holding-pct', statement: 'PL', label: 'Shareholding held by Government of India %', ordinal: 317, tags: ['PercentageOfShareHeldByGovernmentOfIndia'] },
 ];
 
 /**

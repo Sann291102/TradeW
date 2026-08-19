@@ -448,7 +448,30 @@ export class StatementsConnector {
       where: { statementId, conceptKey: { not: null } },
       select: { conceptKey: true, value: true },
     });
-    const byKey = new Map(items.map((i) => [i.conceptKey as string, Number(i.value)]));
+    // Two line items resolving to ONE concept inside a single statement would
+    // make this lookup keep whichever it read last, and every check below would
+    // then be run against an arbitrary choice. Recorded rather than resolved by
+    // accident — the same rule the ingest applies to identifier conflicts.
+    const byKey = new Map<string, number>();
+    const duplicates: string[] = [];
+    for (const i of items) {
+      const key = i.conceptKey as string;
+      if (byKey.has(key)) duplicates.push(key);
+      else byKey.set(key, Number(i.value));
+    }
+    if (duplicates.length > 0) {
+      await this.prisma.dataQualityResult.create({
+        data: {
+          entity: 'FinancialStatement',
+          entityId: statementId,
+          check: 'concept.duplicate-in-statement',
+          severity: 'warn',
+          passed: false,
+          detail: { conceptKeys: [...new Set(duplicates)] } as unknown as Prisma.InputJsonObject,
+          sourceRecordId,
+        },
+      });
+    }
 
     const checks: { check: string; expected: number; observed: number }[] = [];
 
@@ -475,6 +498,26 @@ export class StatementsConnector {
         const associates = byKey.get('pl.associates') ?? 0;
         const discontinued = byKey.get('pl.pat.discontinued') ?? 0;
         checks.push({ check: 'profit-and-loss.tax-bridge', expected: pat, observed: pbt - tax + associates + discontinued });
+      }
+
+      // Banking bridge: operating profit before provisions, less provisions,
+      // is profit before tax. Gives banks a reconciliation to pass instead of
+      // the 'not-applicable' they got when none of their lines were mapped.
+      const bankOperating = byKey.get('pl.bank.operating-profit');
+      const bankProvisions = byKey.get('pl.bank.provisions');
+      if (bankOperating != null && bankProvisions != null && pbt != null) {
+        // ADDED, not subtracted. `pl.exceptional` is already signed as filed —
+        // HDFCBANK reports -802 cr for a charge — so subtracting it moves the
+        // bridge the wrong way by twice the item. RELIANCE never exposed this
+        // because its exceptional items are zero; the first bank with a real
+        // one failed reconciliation by exactly 2x, which is what the check is
+        // for.
+        const exceptional = byKey.get('pl.exceptional') ?? 0;
+        checks.push({
+          check: 'banking.provision-bridge',
+          expected: pbt,
+          observed: bankOperating - bankProvisions + exceptional,
+        });
       }
 
       const income = byKey.get('pl.revenue.total');
