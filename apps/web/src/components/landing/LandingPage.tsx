@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import Link from 'next/link';
 import { motion, useReducedMotion } from 'framer-motion';
 import { LandingHeader } from './LandingHeader';
 import { MarketBackdrop } from './MarketBackdrop';
@@ -9,6 +8,7 @@ import { Mascot } from './Mascot';
 import { TaraGreeter } from './TaraGreeter';
 import { ASSISTANT_NAME } from '@/lib/assistant/identity';
 import { AuthPanel } from './AuthPanel';
+import { SiteFooter } from '@/components/footer/SiteFooter';
 import {
   SentinelIcon,
   ResearchIcon,
@@ -376,7 +376,7 @@ const FAQ = [
   },
   {
     q: 'What happens to my data?',
-    a: 'Your trading behaviour is used to give you better observations, and for nothing else. It is encrypted in transit and at rest, every request passes a single audited ingress, and the platform is built to SEBI and DPDP expectations for observation-only products.',
+    a: 'Your trading behaviour is used to give you better observations, and for nothing else — it is never sold, and there is no advertising or third-party analytics in the product. Traffic is encrypted in transit and every request passes a single audited ingress. The Security page states what is in place and, just as plainly, what is not yet; the Privacy Policy sets out what is collected and the rights you have over it.',
   },
 ];
 
@@ -395,9 +395,32 @@ const PRINCIPLES = [
   },
 ];
 
+/**
+ * WHAT THIS LIST MAY SAY (corrected 2026-08-20).
+ *
+ * Two entries here were claims the implementation does not support, found by
+ * the footer/trust audit (docs/footer/FOOTER_RESEARCH_REPORT.md §4):
+ *
+ *  · "End-to-end encryption in transit and at rest". TLS in transit is real.
+ *    Encryption AT REST is not implemented — packages/database/prisma/schema.prisma
+ *    stores a broker `accessToken` in plaintext and says so in its own comment
+ *    ("encryption at rest is genuinely outstanding … NOT solved by this
+ *    change"). "End-to-end" was wrong as a term of art besides: TradeW can read
+ *    this data.
+ *  · "Two-factor authentication, including authenticator apps". A repository-wide
+ *    grep for totp / authenticator / otpauth returned only this string. What
+ *    exists is one-time codes over email and SMS (services/api/src/auth/otp.service.ts);
+ *    the only authenticator-app step is Dhan's own, on Dhan's site.
+ *
+ * On a financial product an unearned security claim is a compliance exposure,
+ * not a growth tactic — the same rule this file's header already states about
+ * traction numbers and testimonials. The rule for editing this list: every
+ * entry must be checkable against a file in this repository. The full picture,
+ * including the gaps, is /legal/security.
+ */
 const SECURITY = [
-  'End-to-end encryption in transit and at rest',
-  'Two-factor authentication, including authenticator apps',
+  'Encryption in transit — TLS everywhere, with strict transport security enforced',
+  'One-time sign-in codes over email and SMS, stored hashed, expiring, and rate-limited',
   'A single audited ingress — every request passes one policy layer',
   'Session, entitlement and audit handling built into the platform core',
 ];
@@ -932,10 +955,22 @@ export function LandingPage() {
             </div>
 
             <Reveal>
+              {/* This section is a summary. The full picture — including what is
+                  NOT in place, which is the half a security section usually
+                  omits — is /legal/security, and this line exists to send the
+                  reader there rather than let four bullet points stand as the
+                  whole answer. */}
               <p className="mt-8 text-fs2xs leading-normal2 text-faint">
-                TradeW is built to SEBI and DPDP expectations for observation-only platforms.
-                Where a formal certification is not yet held, this page says so rather than
-                implying otherwise.
+                TradeW is built to SEBI and DPDP expectations for observation-only platforms,
+                and holds no formal security certification — the{' '}
+                <a
+                  href="/legal/security"
+                  className="rounded-sm text-teal underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                >
+                  Security page
+                </a>{' '}
+                lists what is in place and what is still outstanding, rather than implying
+                otherwise.
               </p>
             </Reveal>
           </div>
@@ -1006,94 +1041,7 @@ export function LandingPage() {
         </section>
       </main>
 
-      {/* -------------------------------------------------------------- Footer */}
-      <footer className="border-t border-border px-6 py-14">
-        <div className="mx-auto flex max-w-6xl flex-col gap-10 sm:flex-row sm:justify-between">
-          <div className="max-w-xs">
-            <span className="text-lg font-extrabold text-navy">
-              Trade<span className="text-teal">W</span>
-            </span>
-            <p className="mt-3 text-fs2xs leading-normal2 text-muted">
-              An AI trading operating system. Observations only — never investment advice.
-            </p>
-          </div>
-
-          {/* Every link here resolves for a SIGNED-OUT reader, which is the only
-              kind of reader this page has. Pointing at /dashboard or /sentinel
-              would bounce them straight back to this page by the middleware —
-              a loop that reads as a broken link. So the Platform column links
-              to the sections above, and Account links to the form below. */}
-          <nav aria-label="Footer" className="flex flex-wrap gap-x-14 gap-y-10">
-            <div>
-              <h3 className="text-fs2xs font-semibold uppercase tracking-wideTrack text-faint">
-                Platform
-              </h3>
-              <ul className="mt-4 space-y-2.5 text-fsXs">
-                {[
-                  ['#platform', 'Surfaces'],
-                  ['#assistant', ASSISTANT_NAME],
-                  ['#sentinel', 'Sentinel'],
-                  ['#learning', 'Learning Hub'],
-                ].map(([href, label]) => (
-                  <li key={href}>
-                    <a href={href} className="text-muted transition-colors hover:text-text">
-                      {label}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h3 className="text-fs2xs font-semibold uppercase tracking-wideTrack text-faint">
-                Deciding
-              </h3>
-              <ul className="mt-4 space-y-2.5 text-fsXs">
-                {[
-                  ['#brief', 'What you get'],
-                  ['#start', 'Getting started'],
-                  ['#pricing', 'Pricing'],
-                  ['#intelligence', 'Our commitments'],
-                  ['#security', 'Security'],
-                  ['#faq', 'FAQ'],
-                ].map(([href, label]) => (
-                  <li key={href}>
-                    <a href={href} className="text-muted transition-colors hover:text-text">
-                      {label}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h3 className="text-fs2xs font-semibold uppercase tracking-wideTrack text-faint">
-                Account
-              </h3>
-              <ul className="mt-4 space-y-2.5 text-fsXs">
-                <li>
-                  <a href="#auth" className="text-muted transition-colors hover:text-text">
-                    Sign in
-                  </a>
-                </li>
-                <li>
-                  <a href="#auth" className="text-muted transition-colors hover:text-text">
-                    Create account
-                  </a>
-                </li>
-                <li>
-                  <Link href="/reset" className="text-muted transition-colors hover:text-text">
-                    Reset password
-                  </Link>
-                </li>
-              </ul>
-            </div>
-          </nav>
-        </div>
-
-        <div className="mx-auto mt-12 max-w-6xl border-t border-border pt-6 text-fs2xs text-faint">
-          TradeW does not provide investment advice and does not place trades on your behalf.
-          Markets carry risk — trade responsibly.
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

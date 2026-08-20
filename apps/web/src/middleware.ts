@@ -50,8 +50,28 @@ const PUBLIC_PATHS = new Set<string>([
   // See archive/apps-web-sentinel-pricing-route-2026-08-15/.
 ]);
 
+/**
+ * The legal and trust surface — privacy notice, terms, cookie policy, risk
+ * disclosure, disclaimer, security, responsible trading.
+ *
+ * A PREFIX rather than seven entries in the set above, because the routes are
+ * generated from `lib/legal/documents.ts` and a second hand-maintained list is
+ * a list that eventually disagrees with the first. `dynamicParams = false` on
+ * the route means an unknown slug under this prefix 404s rather than reaching
+ * anything, so the prefix does not widen the public surface beyond the
+ * documents that exist.
+ *
+ * This has to be public, and the reason is not convenience: a privacy notice
+ * that only an account holder can read is not a privacy notice, and a risk
+ * disclosure a prospective user cannot reach before signing up is not a
+ * disclosure. `lib/footer/links.test.ts` asserts every legal slug in the footer
+ * matches this prefix, so an auth-gated legal page fails the build.
+ */
+const PUBLIC_PREFIXES = ['/legal/'];
+
 function isPublic(pathname: string): boolean {
-  return PUBLIC_PATHS.has(pathname);
+  if (PUBLIC_PATHS.has(pathname)) return true;
+  return PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
 export function middleware(req: NextRequest) {

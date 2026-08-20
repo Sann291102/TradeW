@@ -41,6 +41,13 @@ export default defineConfig({
     include: [
       // The /feed proxy allowlist — the boundary in front of an unauthenticated bridge.
       'feed-proxy-routes.spec.mjs',
+      // The footer link registry. Same rule as the line above: a mistake here
+      // is an exposure, not a rendering bug. It fails the build on an external
+      // URL nobody verified (the audit found a plausible-looking Instagram
+      // handle that belongs to a DIFFERENT financial company), on a footer link
+      // into the auth wall, on a legal page that is not publicly reachable, and
+      // on a landing anchor that no section declares any more.
+      'src/lib/footer/links.test.ts',
       // Option-chain strike selection and formatting: pure, no DOM.
       'src/lib/sentinel/**/*.test.ts',
       // The assistant's utterance resolver. Belongs under the "a mistake here is
