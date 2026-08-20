@@ -44,6 +44,11 @@ export default defineConfig({
       'src/broker/oauth-state.spec.ts',
       // The single-use claim: conditional update, claimed before the exchange.
       'src/broker/dhan-auth.service.spec.ts',
+      // Encryption at rest. What reaches Prisma is ciphertext; a missing keyring
+      // refuses the write instead of storing plaintext; and no DTO or query
+      // carries the credential. The column was plaintext until 2026-08-20, so
+      // every assertion here is a regression guard on a real exposure.
+      'src/broker/credential-storage.spec.ts',
       // Authentication, operator authorization, and cross-user refusal.
       'src/broker/broker-authz.spec.ts',
       // Feed link validation — the XSS boundary on third-party content.

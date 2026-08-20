@@ -34,6 +34,12 @@ const ALLOWED_KEY_EXACT = new Set([
   'statePresent',
   'stateOutcome',
   'credentialSource',
+  // Which key of the broker-credential keyring sealed or failed to open a row.
+  // A short label like "k1" — matched by FORBIDDEN_KEY_PATTERN's `key`, but it
+  // is a NAME, not material, and it is the one field that makes a decryption
+  // failure diagnosable. The keys themselves live in an env var and are never
+  // passed to this helper.
+  'keyId',
 ]);
 
 export type SecurityOutcome = 'success' | 'failure' | 'denied';

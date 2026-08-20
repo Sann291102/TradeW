@@ -1,7 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import { DhanAuthService } from './dhan-auth.service';
 import { createState, STATE_TTL_MS } from './oauth-state';
+import { KEYRING_ENV } from '@tradew/database';
 
 /**
  * `consumeConsent` — the single-use claim and the attribution decision.
@@ -102,12 +104,19 @@ describe('consumeConsent', () => {
     id: process.env.DHAN_APP_ID,
     secret: process.env.DHAN_APP_SECRET,
     client: process.env.DHAN_CLIENT_ID,
+    keys: process.env[KEYRING_ENV],
   };
 
   beforeEach(() => {
     process.env.DHAN_APP_ID = 'app-id';
     process.env.DHAN_APP_SECRET = 'app-secret';
     process.env.DHAN_CLIENT_ID = 'client-id';
+    // `consumeConsent` stores an ENCRYPTED credential and refuses outright with
+    // no keyring configured (2026-08-20 — it used to write plaintext). That
+    // fail-closed behaviour is asserted in `credential-storage.spec.ts`; here it
+    // would just stop the flow under test from reaching its assertions, so a
+    // throwaway key is provided.
+    process.env[KEYRING_ENV] = `k1:${randomBytes(32).toString('base64')}`;
   });
 
   afterEach(() => {
@@ -115,6 +124,8 @@ describe('consumeConsent', () => {
     process.env.DHAN_APP_ID = saved.id ?? '';
     process.env.DHAN_APP_SECRET = saved.secret ?? '';
     process.env.DHAN_CLIENT_ID = saved.client ?? '';
+    if (saved.keys === undefined) delete process.env[KEYRING_ENV];
+    else process.env[KEYRING_ENV] = saved.keys;
   });
 
   it('claims the state BEFORE exchanging the token', async () => {

@@ -30,6 +30,7 @@
     "@nestjs/throttler": "^6.5.0",
     "@prisma/client": "^5.22.0",
     "@tradew/ai-core": "*",
+    "@tradew/database": "*",
     "@tradew/market-data": "*",
     "bcryptjs": "^2.4.3",
     "class-transformer": "^0.5.1",
