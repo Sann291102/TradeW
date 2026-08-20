@@ -102,6 +102,16 @@ legal routes 200 with no auth cookie, unknown slug 404 · footer checked at
 with an empty accessible name · the link guard negative-tested and observed to
 fail on a real colliding URL. Detail in `FOOTER_QA_CHECKLIST.md`.
 
+### Follow-on: the plaintext broker credential was fixed, not just un-claimed
+
+Checking the "encryption at rest" claim above turned up a live finding — broker
+access tokens stored in plaintext — which was escalated out of this work into a
+separate security remediation. It is now fixed: AES-256-GCM at rest, bound to
+the owning row, with a keyring held outside the database. `/legal/security`
+therefore claims encryption at rest again, scoped to broker credentials, which
+is the only thing that is encrypted. See
+[`docs/security/`](../security/README.md).
+
 ### Known gaps carried forward
 
 1. No monitored contact address — blocks the DPDP grievance route, the

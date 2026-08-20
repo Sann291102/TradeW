@@ -15,8 +15,11 @@
  * checked against it. Where the implementation does not support a claim the
  * page says so rather than reaching for the sentence a template would use:
  *
- *   · Encryption at rest is NOT claimed. `packages/database/prisma/schema.prisma`
- *     stores a broker `accessToken` in plaintext and says so in its own comment.
+ *   · Encryption at rest is claimed ONLY for broker credentials, because that is
+ *     the only thing that is encrypted. `packages/database/src/credential-crypto.ts`
+ *     (added 2026-08-20, after this column was found storing live brokerage
+ *     tokens in plaintext). The rest of the database is not column-encrypted and
+ *     the page says so.
  *   · Authenticator-app 2FA is NOT claimed. A repository-wide grep for `totp`,
  *     `authenticator` and `otpauth` returns nothing; what exists is one-time
  *     codes over email and SMS (`services/api/src/auth/otp.service.ts`).
@@ -527,12 +530,12 @@ const privacy: LegalDocument = {
       blocks: [
         {
           kind: 'p',
-          text: 'Traffic is encrypted in transit. Sign-in codes are stored hashed, expire, and are rate-limited. Every request passes a single audited ingress that checks the caller before any data is read. The Security page states what is in place — and, just as importantly, what is not yet.',
+          text: 'Traffic is encrypted in transit. Sign-in codes are stored hashed, expire, and are rate-limited. If you connect a broker, the credential TradeW holds on your behalf is encrypted before it reaches the database and is bound to your account. Every request passes a single audited ingress that checks the caller before any data is read. The Security page states what is in place — and, just as importantly, what is not yet.',
         },
         {
           kind: 'note',
           tone: 'outstanding',
-          text: 'Encryption at rest is not yet implemented across all stored credentials. This is stated plainly rather than glossed, and the Security page gives the detail.',
+          text: 'Encryption at rest covers broker credentials, and does not yet cover the rest of the database. Your profile and activity data are protected by access control rather than by column encryption. This is stated plainly rather than glossed, and the Security page gives the detail.',
         },
       ],
     },
@@ -665,6 +668,7 @@ const security: LegalDocument = {
           kind: 'ul',
           items: [
             'Encryption in transit. All traffic is served over TLS, with strict transport security and insecure requests upgraded.',
+            'Broker credentials encrypted at rest. If you connect a broker, the access token TradeW holds on your behalf is sealed with AES-256-GCM before it reaches the database, using a key that is not stored in the database. Each credential is cryptographically bound to your account, so its stored form is useless in anyone else\u2019s.',
             'A single audited ingress. Every request from the browser reaches one service that checks the caller before any data is read; the market-data bridge is not publicly addressable and its proxy forwards an explicit allowlist of read-only routes rather than everything it exposes.',
             'An enforced content security policy, including a default-src of self, no plugin content, a locked base URI, form submission restricted to this origin, and framing denied outright.',
             'One-time sign-in codes over email and SMS. Codes are stored hashed, expire in ten minutes, allow five attempts, cannot be requested repeatedly to widen the valid set, and reveal nothing about whether an account exists.',
@@ -687,7 +691,8 @@ const security: LegalDocument = {
         {
           kind: 'ul',
           items: [
-            'Encryption at rest is not implemented for all stored credentials. Broker access tokens are currently stored unencrypted; the work needs a key-management decision and is tracked.',
+            'Encryption at rest covers broker credentials, not the whole database. Your other data \u2014 profile, activity, watchlists \u2014 is protected by access control and by the database\u2019s own hosting, not by column encryption.',
+            'The encryption key is held by the application, not by a hardware security module or a managed key service. It protects a stolen database or backup. It does not protect a fully compromised application server, because the running service has to hold the key to use your credential at all.',
             'There is no authenticator-app two-factor authentication. What exists is one-time codes over email and SMS. Where your broker requires its own two-factor step, that happens on the broker\'s site.',
             'TradeW holds no security certification. No ISO 27001, no SOC 2, no PCI DSS. None is claimed anywhere in the product.',
             'No independent penetration test has been published.',

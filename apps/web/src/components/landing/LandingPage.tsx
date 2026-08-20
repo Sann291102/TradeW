@@ -412,14 +412,21 @@ const PRINCIPLES = [
  *    exists is one-time codes over email and SMS (services/api/src/auth/otp.service.ts);
  *    the only authenticator-app step is Dhan's own, on Dhan's site.
  *
+ * The at-rest gap was then FIXED (2026-08-20) rather than merely un-claimed —
+ * packages/database/src/credential-crypto.ts — so the list says so again, but
+ * scoped to broker credentials, which is the only thing that is encrypted. The
+ * blanket version of that sentence is still false and must not come back.
+ *
  * On a financial product an unearned security claim is a compliance exposure,
  * not a growth tactic — the same rule this file's header already states about
  * traction numbers and testimonials. The rule for editing this list: every
- * entry must be checkable against a file in this repository. The full picture,
- * including the gaps, is /legal/security.
+ * entry must be checkable against a file in this repository, and every entry
+ * must appear in docs/security/SECURITY_CLAIMS_EVIDENCE.md §1 first. The full
+ * picture, including the gaps, is /legal/security.
  */
 const SECURITY = [
   'Encryption in transit — TLS everywhere, with strict transport security enforced',
+  'Broker credentials encrypted at rest, bound to your account, with the key held outside the database',
   'One-time sign-in codes over email and SMS, stored hashed, expiring, and rate-limited',
   'A single audited ingress — every request passes one policy layer',
   'Session, entitlement and audit handling built into the platform core',

@@ -18,6 +18,12 @@ import {
   type ResolvedCredential,
   type ScripMasterRow,
 } from '@tradew/market-data';
+// The at-rest format for BrokerCredential.accessToken. Owned by the package that
+// owns the schema, so this process and services/api cannot drift into
+// incompatible envelopes. Static, not dynamic like the Prisma import below: it
+// is a pure crypto module with no database dependency, so importing it costs
+// nothing on a machine that runs this bridge without Postgres.
+import { decryptCredential } from '@tradew/database';
 
 /**
  * Standalone live-quote server — deliberately outside services/api and
@@ -139,14 +145,59 @@ async function resolveDhanCredential(): Promise<ResolvedCredential | null> {
       // An expired stored token is worse than the env one: it is guaranteed to
       // fail on first use, so skip it rather than prefer it for being newer.
       if (row?.accessToken && (!row.expiresAt || row.expiresAt.getTime() > Date.now())) {
-        return {
-          accessToken: row.accessToken,
-          source: 'db',
-          expiresAt: row.expiresAt,
-          detail: `db:${row.source ?? 'unknown'}`,
-        };
+        // THE DECRYPTION BOUNDARY for this process.
+        //
+        // The column is AES-256-GCM ciphertext as of 2026-08-20 — it used to be
+        // plaintext, so a stolen database or backup was a working brokerage
+        // credential for every linked user. `decryptCredential` is the ONLY
+        // place in this file that turns it back into a token, and it happens
+        // here rather than at startup so the plaintext lives for as short a span
+        // as the design allows.
+        //
+        // The ciphertext is bound to (provider, userId) as associated data, so
+        // this open fails if the row was assembled from someone else's
+        // ciphertext — which is the point of passing `row.userId` rather than a
+        // constant.
+        const opened = decryptCredential(row.accessToken, {
+          provider: 'dhan',
+          userId: row.userId,
+        });
+
+        if (opened.kind === 'decrypted') {
+          return {
+            accessToken: opened.accessToken,
+            source: 'db',
+            expiresAt: row.expiresAt,
+            detail: `db:${row.source ?? 'unknown'}`,
+          };
+        }
+
+        if (opened.kind === 'legacy-plaintext') {
+          // A row written before encryption shipped. Honoured, so deploying the
+          // encrypting build never takes the feed down — and warned loudly,
+          // because a half-migrated database that stays quiet is one nobody
+          // finishes migrating.
+          console.warn(
+            '[dhan] SECURITY: the feed credential is stored UNENCRYPTED at rest. ' +
+              'Run `npm run credential:migrate -w @tradew/database` to seal it.',
+          );
+          return {
+            accessToken: opened.accessToken,
+            source: 'db',
+            expiresAt: row.expiresAt,
+            detail: `db:${row.source ?? 'unknown'}:plaintext`,
+          };
+        }
+
+        // Wrong key, rotated-out key, or a tampered row. Never hand a garbage
+        // value to Dhan — fall through to DHAN_ACCESS_TOKEN, which is the same
+        // path an expired token takes. `code` is a stable enum, never material.
+        console.warn(
+          `[dhan] stored credential could not be decrypted (${opened.code}) — falling back to DHAN_ACCESS_TOKEN`,
+        );
+      } else if (row) {
+        console.warn('[dhan] stored token has expired — falling back to DHAN_ACCESS_TOKEN');
       }
-      if (row) console.warn('[dhan] stored token has expired — falling back to DHAN_ACCESS_TOKEN');
     } finally {
       await prisma.$disconnect();
     }
