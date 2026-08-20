@@ -52,6 +52,10 @@ import { SentinelExecutionClient } from './sentinel-execution.client';
     // consent. It is the only way to set `User.agentPaperTradingEnabledAt`, and
     // it audits every change — see setAgentPaperTrading.
     ExecutionAccountService,
+    // Exported so the console can ask whether the loop is actually ticking.
+    // A read of this process's own state — the one question the database
+    // cannot answer, and the reason `execution/status` exists.
+    ExecutionSchedulerService,
     // Exported for the console's create/rebind route. Omitting this while
     // `AdminController` injected it took the ENTIRE API down at boot on
     // 2026-08-18 with "Nest can't resolve dependencies of the AdminController

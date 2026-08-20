@@ -82,6 +82,8 @@ describe('isAllowedAdminRoute — everything else is denied', () => {
       expect(isAllowedAdminRoute('GET', seg('/execution/profiles'))).toBe(true);
       expect(isAllowedAdminRoute('GET', seg('/execution/intents'))).toBe(true);
       expect(isAllowedAdminRoute('GET', seg('/execution/stats'))).toBe(true);
+      expect(isAllowedAdminRoute('GET', seg('/execution/status'))).toBe(true);
+      expect(isAllowedAdminRoute('GET', seg('/execution/rejections'))).toBe(true);
       expect(isAllowedAdminRoute('GET', seg('/execution/trace/some-intent-id'))).toBe(true);
       expect(isAllowedAdminRoute('GET', seg('/execution/trace-by-order/some-order-id'))).toBe(true);
     });
@@ -93,6 +95,10 @@ describe('isAllowedAdminRoute — everything else is denied', () => {
       // It must never be reachable as a read, and the reads must never be
       // reachable as writes.
       expect(isAllowedAdminRoute('GET', seg('/execution/profiles/abc/enabled'))).toBe(false);
+      // The two liveness reads are reads. Nothing on this console may start or
+      // stop the loop — that is the env flag's job, on the API process.
+      expect(isAllowedAdminRoute('POST', seg('/execution/status'))).toBe(false);
+      expect(isAllowedAdminRoute('POST', seg('/execution/rejections'))).toBe(false);
       expect(isAllowedAdminRoute('GET', seg('/execution/profiles/abc/run'))).toBe(false);
       // `POST /execution/intents` stays denied: an intent is produced by a
       // Sentinel decision, never posted by an operator. (`POST

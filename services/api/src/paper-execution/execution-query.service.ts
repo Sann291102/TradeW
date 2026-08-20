@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { ExecutionIntentStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { istParts } from './execution-identity';
+import { countProfileOpenPositions } from './execution-open-positions';
+import { rejectCheckLabel } from './execution-policy';
 
 /**
  * Read models for the admin console's execution views.
@@ -42,7 +45,14 @@ export class ExecutionQueryService {
     return Promise.all(
       rows.map(async (p) => {
         const [openPositions, todaysIntents] = await Promise.all([
-          this.prisma.position.count({ where: { userId: p.accountUserId, quantity: { not: 0 } } }),
+          // THE PROFILE'S positions, not the account's. This used to count
+          // every non-zero position on the account, which is a different
+          // number the moment a profile is bound to a real person's account —
+          // and it was rendered against the profile's own `maxOpenPositions`,
+          // so a trader holding two of their own made their agent read `2/1`
+          // while the gate that decides was looking at 0. One function now
+          // answers for both; see execution-open-positions.ts.
+          countProfileOpenPositions(this.prisma, p.id, p.accountUserId),
           this.prisma.executionIntent.count({
             where: { profileId: p.id, decidedAt: { gte: istMidnight(new Date()) } },
           }),
@@ -154,6 +164,84 @@ export class ExecutionQueryService {
         selected: c.selected,
       })),
     }));
+  }
+
+  /**
+   * "Why did nothing trade today?" — as one answer instead of N.
+   *
+   * ## The question this exists to make cheap
+   *
+   * On 2026-08-18 the loop produced intents all day and not one order. The
+   * reason was already recorded on every single one of those intents, and it
+   * still took an end-to-end audit of the read path to find, because the only
+   * way to see it was to open rejections one at a time. Grouped, it is a glance:
+   * "42 daily-loss-limit, 3 submission-raised".
+   *
+   * ## Grouped by the check id, never by the sentence
+   *
+   * `rejectReason` interpolates live numbers, so two refusals for the SAME
+   * reason are different strings and grouping by it yields one row per intent —
+   * the same list, sorted differently. `rejectCheckId` is the stable form.
+   *
+   * A null `rejectCheckId` on a refused intent means the row predates that
+   * column (the loop has been running since 2026-08-18). It is reported as its
+   * own bucket rather than dropped: an operator counting today's refusals must
+   * be able to see that the count is short, not silently get a smaller number.
+   */
+  async rejections(hours = 24) {
+    const since = new Date(Date.now() - hours * 3_600_000);
+    const where = {
+      decidedAt: { gte: since },
+      status: { in: [ExecutionIntentStatus.REJECTED, ExecutionIntentStatus.FAILED] },
+    };
+
+    const [grouped, total, samples] = await Promise.all([
+      this.prisma.executionIntent.groupBy({
+        by: ['rejectCheckId'],
+        where,
+        _count: { _all: true },
+        _max: { decidedAt: true },
+      }),
+      this.prisma.executionIntent.count({ where }),
+      // One real sentence per bucket, so the breakdown carries the numbers the
+      // id cannot ("Realized -₹110,987.50 today, at or past the -₹25,000
+      // floor"). The most RECENT one, because a limit's detail changes through
+      // the day and the current state is what an operator is asking about.
+      this.prisma.executionIntent.findMany({
+        where,
+        orderBy: { decidedAt: 'desc' },
+        select: { rejectCheckId: true, rejectReason: true, decidedAt: true, profile: { select: { name: true } } },
+        // Bounded: enough to cover every bucket several times over without
+        // reading a whole day of intents to show nine strings.
+        take: 200,
+      }),
+    ]);
+
+    const latestReason = new Map<string, { reason: string | null; profileName: string }>();
+    for (const s of samples) {
+      const key = s.rejectCheckId ?? '';
+      if (!latestReason.has(key)) latestReason.set(key, { reason: s.rejectReason, profileName: s.profile.name });
+    }
+
+    return {
+      hours,
+      total,
+      buckets: grouped
+        .map((g) => {
+          const key = g.rejectCheckId ?? '';
+          const sample = latestReason.get(key);
+          return {
+            checkId: g.rejectCheckId,
+            label: rejectCheckLabel(g.rejectCheckId),
+            count: g._count._all,
+            lastAt: g._max.decidedAt?.toISOString() ?? null,
+            // The most recent full sentence behind this bucket.
+            lastReason: sample?.reason ?? null,
+            lastProfileName: sample?.profileName ?? null,
+          };
+        })
+        .sort((a, b) => b.count - a.count),
+    };
   }
 
   /**
