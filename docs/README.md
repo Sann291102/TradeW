@@ -41,6 +41,13 @@ meant to be re-read often, not written once.
   documentation — kept here for the team's/Sentinel's reference use, not
   because it describes this codebase.
 
+- **`ADMIN_PORTAL_BLUEPRINT.md`** — the admin portal (`apps/admin`) as built:
+  which surfaces read live data and which are honest placeholders, how the
+  operator auth and deny-by-default proxy work, what actually runs at runtime,
+  what the Sentinel paper-execution loop really does, and the ordered backlog.
+  Rewritten 2026-08-20; the superseded 2026-08-09 vision draft (3D command
+  centre, agent rooms) is in `../archive/root-docs/`.
+
 - **`APPLICATION-STATUS.md`** — living status doc: what's built, what's
   partial, current known issues and risks. If you need to know "does X
   actually work right now," this is the file to check (and update) rather

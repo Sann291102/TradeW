@@ -1,7 +1,7 @@
 # TradeW — Application Status & Roadmap
 
-**Last updated:** 2026-08-15
-**Branch at time of writing:** `main` (latest commit `e3189de`)
+**Last updated:** 2026-08-20 (admin console + Sentinel paper execution entries; the rest is the 2026-08-15 revision)
+**Branch at time of writing:** `main` (latest commit `6928301`)
 **Purpose:** One place a new developer or planner can read to know, right now — what's built, what's actually working, and what's left. This is a living status doc, not a spec. For architecture rules see [`ARCHITECTURE.md`](../ARCHITECTURE.md); for the full file-by-file audit see [`REPOSITORY_INVENTORY.md`](../REPOSITORY_INVENTORY.md).
 
 > **Since the 2026-07-25 revision** the following landed on `main` and are reflected below: a real **automated test suite + CI gate** (the "zero test coverage" gap is closed — see [that section](#automated-test-coverage)), **Razorpay payments/checkout**, the standalone **`apps/admin` operator console**, the **`services/sentinel-py` personal strategy watcher** (Python/FastAPI), the **four-layer cognition network** (`packages/ai-core` + `/admin/cognition`), broker **OAuth/credential** storage, and the **chart drawing layer + FVG detectors** in the trade workspace.
@@ -40,8 +40,10 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 - Razorpay integration in `services/api` (`payments/` module — `razorpay.client.ts`, `payment.controller.ts`, `payment.service.ts`, `payment.catalog.ts`) and a real checkout flow in `apps/web` (`(workspace)/checkout/CheckoutClient.tsx`, `lib/payments.ts`). Turns an entitlement grant into a paid transaction rather than display-only pricing.
 
 ### Admin operator console (`apps/admin`)
-- Standalone Next.js app on port 3001 with its own operator-account auth (`OperatorAccount`, composed `AdminAccessGuard`), a proxy to `services/api`, and a live knowledge SSE stream.
-- Command centers: agents, ai, audit, orders, rules, system, health, observability, learning-platform, reasoning, plus a **cognition** graph console. Read-only aggregations over the api.
+- Standalone Next.js app on port 3001 with its own operator-account auth (`OperatorAccount`, composed `AdminAccessGuard`), a **deny-by-default** proxy allowlist to `services/api` (`src/lib/adminProxyRoutes.ts`), and a live knowledge SSE stream.
+- **Six** surfaces read live data: Dashboard, `/ai`, `/cognition`, `/knowledge`, `/orders` (incl. Sentinel paper execution), `/system`. **Seven** more (`/health`, `/agents`, `/reasoning`, `/rules`, `/learning-platform`, `/observability`, `/audit`) are scaffolded routes that render "Not built yet" with no sample data — the sidebar labels the two groups separately on purpose (`src/components/shell/nav-config.ts`).
+- Writes are limited to seven audited POSTs (admin grant, three cognition controls, execution profile arm/run/upsert, agent-trading consent). No route on this console can place an order.
+- ⚠️ **Gap:** no operator RBAC (`OperatorAccount` has no role column), no MFA, no IP allow-list — mitigated today by loopback-binding + SSH tunnel, which is a deployment property, not an application one. The console also cannot tell an armed profile from an *actually ticking* loop; see `docs/ADMIN_PORTAL_BLUEPRINT.md` §4 for the ordered backlog.
 
 ### Market data (real)
 - Dhan WebSocket live feed with a hand-written binary parser (verified by `packages/market-data/scripts/verify-parser.ts` — the one real test-like artifact in the repo).
@@ -61,6 +63,15 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 - Positions with realized/unrealized/daily P&L, margin, wallet (₹10L paper capital).
 - Option contracts trade at their real per-strike premium.
 - ⚠️ **Gap:** margin is explicitly simplified (not real SPAN), no partial fills, no bracket/OCO orders (schema field exists, nothing writes it).
+
+### Sentinel paper execution (`services/api/src/paper-execution/`)
+- Landed 2026-08-18 (`fd0c66d`). Turns a Sentinel observation that already cleared Sentinel's own gates into a PAPER order through the **existing** `OrderService` — no second OMS, no shadow ledger, no direct position writes. Exits go through `exitPosition` like any other order.
+- `ExecutionProfile` → `ExecutionIntent` → `Order`/`Trade` → `ExecutionOutcome`, with an idempotency key claimed by INSERT *before* any order exists, nine risk gates (`execution-policy.ts`), and a per-order trace on `/orders`.
+- Verified end to end against the running stack on 2026-08-18: real agent orders visible at every hop (admin stats, admin list, the bound user's `/sim/orders`, the console proxy leg) within 196 ms of creation.
+- Bound to **real TradeW user accounts** (`USER_PAPER` scope) behind revocable per-user consent (`User.agentPaperTradingEnabledAt`), re-read every pass.
+- Long options only (side is the constant `BUY`); `ExecutionEnvironment` has exactly one member, `PAPER`, and the loop refuses anything else twice.
+- Two switches, both required: `PAPER_EXECUTION_ENABLED=true` on the API process **and** the profile's own `enabled` column. Off by default.
+- ⚠️ **Gap:** agent square-off orders carry `executionIntentId = null`, so an `orders?source=sentinel` filter shows entries and never exits. Intents can also accumulate with zero orders when a daily-loss gate trips — that is by design, not a bug (see `knowledge/Gotchas/2026-08-18 - Paper orders invisible in Admin_Web is usually no order, not a read bug.md`).
 
 ### Sentinel (AI safety layer)
 - 16-signal observation pipeline: 9 technical, 5 behavioural (revenge trading, overtrading, sizing drift, pacing, loss streaks), 6 trap-detection (bull/bear trap, liquidity sweep, low-volume breakout, FOMO entry, expiry risk), 1 news.

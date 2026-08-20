@@ -12,9 +12,10 @@
  *
  * `WORKING_NAV` is the reachable, wired surface. Everything in it renders real
  * data through `/api/proxy/*`. `SCAFFOLDED_NAV` is the planned taxonomy — each
- * route exists but renders `ModulePlaceholder` ("Not built yet"). Keeping them
- * as separate lists is deliberate: the sidebar labels the second group as
- * planned, so an operator is never misled into thinking a stub is a feature,
+ * route exists but renders `UnavailableState` ("Not built yet", naming the
+ * upstream feed it is waiting on). Keeping them as separate lists is
+ * deliberate: the sidebar labels the second group as planned, so an operator
+ * is never misled into thinking a stub is a feature,
  * and nobody edits this file to "add a module" without seeing which half it
  * belongs in.
  *
@@ -46,7 +47,7 @@ export const WORKING_NAV: AdminNavItem[] = [
 
 /**
  * The planned modules. Each route is scaffolded (routing, auth, nav) but its
- * page renders `ModulePlaceholder` — no data, no sample numbers. These are NOT
+ * page renders `UnavailableState` — no data, no sample numbers. These are NOT
  * implemented and must not be made to look like they are.
  */
 export const SCAFFOLDED_NAV: AdminNavItem[] = [

@@ -241,3 +241,24 @@ duplicate *instance* in the toolbar was removed.
   and the new `WatchContextBadge` readout that now occupies the freed toolbar
   space. The chain poll behind this panel is gone with it — the provider makes
   exactly one option-chain read for the whole page.
+
+**Added 2026-08-20 — the admin portal blueprint's vision draft, superseded by an as-built rewrite:**
+`root-docs/ADMIN_PORTAL_BLUEPRINT-vision-2026-08-09.md` — the original v1.0
+"Complete Blueprint" (2,256 lines), kept verbatim for its design intent: the 3D
+command centre, the Living AI Headquarters rooms, the live agent screen viewer,
+and the subscription/compliance/content module sketches.
+- **Why archived:** it described a system that was never built and does not match
+  the one that was. It specified a separate `tw-admin` repository, a dedicated
+  Postgres with its own ~470-line Prisma schema, Next.js API routes as the
+  backend, an 18-week 9-phase plan and a roadmap in 2025 quarters. What exists is
+  `apps/admin` inside this monorepo, owning no data, reading the shared Postgres
+  only through `services/api`'s NestJS `AdminController` behind a deny-by-default
+  proxy allowlist. Its section 9 schema actively conflicts with
+  `packages/database/prisma/schema.prisma`, and none of its section 10 endpoints
+  exist. Two live documents meant every admin-portal question had to be
+  re-answered from source.
+- **Replaced by:** `docs/ADMIN_PORTAL_BLUEPRINT.md`, rewritten as an as-built
+  record (surfaces, auth, proxy, the runtime paths, and what the paper-execution
+  loop actually does) plus an ordered backlog. The vision above is summarised
+  there in §6, labelled "not built", with four architectural corrections to carry
+  forward if any of it is ever taken up.
