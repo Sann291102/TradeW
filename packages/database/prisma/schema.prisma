@@ -83,25 +83,25 @@ enum PositionCloseReason {
 }
 
 model User {
-  id                   String                @id @default(uuid())
-  email                String                @unique
+  id                         String                @id @default(uuid())
+  email                      String                @unique
   // Nullable since Google sign-in: a user who has only ever authenticated
   // through Google has no password to hash, and storing a random unusable one
   // would make "can this account log in with a password?" unanswerable. Code
   // reading this must treat null as "no password credential", never as an
   // empty password — `login()` rejects null before reaching bcrypt.
-  passwordHash         String?
+  passwordHash               String?
   // Set when the account is linked to a Google identity. Unique so two TradeW
   // users can never claim the same Google account; nullable because most
   // accounts are email+password only.
-  googleId             String?               @unique
+  googleId                   String?               @unique
   // E.164, e.g. +919876543210. Unique so a number identifies one account, and
   // nullable because phone is an optional second way in, not a requirement.
-  phone                String?               @unique
-  phoneVerifiedAt      DateTime?
-  country              String                @default("IN")
-  experienceLevel      String?
-  optionsFamiliarity   String?
+  phone                      String?               @unique
+  phoneVerifiedAt            DateTime?
+  country                    String                @default("IN")
+  experienceLevel            String?
+  optionsFamiliarity         String?
   // Admin portal access. Deliberately a per-user boolean rather than a role
   // enum: there is exactly one privileged surface (`/admin`) and one level of
   // privilege on it, so a role table would model a distinction that does not
@@ -112,7 +112,7 @@ model User {
   // `ADMIN_API_TOKEN` that `AdminTokenGuard` already checks. The admin API
   // requires both: a valid user JWT whose user row has `isAdmin`, and the
   // operator token. Leaking either one alone is not sufficient.
-  isAdmin              Boolean               @default(false)
+  isAdmin                    Boolean               @default(false)
   // ---- Agent paper-trading consent --------------------------------------
   // When set, this user's PAPER account may be bound to a USER_PAPER
   // ExecutionProfile, letting Sentinel place paper orders that land in this
@@ -136,35 +136,36 @@ model User {
   // identity space from `User`, and an FK across the two would imply they are
   // the same kind of principal.
   agentPaperTradingGrantedBy String?
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  orders               Order[]
-  trades               Trade[]
-  positions            Position[]
-  paperWallet          PaperWallet?
-  refreshTokens        RefreshToken[]
-  preferences          UserPreference[]
-  auditEvents          AuditEvent[]
-  subscriptions        Subscription[]
-  entitlementOverrides EntitlementOverride[]
-  journalEntries       JournalEntry[]
-  notifications        Notification[]
-  disciplineSessions   DisciplineSession[]
-  disciplineOverrides  DisciplineOverride[]
-  cryptoWallet         CryptoWallet?
-  cryptoOrders         CryptoOrder[]
-  cryptoPositions      CryptoPosition[]
-  brokerCredentials    BrokerCredential[]
-  brokerOAuthStates    BrokerOAuthState[]
-  apiCallLogs          ApiCallLog[]
-  aiCallLogs           AiCallLog[]
-  holdings             Holding[]
-  holdingSettlements   HoldingSettlement[]
-  portfolioSnapshots   PortfolioSnapshot[]
+  createdAt                  DateTime              @default(now())
+  updatedAt                  DateTime              @updatedAt
+  orders                     Order[]
+  trades                     Trade[]
+  positions                  Position[]
+  paperWallet                PaperWallet?
+  refreshTokens              RefreshToken[]
+  preferences                UserPreference[]
+  auditEvents                AuditEvent[]
+  subscriptions              Subscription[]
+  entitlementOverrides       EntitlementOverride[]
+  journalEntries             JournalEntry[]
+  notifications              Notification[]
+  disciplineSessions         DisciplineSession[]
+  disciplineOverrides        DisciplineOverride[]
+  cryptoWallet               CryptoWallet?
+  cryptoOrders               CryptoOrder[]
+  cryptoPositions            CryptoPosition[]
+  brokerCredentials          BrokerCredential[]
+  brokerOAuthStates          BrokerOAuthState[]
+  apiCallLogs                ApiCallLog[]
+  aiCallLogs                 AiCallLog[]
+  holdings                   Holding[]
+  holdingSettlements         HoldingSettlement[]
+  portfolioSnapshots         PortfolioSnapshot[]
   // Execution profiles whose PAPER account is this user. Non-empty only for the
   // system-owned Sentinel accounts the seed creates — a human trader's account
   // is never bound to a profile. See ExecutionProfile.
-  executionProfiles    ExecutionProfile[]  @relation("ExecutionProfileAccount")
+  executionProfiles          ExecutionProfile[]    @relation("ExecutionProfileAccount")
+  backtests                  Backtest[]
 }
 
 model RefreshToken {
@@ -251,8 +252,8 @@ model Instrument {
   metadataSource   String?
   metadataSyncedAt DateTime?
 
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
   quotes             Quote[]
   candles            Candle[]
   // Company-identity side of the house. Nullable on the other end: an
@@ -386,18 +387,18 @@ model Order {
 }
 
 model Trade {
-  id           String     @id @default(uuid())
-  orderId      String
-  userId       String
-  instrumentId String
-  side         OrderSide
-  quantity     Int
-  fillPrice    Decimal    @db.Decimal(12, 2)
-  charges      Decimal    @db.Decimal(12, 2)
+  id             String     @id @default(uuid())
+  orderId        String
+  userId         String
+  instrumentId   String
+  side           OrderSide
+  quantity       Int
+  fillPrice      Decimal    @db.Decimal(12, 2)
+  charges        Decimal    @db.Decimal(12, 2)
   // Set only when this fill reduces or closes an existing position — the
   // realized P&L this specific trade locked in. Null for a trade that only
   // opens/adds to a position.
-  realizedPnl  Decimal?   @db.Decimal(12, 2)
+  realizedPnl    Decimal?   @db.Decimal(12, 2)
   // The portion of `quantity` that was actually closing, when this trade
   // realized P&L. Equal to `quantity` for an ordinary partial or exact close
   // — but a close-and-flip fill (e.g. closing a 10-long with a 15-SELL)
@@ -407,10 +408,10 @@ model Trade {
   // flip — this is the one number that makes it exact instead. Null
   // wherever realizedPnl is null, for the same reason.
   closedQuantity Int?
-  executedAt   DateTime   @default(now())
-  order        Order      @relation(fields: [orderId], references: [id])
-  user         User       @relation(fields: [userId], references: [id])
-  instrument   Instrument @relation(fields: [instrumentId], references: [id])
+  executedAt     DateTime   @default(now())
+  order          Order      @relation(fields: [orderId], references: [id])
+  user           User       @relation(fields: [userId], references: [id])
+  instrument     Instrument @relation(fields: [instrumentId], references: [id])
 
   @@index([userId, executedAt])
   @@index([orderId])
@@ -466,7 +467,7 @@ model Position {
 // product types aren't delivery ownership, so they can never become a
 // Holding. No productType column — a Holding is definitionally delivery.
 model Holding {
-  id              String   @id @default(uuid())
+  id              String     @id @default(uuid())
   userId          String
   instrumentId    String
   quantity        Int
@@ -474,13 +475,13 @@ model Holding {
   // later BUY-then-settle merge the same way Position.avgPrice is; narrowed
   // (unchanged) on a sell — HoldingsService.sell realizes against this, never
   // rewrites it.
-  avgCost         Decimal  @default(0) @db.Decimal(12, 2)
+  avgCost         Decimal    @default(0) @db.Decimal(12, 2)
   // Lifetime realized P&L from selling settled holdings — separate from
   // Position.realizedPnl (a different life stage of the same underlying
   // shares), both roll up into PaperWallet.realizedPnl, the one ledger.
-  realizedPnl     Decimal  @default(0) @db.Decimal(12, 2)
-  firstAcquiredAt DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  realizedPnl     Decimal    @default(0) @db.Decimal(12, 2)
+  firstAcquiredAt DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
   user            User       @relation(fields: [userId], references: [id])
   instrument      Instrument @relation(fields: [instrumentId], references: [id])
 
@@ -492,7 +493,7 @@ model Holding {
 // lifecycle is inspectable rather than only implicit in Position/Holding
 // state. Not a Trade: no fill occurred, nothing changed hands at a price.
 model HoldingSettlement {
-  id           String   @id @default(uuid())
+  id           String     @id @default(uuid())
   userId       String
   instrumentId String
   // Plain reference, not an FK — this is an append-only audit log of a
@@ -501,8 +502,8 @@ model HoldingSettlement {
   // its own kind of bug.
   positionId   String
   quantity     Int
-  costPrice    Decimal  @db.Decimal(12, 2)
-  settledAt    DateTime @default(now())
+  costPrice    Decimal    @db.Decimal(12, 2)
+  settledAt    DateTime   @default(now())
   user         User       @relation(fields: [userId], references: [id])
   instrument   Instrument @relation(fields: [instrumentId], references: [id])
 
@@ -1369,26 +1370,26 @@ model Otp {
 // a table an operator reads casually. The raw query string is dropped for the
 // same reason.
 model ApiCallLog {
-  id         String   @id @default(uuid())
+  id          String   @id @default(uuid())
   // Correlation id shared with any AiCallLog / AgentActivity rows produced
   // while serving this request. This is the join that lets the portal show
   // "this click caused these four LLM calls".
-  requestId  String
-  method     String
-  path       String
+  requestId   String
+  method      String
+  path        String
   // Populated only when the route is parameterised; lets an operator find the
   // one bad request without denormalising it into `path`.
   routeParams Json?
-  statusCode Int
-  durationMs Int
+  statusCode  Int
+  durationMs  Int
   // Null for unauthenticated routes (login, health, public market data).
-  userId     String?
-  ip         String?
-  userAgent  String?
+  userId      String?
+  ip          String?
+  userAgent   String?
   // Message only, never a stack — this table is rendered in a browser.
-  error      String?
-  createdAt  DateTime @default(now())
-  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  error       String?
+  createdAt   DateTime @default(now())
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([path, createdAt])
@@ -1446,27 +1447,27 @@ model AiCallLog {
 // observation produces roughly a dozen — that volume is the point, it is what
 // makes the animation reflect real work rather than a decorative loop.
 model AgentActivity {
-  id        String   @id @default(uuid())
+  id         String   @id @default(uuid())
   // Groups every transition belonging to one orchestrator run.
-  runId     String
-  requestId String?
-  system    String
-  agent     String
+  runId      String
+  requestId  String?
+  system     String
+  agent      String
   // `queued` | `thinking` | `sending` | `receiving` | `done` | `error` | `idle`
   //
   // `sending`/`receiving` are directional on purpose: the orbit draws a
   // travelling pulse along the connector between `agent` and `peer`, and it
   // needs to know which way the data is moving.
-  state     String
+  state      String
   // The other end of a `sending`/`receiving` transition — almost always
   // `orchestrator`. Null for local states like `thinking`.
-  peer      String?
+  peer       String?
   // Short human-readable line shown on the agent's card in the portal:
   // "scanning 15m structure", "3 signals corroborate".
-  detail    String?
+  detail     String?
   // Time spent in the state being closed out, when known.
   durationMs Int?
-  createdAt DateTime @default(now())
+  createdAt  DateTime @default(now())
 
   @@index([createdAt])
   @@index([runId, createdAt])
@@ -1478,29 +1479,29 @@ model AgentActivity {
 // Kept separate so the portal can list runs cheaply without aggregating the
 // per-transition table on every page load.
 model AgentRun {
-  id           String    @id @default(uuid())
-  runId        String    @unique
-  requestId    String?
-  system       String
+  id         String    @id @default(uuid())
+  runId      String    @unique
+  requestId  String?
+  system     String
   // What started the run: `observe`, `chat`, `market-close`, `backtest`.
-  trigger      String
-  symbol       String?
-  userId       String?
+  trigger    String
+  symbol     String?
+  userId     String?
   // Agents that actually reported activity, so the orbit can dim the ones
   // that sat out this run.
-  agentsRan    String[]
+  agentsRan  String[]
   // `running` | `ok` | `error`
-  status       String    @default("running")
+  status     String    @default("running")
   // Whether the run produced user-facing copy, or stayed silent. Sentinel
   // staying quiet is a normal outcome (silence is a feature), so this is not
   // an error signal — it is the single most useful column for judging whether
   // the confidence gate is tuned correctly.
-  surfaced     Boolean   @default(false)
-  confidence   Float?
-  error        String?
-  durationMs   Int?
-  startedAt    DateTime  @default(now())
-  finishedAt   DateTime?
+  surfaced   Boolean   @default(false)
+  confidence Float?
+  error      String?
+  durationMs Int?
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
 
   @@index([startedAt])
   @@index([system, startedAt])
@@ -1542,17 +1543,17 @@ model AgentRun {
 // "I still hold this" and "someone took it 30 seconds ago".
 model JobLease {
   // The job's stable name, e.g. `matching-engine`. One row per singleton job.
-  name      String   @id
+  name       String   @id
   // Which process currently holds it. Random per boot — deliberately not the
   // hostname, so two containers that a platform gives the same hostname to
   // cannot silently share a lease.
-  holder    String
+  holder     String
   // Hard deadline. Past this instant the lease is free for anyone to take, and
   // the previous holder must consider itself no longer the leader.
-  expiresAt DateTime
+  expiresAt  DateTime
   // When the current holder last renewed. Operational visibility only — the
   // decision is made entirely on `expiresAt`.
-  renewedAt DateTime @default(now())
+  renewedAt  DateTime @default(now())
   // First acquisition of the current holder's tenure, for the same reason.
   acquiredAt DateTime @default(now())
 
@@ -1820,29 +1821,29 @@ model NeuralSynapse {
 // sufficient alone, which is the same two-factor shape `AdminGuard` already
 // enforces for the product-admin path — see AdminAccessGuard.
 model OperatorAccount {
-  id           String    @id @default(uuid())
-  email        String    @unique
+  id             String    @id @default(uuid())
+  email          String    @unique
   // Display name for the audit trail and the console header. Not a credential.
-  name         String?
+  name           String?
   // bcrypt, cost 10 — same as `User.passwordHash`. Non-nullable here, unlike on
   // `User`: there is no OAuth path into this table and there never should be.
-  passwordHash String
+  passwordHash   String
   // Revocation. Checked against the DATABASE on every request rather than being
   // baked into the assertion, for exactly the reason `User.isAdmin` is: an
   // assertion outlives a decision to revoke, and a console that keeps working
   // for hours after access was pulled is not revocation, it is a delay.
-  disabledAt   DateTime?
+  disabledAt     DateTime?
   // Online-guessing brake. `lockedUntil` is set once `failedAttempts` crosses
   // the threshold; both reset on a successful login. The login endpoint is also
   // behind `AdminTokenGuard`, so reaching it at all already requires the
   // operator token — this is defence against someone who has that token, not
   // the first line.
-  failedAttempts Int     @default(0)
-  lockedUntil  DateTime?
-  lastSeenAt   DateTime?
-  lastLoginIp  String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+  lastSeenAt     DateTime?
+  lastLoginIp    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@index([disabledAt])
 }
@@ -1872,10 +1873,10 @@ model UserStrategy {
 // One watch = one (user, strategy, symbol, strike). Owned by
 // services/sentinel-py — see the note on UserStrategy above.
 model WatchSession {
-  id         String    @id @default(uuid())
-  userId     String
-  strategyId String
-  symbol     String
+  id                String    @id @default(uuid())
+  userId            String
+  strategyId        String
+  symbol            String
   // ── LEGACY MIRROR ───────────────────────────────────────────────────────
   // Before 2026-08-18 a watch named ONE leg and these were it. Rows created
   // then still carry only these, so they cannot be dropped without losing
@@ -1884,9 +1885,9 @@ model WatchSession {
   // Read through `watchLegs()` (apps/web) / `_legs_of()` (sentinel-py), never
   // directly — that is what keeps this a migration shim rather than a second
   // live single-strike path.
-  strike     String?
-  optionType String? // CE | PE
-  expiry     String? // YYYY-MM-DD, as the Dhan bridge expects it
+  strike            String?
+  optionType        String? // CE | PE
+  expiry            String? // YYYY-MM-DD, as the Dhan bridge expects it
   // ── THE PAIR UNDER OBSERVATION ──────────────────────────────────────────
   // Sentinel watches the underlying, a CALL and a PUT together and decides
   // which leg is expressing the underlying's move. It cannot do that from one
@@ -1896,48 +1897,48 @@ model WatchSession {
   // inside a JSON blob so "which contracts are we subscribed to" is answerable
   // in SQL.
   // Both legs are null for `watchMode = 'underlying'` and only then.
-  ceStrike          Decimal? @db.Decimal(12, 2)
+  ceStrike          Decimal?  @db.Decimal(12, 2)
   ceSecurityId      String?
   ceExchangeSegment String? // NSE_FNO | BSE_FNO — never assumed from the symbol
   ceDhanInstrument  String? // OPTIDX | OPTSTK
   ceTradingSymbol   String?
   ceLotSize         Int?
-  ceTickSize        Decimal? @db.Decimal(10, 4)
-  peStrike          Decimal? @db.Decimal(12, 2)
+  ceTickSize        Decimal?  @db.Decimal(10, 4)
+  peStrike          Decimal?  @db.Decimal(12, 2)
   peSecurityId      String?
   peExchangeSegment String?
   peDhanInstrument  String?
   peTradingSymbol   String?
   peLotSize         Int?
-  peTickSize        Decimal? @db.Decimal(10, 4)
+  peTickSize        Decimal?  @db.Decimal(10, 4)
   // Which leg the strategy's rules are evaluated against. NOT which leg
   // exists — both do. The UI's CE/PE control sets this and creates nothing.
-  focusedSide String? // CE | PE
-  watchMode   String  @default("option") // option | underlying
+  focusedSide       String? // CE | PE
+  watchMode         String    @default("option") // option | underlying
   // The bars the engine reads, from the strategy's own parsed rules. Recorded
   // on the watch so an observation can be checked against the series it was
   // made on after the strategy has been edited.
-  timeframe String?
-  state      String    @default("IDLE") // IDLE | FORMING | CONFIRMED | IN_TRADE | EXITED
+  timeframe         String?
+  state             String    @default("IDLE") // IDLE | FORMING | CONFIRMED | IN_TRADE | EXITED
   // Set when the user confirms they took the position (P4). Null while the
   // watch is still pre-entry.
   // The user's OWN declared numbers for a position they have already taken.
   // Sentinel does not propose any of these — it is told them, and reports
   // movement relative to them. See app/intrade/monitor.py.
-  entryPrice  Decimal? @db.Decimal(12, 2)
-  stopPrice   Decimal? @db.Decimal(12, 2)
-  targetPrice Decimal? @db.Decimal(12, 2)
-  direction   String? // LONG | SHORT
+  entryPrice        Decimal?  @db.Decimal(12, 2)
+  stopPrice         Decimal?  @db.Decimal(12, 2)
+  targetPrice       Decimal?  @db.Decimal(12, 2)
+  direction         String? // LONG | SHORT
   // R-multiples already announced for the current position, e.g. ["1R","2R"].
   // A milestone is a level, not an event, so "already reported" has to
   // survive a restart or it re-fires on every sweep past it.
-  reachedMilestones Json @default("[]")
+  reachedMilestones Json      @default("[]")
   // Notification gating. cooldownUntil suppresses REPEATS of a state the
   // watch is already in; a forward state change notifies regardless.
-  lastNotifiedAt DateTime?
-  cooldownUntil  DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  lastNotifiedAt    DateTime?
+  cooldownUntil     DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@index([userId])
   @@index([state])
@@ -2069,18 +2070,18 @@ enum StrikeCandidateRole {
 // paper account is a row in this table, not a branch in the execution service.
 // The first end-to-end loop is proven with exactly one enabled row.
 model ExecutionProfile {
-  id   String @id @default(uuid())
+  id           String  @id @default(uuid())
   // Operator-facing identity, e.g. 'sentinel-alpha-nifty'.
-  name String @unique
+  name         String  @unique
   // Which Sentinel agent identity this profile runs as. Recorded on every
   // intent, so a filled order names the agent that produced it.
-  agent String
+  agent        String
   // Registry strategy id to pin, or null to let Sentinel choose (its own
   // 'auto' strategy mode). Passed straight through to the observe call.
   strategyId   String?
   strategyName String?
   // The underlying this profile trades, e.g. 'NIFTY'. One market per profile.
-  symbol String
+  symbol       String
 
   // ---- The paper account -------------------------------------------------
   // A real User row with a real PaperWallet — the EXISTING account model, not a
@@ -2099,6 +2100,20 @@ model ExecutionProfile {
   // consented. Trusting the column alone would make the scope a label rather
   // than a boundary.
   accountScope ExecutionAccountScope @default(SYSTEM_PAPER)
+
+  // ---- Agent Trading Laboratory -----------------------------------------
+  // Whether this profile participates in the Agent Lab's observation loop.
+  //
+  // SEPARATE FROM `enabled` ON PURPOSE. `enabled` answers "may this profile
+  // place orders"; this answers "should the Lab watch this market and narrate
+  // what it sees". They are genuinely different questions, and Phase 0 needs
+  // the second without granting the first — a profile can be observed in the
+  // control room for days before anyone arms it.
+  labEnabled   Boolean @default(false)
+  // Bars the Lab observes on. Null means the engine's own default; from Phase 2
+  // the agent may choose per setup, and the choice is recorded on the
+  // experiment rather than written back here.
+  labTimeframe String?
 
   environment ExecutionEnvironment @default(PAPER)
   // Off by default. A profile that has never been deliberately enabled by an
@@ -2131,7 +2146,8 @@ model ExecutionProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  intents ExecutionIntent[]
+  intents   ExecutionIntent[]
+  labEvents ExperimentEvent[]
 
   @@index([enabled])
   @@index([symbol])
@@ -2172,11 +2188,11 @@ model ExecutionIntent {
   // ---- What was decided --------------------------------------------------
   symbol         String
   // Underlying spot at the moment of decision.
-  underlyingSpot Decimal?  @db.Decimal(12, 2)
+  underlyingSpot Decimal?    @db.Decimal(12, 2)
   side           OrderSide
-  optionType     String    // 'CE' | 'PE' — mirrors SideInFocus.side
-  bias           String    // 'bullish' | 'bearish'
-  strike         Decimal   @db.Decimal(12, 2)
+  optionType     String // 'CE' | 'PE' — mirrors SideInFocus.side
+  bias           String // 'bullish' | 'bearish'
+  strike         Decimal     @db.Decimal(12, 2)
   expiry         DateTime
   // The canonical contract symbol handed to OrderService —
   // UNDERLYING:YYYYMMDD:STRIKE:CE|PE. Stored so the trace shows exactly what
@@ -2190,13 +2206,13 @@ model ExecutionIntent {
   // ---- Evidence ----------------------------------------------------------
   // Sentinel's confidence for this observation (0-100) and its rationale.
   // Copied, not referenced: the observation is ephemeral, this is the record.
-  confidence Int
-  rationale  String[] @default([])
+  confidence     Int
+  rationale      String[] @default([])
   // The four-condition publication gate's conditions[], corroborating sources
   // and conflicts.
-  publication Json?
+  publication    Json?
   // SideInFocus.optionContext — PCR, max pain, OI walls, ATM/focus strike.
-  optionContext Json?
+  optionContext  Json?
   // Everything the decision was made against that has no column of its own:
   // market profile, strategy matches, risk read, market state.
   marketSnapshot Json?
@@ -2231,18 +2247,18 @@ model ExecutionStrikeCandidate {
   intentId String
   intent   ExecutionIntent @relation(fields: [intentId], references: [id], onDelete: Cascade)
 
-  role       StrikeCandidateRole
-  strike     Decimal             @db.Decimal(12, 2)
-  optionType String              // 'CE' | 'PE'
+  role         StrikeCandidateRole
+  strike       Decimal             @db.Decimal(12, 2)
+  optionType   String // 'CE' | 'PE'
   // Live premium read from the option chain at decision time. Null when the
   // chain carried no price for this leg — itself a valid reason for a candidate
   // to lose, and never to be confused with a premium of zero.
-  premium      Decimal? @db.Decimal(12, 2)
+  premium      Decimal?            @db.Decimal(12, 2)
   openInterest BigInt?
   volume       BigInt?
   impliedVol   Float?
   // Distance from spot in points, signed toward the favoured side.
-  moneyness    Decimal? @db.Decimal(12, 2)
+  moneyness    Decimal?            @db.Decimal(12, 2)
 
   selected Boolean @default(false)
   // Did this candidate pass every hard check (priced, liquid enough, inside the
@@ -2268,18 +2284,18 @@ model ExecutionOutcome {
   intentId String          @unique
   intent   ExecutionIntent @relation(fields: [intentId], references: [id], onDelete: Cascade)
 
-  entryPrice  Decimal  @db.Decimal(12, 2)
-  exitPrice   Decimal? @db.Decimal(12, 2)
-  quantity    Int
+  entryPrice         Decimal  @db.Decimal(12, 2)
+  exitPrice          Decimal? @db.Decimal(12, 2)
+  quantity           Int
   // Realized P&L net of the charges the paper engine actually applied.
-  realizedPnl Decimal  @db.Decimal(14, 2)
-  charges     Decimal  @default(0) @db.Decimal(14, 2)
+  realizedPnl        Decimal  @db.Decimal(14, 2)
+  charges            Decimal  @default(0) @db.Decimal(14, 2)
   // 'WIN' | 'LOSS' | 'SCRATCH' — derived from realizedPnl, stored so the
   // learning read does not re-derive it inconsistently.
-  result      String
+  result             String
   // How the position ended: 'TARGET' | 'STOP' | 'SQUARE_OFF' | 'INVALIDATED' |
   // 'MANUAL'. Square-off is the common one for an intraday paper loop.
-  exitReason  String
+  exitReason         String
   // Set when Sentinel's own read went invalid before the exit — the single most
   // useful column for judging whether the decision or the market was wrong.
   invalidationReason String?
@@ -2292,7 +2308,6 @@ model ExecutionOutcome {
 
   @@index([result])
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Company Intelligence — Phase 1: provenance and ingestion foundation
@@ -2552,7 +2567,6 @@ model DataQualityResult {
   @@index([check, observedAt])
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Company Intelligence — Phase 2: company identity
 //
@@ -2716,9 +2730,9 @@ model CompanyAlias {
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   /// 'name' | 'symbol' | 'isin' | 'bse-code' | 'former-name'
-  kind String
+  kind       String
   /// The literal string as the source spells it.
-  value String
+  value      String
   /// Upper-cased, whitespace-collapsed form — what lookups actually match on.
   /// Stored rather than computed per query so the unique constraint can enforce
   /// "one company per identifier" instead of merely hoping for it.
@@ -2733,7 +2747,6 @@ model CompanyAlias {
   @@index([normalized])
   @@index([companyId])
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Company Intelligence — Phase 3: financial statements
@@ -2943,4 +2956,504 @@ model ConceptMapping {
   @@unique([sourceVocabulary, rawTag, validFrom])
   @@index([sourceVocabulary, rawTag])
   @@index([conceptKey])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BACKTESTING
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A backtest is a HISTORICAL simulation: a strategy replayed over stored bars,
+// producing hypothetical trades and statistics. It is not paper trading and it
+// is not live trading, and the three must never be conflated:
+//
+//   Backtest        → historical replay, writes only Backtest* rows
+//   Paper execution → live-market simulation, writes Order/Trade/Position
+//   Live execution  → structurally unavailable (ExecutionEnvironment has one
+//                     member, PAPER; see the enum above)
+//
+// THE SEPARATION IS STRUCTURAL, NOT CONVENTIONAL. Nothing below has a foreign
+// key to Order, Trade, Position or PaperWallet, and the backtest engine holds
+// no reference to OrderService. A backtest therefore *cannot* place a paper
+// order, and a paper order can never be written here — the tables have no
+// column that could hold the other's identity.
+//
+// OBSERVATION / EDUCATION ONLY (ARCHITECTURE.md §3–4, CLAUDE.md Rule 2). A
+// completed backtest reports how a rule WOULD have behaved. It is retrospective
+// statistics, never a Buy/Sell/Entry/Target instruction, and it is not a gate
+// in anybody's order flow.
+
+enum BacktestStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// Why a simulated position was closed. Distinguishing these is what makes the
+// exit distribution readable — "everything timed out" and "everything stopped"
+// describe opposite failures and would otherwise both read as a loss.
+enum BacktestExitReason {
+  TARGET
+  STOP
+  TIMEOUT
+  // Forced flat at the last bar of the session (intraday products).
+  SESSION_END
+  // Forced flat at the configured square-off minute.
+  SQUARE_OFF
+  // Derivative expired while held.
+  EXPIRY
+  // The run ended (end of the requested window) with the position still open.
+  RUN_END
+}
+
+/// One historical simulation: its exact configuration, its provenance, and its
+/// result.
+///
+/// ## Immutability
+///
+/// A row that reaches COMPLETED, FAILED or CANCELLED is terminal and is never
+/// updated again — `BacktestService` has no code path that writes to a terminal
+/// row, and re-running the same configuration produces a NEW row. That is what
+/// makes strategy versioning hold: `Backtest A -> strategy v1.3` keeps
+/// reporting v1.3's numbers after the strategy is edited, because nothing ever
+/// goes back and rewrites it.
+///
+/// ## Reproducibility
+///
+/// Four provenance columns answer "could I get this number again":
+/// `strategyVersion` (the rule set), `engineVersion` (the simulator),
+/// `dataVersion` (the bars) and `configurationHash` (every knob). Two runs that
+/// agree on all four must agree on every trade — asserted in the determinism
+/// test, not merely intended.
+model Backtest {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  /// User-facing name. Optional — an unnamed run is addressed by its strategy +
+  /// symbol + window, which is how the list renders it.
+  label String?
+
+  status        BacktestStatus @default(QUEUED)
+  /// Set for FAILED and CANCELLED. Null otherwise. This is the honest reason —
+  /// "Historical data unavailable for the selected period" is a normal value.
+  failureReason String?
+
+  // ---- What was tested ----------------------------------------------------
+  /// StrategyEngineService id, e.g. 'orb-retest'. Not an FK: strategies are
+  /// definitions in code/YAML, not rows, and a result must outlive a strategy
+  /// being retired.
+  strategyId      String
+  strategyName    String
+  /// Content hash of the resolved StrategyDefinition at run time. A strategy
+  /// edit changes this, so two results are comparable only when it matches.
+  strategyVersion String
+
+  symbol       String
+  exchange     String
+  /// 1m | 5m | 15m | 1h | 1d — mirrors CandleInterval.
+  timeframe    String
+  /// Resolved at run time and stored, so the result still names its instrument
+  /// after a symbol is delisted. A plain reference, not an FK.
+  instrumentId String?
+
+  // ---- The requested window, and the window actually covered --------------
+  /// What the user asked for.
+  startAt    DateTime
+  endAt      DateTime
+  /// The first and last bar actually replayed. These differ from the request
+  /// whenever coverage is partial, and the UI shows both rather than silently
+  /// presenting a shorter test as the requested one.
+  firstBarAt DateTime?
+  lastBarAt  DateTime?
+  barCount   Int       @default(0)
+
+  // ---- Configuration ------------------------------------------------------
+  initialCapital    Decimal @db.Decimal(18, 2)
+  /// Every knob, exactly as resolved (fees, slippage, sizing, risk limits,
+  /// square-off, strategy parameters). Stored verbatim so the detail page can
+  /// render the real configuration rather than today's defaults.
+  configuration     Json
+  /// Stable hash over the canonicalised configuration + strategy + window +
+  /// data version. Equal hashes must produce equal results.
+  configurationHash String
+
+  /// The execution profile this run borrowed its risk policy from, when the
+  /// user started from one. A plain reference — deleting a profile must not
+  /// delete history, and a backtest never writes back to one.
+  sourceProfileId String?
+
+  // ---- Data provenance ----------------------------------------------------
+  /// Where the bars came from: 'dhan' | 'nse-bhavcopy' | mixed, as stored on
+  /// the Candle rows actually read. Never a guess.
+  dataSource  String?
+  /// Identifies the bar set: newest Candle.createdAt in the window plus the row
+  /// count. A backfill that adds or repairs bars changes this, which is what
+  /// makes "same config, different numbers" explainable instead of alarming.
+  dataVersion String?
+  /// Trading days in the window that had no bars at all, and any intra-session
+  /// holes found. Rendered on the detail page; the engine does not fill them.
+  dataGaps    Json?
+
+  /// The simulator's own version. Bumped whenever a change could move a number.
+  engineVersion String
+
+  // ---- Headline result ----------------------------------------------------
+  // Columns, not JSON, for exactly the fields the list filters, sorts and
+  // compares on. Null until COMPLETED — a RUNNING row must never render as a
+  // result.
+  finalCapital   Decimal? @db.Decimal(18, 2)
+  totalPnl       Decimal? @db.Decimal(18, 2)
+  /// Percent, e.g. -12.34.
+  totalReturnPct Decimal? @db.Decimal(10, 4)
+  /// Null when the window is too short for annualisation to mean anything.
+  cagrPct        Decimal? @db.Decimal(10, 4)
+
+  totalTrades   Int?
+  winningTrades Int?
+  losingTrades  Int?
+  winRatePct    Decimal? @db.Decimal(7, 4)
+  profitFactor  Decimal? @db.Decimal(12, 4)
+  expectancy    Decimal? @db.Decimal(18, 2)
+
+  /// Peak-to-trough on the equity curve, as a positive percent.
+  maxDrawdownPct    Decimal? @db.Decimal(10, 4)
+  maxDrawdownAmount Decimal? @db.Decimal(18, 2)
+  /// Calendar days from drawdown start to recovery (or run end if unrecovered).
+  maxDrawdownDays   Int?
+
+  /// The statistically-conditional metrics. NULL is a real answer here and
+  /// means "not enough sample to be meaningful" — the UI prints that rather
+  /// than a number nobody should act on. See METRIC_MIN_SAMPLE in the engine.
+  sharpe        Decimal? @db.Decimal(12, 6)
+  sortino       Decimal? @db.Decimal(12, 6)
+  volatilityPct Decimal? @db.Decimal(10, 4)
+
+  totalFees       Decimal? @db.Decimal(18, 2)
+  totalSlippage   Decimal? @db.Decimal(18, 2)
+  /// Signals that produced no order because the risk policy or the wallet
+  /// refused them, and signals skipped before an order was attempted (no fill
+  /// bar, outside session, cooldown). Counted separately: a rejection is the
+  /// policy working, a skip is the data or the clock.
+  rejectedSignals Int?
+  skippedSignals  Int?
+  /// Fraction of the tested bars during which capital was deployed, 0-1.
+  exposurePct     Decimal? @db.Decimal(7, 4)
+
+  /// Everything with structure rather than a scalar: exit-reason breakdown,
+  /// per-regime performance, largest win/loss detail, holding-time
+  /// distribution. Only fields actually derived from stored evidence appear.
+  metrics Json?
+
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  trades      BacktestTrade[]
+  equityCurve BacktestEquityPoint[]
+  analysis    BacktestAnalysis?
+
+  @@index([userId, createdAt])
+  @@index([userId, status])
+  @@index([userId, strategyId])
+  @@index([userId, symbol])
+  @@index([configurationHash])
+}
+
+/// One completed round trip inside a backtest.
+///
+/// Entry and exit are both stored with the bar timestamp that produced them, so
+/// a reader can go back to the candle and check the fill. `grossPnl - fees -
+/// slippageCost = netPnl` holds exactly; that identity is asserted in the unit
+/// tests, because a P&L computed as `(exit - entry) * qty` with costs waved at
+/// afterwards is the single easiest way to make a losing strategy look
+/// profitable.
+model BacktestTrade {
+  id         String   @id @default(uuid())
+  backtestId String
+  backtest   Backtest @relation(fields: [backtestId], references: [id], onDelete: Cascade)
+
+  /// 1-based order within the run, so the table has a stable natural sort even
+  /// when two trades share a timestamp.
+  sequence Int
+
+  /// The traded contract's canonical symbol. For an option this is the full
+  /// UNDERLYING:YYYYMMDD:STRIKE:CE|PE identity, matching what the paper engine
+  /// hands to OrderService.
+  instrumentSymbol String
+  instrumentType   InstrumentType
+  side             OrderSide
+
+  // ---- Options identity (null for cash/index) ----------------------------
+  underlying String?
+  strike     Decimal?  @db.Decimal(12, 2)
+  expiry     DateTime?
+  /// 'CE' | 'PE'
+  optionType String?
+
+  entryTime     DateTime
+  entryPrice    Decimal  @db.Decimal(12, 2)
+  entryQuantity Int
+  /// Contracts, for derivatives. Null for cash.
+  lots          Int?
+
+  exitTime   DateTime
+  exitPrice  Decimal            @db.Decimal(12, 2)
+  exitReason BacktestExitReason
+
+  /// (exit - entry) x qty, signed by side. Before costs.
+  grossPnl     Decimal @db.Decimal(18, 2)
+  fees         Decimal @default(0) @db.Decimal(18, 2)
+  /// The rupee cost of the modelled slippage on both legs.
+  slippageCost Decimal @default(0) @db.Decimal(18, 2)
+  netPnl       Decimal @db.Decimal(18, 2)
+
+  /// Seconds held. Stored rather than derived so the table can sort on it.
+  holdingSeconds Int
+  barsHeld       Int
+
+  /// Cash after this trade settled — lets the trade table and the equity curve
+  /// be reconciled against each other without recomputation.
+  cashAfter Decimal @db.Decimal(18, 2)
+
+  /// Which strategy rules confirmed at entry. Copied from the StrategyDetection
+  /// — the observation is ephemeral, this is the record.
+  strategyReason String[] @default([])
+  /// Trend/volatility regime and technical state at entry, taken from the same
+  /// MarketSnapshot the decision was made on. Null when the snapshot could not
+  /// classify — never invented.
+  marketContext  Json?
+
+  /// Stop and target as they were set at entry, so a reader can see the plan
+  /// the exit is being judged against.
+  stopPrice   Decimal? @db.Decimal(12, 2)
+  targetPrice Decimal? @db.Decimal(12, 2)
+
+  @@unique([backtestId, sequence])
+  @@index([backtestId, entryTime])
+  @@index([backtestId, netPnl])
+}
+
+/// The equity curve, sampled once per replayed bar that changed the portfolio
+/// and at least once per session close.
+///
+/// PERSISTED ON PURPOSE. The alternative — shipping every trade to the browser
+/// and reducing it there — makes the chart a second, drifting implementation of
+/// the portfolio accounting, and it degrades with exactly the runs that are
+/// most worth looking at.
+model BacktestEquityPoint {
+  id         String   @id @default(uuid())
+  backtestId String
+  backtest   Backtest @relation(fields: [backtestId], references: [id], onDelete: Cascade)
+
+  /// Bar time this point describes.
+  at       DateTime
+  /// Monotone index so the series has a stable order independent of clock ties.
+  sequence Int
+
+  cash           Decimal @db.Decimal(18, 2)
+  /// cash + mark-to-market value of open positions.
+  portfolioValue Decimal @db.Decimal(18, 2)
+  realizedPnl    Decimal @db.Decimal(18, 2)
+  unrealizedPnl  Decimal @db.Decimal(18, 2)
+  /// Percent below the running peak of portfolioValue, positive, 0 at a peak.
+  drawdownPct    Decimal @db.Decimal(10, 4)
+  /// Open positions at this point — 0 means flat, which is what makes the
+  /// exposure metric checkable against the curve.
+  openPositions  Int     @default(0)
+
+  @@unique([backtestId, sequence])
+  @@index([backtestId, at])
+}
+
+/// Optional AI commentary on a COMPLETED backtest.
+///
+/// THE MODEL NEVER SEES THE TRADES OR THE BARS. `evidence` is the exact
+/// structured summary that was sent — metrics, distributions, regime buckets —
+/// and it is stored so any claim in `output` can be traced back to the number
+/// it came from. The analysis is additive: it cannot modify the backtest, and
+/// the backtest renders completely without it.
+model BacktestAnalysis {
+  id         String   @id @default(uuid())
+  backtestId String   @unique
+  backtest   Backtest @relation(fields: [backtestId], references: [id], onDelete: Cascade)
+
+  /// Exactly what was put in front of the model.
+  evidence Json
+  /// Strengths, weaknesses, failure patterns, conditions, consistency.
+  output   Json
+
+  model         String?
+  promptVersion String
+  /// 'llm' when a model wrote it, 'deterministic' when the model was
+  /// unavailable and the rule-based summary was used instead — which is stated
+  /// in the UI, not hidden.
+  generatedBy   String  @default("llm")
+
+  createdAt DateTime @default(now())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AGENT TRADING LABORATORY — Phase 0 (timeline + health)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// An admin-only environment in which TradeW's agents run PAPER experiments
+// against live market conditions. Phase 0 builds only the substrate everything
+// else renders from: a truthful event log, a data-availability record, and a
+// health gate that decides whether the Lab may run at all.
+//
+// WHAT PHASE 0 DELIBERATELY DOES NOT DO. It does not trade. There is no
+// execution path here, no order, no position, and no experiment record yet —
+// those arrive in Phase 1. The event vocabulary below declares the full set so
+// the contract and the timeline UI are stable, but only the observation and
+// health kinds are emitted today. An event kind that nothing emits renders as
+// nothing; it is never populated with a placeholder, because a control room
+// that shows invented activity is worse than one that shows none.
+//
+// THE THREE-WAY SEPARATION IS UNCHANGED (see the BACKTESTING and SENTINEL
+// PAPER EXECUTION blocks above):
+//
+//   Backtest        → historical replay over stored bars
+//   Paper execution → live-market simulation, writes Order/Trade/Position
+//   Agent Lab       → drives paper execution and records WHY
+//   Live execution  → still unrepresentable; ExecutionEnvironment has one member
+//
+// Nothing in this block has a foreign key to Order, Trade or Position. The Lab
+// observes and explains; when Phase 1 gives it the ability to act, it acts by
+// calling the existing paper-execution service, never by writing an order row.
+
+/// The Lab's event vocabulary — one shape for every typed message that passes
+/// between the Lab's parts.
+///
+/// THIS IS THE MESSAGE BUS. The repository has no broker (no EventEmitter2, no
+/// BullMQ, no Kafka, no Redis queue) and coordinates entirely through Postgres
+/// rows, polling and `JobLease`. Introducing a broker for the Lab would add an
+/// operational dependency that nothing else in the system has, and would put
+/// the audit trail somewhere other than the database it must be reconciled
+/// against. An append-only table IS the log, and it is queryable, durable and
+/// already backed up.
+enum LabEventKind {
+  // ---- Lifecycle and health. Emitted from Phase 0. --------------------
+  LAB_STARTED
+  LAB_STOPPED
+  HEALTH_DEGRADED
+  HEALTH_RECOVERED
+  SESSION_OPENED
+  SESSION_CLOSED
+
+  // ---- Observation. Emitted from Phase 0. -----------------------------
+  OBSERVING
+  OBSERVATION_SKIPPED
+  SETUP_CANDIDATE
+  SETUP_REJECTED
+
+  // ---- Decision and execution. Declared now, emitted from Phase 1. ----
+  STRATEGY_SELECTED
+  TRADE_PROPOSAL
+  RISK_ASSESSMENT
+  EXECUTION_RESULT
+  SETUP_WEAKENING
+  SETUP_INVALIDATED
+  TRADE_OUTCOME
+
+  // ---- Learning. Declared now, emitted from Phase 3. ------------------
+  POST_TRADE_ANALYSIS
+  LEARNING_CANDIDATE
+
+  // ---- Operator action. --------------------------------------------
+  KILL_SWITCH
+  COMMAND_ACCEPTED
+  COMMAND_REJECTED
+}
+
+enum LabEventSeverity {
+  INFO
+  WARN
+  ERROR
+}
+
+/// One typed, append-only event in the Lab's timeline.
+///
+/// ## Append-only, and never updated
+///
+/// There is no update path in `LabEventService`. An event is a statement that
+/// something happened at a moment; correcting it would make the timeline a
+/// record of what we currently believe rather than of what occurred, and the
+/// whole value of this table is that an administrator can reconstruct a
+/// decision months later and trust it.
+///
+/// ## Idempotency is a unique constraint, not a convention
+///
+/// `dedupeKey` is derived from the event's own CONTENT — profile, kind, symbol
+/// and the market time it describes — never from a clock read at insert time,
+/// which would mint a fresh key on every retry and defeat the mechanism
+/// entirely. This is the same reasoning `ExecutionIntent.idempotencyKey`
+/// records. A restarted worker, an overlapping tick and two racing replicas all
+/// converge on the same key, and Postgres rejects the second write; the service
+/// catches that violation and returns the first event, so duplicate delivery is
+/// a no-op rather than a duplicated timeline entry.
+///
+/// ## Two clocks, deliberately kept apart
+///
+/// `at` is MARKET time — the bar the event describes. `recordedAt` is when the
+/// row was written. Collapsing them is the defect
+/// `Gotchas/2026-08-11` and the `detectedAt`/`observedAt` split in
+/// `StrategyMatch` both exist to prevent: a setup that formed on the 09:42 bar
+/// must not be re-dated to whenever the poll noticed it, or the timeline reads
+/// as a burst of simultaneous activity at the moment of a refresh rather than
+/// as the sequence the market actually produced.
+model ExperimentEvent {
+  id String @id @default(uuid())
+
+  /// The lab profile this event belongs to. Null only for lab-wide lifecycle
+  /// events (LAB_STARTED, and health transitions that are not profile-specific).
+  profileId String?
+  profile   ExecutionProfile? @relation(fields: [profileId], references: [id])
+
+  /// The experiment this event belongs to. Null throughout Phase 0 — there are
+  /// no experiments yet — and a plain nullable column rather than a required
+  /// relation precisely so the timeline exists before the thing it will
+  /// eventually be grouped by.
+  experimentId String?
+
+  kind     LabEventKind
+  severity LabEventSeverity @default(INFO)
+
+  /// Market-event time: the bar or market moment this event describes.
+  at         DateTime
+  /// Wall-clock time the row was written. See the note above on why both.
+  recordedAt DateTime @default(now())
+
+  symbol    String?
+  timeframe String?
+
+  /// Who produced it: 'lab-runner' | 'sentinel' | 'operator:<operatorId>'.
+  /// A string rather than an enum because the set grows with each phase and an
+  /// unknown actor must be recordable rather than rejected.
+  actor String
+
+  /// One line, written for a human reading the timeline.
+  summary String
+  /// Everything structured that belongs to this kind of event. The timeline
+  /// renders `summary`; an operator inspecting a decision reads this.
+  detail  Json?
+
+  /// What the Lab could actually see when this event was produced — which
+  /// sources answered, how old the newest bar was, which optional inputs were
+  /// absent. See `DataAvailability` in the lab module.
+  ///
+  /// Recorded on the EVENT rather than only on a decision because the most
+  /// important case is the one where no decision was made: "the Lab did
+  /// nothing for two hours" and "the Lab could not see anything for two hours"
+  /// are different facts and must not look the same in the timeline.
+  dataAvailability Json?
+
+  /// Content-derived. See the idempotency note above.
+  dedupeKey String @unique
+
+  @@index([profileId, at])
+  @@index([kind, at])
+  @@index([at])
+  @@index([experimentId])
 }

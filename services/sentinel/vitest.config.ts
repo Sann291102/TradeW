@@ -90,6 +90,14 @@ export default defineConfig({
       // published read), and an UNPRICED leg is never confused with one priced
       // at zero.
       'src/execution/strike-candidates.spec.ts',
+      // The historical replay. The look-ahead suite is adversarial rather than
+      // expectation-based: it corrupts and truncates the FUTURE and demands the
+      // past does not move, because a look-ahead leak makes results better and
+      // so has no visible symptom to assert on directly.
+      'src/backtest/strategy-replay.spec.ts',
+      // Coverage analysis: what a window actually contained. A half-covered
+      // backtest is a different backtest, not a shorter one.
+      'src/backtest/historical-bars.spec.ts',
     ],
     environment: 'node',
     // Deterministic and clock-injected throughout: a slow test is a real hang,

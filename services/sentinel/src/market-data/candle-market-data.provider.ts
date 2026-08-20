@@ -9,6 +9,7 @@ import type {
   OptionContractRef,
   Quote,
 } from '@tradew/types';
+import { liveExpiries, normaliseExpiryList, tradingDateIso } from '@tradew/types';
 import { istDateKey } from '@tradew/market-data';
 import { PrismaService } from '../prisma.service';
 
@@ -502,8 +503,33 @@ export class CandleMarketDataProvider implements MarketDataProvider {
   async getOptionExpiries(symbol: string): Promise<string[]> {
     if (!LIVE_FEED_URL) return [];
     const key = symbol.toUpperCase();
+
+    /**
+     * ── EXPIRED CONTRACTS ARE FILTERED ON THE WAY OUT, NOT ON THE WAY IN ────
+     *
+     * Every return path in this method runs through `liveExpiries` against the
+     * CURRENT IST trading date, including the three that serve a stale cache
+     * entry after a failed read. That placement is the point.
+     *
+     * The list used to be stored and returned as `[...expiries].sort()` —
+     * ordered, never date-filtered — and callers take `[0]`. So on the morning
+     * after an expiry the engine observed a contract that had stopped trading:
+     * `market-intelligence.service` reads `expiries[0]` for the CE/PE legs of
+     * every `/observe` snapshot, and `contracts()` reads it for the pair it
+     * reports to the user. Both would have been reading a dead series, and the
+     * empty premium history that came back reads as a quiet market rather than
+     * a rolled-over contract.
+     *
+     * Filtering at STORE time would not have fixed it: this cache holds an
+     * entry for 15 minutes and is deliberately served stale for far longer when
+     * the bridge is unreachable, so an entry filtered on the day it was read
+     * keeps asserting that day's answer. The stored value is what the bridge
+     * said; the returned value is what is live now.
+     */
     const cached = this.expiryCache.get(key);
-    if (cached && Date.now() - cached.at < EXPIRY_CACHE_TTL_MS) return cached.expiries;
+    if (cached && Date.now() - cached.at < EXPIRY_CACHE_TTL_MS) {
+      return liveExpiries(cached.expiries, tradingDateIso());
+    }
 
     const read = await this.readFeed<{ expiries?: string[] } & FeedFault>(
       `${LIVE_FEED_URL}/optionchain/expirylist?symbol=${encodeURIComponent(symbol)}`,
@@ -525,7 +551,7 @@ export class CandleMarketDataProvider implements MarketDataProvider {
     // failure to read. Serving a still-valid stale list first is fine — that IS
     // a real answer — but inventing one is not.
     if (!read.ok) {
-      if (cached) return cached.expiries;
+      if (cached) return liveExpiries(cached.expiries, tradingDateIso());
       throw new MarketDataUnavailableError({
         what: 'option expiry list',
         symbol,
@@ -537,7 +563,7 @@ export class CandleMarketDataProvider implements MarketDataProvider {
 
     const fault = faultText(read.data);
     if (fault) {
-      if (cached) return cached.expiries;
+      if (cached) return liveExpiries(cached.expiries, tradingDateIso());
       throw new MarketDataUnavailableError({
         what: 'option expiry list',
         symbol,
@@ -548,7 +574,7 @@ export class CandleMarketDataProvider implements MarketDataProvider {
     }
 
     if (!Array.isArray(read.data.expiries)) {
-      if (cached) return cached.expiries;
+      if (cached) return liveExpiries(cached.expiries, tradingDateIso());
       throw new MarketDataUnavailableError({
         what: 'option expiry list',
         symbol,
@@ -560,9 +586,13 @@ export class CandleMarketDataProvider implements MarketDataProvider {
 
     // Only a clean read caches. An empty array here IS Dhan's answer that this
     // instrument has no derivatives market, and caching that is correct.
-    const expiries = [...read.data.expiries].sort();
+    //
+    // Stored RAW (normalised, but not date-filtered) and filtered on the way
+    // out — see the `liveExpiries` call at the top of this method for why the
+    // filter must not be baked into a cached value.
+    const expiries = normaliseExpiryList(read.data.expiries);
     this.expiryCache.set(key, { at: Date.now(), expiries });
-    return expiries;
+    return liveExpiries(expiries, tradingDateIso());
   }
 
   /**
