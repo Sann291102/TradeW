@@ -1179,17 +1179,34 @@ model BrokerCredential {
   brokerClientId   String?
   brokerClientName String?
 
-  // The access token itself, still plaintext at rest.
+  // The access token, ENCRYPTED AT REST as of 2026-08-20.
   //
-  // SECURITY: the previous comment here justified plaintext on the grounds
-  // that there was "exactly one operator account behind the feed" and told
-  // the next reader to encrypt before adding per-user linking. Per-user
-  // linking is what this column now carries, so that condition has been met
-  // and encryption at rest is genuinely outstanding. It is NOT solved by this
-  // change; what this change removes is the cross-user exposure — a user can
-  // no longer read, overwrite or displace another user's token through the
-  // API. Encrypting the column is tracked separately because it needs a key
-  // management decision (KMS vs. app-held key) rather than a code edit.
+  // Stored as `enc:v1:<keyId>:<iv>:<tag>:<ciphertext>` — AES-256-GCM, key from
+  // BROKER_CREDENTIAL_ENC_KEYS, never from this database. The format and both
+  // ends of it live in packages/database/src/credential-crypto.ts; nothing else
+  // in the codebase encrypts or decrypts this column.
+  //
+  // Bound to (provider, userId) as AEAD associated data. That is not
+  // decoration: without it, an attacker with write access to this table could
+  // copy the feed-default user's ciphertext into their own row and inherit that
+  // credential without decrypting anything.
+  //
+  // HISTORY, kept because it explains the migration story. This column was
+  // plaintext until 2026-08-20, so any database or backup taken before then
+  // contains live brokerage tokens — see
+  // docs/security/BROKER_CREDENTIAL_SECURITY_DESIGN.md §7 for what to do about
+  // that. Reads still accept a plaintext value (and log loudly), so deploying
+  // the encrypting build disconnects nobody; the backfill is a separate,
+  // explicit, dry-run-by-default command:
+  //   npm run credential:migrate -w @tradew/database
+  //
+  // NO SCHEMA MIGRATION accompanies this change, deliberately. The column type
+  // is unchanged, so there is no SQL to write — and therefore no migration that
+  // can destroy a live credential by getting the transform wrong.
+  //
+  // WHY ENCRYPTED AND NOT HASHED, unlike RefreshToken.tokenHash / Otp.codeHash /
+  // BrokerOAuthState.stateHash: those are verified, this one is REPLAYED to
+  // Dhan, so it has to be recoverable.
   accessToken String
 
   // Broker-reported expiry. The refresh job and the /status route both read

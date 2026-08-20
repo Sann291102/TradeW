@@ -17,6 +17,13 @@ import {
   type PendingStateRow,
   type StateRejection,
 } from './oauth-state';
+import {
+  CredentialCryptoError,
+  decryptCredential,
+  encryptCredential,
+  isCredentialEncryptionConfigured,
+  KEYRING_ENV,
+} from '@tradew/database';
 
 /**
  * Dhan app-key authentication (the "consent" flow).
@@ -64,9 +71,23 @@ import {
  *     nothing. Burning the state on a failed exchange is the safe direction:
  *     the cost is one restart of a flow the user can retry at will.
  *
- * Still outstanding and NOT fixed here: `accessToken` is plaintext at rest.
- * That needs a key-management decision, not a code edit; see the column comment
- * in schema.prisma.
+ *  4. ENCRYPTION AT REST (2026-08-20). `accessToken` was plaintext in the
+ *     database, so a stolen dump, backup or snapshot handed an attacker working
+ *     brokerage credentials for every linked user. It is now AES-256-GCM
+ *     ciphertext, bound to (provider, userId) as associated data so a row's
+ *     ciphertext cannot be copied into another row. The key lives in
+ *     BROKER_CREDENTIAL_ENC_KEYS, never in the database.
+ *
+ *     The write path FAILS CLOSED: with no keyring configured, `consumeConsent`
+ *     refuses rather than storing plaintext. A fallback would recreate the
+ *     vulnerability at exactly the moment an operator believes it is fixed.
+ *
+ *     Reads accept legacy plaintext, so shipping this disconnects nobody. The
+ *     backfill is a separate explicit command
+ *     (`npm run credential:migrate -w @tradew/database`), because an automatic
+ *     migration over live credentials is how credentials get destroyed.
+ *
+ * See docs/security/BROKER_CREDENTIAL_SECURITY_DESIGN.md.
  */
 
 const DHAN_AUTH = process.env.DHAN_AUTH_URL || 'https://auth.dhan.co';
@@ -307,8 +328,14 @@ export class DhanAuthService {
     // Dhan reports its own expiry; trust it rather than assuming 24h from now,
     // so the status view and any refresh logic agree with the broker.
     const expiresAt = body.expiryTime ? new Date(body.expiryTime) : null;
+
+    // THE ENCRYPTION BOUNDARY. The token has existed in memory for exactly the
+    // few lines above; from here on it exists only as ciphertext. Bound to
+    // (provider, userId) so this ciphertext is worthless in any other row.
+    const sealed = this.seal(body.accessToken, stateRow.userId, meta);
+
     const data = {
-      accessToken: body.accessToken,
+      accessToken: sealed.value,
       brokerClientId: body.dhanClientId ?? null,
       brokerClientName: body.dhanClientName ?? null,
       expiresAt: expiresAt && !Number.isNaN(expiresAt.getTime()) ? expiresAt : null,
@@ -336,6 +363,10 @@ export class DhanAuthService {
         brokerClientId: data.brokerClientId,
         expiresAt: data.expiresAt?.toISOString() ?? null,
         matchedBy: resolution.matchedBy,
+        // Which key sealed it. A label like "k1", not material — and the one
+        // field that makes a later decryption failure diagnosable. Whitelisted
+        // in security-log.ts for exactly that reason.
+        keyId: sealed.keyId,
       },
     });
 
@@ -492,9 +523,103 @@ export class DhanAuthService {
       where: { provider: PROVIDER, isFeedDefault: true },
     });
     const fresh = row && (!row.expiresAt || row.expiresAt.getTime() > Date.now());
-    if (fresh && row) return { accessToken: row.accessToken, source: row.source };
+    if (fresh && row) {
+      // THE DECRYPTION BOUNDARY. Opened here, at the point of use, and never
+      // earlier — `status`, `listCredentials` and `setFeedDefault` all read this
+      // table without ever touching the column.
+      const opened = this.open(row.accessToken, row.userId);
+      if (opened) return { accessToken: opened, source: row.source };
+      // Could not be opened: wrong key, rotated-out key, or a tampered row. Fall
+      // through to the env token rather than returning a value that is
+      // guaranteed to fail against Dhan — and rather than throwing, because the
+      // caller is a long-running feed process.
+    }
     const fromEnv = process.env.DHAN_ACCESS_TOKEN;
     if (fromEnv) return { accessToken: fromEnv, source: 'env' };
+    return null;
+  }
+
+  // --------------------------------------------------------- crypto boundary
+
+  /**
+   * Seal a credential for storage.
+   *
+   * FAILS CLOSED. With no keyring configured this throws rather than storing
+   * plaintext, and that is the most important behaviour in this file: a
+   * plaintext fallback would recreate the vulnerability precisely when the
+   * operator believes it has been fixed. The cost is that broker connect stops
+   * working until `BROKER_CREDENTIAL_ENC_KEYS` is set — which is a visible,
+   * fixable outage rather than a silent regression.
+   */
+  private seal(plaintext: string, userId: string, meta: RequestMeta): { value: string; keyId: string } {
+    if (!isCredentialEncryptionConfigured()) {
+      securityLog({
+        event: 'broker.credential.encryption_unavailable',
+        outcome: 'denied',
+        userId,
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+        detail: { provider: PROVIDER, reason: 'no_keyring', variable: KEYRING_ENV },
+      });
+      throw new ServiceUnavailableException(
+        `Broker credentials cannot be stored: ${KEYRING_ENV} is not configured. ` +
+          'Set it and retry the connection — nothing was saved.',
+      );
+    }
+
+    try {
+      return encryptCredential(plaintext, { provider: PROVIDER, userId });
+    } catch (err) {
+      const code = err instanceof CredentialCryptoError ? err.code : 'unknown';
+      securityLog({
+        event: 'broker.credential.encryption_unavailable',
+        outcome: 'denied',
+        userId,
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+        detail: { provider: PROVIDER, reason: code, variable: KEYRING_ENV },
+      });
+      // The message names the rule that failed, never the material — the same
+      // discipline `rejectionMessage` applies to state failures.
+      throw new ServiceUnavailableException(
+        `Broker credential encryption is misconfigured (${code}). Nothing was saved.`,
+      );
+    }
+  }
+
+  /**
+   * Open a stored credential. Returns null rather than throwing — every caller
+   * has a fallback and none of them should crash on an unopenable row.
+   *
+   * A legacy plaintext row is returned AND logged. The log line is deliberately
+   * at warn level: a half-migrated database should be loud, because the silent
+   * version of this is a migration that looks finished and is not.
+   */
+  private open(stored: string, userId: string): string | null {
+    const result = decryptCredential(stored, { provider: PROVIDER, userId });
+
+    if (result.kind === 'decrypted') return result.accessToken;
+
+    if (result.kind === 'legacy-plaintext') {
+      securityLog({
+        event: 'broker.credential.legacy_plaintext_read',
+        outcome: 'failure',
+        userId,
+        detail: {
+          provider: PROVIDER,
+          reason: 'unencrypted_at_rest',
+          remedy: 'npm run credential:migrate -w @tradew/database',
+        },
+      });
+      return result.accessToken;
+    }
+
+    securityLog({
+      event: 'broker.credential.decrypt_failed',
+      outcome: 'failure',
+      userId,
+      detail: { provider: PROVIDER, reason: result.code },
+    });
     return null;
   }
 
