@@ -43,6 +43,7 @@ export const WORKING_NAV: AdminNavItem[] = [
   { href: '/knowledge', label: 'Knowledge Management', description: 'The engineering knowledge vault — tree, graph, recent changes (live).' },
   { href: '/orders', label: 'Orders / OMS', description: 'Order flow, fills, rejects and trade stats across all users.' },
   { href: '/system', label: 'Users / System', description: 'Users, admin grants, audit trail, API health and route latency.' },
+  { href: '/audit', label: 'Audit & Compliance', description: 'Every authentication event and every privileged operator action.' },
 ];
 
 /**
@@ -57,7 +58,6 @@ export const SCAFFOLDED_NAV: AdminNavItem[] = [
   { href: '/rules', label: 'TradingView Rule Management', description: 'Learned rules, approval workflow, rollback, version history.' },
   { href: '/learning-platform', label: 'Learning Platform', description: 'Courses, generated content, user progress, AI teacher analytics.' },
   { href: '/observability', label: 'Observability', description: 'API health, Dhan bridge, market-data pipeline, Redis, PostgreSQL, pgvector.' },
-  { href: '/audit', label: 'Audit & Compliance', description: 'AI decisions, overrides, policy violations, user activity.' },
 ];
 
 /**

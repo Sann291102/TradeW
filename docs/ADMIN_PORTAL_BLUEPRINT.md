@@ -1,6 +1,6 @@
 # TradeW Admin Portal — Blueprint (as built, and what is next)
 
-**Last updated:** 2026-08-20
+**Last updated:** 2026-08-20 (second pass — the P0 backlog below is now built)
 **Verified against:** `main` @ `6928301`, by reading source — not by running the stack (see [How to verify this yourself](#how-to-verify-this-yourself)).
 **Supersedes:** the 2026-08-09 v1.0 blueprint, archived verbatim at
 [`archive/root-docs/ADMIN_PORTAL_BLUEPRINT-vision-2026-08-09.md`](../archive/root-docs/ADMIN_PORTAL_BLUEPRINT-vision-2026-08-09.md).
@@ -43,7 +43,7 @@ renders them as two labelled groups. This is load-bearing: a 2026-08-12 parity
 audit found the sidebar advertising eight unbuilt modules while hiding four
 working ones.
 
-**Working — reads live data through the proxy (6):**
+**Working — reads live data through the proxy (7):**
 
 | Route | File | Reads |
 |---|---|---|
@@ -53,13 +53,16 @@ working ones.
 | `/knowledge` Knowledge Management | `(console)/knowledge/page.tsx` | `/admin/knowledge/{tree,file,recent,search,graph,activity}` + SSE |
 | `/orders` Orders / OMS | `(console)/orders/page.tsx` (705 ln) | `/admin/orders*`, `/admin/trades`, **`/admin/execution/*`** |
 | `/system` Users / System | `(console)/system/page.tsx` | `/admin/users`, `/admin/audit`, `/admin/api-calls/routes` |
+| `/audit` Audit & Compliance | `(console)/audit/page.tsx` | `/admin/audit` — filtered by category and event type, searchable, with metadata |
 
-**Scaffolded — routing, auth and nav exist; the page says "Not built yet" (7):**
+**Scaffolded — routing, auth and nav exist; the page says "Not built yet" (6):**
 `/health`, `/agents`, `/reasoning`, `/rules`, `/learning-platform`,
-`/observability`, `/audit`. All seven render `UnavailableState`
-(which names the missing upstream feed) and **no sample data** — the house rule against inventing numbers in place of a
-real connection. Do not promote one to `WORKING_NAV` until its page reads a live
-feed.
+`/observability`. All six render `UnavailableState`
+(which names the missing upstream feed) and **no sample data** — the house rule
+against inventing numbers in place of a real connection. Do not promote one to
+`WORKING_NAV` until its page reads a live feed. `/audit` was promoted on
+2026-08-20 under exactly that rule: its feed already existed, so the page could
+be built rather than described.
 
 ### 1.2 Authentication — two factors, neither in the browser
 
@@ -82,7 +85,7 @@ decides; the data calls are re-authorized per request upstream.
 `src/app/api/proxy/[...path]/route.ts` forwards to `services/api/admin/*` with
 `x-admin-token` + `x-operator-assertion` attached **server-side**, and
 `Cache-Control: no-store` restated (not forwarded) on the way back.
-`src/lib/adminProxyRoutes.ts` is an explicit allowlist — currently ~40 rules,
+`src/lib/adminProxyRoutes.ts` is an explicit allowlist — currently ~42 rules,
 GET and POST only. A new admin endpoint upstream is **unreachable** from this
 console until someone adds a rule here. Both properties are pinned by tests
 (`adminProxyRoutes.test.ts`, `adminProxyCacheHeaders.test.ts`,
@@ -229,51 +232,89 @@ invisible there until the user picks **Executed**.
 Ordered by what an operator actually loses without it. Every item names the file
 it lands in.
 
-### P0 — the console can mislead an operator today
+### Shipped 2026-08-20 — the P0 set
 
-1. **~~`PAPER_EXECUTION_*` is undocumented in `.env.example`.~~** Fixed in this
-   change. The flag that decides whether the loop runs at all existed in exactly
-   five source files and no env template, so a fresh deployment could arm a
-   profile and wait forever. Keep the template in sync when the loop gains a knob.
-2. **The console cannot tell "armed" from "armed and ticking."** The Sentinel
-   card reads `enabledProfiles` from the database; the env switch lives in the
-   API process. A profile can show as armed while the loop is disabled, and the
-   only hint is a footnote in small print under the table. **Add
-   `GET /admin/execution/status`** returning `{ enabled, intervalMs,
-   reconcileMs, isLeader, lastEvaluateTickAt, lastReconcileTickAt }`, allowlist
-   it, and render it as a status indicator beside "Armed profiles."
-   (`execution-scheduler.service.ts` → `admin.controller.ts` →
-   `adminProxyRoutes.ts` → `(console)/orders/page.tsx`.)
-3. **"Why did nothing trade today?" needs one view.** The reason is already on
-   `ExecutionIntent.rejectReason` and in the per-order trace, but only per-intent.
-   Group today's REJECTED/FAILED intents by their first failing check id, so the
-   answer is one glance instead of the day the 2026-08-18 audit spent on the read
-   path. (`execution-query.service.ts` + a panel on `/orders`.)
-4. **Label agent exits.** Either link the square-off order back to its intent
-   (a nullable second FK, keeping the `@unique` entry link intact) or render an
-   explicit "exit (agent)" source pill. Today the source filter quietly under-
-   reports agent activity by half.
+Every item below was on this list as P0 and is now in the tree. Kept rather than
+deleted: the reason each existed is the argument for not regressing it.
 
-### P1 — the promised surface that is still a placeholder
+1. **`PAPER_EXECUTION_*` is documented in `.env.example`.** The flag deciding
+   whether the loop runs at all existed in five source files and no env
+   template, so a fresh deployment could arm a profile and wait forever. Keep
+   the template in sync when the loop gains a knob.
 
-5. **`/audit` is the cheapest win of the seven.** `/admin/audit` is already
-   allowlisted and already read by `/system`; the page is a placeholder purely
-   because nobody built the filtered view. The other six each need an upstream
-   feed first (`/health` a per-engine feed, `/agents` an agent registry with
-   write control, `/reasoning` a trace read, `/rules` the learned-rule store,
-   `/learning-platform` course analytics, `/observability` a dependency probe).
-   For each: build the feed, or drop the route. A permanent placeholder is the
-   thing `nav-config.ts` exists to prevent hardening into.
-6. **Operator RBAC does not exist.** `OperatorAccount` has no role column, so
+2. **The console tells "armed" from "armed and ticking."**
+   `GET /admin/execution/status` reports this process's own live state —
+   `enabled`, both intervals, both leader leases, whether a pass is in flight,
+   and when each tick last fired — and `/orders` renders it beside the armed
+   count. Four states are distinguished, because they mean different things to
+   an operator: loop off (warn, and it names the env var), on but another
+   replica holds the lease (info, ordinary on two replicas), ticking (good, with
+   the age of the last pass), and stalled — no pass in over two intervals — as a
+   fault. Nothing on the console starts or stops the loop; the status route is a
+   read, and `POST` to it is refused by the allowlist.
+   *(`execution-scheduler.service.ts`, `admin.controller.ts`,
+   `adminProxyRoutes.ts`, `(console)/orders/page.tsx`.)*
+
+3. **"Why did nothing trade today?" is one panel.** Refusals were always
+   recorded — as a sentence, written for someone reading one intent, with live
+   numbers interpolated into it, which is precisely why they could not be
+   counted. `ExecutionIntent.rejectCheckId` now stores the same refusal as the
+   failing gate's id (plus `submission-raised` / `oms-rejected` for the two
+   non-policy stops), `GET /admin/execution/rejections` groups a window by it,
+   and `/orders` renders the breakdown with the most recent full sentence under
+   each bar. One map in `execution-policy.ts` supplies both a live check's label
+   and a stored refusal's, so a renamed check cannot leave an unlabelled bar.
+   *(`execution-policy.ts`, `paper-execution.service.ts`,
+   `execution-query.service.ts`, `(console)/orders/page.tsx`.)*
+
+4. **Agent exits are visible.** `Order.exitOfIntentId` links a square-off back to
+   the decision it closed — a second, nullable, non-unique column, because the
+   entry link is `@unique` and that constraint IS the order-layer idempotency
+   guarantee, and because a retried exit is ordinary. `source=sentinel` now
+   matches either link, the orders table labels an exit as an exit and names the
+   decision it closed, and the trace resolves from an exit order as well as an
+   entry — so the orders whose provenance is least obvious from the row are no
+   longer the ones with no trace behind them.
+   *(`schema.prisma` + migration, `execution-lifecycle.service.ts`,
+   `admin.service.ts`, `execution-trace.service.ts`, `(console)/orders/page.tsx`.)*
+
+5. **The limit and its display are one function** — found while building #2.
+   `maxOpenPositions` bounds what THIS PROFILE holds and was gated on exactly
+   that, but the console counted every non-zero position on the ACCOUNT and
+   rendered it against the same limit. On a system account the two agree; on a
+   real person's account they do not, so a trader holding two of their own
+   positions made their agent read `2/1` — visibly over a limit it was nowhere
+   near. Both callers now use `countProfileOpenPositions`.
+   *(`execution-open-positions.ts` + spec.)*
+
+6. **`/audit` is built** — see §1.1. The cheapest of the seven placeholders: its
+   feed already existed and was already allowlisted.
+
+7. **A pre-existing migration drift is corrected.** `Order.updatedAt` carried a
+   database default that `schema.prisma` never declared, dating to
+   `20260722100001_oms_order_lifecycle`, so CI's drift job reported a diff on
+   every run — on `main` as much as anywhere. Verified by applying main's
+   migrations to an empty Postgres and diffing: identical output, none of this
+   work's changes present. Dropped in the same migration that touches the table.
+
+### P1 — next, and blocked on a decision rather than on effort
+
+1. **Build the remaining six placeholders, or drop them.** Each needs an
+   upstream feed built first — `/health` a per-engine feed, `/agents` an agent
+   registry with write control, `/reasoning` a trace read, `/rules` the
+   learned-rule store, `/learning-platform` course analytics, `/observability` a
+   dependency probe. For each: build the feed, or drop the route. A permanent
+   placeholder is the thing `nav-config.ts` exists to prevent hardening into.
+2. **Operator RBAC does not exist.** `OperatorAccount` has no role column, so
    every operator can grant product admin, arm an execution profile, and grant
    agent-trading consent. The archived blueprint assumed five roles
    (SUPER_ADMIN / OPS / SUPPORT / FINANCE / COMPLIANCE). At minimum, gate the
    three privileged writes behind a role before a second person gets an account.
-7. **No MFA and no IP allow-list.** Both were in the original security section;
+3. **No MFA and no IP allow-list.** Both were in the original security section;
    neither exists. Currently mitigated by loopback-binding + SSH tunnel, which is
    real but is a deployment property, not an application one — it evaporates the
    day this is exposed.
-8. **KYC/compliance review UI and the DLQ retry UI** — `apps/admin/README.md`'s
+4. **KYC/compliance review UI and the DLQ retry UI** — `apps/admin/README.md`'s
    own open roadmap. The DLQ retry worker is still unbuilt engine-side, so the UI
    cannot lead it.
 

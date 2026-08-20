@@ -60,7 +60,7 @@ jobs:
         run: python -m pytest -q
 
   typecheck:
-    name: Typecheck (api, sentinel, market-data)
+    name: Typecheck (api, sentinel, admin, market-data)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +81,12 @@ jobs:
       - run: npm run build -w @tradew/ai-core
       - run: npx tsc --noEmit -p services/api/tsconfig.json
       - run: npx tsc --noEmit -p services/sentinel/tsconfig.json
+      # Added 2026-08-20: apps/admin was typechecked by nothing. Its `test`
+      # script runs in the test job, but those three suites cover the proxy
+      # allowlist, the session seal and cache headers — not the twelve console
+      # pages, where a type error surfaces as a blank operator screen at
+      # runtime. Same class of gap as the apps/web one recorded below.
+      - run: npx tsc --noEmit -p apps/admin/tsconfig.json
       # Added 2026-08-04: services/market-data was real, built code with no
       # CI coverage at all (no test script either — see the implementation
       # report's tech-debt section; typecheck is what's addable today).

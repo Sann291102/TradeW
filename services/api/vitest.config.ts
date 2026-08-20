@@ -64,8 +64,13 @@ export default defineConfig({
       //    fresh uuid per call would mint a new key every tick).
       //  · policy   — the risk gate, including the PAPER-only refusal that
       //    holds even against a row this application did not write.
+      //  · open-positions — the count a limit and its own display must agree
+      //    on. Two implementations of it drifted apart, and the disagreement
+      //    was invisible in both: each was self-consistent, and only the
+      //    console showed the account's number against the profile's limit.
       'src/paper-execution/execution-identity.spec.ts',
       'src/paper-execution/execution-policy.spec.ts',
+      'src/paper-execution/execution-open-positions.spec.ts',
       //  · account   — WHOSE account an agent may trade. Pins the two bypasses
       //    that would let an agent trade a real person's money without consent:
       //    labelling a real account SYSTEM_PAPER to skip the consent check, and

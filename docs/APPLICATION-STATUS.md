@@ -41,9 +41,10 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 
 ### Admin operator console (`apps/admin`)
 - Standalone Next.js app on port 3001 with its own operator-account auth (`OperatorAccount`, composed `AdminAccessGuard`), a **deny-by-default** proxy allowlist to `services/api` (`src/lib/adminProxyRoutes.ts`), and a live knowledge SSE stream.
-- **Six** surfaces read live data: Dashboard, `/ai`, `/cognition`, `/knowledge`, `/orders` (incl. Sentinel paper execution), `/system`. **Seven** more (`/health`, `/agents`, `/reasoning`, `/rules`, `/learning-platform`, `/observability`, `/audit`) are scaffolded routes that render "Not built yet" with no sample data — the sidebar labels the two groups separately on purpose (`src/components/shell/nav-config.ts`).
+- **Seven** surfaces read live data: Dashboard, `/ai`, `/cognition`, `/knowledge`, `/orders` (incl. Sentinel paper execution), `/system`, `/audit`. **Six** more (`/health`, `/agents`, `/reasoning`, `/rules`, `/learning-platform`, `/observability`) are scaffolded routes that render "Not built yet" with no sample data — the sidebar labels the two groups separately on purpose (`src/components/shell/nav-config.ts`).
 - Writes are limited to seven audited POSTs (admin grant, three cognition controls, execution profile arm/run/upsert, agent-trading consent). No route on this console can place an order.
-- ⚠️ **Gap:** no operator RBAC (`OperatorAccount` has no role column), no MFA, no IP allow-list — mitigated today by loopback-binding + SSH tunnel, which is a deployment property, not an application one. The console also cannot tell an armed profile from an *actually ticking* loop; see `docs/ADMIN_PORTAL_BLUEPRINT.md` §4 for the ordered backlog.
+- `/orders` reports whether the execution loop is actually **ticking** (`/admin/execution/status` — env flag, both leader leases, last tick), and groups the window's refused decisions by the gate that stopped them (`/admin/execution/rejections`).
+- ⚠️ **Gap:** no operator RBAC (`OperatorAccount` has no role column), no MFA, no IP allow-list — mitigated today by loopback-binding + SSH tunnel, which is a deployment property, not an application one. See `docs/ADMIN_PORTAL_BLUEPRINT.md` §4 for the ordered backlog.
 
 ### Market data (real)
 - Dhan WebSocket live feed with a hand-written binary parser (verified by `packages/market-data/scripts/verify-parser.ts` — the one real test-like artifact in the repo).
@@ -71,7 +72,9 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 - Bound to **real TradeW user accounts** (`USER_PAPER` scope) behind revocable per-user consent (`User.agentPaperTradingEnabledAt`), re-read every pass.
 - Long options only (side is the constant `BUY`); `ExecutionEnvironment` has exactly one member, `PAPER`, and the loop refuses anything else twice.
 - Two switches, both required: `PAPER_EXECUTION_ENABLED=true` on the API process **and** the profile's own `enabled` column. Off by default.
-- ⚠️ **Gap:** agent square-off orders carry `executionIntentId = null`, so an `orders?source=sentinel` filter shows entries and never exits. Intents can also accumulate with zero orders when a daily-loss gate trips — that is by design, not a bug (see `knowledge/Gotchas/2026-08-18 - Paper orders invisible in Admin_Web is usually no order, not a read bug.md`).
+- Square-off orders link back to the decision they close (`Order.exitOfIntentId`, 2026-08-20), so the `source=sentinel` filter and the per-order trace cover an agent's exits as well as its entries.
+- Every refusal is stored twice: as a sentence for a human (`rejectReason`) and as the failing gate's id (`rejectCheckId`) so refusals can be counted.
+- ⚠️ **Expected behaviour, not a gap:** intents can accumulate with zero orders when a daily-loss gate trips (see `knowledge/Gotchas/2026-08-18 - Paper orders invisible in Admin_Web is usually no order, not a read bug.md`). The console's rejection breakdown now answers that in one glance.
 
 ### Sentinel (AI safety layer)
 - 16-signal observation pipeline: 9 technical, 5 behavioural (revenge trading, overtrading, sizing drift, pacing, loss streaks), 6 trap-detection (bull/bear trap, liquidity sweep, low-volume breakout, FOMO entry, expiry risk), 1 news.

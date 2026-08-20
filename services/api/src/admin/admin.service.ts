@@ -422,16 +422,27 @@ export class AdminService {
    * paper-execution loop and null for every human order, so "was this
    * agent-generated?" is a structural question with an exact answer.
    *
-   *   'sentinel' → executionIntentId is not null
-   *   'user'     → executionIntentId is null
+   *   'sentinel' → it carries an entry link OR an exit link
+   *   'user'     → it carries neither
    *   undefined  → everything (the pre-existing behaviour, unchanged)
+   *
+   * BOTH links, not just the entry. A square-off cannot reuse
+   * `executionIntentId` (that column is @unique and holds the entry), so it
+   * carries `exitOfIntentId` instead — and while this filter tested only the
+   * entry, an agent appeared to open positions and never close them. Half of
+   * its order flow was filed as a human's.
    */
   async orders(params: { limit?: number; status?: string; userId?: string; hours?: number; source?: string }) {
     const where: Record<string, unknown> = { placedAt: { gte: this.since(params.hours, 24) } };
     if (params.status) where.status = params.status;
     if (params.userId) where.userId = params.userId;
-    if (params.source === 'sentinel') where.executionIntentId = { not: null };
-    if (params.source === 'user') where.executionIntentId = null;
+    if (params.source === 'sentinel') {
+      where.OR = [{ executionIntentId: { not: null } }, { exitOfIntentId: { not: null } }];
+    }
+    if (params.source === 'user') {
+      where.executionIntentId = null;
+      where.exitOfIntentId = null;
+    }
     return this.prisma.order.findMany({
       where,
       orderBy: { placedAt: 'desc' },
@@ -456,6 +467,22 @@ export class AdminService {
             strategyName: true,
             profile: { select: { name: true } },
             outcome: { select: { result: true, realizedPnl: true } },
+          },
+        },
+        // The intent this order CLOSED, when it is an agent exit. Narrower than
+        // the entry selection above on purpose: the console renders an exit as
+        // "exit of <that decision>" and links to the same trace, so it needs
+        // the identity and the contract, not the evidence a second time.
+        exitOfIntent: {
+          select: {
+            id: true,
+            agent: true,
+            symbol: true,
+            optionType: true,
+            strike: true,
+            status: true,
+            environment: true,
+            profile: { select: { name: true } },
           },
         },
       },

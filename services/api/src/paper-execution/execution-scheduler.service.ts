@@ -34,6 +34,30 @@ import { PaperExecutionService } from './paper-execution.service';
 const EVALUATE_JOB = 'paper-execution-evaluate';
 const RECONCILE_JOB = 'paper-execution-reconcile';
 
+/**
+ * What the admin console reads to tell an ARMED profile from a TICKING loop.
+ *
+ * Every field is this process's own live state. Nothing is persisted: a status
+ * row in the database would be a second copy of a fact the process already
+ * holds, and it would keep asserting "running" after the process that wrote it
+ * had gone.
+ */
+export interface ExecutionLoopStatus {
+  /** `PAPER_EXECUTION_ENABLED` — the switch that decides whether timers exist. */
+  enabled: boolean;
+  intervalMs: number | null;
+  reconcileMs: number | null;
+  isEvaluateLeader: boolean;
+  isReconcileLeader: boolean;
+  /** A pass in flight right now. */
+  evaluating: boolean;
+  reconciling: boolean;
+  /** When this process started its timers, and when each last fired. */
+  startedAt: string | null;
+  lastEvaluateAt: string | null;
+  lastReconcileAt: string | null;
+}
+
 @Injectable()
 export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ExecutionSchedulerService.name);
@@ -41,6 +65,9 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private evaluating = false;
   private reconciling = false;
+  private lastEvaluateAt: Date | null = null;
+  private lastReconcileAt: Date | null = null;
+  private startedAt: Date | null = null;
 
   constructor(
     private readonly execution: PaperExecutionService,
@@ -64,6 +91,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     const reconcileMs = Number(process.env.PAPER_EXECUTION_RECONCILE_MS ?? 15_000);
     this.evaluateTimer = setInterval(() => void this.evaluateTick(), evaluateMs);
     this.reconcileTimer = setInterval(() => void this.reconcileTick(), reconcileMs);
+    this.startedAt = new Date();
     this.logger.log(`paper execution loop started — evaluate every ${evaluateMs}ms, reconcile every ${reconcileMs}ms.`);
   }
 
@@ -80,6 +108,9 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     // paid for an evaluation.
     if (this.evaluating) return;
     this.evaluating = true;
+    // Stamped before the work, not after: the console's question is "is this
+    // loop alive", and a tick that started and then threw is still a live loop.
+    this.lastEvaluateAt = new Date();
     try {
       const results = await this.execution.runAllEnabled();
       const acted = results.filter((r) => r.outcome === 'executed' || r.outcome === 'rejected' || r.outcome === 'failed');
@@ -97,6 +128,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     if (!this.leader.isLeader(RECONCILE_JOB)) return;
     if (this.reconciling) return;
     this.reconciling = true;
+    this.lastReconcileAt = new Date();
     try {
       // Square-off runs FIRST. Both passes read the same positions, and running
       // reconcile first would see a position still open, skip it, and leave the
@@ -111,5 +143,43 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     } finally {
       this.reconciling = false;
     }
+  }
+
+  /**
+   * Is this loop actually running?
+   *
+   * ## Why the console cannot answer this from the database
+   *
+   * "Armed profiles" is a COUNT of `ExecutionProfile.enabled` — a database
+   * fact. Whether anything ticks is `PAPER_EXECUTION_ENABLED` plus a leader
+   * lease — a PROCESS fact, invisible to any query. So a console reading only
+   * the database will report "1 armed" identically whether the loop is
+   * evaluating that profile every minute or has never started, and the operator
+   * has no way to tell those apart. That gap is what this exists to close.
+   *
+   * `isLeader` is the same local lease check the ticks themselves make, so what
+   * the console displays is what the next tick will decide — not a second
+   * opinion computed a different way.
+   *
+   * Deliberately read-only and side-effect free: nothing here starts, stops or
+   * nudges a timer. An operator who wants a pass runs one explicitly.
+   */
+  status(): ExecutionLoopStatus {
+    return {
+      enabled: this.enabled,
+      // Null when disabled rather than the default: reporting "60000ms" for a
+      // loop that will never tick describes a schedule that does not exist.
+      intervalMs: this.enabled ? Number(process.env.PAPER_EXECUTION_INTERVAL_MS ?? 60_000) : null,
+      reconcileMs: this.enabled ? Number(process.env.PAPER_EXECUTION_RECONCILE_MS ?? 15_000) : null,
+      // Both jobs are leased separately, so a replica can lead one and not the
+      // other. Reported separately for the same reason.
+      isEvaluateLeader: this.enabled && this.leader.isLeader(EVALUATE_JOB),
+      isReconcileLeader: this.enabled && this.leader.isLeader(RECONCILE_JOB),
+      evaluating: this.evaluating,
+      reconciling: this.reconciling,
+      startedAt: this.startedAt?.toISOString() ?? null,
+      lastEvaluateAt: this.lastEvaluateAt?.toISOString() ?? null,
+      lastReconcileAt: this.lastReconcileAt?.toISOString() ?? null,
+    };
   }
 }

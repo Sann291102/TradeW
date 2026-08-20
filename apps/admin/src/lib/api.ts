@@ -105,13 +105,21 @@ export interface ApiCallRow { id: string; requestId: string; method: string; pat
 export interface AiCallRow { id: string; requestId: string | null; system: string; agent: string; provider: string; model: string; tier: string | null; promptTokens: number; completionTokens: number; costUsd: number; latencyMs: number; status: string; error: string | null; createdAt: string; }
 export interface AgentSummaryRow { system: string; agent: string; calls: number; costUsd: number; promptTokens: number; completionTokens: number; avgLatencyMs: number; maxLatencyMs: number; failures: number; }
 export interface RunRow { runId: string; system: string; trigger: string; symbol: string | null; status: string; surfaced: boolean; confidence: number | null; agentsRan: string[]; durationMs: number | null; startedAt: string; error: string | null; }
-export interface OrderRow { id: string; status: string; side: string; type: string; quantity: number; filledQuantity: number; price: string | null; avgFillPrice: string | null; rejectReason: string | null; placedAt: string; user: { id: string; email: string } | null; instrument: { symbol: string; displayName: string; type: string } | null; executionIntentId: string | null; executionIntent: OrderExecutionIntent | null; }
+export interface OrderRow { id: string; status: string; side: string; type: string; quantity: number; filledQuantity: number; price: string | null; avgFillPrice: string | null; rejectReason: string | null; placedAt: string; user: { id: string; email: string } | null; instrument: { symbol: string; displayName: string; type: string } | null; executionIntentId: string | null; executionIntent: OrderExecutionIntent | null; exitOfIntentId: string | null; exitOfIntent: OrderExitOfIntent | null; }
 
 // ---- Sentinel paper execution ---------------------------------------------
 // `executionIntent` is non-null on exactly the orders the execution loop
 // produced. Its presence — not the account's email, not a naming convention —
 // is what makes an order agent-generated.
 export interface OrderExecutionIntent { id: string; agent: string; symbol: string; optionType: string; bias: string; strike: string; confidence: number; status: string; environment: string; strategyName: string | null; profile: { name: string }; outcome: { result: string; realizedPnl: string } | null; }
+/**
+ * Set on an order that CLOSED an agent position — the square-off's link back to
+ * the decision it ended. An order carries one or the other, never both: the
+ * entry link is @unique upstream and holds the submission, so the exit needs
+ * its own column. Without reading this the console filed every agent exit as a
+ * human's order.
+ */
+export interface OrderExitOfIntent { id: string; agent: string; symbol: string; optionType: string; strike: string; status: string; environment: string; profile: { name: string }; }
 export type ExecutionAccountScope = 'SYSTEM_PAPER' | 'USER_PAPER';
 export interface ExecutionProfileAccount { id: string; email: string; agentPaperTradingEnabled: boolean; agentPaperTradingEnabledAt: string | null; agentPaperTradingGrantedBy: string | null; }
 export interface ExecutionProfileRow { id: string; name: string; agent: string; symbol: string; strategyId: string | null; strategyName: string | null; environment: string; accountScope: ExecutionAccountScope; enabled: boolean; account: ExecutionProfileAccount; wallet: { startingBalance: number; cashBalance: number; marginUsed: number; realizedPnl: number } | null; policy: { lots: number; productType: string; orderType: string; minConfidence: number; maxOpenPositions: number; maxOrdersPerDay: number; maxLossPerDay: number; squareOffMinute: number }; openPositions: number; intentsToday: number; intentsTotal: number; }
@@ -121,12 +129,27 @@ export interface AccountCheck { id: string; label: string; passed: boolean; deta
 export interface ExecutionAuthorization { profileId: string; profileName: string; authorized: boolean; checks: AccountCheck[]; reason: string | null; }
 export interface ExecutionCandidateRow { role: 'ITM' | 'ATM' | 'OTM'; strike: number; tradable: boolean; selected: boolean; }
 export interface ExecutionIntentRow { id: string; decidedAt: string; status: string; environment: string; profileName: string; agent: string; symbol: string; contractSymbol: string; optionType: string; bias: string; strike: number; side: string; quantity: number; confidence: number; strategyName: string | null; sentinelRunId: string | null; rejectReason: string | null; order: { id: string; status: string; filledQuantity: number; avgFillPrice: number | null; rejectReason: string | null } | null; outcome: { result: string; realizedPnl: number; exitReason: string; holdingSeconds: number | null } | null; candidates: ExecutionCandidateRow[]; }
+/**
+ * Whether the loop is TICKING, as opposed to whether a profile is ARMED.
+ *
+ * `ExecutionStats.enabledProfiles` is a database count and cannot answer this:
+ * the switch that decides whether anything runs is an env var inside the API
+ * process, so an armed profile reads identically whether the loop evaluates it
+ * every minute or has never started. This is the process's own live state.
+ */
+export interface ExecutionLoopStatus { enabled: boolean; intervalMs: number | null; reconcileMs: number | null; isEvaluateLeader: boolean; isReconcileLeader: boolean; evaluating: boolean; reconciling: boolean; startedAt: string | null; lastEvaluateAt: string | null; lastReconcileAt: string | null; }
+/** One reason today's decisions did not become orders, and how many times. */
+export interface RejectionBucket { checkId: string | null; label: string; count: number; lastAt: string | null; lastReason: string | null; lastProfileName: string | null; }
+export interface ExecutionRejections { hours: number; total: number; buckets: RejectionBucket[]; }
 export interface ExecutionStats { enabledProfiles: number; byStatus: Array<{ status: string; count: number }>; bySymbol: Array<{ symbol: string; count: number }>; closed: number; wins: number; losses: number; scratches: number; winRate: number | null; realizedPnl: number; avgHoldingSeconds: number | null; }
 export interface TraceStage { id: string; label: string; present: boolean; at: string | null; summary: string; detail?: Record<string, unknown>; }
 export interface ExecutionTrace { intentId: string; orderId: string | null; status: string; environment: string; symbol: string; contractSymbol: string; agent: string; profileName: string; decidedAt: string; stages: TraceStage[]; }
 export interface ExecutionRunResult { outcome: string; profileId: string; profileName: string; reason: string; intentId: string | null; orderId: string | null; verdict: string | null; checks: Array<{ id: string; label: string; passed: boolean; detail: string }>; }
 export interface UserRow { id: string; email: string; country: string; experienceLevel: string | null; isAdmin: boolean; createdAt: string; _count: { orders: number; trades: number; notifications: number }; subscriptions: Array<{ status: string; planId: string }>; }
-export interface AuditRow { id: string; eventType: string; userId: string | null; ip: string | null; createdAt: string; user: { email: string } | null; }
+/** `userAgent` and `metadata` were always on the wire — `AdminService.auditEvents`
+ *  selects the whole row — but were undeclared here, so the Audit page could not
+ *  render what an action was done TO without appearing to invent it. */
+export interface AuditRow { id: string; eventType: string; userId: string | null; ip: string | null; userAgent: string | null; metadata: Record<string, unknown> | null; createdAt: string; user: { email: string } | null; }
 export interface HealthReport { services: Array<{ name: string; status: 'up' | 'down'; latencyMs: number; error?: string }>; serverErrorsLast5m: number; oldestPendingOrder: { id: string; createdAt: string } | null; uptimeSeconds: number; memoryMb: number; nodeVersion: string; checkedAt: string; }
 export interface RouteStatRow { method: string; path: string; count: number; avgMs: number; maxMs: number; errors: number; }
 export interface AiModelRow { provider: string; model: string; calls: number; costUsd: number; promptTokens: number; completionTokens: number; avgLatencyMs: number; failures: number; }
@@ -178,6 +201,8 @@ export const admin = {
     profiles: () => adminApi<ExecutionProfileRow[]>('/execution/profiles'),
     intents: (q: Record<string, string | number | undefined> = {}) => adminApi<ExecutionIntentRow[]>(`/execution/intents?${qs(q)}`),
     stats: (hours = 24) => adminApi<ExecutionStats>(`/execution/stats?hours=${hours}`),
+    status: () => adminApi<ExecutionLoopStatus>('/execution/status'),
+    rejections: (hours = 24) => adminApi<ExecutionRejections>(`/execution/rejections?hours=${hours}`),
     trace: (intentId: string) => adminApi<ExecutionTrace>(`/execution/trace/${encodeURIComponent(intentId)}`),
     traceByOrder: (orderId: string) => adminApi<ExecutionTrace>(`/execution/trace-by-order/${encodeURIComponent(orderId)}`),
     setEnabled: (id: string, enabled: boolean) => adminApi(`/execution/profiles/${encodeURIComponent(id)}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),
