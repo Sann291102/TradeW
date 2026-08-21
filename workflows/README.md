@@ -10,4 +10,4 @@ Version-controlled JSON exports of the n8n workflows TradeW actually runs. The n
 
 **Direction of calls:** TradeW services trigger a workflow via webhook; a running workflow calls back into `services/api` using a service-scoped credential (never an end-user JWT) to actually take action. See ARCHITECTURE.md §5.
 
-**Status:** no exports exist yet — nothing has been built in n8n for TradeW specifically. Populate this once the first real ops workflow (alert fanout is the natural first candidate) is built in the n8n instance.
+**Status:** empty — no exports exist, and **no orchestration in TradeW passes through n8n**, despite `../docs/product-architecture/AGENT-ARCHITECTURE.md` §3 assigning n8n the background-sequencing role. That role is currently filled in-process by raw `setInterval` timers under Nest lifecycle hooks: `MarketWatchService`, `OutcomeLearningService` and `AdaptiveCalibrationService` in `services/sentinel`, and `IngestionQueueService`. Populate this once the first real ops workflow (alert fanout is the natural first candidate) is built in the n8n instance.

@@ -6,6 +6,34 @@ import { ChatMessage } from '../providers/types';
 import { ToolRegistry } from '../tools/interfaces';
 import { AgentDefinition, AgentInvocation, AgentResult, AgentRuntime } from './interfaces';
 
+/**
+ * ⚠️ ONE CALLER, AND NOT THE ONE THE ARCHITECTURE DOCS DESCRIBE.
+ *
+ * `DefaultAgentRuntime` is instantiated in exactly one place —
+ * `services/tradew-ai/src/assistant/assistant.service.ts` — where it runs a
+ * single agent, `assistant-planner`, loaded from
+ * `agents/tradew-ai/definitions.json`. That path is real and works.
+ *
+ * Everything else the docs attribute to this runtime does not exist:
+ *
+ *   - No `POST /agents/:name/invoke` route exists in any runtime, despite
+ *     `ARCHITECTURE.md` §4 and `AGENT-ARCHITECTURE.md` §5 both specifying it.
+ *     The one live surface is `POST /assistant/interpret`.
+ *   - `agents/sentinel/definitions.json` is read by NO code. The five Sentinel
+ *     definitions in it are entirely inert.
+ *   - Sentinel runs no LLM-backed agents at all. Its ten agents are
+ *     deterministic TypeScript classes implementing a different contract
+ *     (`services/sentinel/src/sentinel-intelligence/agents/agent.contract.ts`).
+ *   - `def.allowedTools` and `def.systemPromptId` are inert even on the live
+ *     path: the sole caller passes an empty `DefaultToolRegistry` and an empty
+ *     `InMemoryPromptLibrary`, so `specsFor()` returns `[]` and the prompt
+ *     lookup misses, falling through to the synthesized
+ *     "You are the {name} agent" string below.
+ *
+ * See `docs/product-architecture/AGENT-LAYERS.md` for the full map of which
+ * agent layer runs and which is specification only.
+ */
+
 const MAX_TOOL_ROUNDS = 6;
 
 /**

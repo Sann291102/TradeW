@@ -193,8 +193,12 @@ export class SentinelOrchestratorService {
     // Continuous Research Engine: event-driven, fire-and-forget so it never
     // adds latency to this response — enriches the Brain for next time.
     void this.researchTrigger.researchIfUnfamiliar(symbol).catch(() => undefined);
-    // Continuous Learning from Outcomes: piggybacks on this same continuous
-    // cadence rather than a new scheduler — a small batch per call.
+    // Continuous Learning from Outcomes: a small batch per call, on top of
+    // `OutcomeLearningService`'s own timer. Kept rather than replaced by the
+    // timer — it costs nothing when the backlog is empty, and it means request
+    // traffic helps drain the backlog instead of only adding to it. The timer
+    // is what makes tagging keep up on a quiet day, when the watch is writing
+    // occurrences and nobody is calling this route at all.
     void this.outcomeLearning.evaluatePending(5).catch(() => undefined);
 
     // ---- Modules 1, 2, 4 and the behavioural agents ---------------------

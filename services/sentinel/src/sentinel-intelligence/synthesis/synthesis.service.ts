@@ -12,6 +12,7 @@ import {
   type SurfacedObservation,
   type SynthesisResult,
   type UnderstoodRequest,
+  type VerdictVeto,
 } from '../types';
 
 /**
@@ -20,11 +21,19 @@ import {
  * SentinelIntelligence is silent by default. An observation is surfaced only
  * when ALL of these hold:
  *
+ *  0. no agent raised a veto,
  *  1. aggregate confidence ≥ the threshold (0.70 by default),
  *  2. at least N non-abstaining agents (2 by default) independently landed on
  *     the leading stance, and
  *  3. for a directional read, the pattern it is about has a live-market track
  *     record behind it.
+ *
+ * Gate 0 is structurally different from the rest and runs first. Gates 1-4
+ * weigh opinions; a veto is not an opinion. The compliance agent raises one
+ * when directive language survives the vocabulary rewriter, and that finding
+ * has to be able to stop a run on its own — as a weighted stance it was the
+ * lowest-weighted voice in the system (0.2 on every intent), so the one agent
+ * that exists to hold the observation-only boundary was the one least able to.
  *
  * None substitutes for another, and that is the whole point. One agent at 95%
  * is a single point of failure — an overfit threshold, a stale feed, a bug —
@@ -87,6 +96,28 @@ export class SynthesisService {
       validationFailures: crossCheck.validationFailures,
       livePerformance,
     };
+
+    // ---- gate 0: agent veto (pre-gate) ----------------------------------
+    // Checked before anything is weighed, and before the leading stance or the
+    // confidence is even consulted. A veto says the run's own text is unsafe
+    // to publish; no amount of market agreement changes that, and running the
+    // weighting first would only produce a more confident version of the same
+    // unpublishable output.
+    const veto = firstVeto(verdicts);
+    if (veto) {
+      this.logger.error(
+        `run vetoed by ${veto.agent} (${veto.veto.code}): ${veto.veto.reason} — refusing to surface`,
+      );
+      return {
+        ...base,
+        surfaced: false,
+        observation: null,
+        silenceReason:
+          `Withheld on a compliance finding: ${veto.veto.reason}. ` +
+          'The observation-only boundary is not a weighted opinion — nothing is surfaced from this run. ' +
+          'Monitoring continues.',
+      };
+    }
 
     // ---- gate 1: corroboration -----------------------------------------
     // Checked before confidence so the silence reason names the binding
@@ -160,7 +191,7 @@ export class SynthesisService {
 
     const observation = this.compose(understood, verdicts, crossCheck, confidence, pattern);
 
-    // ---- gate 5: compliance backstop ------------------------------------
+    // ---- gate 5: compliance backstop on the composed text ----------------
     // If directive vocabulary survives enforcement, the composition is refused
     // outright rather than published with a warning. A gap in the rewrite table
     // must fail closed.
@@ -295,6 +326,21 @@ export const OBSERVATION_CLOSER = 'This is an observation of current market stat
 // ---------------------------------------------------------------------------
 // Pure helpers — exported for direct testing.
 // ---------------------------------------------------------------------------
+
+/**
+ * The first veto raised in a run, or null.
+ *
+ * Exported so the gate tests assert against the same lookup the gate uses.
+ * Abstentions are skipped: an agent that declined to answer has, by
+ * definition, found nothing to enforce, and an abstention carrying a veto
+ * would be a bug in that agent rather than a finding to act on.
+ */
+export function firstVeto(verdicts: AgentVerdict[]): { agent: string; veto: VerdictVeto } | null {
+  for (const verdict of verdicts) {
+    if (verdict.veto && !verdict.abstained) return { agent: verdict.agent, veto: verdict.veto };
+  }
+  return null;
+}
 
 /**
  * Status headline from the allowed vocabulary.

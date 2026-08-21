@@ -95,6 +95,15 @@ Sentinel's *workspace* differs from the others because its job differs — diffe
 
 ## 4. AI agent architecture — two separate systems
 
+> **⚠️ This section is the intended design, not the running system.**
+> `POST /agents/:name/invoke` does not exist in any runtime. `services/sentinel`
+> reads no agent definitions and runs no LLM-backed agent. No tool and no
+> prompt template is registered anywhere, so `allowedTools` and `systemPromptId`
+> are inert everywhere they appear. The one live piece of this design is
+> `assistant-planner` in `services/tradew-ai`, on `POST /assistant/interpret`.
+> **`docs/product-architecture/AGENT-LAYERS.md` is the accurate map** and takes
+> precedence over this section wherever the two disagree.
+
 **Scope, per the PRD's own boundary** ("no discretionary advice"): every agent, in either system, analyzes, explains, or reflects. None of them recommend trades in a way that bypasses user judgment, and none execute orders.
 
 TradeW AI (Research) and Sentinel (Safety Nets) are **deliberately separate systems**, not two feature sets of one orchestrator — different question (understanding vs. behavioral risk), different data (market/company data vs. the user's own trading behavior), different tone (explanatory vs. diagnostic/reflective), different compliance posture (Sentinel's Compliance & Audit agent logs and SEBI-labels every observation it produces). Full detail lives in `docs/product-architecture/`:
@@ -105,7 +114,7 @@ TradeW AI (Research) and Sentinel (Safety Nets) are **deliberately separate syst
 **Runtime split:**
 
 - `agents/tradew-ai/` and `agents/sentinel/` hold **declarative** agent definitions — system prompts, allowed tools, guardrail/disclaimer config — as version-controlled files, reviewed like code, one subfolder per system.
-- `services/tradew-ai` and `services/sentinel` are the two **runtimes** — each loads only its own subfolder's definitions, each exposes its own internal endpoint (`POST /agents/:name/invoke`), called only by `services/api` — never directly by `apps/*` — so there's one auth/rate-limit/audit chokepoint per system for compliance review later.
+- `services/tradew-ai` and `services/sentinel` are the two **runtimes** — each was to load only its own subfolder's definitions and expose its own internal endpoint (`POST /agents/:name/invoke`), called only by `services/api` — never directly by `apps/*` — so there's one auth/rate-limit/audit chokepoint per system for compliance review later. **As built:** `services/tradew-ai` loads its definitions and exposes `POST /assistant/interpret` (not `/agents/:name/invoke`); `services/sentinel` loads no definitions at all and exposes `POST /observe` and `POST /intelligence/reason`, both backed by deterministic TypeScript rather than agent definitions. The single-chokepoint property still holds — both are behind `ServiceTokenGuard` and called only by `services/api`.
 - `services/sentinel-py` (Python/FastAPI, port 4011) is a **third, additive runtime** under the Sentinel umbrella: the *personal strategy watcher*. The user writes their own strategy in plain text; a deterministic parser turns it into rules, an in-process sweep loop watches live Dhan candles (`IDLE → FORMING → CONFIRMED`), and confirmations/in-trade R-multiple milestones are pushed to the user as `Notification` rows via `services/api`. It is called only by `services/api` (service-token guard, mirroring `services/sentinel`'s `ServiceTokenGuard`), reads/writes its own `UserStrategy`/`WatchSession`/`WatchObservation` tables in the shared Postgres via `asyncpg`, and — like every Sentinel component — **never proposes, buys, or sells**; a compliance gate (`app/notify/compliance.py`) blocks any Buy/Sell/Entry/Target/Stop string before it leaves the service. It runs alongside `services/sentinel` (TypeScript), which is unchanged; see `services/sentinel-py/README.md` and `SENTINEL_MASTER_PLAN.md`.
 - Model access goes through the Anthropic API directly (see the workspace's `claude-api` reference for model/pricing/caching choices); this is independent of the separate `TradingBot` project's own Anthropic integration, which stays out of scope per the earlier decision.
 - Every agent response that touches trading data carries a disclaimer and, where relevant, a structured "suggested next step" the user must explicitly act on — the UI converts that into an order only via the normal order-flow path in §3, never automatically. Sentinel additionally never blocks or delays the order flow — it comments in parallel, it is not a gate.

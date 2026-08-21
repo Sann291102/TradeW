@@ -42,11 +42,26 @@ n8n's role is the third row: it's the durable, observable, retry-capable coordin
 
 ## 4. Why this doesn't create new infrastructure
 
+> **⚠️ Still conceptual.** The stable contract this section's argument rests on
+> (`POST /agents/:name/invoke`) was never built; see `AGENT-LAYERS.md`.
+
 Per `TRADEW-OS.md` §2.1, this roster is a **conceptual/naming layer over agents that already exist** in the pillar docs and the Sentinel Brain — not ten new services. The value of naming them uniformly is: n8n workflows and `services/api` orchestration can reference a stable agent contract (`POST /agents/:name/invoke`, already the pattern in `ARCHITECTURE.md` §4) regardless of which runtime hosts the agent, and each agent can be tested/swapped independently.
 
 ## 5. Agent contract (shared shape)
 
-Every agent, in either runtime, exposes the same invocation contract (`ARCHITECTURE.md` §4): `POST /agents/:name/invoke`, internal-only, called by `services/api` (or n8n via service credential). Premium agents additionally return the explainability block (`EXPLAINABILITY.md` §4). This uniform contract is what lets n8n orchestrate agents without embedding logic — it just calls contracts and passes results along.
+> **⚠️ UNIMPLEMENTED.** No agent in TradeW exposes this contract, and no n8n
+> workflow orchestrates anything (`workflows/` is empty). See
+> `AGENT-LAYERS.md` for what actually runs. The paragraph below is the target
+> shape, retained as a design decision.
+
+Every agent, in either runtime, would expose the same invocation contract (`ARCHITECTURE.md` §4): `POST /agents/:name/invoke`, internal-only, called by `services/api` (or n8n via service credential). Premium agents additionally return the explainability block (`EXPLAINABILITY.md` §4). This uniform contract is what lets n8n orchestrate agents without embedding logic — it just calls contracts and passes results along.
+
+**Where the two live runtimes actually sit relative to this:**
+
+| | Route today | Definitions loaded? | Reasoning |
+|---|---|---|---|
+| `services/tradew-ai` | `POST /assistant/interpret` | Yes — `agents/tradew-ai/definitions.json`, one agent | LLM, via `DefaultAgentRuntime` |
+| `services/sentinel` | `POST /observe`, `POST /intelligence/reason` | No — `agents/sentinel/definitions.json` is read by nothing | Deterministic TypeScript, no LLM on any path |
 
 ## 6. Open items
 

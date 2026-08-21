@@ -75,6 +75,20 @@ export interface SentinelIntelligenceConfig {
   watchReasonEnabled: boolean;
   /** Most symbols one sweep may reason about, so a sweep cannot overrun. */
   watchMaxReasoningPerSweep: number;
+  /**
+   * Symbols placed under watch at boot, before anybody asks about anything.
+   *
+   * The watch list was populated exclusively by `register()`, which only a
+   * request reaches, so "Sentinel watches whether or not anyone is looking"
+   * held only within one TTL of somebody looking. On a freshly deployed
+   * instance with no traffic the list stayed empty, every sweep exited at the
+   * `no-symbols` guard, no agent ever ran, and the live-performance gate
+   * accumulated no evidence — which meant directional reads could never clear
+   * gate 4. A self-reinforcing cold-start deadlock, broken by seeding.
+   *
+   * Empty (`SI_WATCH_SEED_SYMBOLS=`) restores the request-only behaviour.
+   */
+  watchSeedSymbols: string[];
 }
 
 export interface CorpusRoot {
@@ -155,6 +169,19 @@ const DEFAULT_WATCH_RECORD_COOLDOWN_MS = 15 * 60_000;
  */
 const DEFAULT_WATCH_MAX_REASONING_PER_SWEEP = 3;
 
+/**
+ * The seed universe.
+ *
+ * The two index underlyings every Indian intraday desk watches, and the two
+ * the strategy engine's book-derived rules were written against. Deliberately
+ * small: each seeded symbol costs two `/candles` calls per sweep against Dhan's
+ * 5 req/s ceiling for the whole trading day whether or not a human ever opens
+ * the app, so the seed is the minimum that makes the system self-starting, not
+ * a watchlist. Symbols traders actually open still arrive through `register()`
+ * and evict these under the cap if the board fills up.
+ */
+const DEFAULT_WATCH_SEED_SYMBOLS = ['NIFTY', 'BANKNIFTY'];
+
 const DEFAULT_CHUNK_CHARS = 2400;
 const DEFAULT_CHUNK_OVERLAP = 240;
 const DEFAULT_MIN_CHUNK_CHARS = 280;
@@ -176,8 +203,30 @@ const DEFAULT_CORPUS_ROOTS: CorpusRoot[] = [
   { path: 'knowledge', kind: 'vault', extensions: ['md'], recursive: true },
   { path: 'docs/product-architecture', kind: 'doc', extensions: ['md'], recursive: true },
   { path: 'docs/handbook', kind: 'doc', extensions: ['md'], recursive: true },
-  { path: 'agents', kind: 'doc', extensions: ['md', 'json'], recursive: true },
+  // `agents/` was a root until 2026-08-21 and is deliberately NOT one now.
+  //
+  // It contains agent definitions and their READMEs — including, at the time,
+  // the line "Status: no definitions exist yet" — indexed as citable knowledge
+  // and returnable by `gatherCitations` as evidence for a market claim. An
+  // agent could cite its own unimplemented specification as support for a read
+  // of NIFTY, which is not a weak citation but a meaningless one.
+  //
+  // Dropped rather than demoted to a lower tier: there is no authority level at
+  // which "this agent is not implemented" is evidence about the market, and a
+  // tier change would have left the passages retrievable while making the
+  // problem harder to see.
 ];
+
+/**
+ * Comma-separated symbols, upper-cased and de-duplicated.
+ *
+ * Returns the fallback only when the variable is UNSET. A set-but-empty value
+ * is a deliberate "seed nothing" and returns an empty list.
+ */
+function symbolList(value: string | undefined, fallback: string[]): string[] {
+  if (value === undefined) return fallback;
+  return [...new Set(value.split(',').map((s) => s.trim().toUpperCase()).filter((s) => s.length > 0))];
+}
 
 function positiveInt(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
@@ -245,6 +294,11 @@ export function loadSentinelIntelligenceConfig(
       1,
       positiveInt(env.SI_WATCH_MAX_REASONING_PER_SWEEP, DEFAULT_WATCH_MAX_REASONING_PER_SWEEP),
     ),
+    // An explicitly empty value means "seed nothing" and is honoured; an unset
+    // value means "the operator expressed no preference" and gets the default.
+    // `?? undefined` rather than `||` for exactly that reason — `''` and
+    // undefined are different answers here.
+    watchSeedSymbols: symbolList(env.SI_WATCH_SEED_SYMBOLS, DEFAULT_WATCH_SEED_SYMBOLS),
   };
 }
 
