@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from './otp.service';
 import { MailService } from '../mail/mail.service';
 import { loginAlert, passwordChanged } from '../mail/templates';
+import { isAllowedPreferenceKey, MAX_PREFERENCE_BYTES } from './preference-keys';
 
 type RequestMeta = { ip?: string; userAgent?: string };
 
@@ -283,7 +284,29 @@ export class AuthService {
     return Object.fromEntries(rows.map((r) => [r.key, r.value]));
   }
 
+  /**
+   * Upsert one preference document for the CALLER.
+   *
+   * `userId` is always the token's subject — the controller passes
+   * `req.user.sub` and there is no route that names another user — so a
+   * preference cannot be written to somebody else's account.
+   *
+   * The key is checked against a fixed allowlist and the document against a
+   * size cap: this route is authenticated and writes JSON verbatim, so without
+   * those two it is a general-purpose store for anyone with an account.
+   */
   async setPreference(userId: string, key: string, value: unknown, meta: RequestMeta = {}) {
+    if (!isAllowedPreferenceKey(key)) {
+      // Names the rejected key, not the allowlist: the caller already knows
+      // what it asked for, and the list is an implementation detail.
+      throw new BadRequestException(`Unknown preference key: ${key}`);
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new BadRequestException('A preference value must be a JSON object.');
+    }
+    if (Buffer.byteLength(JSON.stringify(value), 'utf8') > MAX_PREFERENCE_BYTES) {
+      throw new BadRequestException('That preference document is too large.');
+    }
     const pref = await this.prisma.userPreference.upsert({
       where: { userId_key: { userId, key } },
       update: { value: value as any },
@@ -291,6 +314,110 @@ export class AuthService {
     });
     await this.audit('user.preference.update', userId, meta, { key });
     return { key: pref.key, value: pref.value };
+  }
+
+  /**
+   * Change the password of an account that already has one, from inside a
+   * signed-in session.
+   *
+   * This is NOT the reset flow. Reset proves identity with an emailed code
+   * because the user cannot sign in; this proves it with the current password
+   * because they can. Both end the same way — a new bcrypt hash, every refresh
+   * token revoked, an audit row and a security email — because both are the
+   * moment at which older sessions stop being trustworthy.
+   *
+   * An account with no `passwordHash` (Google- or phone-only) is rejected
+   * rather than silently given one: "change" implies there is something to
+   * change, and setting a first password from a session that was established
+   * by a different factor is a different feature with different risks.
+   */
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    meta: RequestMeta = {},
+  ): Promise<{ ok: true }> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('User not found');
+    if (!user.passwordHash) {
+      throw new BadRequestException(
+        'This account signs in with Google or a phone code and has no password to change.',
+      );
+    }
+    const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!matches) {
+      await this.audit('user.password_change.failure', userId, meta);
+      // Same wording the login path uses for a wrong password. Nothing here
+      // reveals anything the caller does not already hold.
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+    if (currentPassword === newPassword) {
+      throw new BadRequestException('The new password must be different from the current one.');
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await this.prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+    await this.prisma.refreshToken.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    await this.audit('user.password_change.success', userId, meta);
+    const changed = passwordChanged({ email: user.email, when: this.nowLabel(), ip: meta.ip });
+    void this.mail.send(user.email, changed.subject, changed.text, changed.html).catch(() => undefined);
+    return { ok: true };
+  }
+
+  /**
+   * The caller's live sessions, one row per unrevoked, unexpired refresh token.
+   *
+   * WHAT THIS CAN AND CANNOT TELL YOU. `RefreshToken` stores a hash, an issue
+   * time and an expiry — no IP, no user agent, no device label. So a session
+   * here is "a sign-in that happened at this time and is still valid", and the
+   * UI must not dress it up as a named device. Adding those columns is a
+   * schema change, deliberately not made as part of a settings screen.
+   *
+   * `current` is decided by hashing a refresh token the caller presents, using
+   * the same SHA-256 the tokens are stored under. Callers that do not present
+   * one get `current: false` everywhere rather than a guess.
+   */
+  async listSessions(userId: string, currentRefreshToken?: string) {
+    const now = new Date();
+    const rows = await this.prisma.refreshToken.findMany({
+      where: { userId, revokedAt: null, expiresAt: { gt: now } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, tokenHash: true, createdAt: true, expiresAt: true },
+    });
+    const currentHash = currentRefreshToken ? this.hash(currentRefreshToken) : null;
+    return {
+      sessions: rows.map((r) => ({
+        id: r.id,
+        createdAt: r.createdAt.toISOString(),
+        expiresAt: r.expiresAt.toISOString(),
+        current: currentHash != null && r.tokenHash === currentHash,
+      })),
+    };
+  }
+
+  /**
+   * Revoke every session except the one the caller is using.
+   *
+   * The caller proves which one that is by presenting its refresh token; a
+   * request without one revokes everything, including itself, which is the
+   * safe direction to fail in — "sign out everywhere" is what someone reaches
+   * for when they think an account is compromised.
+   */
+  async revokeOtherSessions(userId: string, currentRefreshToken?: string, meta: RequestMeta = {}) {
+    const keepHash = currentRefreshToken ? this.hash(currentRefreshToken) : null;
+    const result = await this.prisma.refreshToken.updateMany({
+      where: {
+        userId,
+        revokedAt: null,
+        ...(keepHash ? { NOT: { tokenHash: keepHash } } : {}),
+      },
+      data: { revokedAt: new Date() },
+    });
+    await this.audit('session.revoke_others', userId, meta, { revoked: result.count });
+    return { revoked: result.count };
   }
 
   private async issue(userId: string, email: string) {

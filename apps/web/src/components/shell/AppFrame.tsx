@@ -9,7 +9,8 @@ import { Ticker } from './Ticker';
 import { FloatingAI } from './FloatingAI';
 import { NotificationCenter } from './NotificationCenter';
 import { NotificationSync } from './NotificationSync';
-import { useWorkspaceStore } from '@/lib/store/workspaceStore';
+import { SettingsEffects } from './SettingsEffects';
+import { useWorkspaceStore, resolveTheme } from '@/lib/store/workspaceStore';
 import { useHydrateWorkspaceStore } from '@/lib/store/useHydrated';
 import { useKeyboardShortcuts } from '@/lib/store/useKeyboardShortcuts';
 import { useSessionStore } from '@/lib/store/sessionStore';
@@ -73,10 +74,21 @@ export function AppFrame({ children }: { children: ReactNode }) {
 
   // The inline script in layout.tsx only runs once, pre-hydration (prevents
   // FOUC on load). Subsequent theme changes — ThemeMenu, the command palette's
-  // theme commands, or rehydration restoring a different saved theme — apply
-  // here.
+  // theme commands, the Settings → Appearance screen, or rehydration restoring
+  // a different saved theme — apply here.
+  //
+  // `system` is resolved rather than written: `data-theme="system"` matches no
+  // token block, so the page would fall through to the :root (light) set. The
+  // media-query listener keeps it honest when the OS flips at dusk while the
+  // tab is open; it is only attached for the `system` choice, so an explicit
+  // dark/light user is unaffected by their OS.
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    const apply = () => document.documentElement.setAttribute('data-theme', resolveTheme(theme));
+    apply();
+    if (theme !== 'system' || typeof window.matchMedia !== 'function') return;
+    const query = window.matchMedia('(prefers-color-scheme: light)');
+    query.addEventListener('change', apply);
+    return () => query.removeEventListener('change', apply);
   }, [theme]);
 
   // Replay the route transition WITHOUT remounting the route.
@@ -167,6 +179,7 @@ export function AppFrame({ children }: { children: ReactNode }) {
       </div >
 
       <FloatingAI />
+      <SettingsEffects />
       <NotificationSync />
       <NotificationCenter />
       <CommandPalette />

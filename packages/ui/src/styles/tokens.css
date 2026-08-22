@@ -25,6 +25,19 @@
   --green-bg: #e8f6f3;
   --red: #e4573d;
   --red-bg: #fdeeea;
+
+  /* Candle colours.
+   *
+   * Separate from --green/--red on purpose. Those are the app's
+   * market-direction colours and are used by P&L figures, badges, sparklines
+   * and arrows everywhere; the Settings -> Appearance screen only lets a user
+   * recolour CANDLES, so it overrides these two and nothing else. Defined per
+   * theme as `var(--green)`/`var(--red)` so an account that has never touched
+   * the setting still follows the theme; a user override is written as an
+   * inline custom property on <html> (see lib/settings/apply.ts), which wins
+   * over these because inline styles beat a stylesheet rule. */
+  --candle-up: var(--green);
+  --candle-down: var(--red);
   --amber: #e8930c;
   --amber-bg: #fdf3e3;
   --navy: #1a2b4a;
@@ -100,6 +113,19 @@
   --green-bg: #0f2e2a;
   --red: #ef5350;
   --red-bg: #3a1f1e;
+
+  /* Candle colours.
+   *
+   * Separate from --green/--red on purpose. Those are the app's
+   * market-direction colours and are used by P&L figures, badges, sparklines
+   * and arrows everywhere; the Settings -> Appearance screen only lets a user
+   * recolour CANDLES, so it overrides these two and nothing else. Defined per
+   * theme as `var(--green)`/`var(--red)` so an account that has never touched
+   * the setting still follows the theme; a user override is written as an
+   * inline custom property on <html> (see lib/settings/apply.ts), which wins
+   * over these because inline styles beat a stylesheet rule. */
+  --candle-up: var(--green);
+  --candle-down: var(--red);
   --amber: #f0a53c;
   --amber-bg: #3a2d14;
   --navy: #e2e8f0;
@@ -141,6 +167,19 @@
   --green-bg: #00291a;
   --red: #ff5252;
   --red-bg: #330000;
+
+  /* Candle colours.
+   *
+   * Separate from --green/--red on purpose. Those are the app's
+   * market-direction colours and are used by P&L figures, badges, sparklines
+   * and arrows everywhere; the Settings -> Appearance screen only lets a user
+   * recolour CANDLES, so it overrides these two and nothing else. Defined per
+   * theme as `var(--green)`/`var(--red)` so an account that has never touched
+   * the setting still follows the theme; a user override is written as an
+   * inline custom property on <html> (see lib/settings/apply.ts), which wins
+   * over these because inline styles beat a stylesheet rule. */
+  --candle-up: var(--green);
+  --candle-down: var(--red);
   --amber: #ffca28;
   --amber-bg: #332400;
   --navy: #ffffff;

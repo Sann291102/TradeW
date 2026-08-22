@@ -73,3 +73,23 @@ body {
     animation: none;
   }
 }
+
+/* ── Compact layout (Settings → Preferences → Compact layout) ──────────────
+ *
+ * Applied by SettingsEffects as `data-density="compact"` on <html>, so the
+ * choice reaches every route rather than one page opting in. It tightens the
+ * padding of dense list surfaces — table cells and the shared Card — and
+ * deliberately does nothing else: shrinking type or control targets to fit
+ * more rows would trade legibility and touch accessibility for density, which
+ * is not what a trader asking for "compact" wants.
+ */
+:root[data-density='compact'] td,
+:root[data-density='compact'] th {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+:root[data-density='compact'] .rounded-card {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}

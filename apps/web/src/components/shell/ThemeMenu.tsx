@@ -3,11 +3,16 @@
 import { cn } from '@tradew/ui';
 import { useWorkspaceStore, type ThemeName } from '@/lib/store/workspaceStore';
 import { Popover } from '../workspace/Popover';
-import { SunIcon, MoonIcon, ContrastIcon, CheckIcon } from './icons';
+import { SunIcon, MoonIcon, ContrastIcon, CheckIcon, DeviceIcon } from './icons';
+import { useSessionStore } from '@/lib/store/sessionStore';
+import { useSettingsStore } from '@/lib/store/settingsStore';
 
 const THEMES: Array<{ id: ThemeName; label: string; icon: typeof SunIcon }> = [
   { id: 'dark', label: 'Dark', icon: MoonIcon },
   { id: 'light', label: 'Light', icon: SunIcon },
+  // Added with the Settings -> Appearance screen. Resolved to dark or light
+  // against prefers-color-scheme before it is painted; see resolveTheme().
+  { id: 'system', label: 'System', icon: DeviceIcon },
   { id: 'high-contrast', label: 'High Contrast', icon: ContrastIcon },
 ];
 
@@ -15,6 +20,8 @@ const THEMES: Array<{ id: ThemeName; label: string; icon: typeof SunIcon }> = [
 export function ThemeMenu() {
   const theme = useWorkspaceStore((s) => s.theme);
   const setTheme = useWorkspaceStore((s) => s.setTheme);
+  const signedIn = useSessionStore((s) => s.status === 'authenticated');
+  const updatePrefs = useSettingsStore((s) => s.update);
   const current = THEMES.find((t) => t.id === theme) ?? THEMES[0];
 
   return (
@@ -42,6 +49,13 @@ export function ThemeMenu() {
               aria-checked={t.id === theme}
               onClick={() => {
                 setTheme(t.id);
+                // Persist to the account as well, so the choice follows the
+                // user to their other devices rather than living only in this
+                // browser's localStorage. Fire-and-forget: the local switch has
+                // already happened and must not wait on, or be undone by, a
+                // network call. Signed-out visitors keep the local-only
+                // behaviour this menu has always had.
+                if (signedIn) void updatePrefs('appearance', { theme: t.id });
                 close();
               }}
               className={cn(

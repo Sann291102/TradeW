@@ -47,8 +47,14 @@ const SECTION_TITLES: Record<PortfolioSection, string> = {
   performance: 'Performance',
 };
 
-export function PortfolioClient() {
-  const [section, setSection] = useState<PortfolioSection>('overview');
+/**
+ * `initialSection` exists so `/orders` and `/positions` can be real routes
+ * without a second implementation of either table. Both render THIS component
+ * with a different opening section — the queries, the P&L maths and the broker
+ * sync are the ones that were already here.
+ */
+export function PortfolioClient({ initialSection = 'overview' }: { initialSection?: PortfolioSection } = {}) {
+  const [section, setSection] = useState<PortfolioSection>(initialSection);
   const signedIn = useSignedIn();
 
   const summaryQuery = usePortfolioSummary(signedIn);

@@ -68,6 +68,28 @@ class UpdateProfileDto {
   optionsFamiliarity?: string;
 }
 
+class ChangePasswordDto {
+  @ApiProperty({ format: 'password', description: 'The password the caller signs in with today.' })
+  @IsString()
+  currentPassword!: string;
+
+  @ApiProperty({ minLength: 6, format: 'password' })
+  @IsString()
+  @MinLength(6)
+  newPassword!: string;
+}
+
+class RevokeOtherSessionsDto {
+  @ApiProperty({
+    required: false,
+    description:
+      'The refreshToken of the session to KEEP. Omit to revoke every session, including this one.',
+  })
+  @IsOptional()
+  @IsString()
+  refreshToken?: string;
+}
+
 class PreferenceDto {
   @ApiProperty({ type: 'object', additionalProperties: true, description: 'Arbitrary JSON stored against the preference key in the path.' })
   @IsObject()
@@ -281,5 +303,40 @@ export class AuthController {
   @Post('preferences/:key')
   setPreference(@Req() req: any, @Param('key') key: string, @Body() dto: PreferenceDto) {
     return this.auth.setPreference(req.user.sub, key, dto.value, meta(req));
+  }
+
+  /**
+   * Change the caller's password from inside a live session.
+   *
+   * Throttled on the same bucket as login and reset: it takes a password as
+   * input and answers whether it was right, so it is a guessing oracle for
+   * anyone who has stolen an access token but not the password.
+   */
+  @ApiBearerAuth(SECURITY.bearer)
+  @UseGuards(AuthGuard)
+  @Throttle(AUTH_LIMIT)
+  @Post('password/change')
+  changePassword(@Req() req: any, @Body() dto: ChangePasswordDto) {
+    return this.auth.changePassword(req.user.sub, dto.currentPassword, dto.newPassword, meta(req));
+  }
+
+  /**
+   * The caller's live sessions. `?refreshToken=` is optional and only decides
+   * which row is flagged `current` — it grants nothing, and the list is always
+   * scoped to the token's subject.
+   */
+  @ApiBearerAuth(SECURITY.bearer)
+  @UseGuards(AuthGuard)
+  @Get('sessions')
+  sessions(@Req() req: any, @Query('refreshToken') refreshToken?: string) {
+    return this.auth.listSessions(req.user.sub, refreshToken);
+  }
+
+  /** Sign out everywhere else, keeping the session that presents its own refresh token. */
+  @ApiBearerAuth(SECURITY.bearer)
+  @UseGuards(AuthGuard)
+  @Post('sessions/revoke-others')
+  revokeOtherSessions(@Req() req: any, @Body() dto: RevokeOtherSessionsDto) {
+    return this.auth.revokeOtherSessions(req.user.sub, dto?.refreshToken, meta(req));
   }
 }
