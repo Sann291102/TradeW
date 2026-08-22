@@ -12,6 +12,19 @@ import type { AgentId, AgentVerdict } from '../types';
 import type { StrategyDetection } from '../../intelligence/strategy-engine.service';
 
 /**
+ * ⚠️ NAME COLLISION: this is the **agent**, not the Brain.
+ *
+ * `StrategyIntelligenceService` (`../../brain/strategy-intelligence.service.ts`)
+ * is an unrelated component that owns outcome-tagged base rates and reads
+ * Postgres. This agent is pure, does no I/O, and reads only `AgentContext`.
+ * The live base rate it might seem to want arrives pre-resolved in
+ * `context.baseRates` — see `historical-pattern-intelligence.agent.ts`, which
+ * is the agent whose remit that is.
+ *
+ * See `docs/product-architecture/AGENT-LAYERS.md` §3.
+ */
+
+/**
  * Strategy Intelligence — does a learned method actually confirm right now?
  *
  * Rule evaluation is delegated to the existing declarative Strategy Engine

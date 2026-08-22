@@ -2,4 +2,6 @@
 
 Agent definitions for the Sentinel (Safety Nets) pillar. See `../../docs/product-architecture/SENTINEL.md` §2 for each agent's job and inputs: `market-technical-intelligence`, `emotion-intelligence`, `trap-safety-intelligence`, `compliance-audit`, `sentinel-orchestrator`.
 
-**Status (corrected 2026-07-21):** has a `definitions.json` config file; no per-agent source files yet (the actual agent logic already lives in `services/sentinel/src/{intelligence,compliance,orchestrator}/`, not here — see `services/sentinel/README.md`). These five have a strict dependency order: the first three feed the orchestrator, so write and test them independently before wiring up `sentinel-orchestrator`'s synthesis logic.
+**Status (corrected 2026-08-21):** `definitions.json` exists and **nothing reads it** — not this folder's absence of source files, but the file itself being unwired. Sentinel's agent logic lives in `services/sentinel/src/`, is deterministic TypeScript with no LLM, no tools and no prompt templates, and its roster is ten agents whose ids do not match the five names in `definitions.json`.
+
+Do not add a definition here expecting it to take effect. Adding a Sentinel agent means writing a class in `services/sentinel/src/sentinel-intelligence/agents/` and registering it in `AgentRegistryService`. See `../../docs/product-architecture/AGENT-LAYERS.md` for the full map.

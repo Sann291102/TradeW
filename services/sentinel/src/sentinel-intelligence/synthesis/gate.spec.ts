@@ -11,6 +11,7 @@ import type {
   Stance,
   Subtask,
   UnderstoodRequest,
+  VerdictVeto,
 } from '../types';
 
 /**
@@ -48,7 +49,7 @@ function verdict(
   agent: AgentId,
   stance: Stance,
   confidence: number,
-  opts: { sources?: string[]; dataQuality?: number; abstained?: boolean } = {},
+  opts: { sources?: string[]; dataQuality?: number; abstained?: boolean; veto?: VerdictVeto } = {},
 ): AgentVerdict {
   const citations = (opts.sources ?? ['alpha', 'beta']).map((s) => citation(s));
   return {
@@ -67,6 +68,7 @@ function verdict(
     abstentionReason: null,
     dataQuality: opts.dataQuality ?? 1,
     latencyMs: 1,
+    veto: opts.veto ?? null,
   };
 }
 
@@ -77,7 +79,7 @@ function subtask(agent: AgentId, weight = 1): Subtask {
     question: 'q',
     rationale: 'r',
     knowledgeQueries: [],
-    dependsOn: [],
+    informedBy: [],
     weight,
   };
 }
@@ -116,6 +118,80 @@ function run(
   const checked = crossCheck.check(verdicts, subtasks);
   return { checked, result: synthesis.synthesize(understood, verdicts, checked, { livePerformance }) };
 }
+
+describe('gate 0 — the compliance veto', () => {
+  const RESIDUAL: VerdictVeto = {
+    code: 'residual-directive-language',
+    reason: '2 agent statement(s) still contained directive language after vocabulary enforcement',
+  };
+
+  it('withholds a run that would otherwise clear every other gate', () => {
+    const verdicts = [
+      verdict('market-intelligence', 'bullish', 0.92),
+      verdict('strategy-intelligence', 'bullish', 0.9),
+      verdict('trap-intelligence', 'bullish', 0.88),
+      verdict('compliance-intelligence', 'risk-elevated', 0.9, { veto: RESIDUAL }),
+    ];
+    const { result } = run(verdicts, [
+      subtask('market-intelligence'),
+      subtask('strategy-intelligence'),
+      subtask('trap-intelligence'),
+      // The weight the compliance agent actually carries on every intent. The
+      // point of the veto is that this number is irrelevant to the outcome.
+      subtask('compliance-intelligence', 0.2),
+    ]);
+
+    expect(result.surfaced).toBe(false);
+    expect(result.observation).toBeNull();
+    expect(result.silenceReason).toMatch(/compliance finding/);
+    expect(result.silenceReason).toContain(RESIDUAL.reason);
+  });
+
+  it('is checked before corroboration and confidence, so the silence reason names compliance', () => {
+    // One agent only: this run also fails gate 1. The veto must still be the
+    // reason reported, because it is the one an operator has to act on.
+    const verdicts = [
+      verdict('market-intelligence', 'bullish', 0.4),
+      verdict('compliance-intelligence', 'risk-elevated', 0.9, { veto: RESIDUAL }),
+    ];
+    const { result } = run(verdicts, [subtask('market-intelligence'), subtask('compliance-intelligence', 0.2)]);
+
+    expect(result.surfaced).toBe(false);
+    expect(result.silenceReason).toMatch(/compliance finding/);
+    expect(result.silenceReason).not.toMatch(/corroborating agents are required/);
+  });
+
+  it('ignores a veto on an abstaining verdict — a dispatch failure is not a finding', () => {
+    const verdicts = [
+      verdict('market-intelligence', 'bullish', 0.86),
+      verdict('strategy-intelligence', 'bullish', 0.82),
+      { ...verdict('compliance-intelligence', 'no-read', 0, { abstained: true, veto: RESIDUAL }), evidence: [] },
+    ];
+    const { result } = run(verdicts, [
+      subtask('market-intelligence'),
+      subtask('strategy-intelligence'),
+      subtask('compliance-intelligence', 0.2),
+    ]);
+
+    expect(result.surfaced).toBe(true);
+  });
+
+  it('surfaces normally when compliance found nothing to enforce', () => {
+    const verdicts = [
+      verdict('market-intelligence', 'bullish', 0.86),
+      verdict('strategy-intelligence', 'bullish', 0.82),
+      verdict('compliance-intelligence', 'neutral', 0.8),
+    ];
+    const { result } = run(verdicts, [
+      subtask('market-intelligence'),
+      subtask('strategy-intelligence'),
+      subtask('compliance-intelligence', 0.2),
+    ]);
+
+    expect(result.surfaced).toBe(true);
+    expect(result.silenceReason).toBeNull();
+  });
+});
 
 describe('the surfacing gate', () => {
   it('surfaces when two agents agree above the threshold', () => {

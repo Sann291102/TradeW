@@ -42,7 +42,7 @@ export class NewsIntelligenceService {
       return [
         {
           name: 'news_driven_volatility',
-          agent: 'market-technical',
+          agent: 'news',
           triggered: false,
           weight: 0.25,
           evidence: ['No news events in the last 24h for this symbol'],
@@ -59,7 +59,7 @@ export class NewsIntelligenceService {
     return [
       {
         name: 'news_driven_volatility',
-        agent: 'market-technical',
+        agent: 'news',
         triggered: highImpact.length > 0 || unscheduled > 0,
         weight: 0.25,
         evidence: [

@@ -1,5 +1,21 @@
 import { PromptLibrary, PromptTemplate } from './interfaces';
 
+/**
+ * ⚠️ INSTANTIATED, NEVER POPULATED.
+ *
+ * The single construction site —
+ * `services/tradew-ai/src/assistant/assistant.service.ts` — creates an
+ * `InMemoryPromptLibrary` and registers no templates in it. Nothing in
+ * `services/`, `apps/` or `scripts/` calls `register()` with a
+ * `PromptTemplate`, so `get()` always returns null, every `systemPromptId` in
+ * `agents/sentinel/definitions.json` and `agents/tradew-ai/definitions.json` is inert, and `DefaultAgentRuntime` falls back to
+ * a system prompt synthesized from the definition's `name` and `description`.
+ *
+ * There are consequently no prompts to version, despite the admin portal
+ * having advertised prompt/version management. See
+ * `docs/product-architecture/AGENT-LAYERS.md`.
+ */
+
 /** In-process prompt library; templates are registered from version-controlled files at boot. */
 export class InMemoryPromptLibrary implements PromptLibrary {
   /** id -> version -> template */

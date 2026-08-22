@@ -749,24 +749,53 @@ export class AdminService {
 /**
  * The agents the orbit draws, in the order they sit around the ring.
  *
- * Mirrors `agents/sentinel/definitions.json`. Duplicated here rather than
- * imported because the orbit must render every agent — including one that has
- * never emitted an event, which is precisely the case an operator needs to
- * SEE (an agent that never runs is a bug, and a view built only from observed
- * events would render it as absent rather than as silent).
+ * Duplicated here rather than imported because the orbit must render every
+ * agent — including one that has never emitted an event, which is precisely
+ * the case an operator needs to SEE (an agent that never runs is a bug, and a
+ * view built only from observed events would render it as absent rather than
+ * as silent).
+ *
+ * NOT mirrored from `agents/sentinel/definitions.json`, whatever this comment
+ * used to say. Nothing reads that file, its five names are not agent ids, and
+ * treating it as the roster is what left the nine agents that actually run
+ * every 60 seconds invisible here. This list mirrors the two things that emit:
+ * the `trackAgent` names in `sentinel-orchestrator.service.ts` and the
+ * `AgentId` union in `sentinel-intelligence/types.ts`. Adding an agent to
+ * either means adding it here, or it will run unseen.
+ * See `docs/product-architecture/AGENT-LAYERS.md`.
  */
 const KNOWN_AGENTS: Record<string, Array<{ name: string; label: string; role: string }>> = {
   sentinel: [
+    // ---- the /observe engines (layer B) --------------------------------
+    { name: 'orchestrator', label: 'Orchestrator', role: 'The only user-facing voice on /observe. Synthesises corroborating signals into one message.' },
     { name: 'market-technical', label: 'Market Technical', role: 'Observes structure — EMA, RSI, VWAP, CPR, volume, OI, IV, breadth.' },
     { name: 'emotion', label: 'Emotion', role: "Observes the trader's own pacing, sizing drift and loss streaks." },
     { name: 'trap-safety', label: 'Trap Safety', role: 'Composite trap detection — sweeps, false breakouts, expiry traps.' },
+    { name: 'news', label: 'News', role: 'Newswire scan — classifies events into the standard categories.' },
     { name: 'compliance-audit', label: 'Compliance Audit', role: 'Labels each observation with a SEBI category and its evidence.' },
-    { name: 'orchestrator', label: 'Orchestrator', role: 'The only user-facing voice. Synthesises corroborating signals into one message.' },
+
+    // ---- the SentinelIntelligence agents (layer A) ----------------------
+    // These run on every /intelligence/reason AND autonomously on every watch
+    // sweep. Their ids are the `AgentId` union verbatim, so an activity row
+    // written by `AgentRegistryService.run` lands on the node it belongs to.
+    { name: 'market-intelligence', label: 'Market Intelligence', role: 'Reads the shared snapshot and reports a stance on current structure.' },
+    { name: 'strategy-intelligence', label: 'Strategy Intelligence', role: 'Whether a named, book-derived setup is confirming on this chart right now.' },
+    { name: 'news-intelligence', label: 'News Intelligence', role: 'Whether an event changes how the structure reads — volatility, never direction.' },
+    { name: 'options-chain-intelligence', label: 'Options Chain Intelligence', role: 'Positioning in the chain — OI, IV, and what the strikes imply.' },
+    { name: 'risk-intelligence', label: 'Risk Intelligence', role: 'Exposure and hazard from the computed risk assessment.' },
+    { name: 'emotion-intelligence', label: 'Emotion Intelligence', role: "The trader's own behavioural state, from their recent trades." },
+    { name: 'trap-intelligence', label: 'Trap Intelligence', role: 'Trap structure in the current tape — sweeps, false breaks, expiry effects.' },
+    { name: 'historical-pattern-intelligence', label: 'Historical Pattern', role: 'What happened last time this shape appeared, by self-similarity and live base rate.' },
+    { name: 'compliance-intelligence', label: 'Compliance Intelligence', role: 'Audits every agent’s output for directive language. Can veto a run outright.' },
+    { name: 'learning-intelligence', label: 'Learning Intelligence', role: 'The concepts and corpus passages that explain what is happening.' },
   ],
+  // One agent, because one agent exists. `research` and `orchestrator` were
+  // listed here for a roster that was never built, so the orbit drew two
+  // permanently-idle nodes for code that does not exist. `services/tradew-ai`
+  // does not emit agent telemetry yet, so even this node reads idle — that is
+  // a real gap in that service, and now an honest one.
   'tradew-ai': [
-    { name: 'assistant', label: 'Assistant', role: 'The conversational surface — answers, navigates, explains.' },
-    { name: 'research', label: 'Research', role: 'Validates, summarises and embeds external sources.' },
-    { name: 'orchestrator', label: 'Orchestrator', role: 'Routes a request to the agent that should handle it.' },
+    { name: 'assistant-planner', label: 'Assistant Planner', role: 'Turns an utterance plus workspace context into a validated navigation plan.' },
   ],
 };
 

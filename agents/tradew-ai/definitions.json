@@ -1,5 +1,5 @@
 {
-  "$comment": "Declarative TradeW AI agent definitions (AgentDefinition[] from @tradew/ai-core), loaded by services/tradew-ai. CORE_GUARDRAILS are ALWAYS appended by the runtime and cannot be removed here. The deterministic command grammar lives in apps/web/src/lib/assistant/ and runs BEFORE any agent here is reached — see docs/product-architecture/AI-OPERATING-SYSTEM.md §3.",
+  "$comment": "PARTIALLY LIVE — this file IS loaded, by services/tradew-ai/src/assistant/assistant.service.ts, which runs assistant-planner through DefaultAgentRuntime on POST /assistant/interpret. Two fields are inert even so: allowedTools (the caller passes an empty DefaultToolRegistry, so no tool is ever exposed) and systemPromptId (the caller passes an empty InMemoryPromptLibrary, so the lookup misses and the runtime synthesizes a prompt from name + description instead). description and guardrails DO take effect. See docs/product-architecture/AGENT-LAYERS.md. Original intent, retained: declarative agent definitions (AgentDefinition[] from @tradew/ai-core) governing the LLM-facing half, with CORE_GUARDRAILS always appended by the runtime.",
   "agents": [
     {
       "name": "assistant-planner",

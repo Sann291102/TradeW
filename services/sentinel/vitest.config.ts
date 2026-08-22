@@ -90,6 +90,21 @@ export default defineConfig({
       // published read), and an UNPRICED leg is never confused with one priced
       // at zero.
       'src/execution/strike-candidates.spec.ts',
+      // The outcome tagger's own scheduler, added 2026-08-21. Pins the reason
+      // it exists: `MarketWatchService` writes occurrences on a timer and does
+      // not call `/observe`, so tagging that depended on request traffic let
+      // the untagged backlog grow all session — and an untagged occurrence is
+      // invisible to the base rates the live-performance gate reads.
+      'src/brain/outcome-learning.spec.ts',
+      // The ten reasoning agents and the dispatcher that guarantees a verdict
+      // for every subtask. Pins the invariants stated in their own headers:
+      // abstention on missing input, no knowledge evidence without a citation,
+      // and a thrown agent becoming an abstention rather than a failed run.
+      'src/sentinel-intelligence/agents/agents.spec.ts',
+      'src/sentinel-intelligence/agents/agent-registry.spec.ts',
+      // Decomposition: which agents a given intent routes to, and the skip
+      // paths that keep an agent from being asked a question it has no data for.
+      'src/sentinel-intelligence/understanding/task-decomposer.spec.ts',
     ],
     environment: 'node',
     // Deterministic and clock-injected throughout: a slow test is a real hang,

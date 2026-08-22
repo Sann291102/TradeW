@@ -1,5 +1,5 @@
-import { randomUUID } from 'crypto';
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { runAgentRun } from '@tradew/ai-core';
 import type { RiskAssessment, Signal, TradeSummary } from '../domain';
 import { EmotionIntelligenceService } from '../intelligence/emotion-intelligence.service';
 import { MarketIntelligenceService, type MarketSnapshot } from '../intelligence/market-intelligence.service';
@@ -8,7 +8,7 @@ import { RiskIntelligenceService } from '../intelligence/risk-intelligence.servi
 import { StrategyEngineService, type StrategyDetection } from '../intelligence/strategy-engine.service';
 import { TrapIntelligenceService } from '../intelligence/trap-intelligence.service';
 import { AgentRegistryService } from './agents/agent-registry.service';
-import type { AgentContext } from './agents/agent.contract';
+import type { AgentContext, LiveBaseRate } from './agents/agent.contract';
 import { CorpusIngestionService } from './knowledge/corpus-ingestion.service';
 import { KnowledgeIndexService } from './knowledge/knowledge-index.service';
 import { ReasoningGraphService } from './knowledge/reasoning-graph.service';
@@ -99,7 +99,53 @@ export class SentinelIntelligenceService implements OnModuleInit, OnModuleDestro
    * auditing the reasoning has everything it needs without a second call.
    */
   async reason(request: ReasonRequest, opts: ReasonOptions = {}): Promise<ReasoningRun> {
-    const runId = randomUUID();
+    // Telemetry wrapper around the real pipeline, split out for the same
+    // reason the orchestrator splits `observe` from `runObservation`: the
+    // instrumentation stays one readable block rather than a `runAgentRun(`
+    // that opens at the top of a long method and closes off-screen.
+    //
+    // This is what makes the ten agents visible. `runAgentRun` opens the
+    // AgentRun row and establishes the ambient correlation context that every
+    // `trackAgent` call inside `AgentRegistryService.run` inherits — without a
+    // run here, those emits have no runId and are dropped by design, which is
+    // exactly why the agents produced no telemetry before.
+    //
+    // `trigger` distinguishes the two ways a run starts, because they answer
+    // different operational questions: 'watch' runs prove the autonomous loop
+    // is alive, 'reason' runs prove the request path is. Collapsing them would
+    // make a dead watch loop invisible behind healthy request traffic.
+    //
+    // The run id comes FROM `runAgentRun` rather than being minted here, so
+    // `ReasoningRun.runId` and the `AgentRun` row are the same identifier. A
+    // caller holding a reasoning run can look up its telemetry by primary key
+    // instead of searching by timestamp.
+    let run!: ReasoningRun;
+    await runAgentRun(
+      {
+        system: 'sentinel',
+        trigger: opts.register === false ? 'watch' : 'reason',
+        symbol: request.symbol ?? 'NIFTY',
+        userId: request.userId,
+      },
+      async (runId) => {
+        run = await this.runReasoning(request, opts, runId);
+        return {
+          // Reported, never assumed: silence is the designed outcome here, and
+          // an operator has to be able to tell a run that stayed quiet from a
+          // run that failed.
+          surfaced: run.synthesis.surfaced,
+          confidence: run.synthesis.confidence,
+        };
+      },
+    );
+    return run;
+  }
+
+  private async runReasoning(
+    request: ReasonRequest,
+    opts: ReasonOptions,
+    runId: string,
+  ): Promise<ReasoningRun> {
     const startedAt = opts.at ?? new Date();
 
     // The corpus is the substrate for every citation. Building it lazily here
@@ -401,7 +447,54 @@ export class SentinelIntelligenceService implements OnModuleInit, OnModuleDestro
       this.logger.warn(`news signals unavailable (non-fatal): ${(err as Error).message}`);
     }
 
-    return { snapshot, signals, detections, risk: riskAssessment, trades };
+    return {
+      snapshot,
+      signals,
+      detections,
+      risk: riskAssessment,
+      trades,
+      baseRates: await this.baseRatesFor(detections),
+    };
+  }
+
+  /**
+   * The Brain's live track record for every pattern this run's detections are
+   * about, resolved once and shared.
+   *
+   * This is the fix for an agent that had no memory. Historical Pattern
+   * Intelligence computed self-similarity over the candles in hand and nothing
+   * else, while the measured, outcome-tagged record of what those same setups
+   * actually did was already sitting in Postgres — read later in the same run,
+   * by `livePerformanceFor`, at the gate. The agent whose entire remit is "what
+   * happened last time" was the one agent that could not see what happened last
+   * time, and the two could disagree inside a single run.
+   *
+   * Resolved HERE rather than inside the agent so the agent keeps its
+   * zero-dependency, zero-I/O property: it reads a map that was handed to it,
+   * exactly as it reads the snapshot.
+   *
+   * Names match `MarketWatchService.validatedSignals` and the orchestrator's
+   * `strategySignals` — `strategyId` with dashes as underscores — because that
+   * is the string `PatternRecognitionService` writes. A mismatch here would not
+   * throw; it would silently return sample 0 for every pattern and look exactly
+   * like a cold database.
+   */
+  private async baseRatesFor(detections: StrategyDetection[]): Promise<ReadonlyMap<string, LiveBaseRate>> {
+    const patterns = [
+      ...new Set(detections.filter((d) => d.validated).map((d) => d.strategyId.replace(/-/g, '_'))),
+    ];
+    if (patterns.length === 0) return new Map();
+
+    try {
+      const results = await this.strategyIntelligence.baseRatesFor(patterns);
+      return new Map(results.map((r) => [r.pattern, r]));
+    } catch (err) {
+      // An empty map reads as "no live record" everywhere it is consumed, which
+      // is the safe direction: a database outage must weaken a verdict, never
+      // strengthen one.
+      this.logger.warn(`base-rate pre-resolution failed (agents will see no live record): ${(err as Error).message}`);
+      return new Map();
+    }
   }
 
   /**
@@ -409,8 +502,10 @@ export class SentinelIntelligenceService implements OnModuleInit, OnModuleDestro
    *
    * Everything except compliance runs concurrently — the agents are pure
    * functions over shared state with no ordering dependency between them, and
-   * `dependsOn` in the plan documents which verdict informs which for a reader
-   * rather than forcing serial execution.
+   * `informedBy` in the plan documents which verdict informs which for a
+   * reader rather than forcing serial execution. The field was called
+   * `dependsOn` until 2026-08-21, which implied an execution DAG this method
+   * has never built; the rename makes the plan say what the code does.
    *
    * Compliance is the exception and genuinely must run last: it audits the
    * text the other nine produced.
@@ -431,6 +526,7 @@ export class SentinelIntelligenceService implements OnModuleInit, OnModuleDestro
       risk: shared.risk,
       trades: request.recentTrades ?? [],
       account: request.account,
+      baseRates: shared.baseRates,
       index: this.index,
       graph: this.graph,
       at,
@@ -528,4 +624,6 @@ export interface SharedMarketState {
   detections: StrategyDetection[];
   risk: RiskAssessment | null;
   trades: TradeSummary[];
+  /** Live base rates for this run's validated detections, keyed by pattern. */
+  baseRates: ReadonlyMap<string, LiveBaseRate>;
 }

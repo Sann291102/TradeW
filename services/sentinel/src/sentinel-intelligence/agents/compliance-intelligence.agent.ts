@@ -12,12 +12,17 @@ import type { AgentId, AgentVerdict } from '../types';
  * Compliance Intelligence — the observation-only boundary, checked in-run.
  *
  * Runs last, over the text the other agents produced, and reports what it
- * found. It is an *auditor*, not the enforcer: the actual enforcement is
- * `enforceVocabulary` applied to the synthesized output on its way out, which
- * rewrites rather than blocks. Two layers, doing different jobs — this one
- * makes a breach visible in the audit trail even when the rewriter silently
- * fixed it, because a model that keeps producing directives is a problem worth
- * seeing rather than one worth papering over.
+ * found. For a phrase the rewriter caught it is an *auditor*: `enforceVocabulary`
+ * has already rewritten the output on its way out, and this agent's job is to
+ * make the breach visible in the audit trail even though it was silently fixed,
+ * because a model that keeps producing directives is a problem worth seeing
+ * rather than one worth papering over.
+ *
+ * For directive language that SURVIVES the rewriter it is an enforcer, and
+ * raises a `residual-directive-language` veto. That case means the rewrite
+ * table has a gap, so nothing downstream can be assumed to have cleaned the
+ * text — and the gate in `SynthesisService` refuses the run outright rather
+ * than weighing this agent's opinion against nine market reads.
  *
  * The stance is always `neutral` or `risk-elevated`, never directional, so a
  * compliance finding can never be mistaken for a market view.
@@ -103,14 +108,35 @@ export class ComplianceIntelligenceAgent implements IntelligenceAgent {
       );
     }
 
+    if (residual.length > 0) {
+      // The veto, not the stance, is what actually stops this run.
+      //
+      // As a stance this finding was `risk-elevated` at 0.9 — and therefore
+      // one weighted opinion among ten, carrying the lowest weight on every
+      // intent (0.2), which meant the agent that exists to hold the
+      // observation-only boundary was the least able to hold it. The stance is
+      // kept for the audit trail and the cross-checker; the enforcement is the
+      // veto, which the synthesis gate honours before it weighs anything.
+      return builder
+        .quality(1)
+        .veto(
+          'residual-directive-language',
+          `${residual.length} agent statement(s) still contained directive language after vocabulary enforcement`,
+        )
+        .conclude(
+          'risk-elevated',
+          0.9,
+          `${residual.length} statement(s) survived vocabulary enforcement with directive language intact — this run's output must not be surfaced as written.`,
+        )
+        .build();
+    }
+
     return builder
       .quality(1)
       .conclude(
-        residual.length > 0 ? 'risk-elevated' : 'neutral',
-        residual.length > 0 ? 0.9 : 0.6,
-        residual.length > 0
-          ? `${residual.length} statement(s) survived vocabulary enforcement with directive language intact — this run's output must not be surfaced as written.`
-          : `${breaches.length} directive phrase(s) were rewritten into observational language before output.`,
+        'neutral',
+        0.6,
+        `${breaches.length} directive phrase(s) were rewritten into observational language before output.`,
       )
       .build();
   }

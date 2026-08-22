@@ -7,4 +7,11 @@ Declarative AI agent definitions — system prompts, allowed tools, guardrail/di
 
 **Hard rule every definition in either subfolder must encode:** no agent output converts into a real order without an explicit, separate user action, and no agent calls `services/trading-engine`. This is a product/compliance boundary, not just a technical one.
 
-**Status:** each subfolder now has a `definitions.json`. The Sentinel agents' actual logic already runs inside `services/sentinel/src/{intelligence,compliance,orchestrator}/` (the declarative files here are the reviewed config, not the runtime); the TradeW AI roster is still being fleshed out and is not yet wired through `services/tradew-ai`. See each subfolder's README.
+**Status (corrected 2026-08-21 — see `../docs/product-architecture/AGENT-LAYERS.md`):**
+
+- **`sentinel/definitions.json` is read by no code.** Sentinel runs no LLM-backed agent on any path. Its reasoning is ten deterministic TypeScript classes in `services/sentinel/src/sentinel-intelligence/agents/` plus six signal engines behind `/observe`. Every field in that file is inert, and the five names in it are not agent ids that run.
+- **`tradew-ai/definitions.json` IS loaded**, by `services/tradew-ai`, which runs its one agent (`assistant-planner`) on `POST /assistant/interpret`. `description` and `guardrails` take effect there.
+- **`allowedTools` and `systemPromptId` are inert in both files.** No tool and no prompt template is registered anywhere in the repo, so the tool registry is always empty and the prompt lookup always misses.
+- **`POST /agents/:name/invoke` does not exist** in either runtime, despite `../ARCHITECTURE.md` §4 specifying it.
+
+The hard rule above still holds and is enforced in code, not by these files: no agent output converts into a real order without an explicit, separate user action, and no agent calls `services/trading-engine`.

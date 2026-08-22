@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { trackAgent } from '@tradew/ai-core';
 import { ComplianceIntelligenceAgent } from './compliance-intelligence.agent';
 import { EmotionIntelligenceAgent } from './emotion-intelligence.agent';
 import { HistoricalPatternIntelligenceAgent } from './historical-pattern-intelligence.agent';
@@ -67,13 +68,36 @@ export class AgentRegistryService {
     return [...this.agents.values()].map((a) => ({ id: a.id, remit: a.remit }));
   }
 
+  /**
+   * Dispatch one subtask, instrumented.
+   *
+   * `trackAgent` emits `thinking` on entry and `sending`/`error` on the way
+   * out, under the agent's own id — the same id the admin portal draws a node
+   * for. Without this the nine agents that run autonomously every sweep
+   * produced no activity row at all, so the orbit showed the `/observe`
+   * engines and nothing else, and a silently broken background agent was
+   * indistinguishable from an idle one.
+   *
+   * The emit is a no-op outside a run: `emitAgentActivity` drops any event
+   * with no ambient runId rather than writing a row with nothing to belong to.
+   * So a unit test constructing a registry by hand pays one null check, and a
+   * real run — which `SentinelIntelligenceService.reason` wraps in
+   * `runAgentRun` — gets a correlated row per agent.
+   *
+   * Note the ordering against the throw path below: `trackAgent` rethrows, so
+   * the `error` transition is emitted BEFORE the abstention is built. An agent
+   * that fails is visible as a failure in the portal even though the run
+   * survives it.
+   */
   async run(context: AgentContext): Promise<AgentVerdict> {
     const agent = this.agents.get(context.subtask.agent);
     if (!agent) {
       return abstention(context, `No agent is registered for id "${context.subtask.agent}".`);
     }
     try {
-      return await agent.reason(context);
+      return await trackAgent(agent.id, async () => agent.reason(context), {
+        detail: context.subtask.question.slice(0, 120),
+      });
     } catch (err) {
       this.logger.error(`agent ${agent.id} threw during ${context.subtask.id}: ${(err as Error).message}`);
       return abstention(context, `The agent failed while reasoning: ${(err as Error).message}`);
@@ -95,5 +119,8 @@ function abstention(context: AgentContext, reason: string): AgentVerdict {
     abstentionReason: reason,
     dataQuality: 0,
     latencyMs: 0,
+    // An agent that could not run found nothing to enforce. A dispatch failure
+    // must not be able to masquerade as a compliance veto.
+    veto: null,
   };
 }

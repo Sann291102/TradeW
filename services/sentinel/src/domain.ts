@@ -7,13 +7,24 @@
  * orchestrator returns lives here.
  */
 
-/** Which intelligence engine produced a signal. */
+/**
+ * Which intelligence engine produced a signal.
+ *
+ * `news` was added 2026-08-21. `NewsIntelligenceService` had been emitting its
+ * one signal under `market-technical` because this union had no member for it,
+ * which cost two things: the cross-validator had to exclude
+ * `news_driven_volatility` BY NAME to stop one piece of evidence voting twice
+ * (once as a technical, once as its own dimension), and news contribution was
+ * unattributable in the signal stream. Both are structural now rather than
+ * maintained by a name list.
+ */
 export type SignalAgent =
   | 'market-technical'
   | 'emotion'
   | 'trap-safety'
   | 'strategy'
-  | 'risk';
+  | 'risk'
+  | 'news';
 
 /** A single deterministic signal computed by an intelligence engine. */
 export interface Signal {

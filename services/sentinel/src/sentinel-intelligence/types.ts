@@ -194,8 +194,21 @@ export interface Subtask {
   rationale: string;
   /** Retrieval hints seeded from the understood request. */
   knowledgeQueries: string[];
-  /** Subtask ids whose verdicts this one wants available first. */
-  dependsOn: string[];
+  /**
+   * Subtask ids whose verdicts inform this one, for a reader of the plan.
+   *
+   * DOCUMENTATION ONLY. It is not an execution DAG and nothing orders agents
+   * by it — every non-compliance agent runs concurrently over shared state
+   * (`SentinelIntelligenceService.runAgents`). Named `informedBy` rather than
+   * `dependsOn` precisely because the old name implied a guarantee the field
+   * has never carried: a reader of `DecompositionPlan` would reasonably assume
+   * ordering, and a future agent that genuinely needed a predecessor's verdict
+   * would look correct and be wrong.
+   *
+   * If an agent ever does need one, the fix is topological batching in
+   * `runAgents`, not a field rename back.
+   */
+  informedBy: string[];
   /** Relative importance when weighting this agent's verdict, 0..1. */
   weight: number;
 }
@@ -272,7 +285,38 @@ export interface AgentVerdict {
   dataQuality: number;
   /** Milliseconds the agent took. */
   latencyMs: number;
+  /**
+   * A finding this agent is empowered to enforce rather than merely report.
+   *
+   * Everything else a verdict carries is advisory: a stance and a confidence
+   * that get weighted, averaged and possibly outvoted. That is the correct
+   * treatment for a market read, and the wrong one for a boundary breach — a
+   * run whose text still contains directive language does not become
+   * surfaceable because nine other agents are confident about the chart.
+   *
+   * Null on every verdict that has nothing to enforce, which today is every
+   * verdict except a compliance verdict that found residual directive
+   * language. The field is required rather than optional so a new agent has to
+   * decide, in code, that it has no veto to raise.
+   */
+  veto: VerdictVeto | null;
 }
+
+/**
+ * A veto raised by an agent, checked before any weighting happens.
+ *
+ * `code` exists so the gate matches on a value rather than on prose. A gate
+ * that keyed off the headline text would silently stop enforcing the moment
+ * somebody improved the wording, which is exactly the kind of failure a
+ * compliance control must not have.
+ */
+export interface VerdictVeto {
+  code: VerdictVetoCode;
+  /** Operator-facing explanation, used verbatim in the silence reason. */
+  reason: string;
+}
+
+export type VerdictVetoCode = 'residual-directive-language';
 
 // ---------------------------------------------------------------------------
 // 5. Cross-checking, conflicts, synthesis

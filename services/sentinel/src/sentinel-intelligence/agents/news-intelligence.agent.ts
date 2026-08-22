@@ -15,11 +15,12 @@ import type { AgentId, AgentVerdict } from '../types';
  *
  * Consumes the signal the existing `NewsIntelligenceService` already produces
  * (`news_driven_volatility`, classified into the 13 standard event categories
- * through the provider layer). Found by NAME rather than by `agent` tag,
- * because that service emits under the `market-technical` tag — the `SignalAgent`
- * union in `domain.ts` has no `news` member and widening it would change a type
- * the existing orchestrator depends on. Matching by name keeps this module
- * strictly additive.
+ * through the provider layer). Still found by NAME rather than by `agent` tag,
+ * but for a different reason than it used to be: that service now emits under
+ * `agent: 'news'` (the `SignalAgent` union gained the member on 2026-08-21), so
+ * the tag would work — this agent reads exactly one named signal and looking it
+ * up by name says so precisely, where a tag filter would silently start picking
+ * up any future news signal as if it were this one.
  *
  * The agent takes a deliberately narrow stance: news is read as a *volatility
  * and reliability* modifier, never as a direction. Inferring "earnings beat, so

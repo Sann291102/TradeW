@@ -19,10 +19,16 @@ import { SI_CONFIG, SentinelIntelligenceConfig } from '../si.config';
  * strategy engine over it — the same declarative, book-derived rules the
  * request path uses — and record every validated detection to the Brain.
  *
- * What it deliberately does NOT do: run the ten reasoning agents. Ten agents
- * against the BM25 corpus, per symbol, per tick, would cost orders of
- * magnitude more than the detection itself and produce reasoning nobody
- * requested. Detection is continuous; reasoning stays on demand.
+ * It also reasons, but only on a setup that is NEW — one that just cleared its
+ * record cooldown — and at most `watchMaxReasoningPerSweep` symbols per sweep.
+ * Running ten agents against the corpus for every symbol on every tick would
+ * cost orders of magnitude more than the detection and would mostly reproduce
+ * the previous minute's verdicts about an unchanged picture.
+ *
+ * The watch list is seeded at boot from `watchSeedSymbols` and extended by
+ * `register()` from the request path. The seed is what makes "watches whether
+ * or not anyone is looking" literally true: without it the list was empty on a
+ * fresh deployment and stayed empty until a human asked about something.
  *
  * ## Why polling, and not a WebSocket
  *
@@ -69,6 +75,8 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
   private reasonedRuns = 0;
   private reasoningSkipped = 0;
   private reasoner: WatchReasoner | null = null;
+  /** Symbols seeded at boot, reported in `status()` so the seed is checkable. */
+  private readonly seeded: string[] = [];
 
   constructor(
     @Inject(SI_CONFIG) private readonly config: SentinelIntelligenceConfig,
@@ -98,6 +106,8 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
           'so the live-performance gate will never accumulate evidence',
       );
     }
+    this.seed();
+
     // Raw `setInterval` under the lifecycle hooks, matching
     // `IngestionQueueService`. `@nestjs/schedule` is deliberately absent from
     // this service: `docs/handbook/09-sentinel-runtime.md` warns it runs the
@@ -106,8 +116,47 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
     this.timer = setInterval(() => void this.sweep(), this.config.watchIntervalMs);
     this.logger.log(
       `market watch ready — interval=${this.config.watchIntervalMs}ms maxSymbols=${this.config.watchMaxSymbols} ` +
-        `ttl=${this.config.watchTtlMs}ms cooldown=${this.config.watchRecordCooldownMs}ms`,
+        `ttl=${this.config.watchTtlMs}ms cooldown=${this.config.watchRecordCooldownMs}ms ` +
+        `seeded=${this.seeded.length ? this.seeded.join('/') : 'none'}`,
     );
+  }
+
+  /**
+   * Put the configured default universe under watch at boot.
+   *
+   * This is what makes the system self-starting. `register()` is only reachable
+   * from a request, so before this the watch list was empty on a fresh
+   * deployment, every sweep exited at the `no-symbols` guard, the nine
+   * autonomous agents never ran, and `PatternRecognitionService` recorded
+   * nothing — which starved the base rates that gate 4 reads, which meant a
+   * directional read could never surface, which meant nothing ever gave a
+   * trader a reason to open the app. A deadlock that fed itself.
+   *
+   * Seeded symbols are ordinary watch entries, not privileged ones. They
+   * expire on the same rule as any other (`expiryFor`), they are evicted by the
+   * same cap, and they cost nothing outside trading hours because `sweep()`
+   * declines with `market-closed` before touching the data API. Registering
+   * outside a session gives them the plain TTL, so a service restarted at
+   * 2am does not hold them overnight — the next boot inside a session seeds
+   * them again.
+   *
+   * Public, and takes `at`, for the same reason `sweep()` is: a boot-time
+   * behaviour that can only be exercised by booting is a behaviour nobody
+   * tests. Production calls it with no argument from `onModuleInit`.
+   */
+  seed(at: Date = new Date()): void {
+    for (const symbol of this.config.watchSeedSymbols) {
+      this.register(symbol, at);
+      // `register` is idempotent; this list must be too, or a second call
+      // would report a doubled seed to an operator reading `status()`.
+      if (this.config.watchEnabled && !this.seeded.includes(symbol)) this.seeded.push(symbol);
+    }
+    if (this.seeded.length === 0) {
+      this.logger.warn(
+        'no seed symbols configured (SI_WATCH_SEED_SYMBOLS is empty) — the watch stays idle until a request ' +
+          'registers a symbol, and the live-performance gate accumulates no evidence until then',
+      );
+    }
   }
 
   onModuleDestroy(): void {
@@ -120,9 +169,10 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
    * Put a symbol under watch, or extend the watch already on it.
    *
    * Called from the request path — `/observe` and `/intelligence/reason` — so
-   * the watch list is exactly the set of charts traders actually have on their
-   * board, not a sweep of the ~219 selectable symbols, which would spend the
-   * Dhan candle budget almost entirely on instruments nobody is looking at.
+   * the watch list is the configured seed universe plus exactly the charts
+   * traders actually have on their board, not a sweep of the ~219 selectable
+   * symbols, which would spend the Dhan candle budget almost entirely on
+   * instruments nobody is looking at.
    *
    * Idempotent: re-registering an already-watched symbol only moves its expiry,
    * so the 45 s dashboard poll creates one watcher, not one per request, and
@@ -387,6 +437,12 @@ export class MarketWatchService implements OnModuleInit, OnModuleDestroy {
       recording: this.patterns !== null,
       tradingTime: this.isTradingTime(at),
       watching: [...this.watched.keys()],
+      /**
+       * The boot seed. An empty array with an empty `watching` is the
+       * cold-start deadlock this service used to sit in permanently; the two
+       * fields together say whether that is configuration or a fault.
+       */
+      seeded: [...this.seeded],
       /** symbol → when its watch lapses, so "watched until the close" is checkable. */
       watchedUntil: Object.fromEntries(
         [...this.watched].map(([symbol, expiresAt]) => [symbol, new Date(expiresAt).toISOString()]),

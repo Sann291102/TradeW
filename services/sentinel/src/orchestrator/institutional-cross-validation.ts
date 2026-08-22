@@ -145,17 +145,18 @@ export function buildInstitutionalCrossValidation(input: CrossValidationInput): 
   };
 }
 
-/** Signal names that are emitted under the technical agent but are NOT technicals. */
-const NON_TECHNICAL_SIGNALS = ['news_driven_volatility'];
-
 function technicalDimension(input: CrossValidationInput): DimensionRead {
-  // `NewsIntelligenceService` emits under `agent: 'market-technical'` (there is
-  // no 'news' member of `SignalAgent`), so filtering on the agent alone would
-  // count the news signal as technical corroboration AND as its own dimension
-  // — one piece of evidence voting twice. Excluded by name.
-  const technical = input.signals.filter(
-    (s) => s.agent === 'market-technical' && s.triggered && !NON_TECHNICAL_SIGNALS.includes(s.name),
-  );
+  // `NewsIntelligenceService` now emits under `agent: 'news'`, so the agent tag
+  // alone is sufficient and correct.
+  //
+  // It used to emit under `market-technical` because `SignalAgent` had no
+  // 'news' member, which forced a `NON_TECHNICAL_SIGNALS` name list here to
+  // stop the news signal counting as technical corroboration AND as its own
+  // dimension — one piece of evidence voting twice. That list is gone: the
+  // exclusion is now structural, and a second news signal added later is
+  // excluded automatically instead of silently double-counting until somebody
+  // remembers to add its name.
+  const technical = input.signals.filter((s) => s.agent === 'market-technical' && s.triggered);
   if (technical.length === 0) {
     return {
       id: 'technical',

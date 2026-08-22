@@ -1,6 +1,20 @@
 import { ToolSpec } from '../providers/types';
 import { RegisteredTool, ToolContext, ToolRegistry } from './interfaces';
 
+/**
+ * ⚠️ INSTANTIATED, NEVER POPULATED.
+ *
+ * The single construction site —
+ * `services/tradew-ai/src/assistant/assistant.service.ts` — creates a
+ * `DefaultToolRegistry` and registers nothing in it. No `register()` call for
+ * a tool exists anywhere in `services/`, `apps/` or `scripts/`, so
+ * `specsFor()` always returns `[]` and every `allowedTools` array in
+ * `agents/sentinel/definitions.json` and `agents/tradew-ai/definitions.json` is inert. No agent in TradeW calls a tool today.
+ *
+ * The class is correct and ready; it simply has no tools yet. See
+ * `docs/product-architecture/AGENT-LAYERS.md`.
+ */
+
 export class DefaultToolRegistry implements ToolRegistry {
   private tools = new Map<string, RegisteredTool>();
 

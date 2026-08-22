@@ -68,6 +68,81 @@ function harness(
   return { service, record, snapshot, scan };
 }
 
+describe('the boot seed', () => {
+  it('puts the configured universe under watch before any request arrives', () => {
+    const h = harness();
+    h.service.seed(TRADING);
+
+    // The whole point: a sweep now finds symbols on a freshly booted instance
+    // that nobody has opened the app against.
+    expect(h.service.status(TRADING).watching).toEqual(['NIFTY', 'BANKNIFTY']);
+    expect(h.service.status(TRADING).seeded).toEqual(['NIFTY', 'BANKNIFTY']);
+  });
+
+  it('actually sweeps on a cold instance — the cold-start deadlock is gone', async () => {
+    const h = harness();
+    h.service.seed(TRADING);
+    const result = await h.service.sweep(TRADING);
+
+    // Before seeding this returned skipped: 'no-symbols' forever on an
+    // untouched deployment, so no occurrence was ever recorded and the
+    // live-performance gate could never accumulate evidence.
+    expect(result.skipped).toBeNull();
+    expect(result.symbols).toBe(2);
+    expect(h.record).toHaveBeenCalled();
+  });
+
+  it('seeds nothing when the seed list is explicitly empty', () => {
+    const h = harness({ config: loadSentinelIntelligenceConfig({ SI_WATCH_SEED_SYMBOLS: '' }) });
+    h.service.seed(TRADING);
+
+    expect(h.service.status(TRADING).watching).toEqual([]);
+    expect(h.service.status(TRADING).seeded).toEqual([]);
+  });
+
+  it('honours a custom seed universe, upper-cased and deduped', () => {
+    const h = harness({
+      config: loadSentinelIntelligenceConfig({ SI_WATCH_SEED_SYMBOLS: 'nifty, RELIANCE ,nifty' }),
+    });
+    h.service.seed(TRADING);
+
+    expect(h.service.status(TRADING).watching).toEqual(['NIFTY', 'RELIANCE']);
+  });
+
+  it('seeds nothing at all when the watch is disabled', () => {
+    const h = harness({ config: loadSentinelIntelligenceConfig({ SI_WATCH_ENABLED: 'false' }) });
+    h.service.seed(TRADING);
+
+    // `register` is a no-op with the watch off, so the seed cannot smuggle a
+    // symbol past the kill switch — and reports nothing seeded, rather than
+    // claiming a seed that did not take.
+    expect(h.service.status(TRADING).watching).toEqual([]);
+    expect(h.service.status(TRADING).seeded).toEqual([]);
+  });
+
+  it('gives seeded symbols no privileges — they lapse on the ordinary rule', () => {
+    const h = harness();
+    h.service.seed(TRADING);
+
+    // Seeded inside the session, so they run to the close and no further —
+    // the same `expiryFor` every registered symbol gets, not a pinned entry.
+    const until = new Date(h.service.status(TRADING).watchedUntil.NIFTY).getTime();
+    expect(until).toBeGreaterThan(TRADING.getTime());
+    expect(until).toBeLessThanOrEqual(AFTER_CLOSE.getTime());
+  });
+
+  it('does not seed twice when the module is re-initialised', () => {
+    const h = harness();
+    h.service.seed(TRADING);
+    h.service.seed(TRADING);
+
+    // `register` is idempotent, so the watch list is right either way; this
+    // pins that the reported seed does not double-count and mislead an operator.
+    expect(h.service.status(TRADING).watching).toEqual(['NIFTY', 'BANKNIFTY']);
+    expect(h.service.status(TRADING).seeded).toEqual(['NIFTY', 'BANKNIFTY']);
+  });
+});
+
 describe('the continuous market watch', () => {
   let h: ReturnType<typeof harness>;
   beforeEach(() => {
