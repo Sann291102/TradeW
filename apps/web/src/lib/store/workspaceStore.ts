@@ -273,7 +273,35 @@ function seedNotifications(): NotificationItem[] {
 // Theme
 // ---------------------------------------------------------------------------
 
-export type ThemeName = 'dark' | 'light' | 'high-contrast';
+/**
+ * `system` was added alongside the Settings → Appearance screen. It is a
+ * PREFERENCE, not a palette: nothing renders "system", it resolves to `dark`
+ * or `light` against `prefers-color-scheme` before `data-theme` is written
+ * (see `resolveTheme` below and its two callers — AppFrame at runtime and the
+ * inline script in app/layout.tsx pre-hydration).
+ *
+ * `high-contrast` is kept. It is a real accessibility theme with its own token
+ * set and predates the settings screen; dropping it to match a three-option
+ * mockup would be a regression, so Appearance shows four choices.
+ */
+export type ThemeName = 'dark' | 'light' | 'system' | 'high-contrast';
+
+/** The palette actually painted for a given preference. */
+export type ResolvedTheme = 'dark' | 'light' | 'high-contrast';
+
+/**
+ * Resolve a theme preference to the palette to paint.
+ *
+ * Defaults to `dark` when the OS preference cannot be read (SSR, or a browser
+ * that does not answer the query) because TradeW is dark-first — the same
+ * default the pre-hydration script in app/layout.tsx uses, so the two never
+ * disagree and cause a flash.
+ */
+export function resolveTheme(theme: ThemeName): ResolvedTheme {
+  if (theme !== 'system') return theme;
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'dark';
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
 
 // ---------------------------------------------------------------------------
 // Store

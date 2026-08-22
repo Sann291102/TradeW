@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { API_URL, api, setSession } from '@/lib/api';
 import { useSessionStore } from '@/lib/store/sessionStore';
+import { useSettingsStore } from '@/lib/store/settingsStore';
 import { CandleLoader } from '@tradew/ui';
 
 /**
@@ -99,9 +100,9 @@ export function AuthPanel() {
    * protocol-relative URL that a naive "starts with /" check would accept and
    * the browser would treat as another origin, so it is rejected explicitly.
    */
-  function destination(): string {
+  function destination(): string | null {
     const next = new URLSearchParams(window.location.search).get('next');
-    if (!next || !next.startsWith('/') || next.startsWith('//')) return '/dashboard';
+    if (!next || !next.startsWith('/') || next.startsWith('//')) return null;
     return next;
   }
 
@@ -110,7 +111,27 @@ export function AuthPanel() {
     // AppFrame's session init already ran on mount, before this token existed.
     // Re-init explicitly so the shell shows the real identity immediately.
     await useSessionStore.getState().init();
-    router.push(destination());
+
+    /**
+     * Where to land.
+     *
+     * An explicit `?next=` always wins: someone who deep-linked to /sentinel
+     * and was bounced by the auth gate is trying to reach that page, not their
+     * default. Only when there is no such destination does the account's
+     * landing-page preference apply.
+     *
+     * The preferences are loaded here, before navigating, rather than left to
+     * SettingsEffects: by the time that effect has fetched them the router has
+     * already gone somewhere, and a redirect a beat after arrival is worse than
+     * a slightly later first paint.
+     */
+    const explicit = destination();
+    if (explicit) {
+      router.push(explicit);
+      return;
+    }
+    await useSettingsStore.getState().hydrate();
+    router.push(useSettingsStore.getState().prefs.general.landingRoute || '/dashboard');
   }
 
   async function submitEmail(e: React.FormEvent) {

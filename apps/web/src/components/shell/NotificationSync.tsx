@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { useWorkspaceStore } from '@/lib/store/workspaceStore';
+import { useSettingsStore } from '@/lib/store/settingsStore';
 import { playNotificationSound } from '@/lib/notificationSound';
 import { useNotifications } from '@/lib/query/useNotifications';
 
@@ -72,7 +73,14 @@ export function NotificationSync() {
     // operator hasn't muted. Read the flag at ring-time so a mid-session mute
     // takes effect immediately.
     if (primed.current && fresh.length > 0) {
-      if (!useWorkspaceStore.getState().notificationsMuted) playNotificationSound();
+      // Two independent mutes, and both have to be off for a chime. The
+      // workspace store's is the per-device one behind the top bar's speaker
+      // button; the settings store's is the account preference that follows
+      // the user between devices. Read at ring-time so a mid-session change to
+      // either takes effect on the next notification, not the next reload.
+      const deviceMuted = useWorkspaceStore.getState().notificationsMuted;
+      const soundEnabled = useSettingsStore.getState().prefs.notifications.sound;
+      if (!deviceMuted && soundEnabled) playNotificationSound();
     }
     primed.current = true;
   }, [authenticated, items, setNotifications]);

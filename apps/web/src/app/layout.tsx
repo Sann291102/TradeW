@@ -14,7 +14,19 @@ export const metadata = {
 // string, no interpolated data, so inlining it is safe (the standard
 // next-themes-style no-FOUC pattern). Falls back to 'dark' (this app's
 // default) if nothing is stored yet or JSON parsing fails for any reason.
-const THEME_INIT_SCRIPT = `(function(){try{var r=localStorage.getItem('tradew-workspace-v1');var t='dark';if(r){var p=JSON.parse(r);if(p&&p.state&&p.state.theme)t=p.state.theme;}document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`;
+//
+// It also resolves the 'system' choice here rather than waiting for React,
+// using the same rule as `resolveTheme()` in lib/store/workspaceStore.ts
+// (prefers-color-scheme: light -> light, everything else -> dark). If the two
+// ever disagree the result is precisely the flash this script exists to
+// prevent, so change them together.
+//
+// The stored candle colours are applied in the same pass. They live in the
+// server-backed preference document, but a copy is mirrored to localStorage
+// (see SettingsEffects) for exactly this reason: the chart mounts long before
+// GET /auth/preferences resolves, and repainting every candle a second later
+// is worse than the one-frame-late colours it replaces.
+const THEME_INIT_SCRIPT = `(function(){try{var r=localStorage.getItem('tradew-workspace-v1');var t='dark';if(r){var p=JSON.parse(r);if(p&&p.state&&p.state.theme)t=p.state.theme;}if(t==='system'){t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark';}document.documentElement.setAttribute('data-theme',t);var c=localStorage.getItem('tradew-candle-colors-v1');if(c){var d=JSON.parse(c);if(d&&/^#[0-9a-fA-F]{3,6}$/.test(d.up||'')){document.documentElement.style.setProperty('--candle-up',d.up);document.documentElement.setAttribute('data-candle-up',d.up);}if(d&&/^#[0-9a-fA-F]{3,6}$/.test(d.down||'')){document.documentElement.style.setProperty('--candle-down',d.down);document.documentElement.setAttribute('data-candle-down',d.down);}}}catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   // Dark-first default (Genesis brief) via the static attribute below; the

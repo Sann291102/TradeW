@@ -256,3 +256,175 @@ export const ExpandIcon = (p: IconProps) => (
     <path d="M9 4H4v5M15 4h5v5M15 20h5v-5M9 20H4v-5" />
   </svg>
 );
+
+/* --------------------- Canonical sidebar (2026-08-22) -------------------- */
+
+/** Orders — a document with lines, the order book. */
+export const OrdersIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M6 3.5h9L19 7v13.5H6z" strokeLinejoin="round" />
+    <path d="M14.5 3.5V7H19" />
+    <path d="M9 12h7M9 15.5h7" />
+  </svg>
+);
+
+/** Positions — a map pin: where you currently stand in the market. */
+export const PositionsIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M12 21s6-5.4 6-10a6 6 0 1 0-12 0c0 4.6 6 10 6 10z" strokeLinejoin="round" />
+    <circle cx="12" cy="11" r="2.2" />
+  </svg>
+);
+
+/** Backtesting — a clock turned back over a chart line. */
+export const BacktestingIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1" />
+    <path d="M3.5 4.5v4h4" />
+    <path d="M12 8v4.5l3 1.8" />
+  </svg>
+);
+
+/** Reports — a bar chart on a page. */
+export const ReportsIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M5.5 3.5h13v17h-13z" strokeLinejoin="round" />
+    <path d="M9 16v-3.5M12 16V9M15 16v-5.5" />
+  </svg>
+);
+
+/** Alerts — a bell with a ring, distinct from the plain BellIcon used by the
+ *  top bar so the sidebar entry and the notification button do not read as the
+ *  same control. */
+export const AlertsIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M7 10a5 5 0 0 1 10 0c0 3.2.8 4.6 1.5 5.5h-13C6.2 14.6 7 13.2 7 10z" strokeLinejoin="round" />
+    <path d="M10.2 18.5a2 2 0 0 0 3.6 0" />
+  </svg>
+);
+
+/** Calendar. */
+export const CalendarIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <rect x="3.5" y="5" width="17" height="15" rx="1.5" />
+    <path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" />
+  </svg>
+);
+
+/** Community — two people. */
+export const CommunityIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="9" cy="8.5" r="3" />
+    <path d="M3.5 19.5c0-3 2.5-5 5.5-5s5.5 2 5.5 5" />
+    <path d="M16 6.2a3 3 0 0 1 0 5.6M17 14.8c2 .6 3.5 2.4 3.5 4.7" />
+  </svg>
+);
+
+/** Shield — privacy & security. */
+export const ShieldIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M12 3.5 19 6v5.5c0 4.3-3 7.4-7 9-4-1.6-7-4.7-7-9V6l7-2.5z" strokeLinejoin="round" />
+  </svg>
+);
+
+/** Plug — integrations. */
+export const PlugIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M9 3.5v5M15 3.5v5" />
+    <path d="M6.5 8.5h11v3a5.5 5.5 0 0 1-11 0v-3z" strokeLinejoin="round" />
+    <path d="M12 17v3.5" />
+  </svg>
+);
+
+/** Crown — subscription / plan. */
+export const CrownIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M4 17.5 5.5 7l4.5 4L12 5.5 14 11l4.5-4L20 17.5z" strokeLinejoin="round" />
+    <path d="M4 20h16" />
+  </svg>
+);
+
+/** Question mark in a circle — help & support. */
+export const HelpIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M9.7 9.6a2.4 2.4 0 0 1 4.6.8c0 1.6-2.3 1.9-2.3 3.3" />
+    <path d="M12 17.2h.01" />
+  </svg>
+);
+
+/** Scales — legal. */
+export const LegalIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M12 4.5v15M7 19.5h10" />
+    <path d="M12 7 4.5 9m0 0 2.2 4.5H2.3L4.5 9zM12 7l7.5 2m0 0 2.2 4.5h-4.4L19.5 9z" strokeLinejoin="round" />
+  </svg>
+);
+
+/** "i" in a circle — about. */
+export const InfoIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 11v5.5M12 7.7h.01" />
+  </svg>
+);
+
+/** Sliders — preferences. */
+export const SlidersIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M5 6.5h14M5 12h14M5 17.5h14" />
+    <circle cx="9" cy="6.5" r="1.8" />
+    <circle cx="15" cy="12" r="1.8" />
+    <circle cx="8" cy="17.5" r="1.8" />
+  </svg>
+);
+
+/** Paintbrush — appearance. */
+export const PaletteIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-1.4-1-1.7-1-2.7 0-.8.7-1.4 1.6-1.4h1.7A4.4 4.4 0 0 0 20.5 10c0-3.6-3.8-6.5-8.5-6.5z" strokeLinejoin="round" />
+    <circle cx="8" cy="10" r="1.1" />
+    <circle cx="12" cy="7.6" r="1.1" />
+    <circle cx="16" cy="10" r="1.1" />
+  </svg>
+);
+
+/** Download / export. */
+export const DownloadIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M12 4v10M8 10.5l4 4 4-4" />
+    <path d="M4.5 18.5h15" />
+  </svg>
+);
+
+/** Trash — destructive actions. */
+export const TrashIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M4.5 6.5h15M9.5 6.5V4.5h5v2" />
+    <path d="M6.5 6.5 7.5 20h9l1-13.5" strokeLinejoin="round" />
+  </svg>
+);
+
+/** Key — password / credentials. */
+export const KeyIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="8" cy="12" r="3.5" />
+    <path d="M11.5 12H20M17 12v3M14.5 12v2.2" />
+  </svg>
+);
+
+/** Monitor — active sessions / devices. */
+export const DeviceIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <rect x="3.5" y="5" width="17" height="11" rx="1.5" />
+    <path d="M9 19.5h6M12 16v3.5" />
+  </svg>
+);
+
+/** Book — documentation / how to use. */
+export const BookIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M4.5 5.5A2 2 0 0 1 6.5 3.5H19v14H6.5a2 2 0 0 0-2 2v-14z" strokeLinejoin="round" />
+    <path d="M4.5 19.5A2 2 0 0 1 6.5 17.5H19v3H6.5a2 2 0 0 0-2 -1z" strokeLinejoin="round" />
+  </svg>
+);
