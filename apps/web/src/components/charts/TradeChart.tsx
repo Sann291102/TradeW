@@ -17,6 +17,7 @@ import type { Candle } from '@tradew/types';
 import { cn } from '@tradew/ui';
 import { candleTime, type ChartDrawing } from '@/lib/charts/drawings';
 import { ChartDrawingsPrimitive } from './drawingPrimitive';
+import { useSettingsStore } from '@/lib/store/settingsStore';
 
 /** A horizontal marker drawn across the chart — used for strategy strikes. */
 export interface ChartPriceLine {
@@ -152,6 +153,8 @@ export function TradeChart({
   /** Read once at attach time without making `drawings` a mount dependency. */
   const drawingsRef = useRef<ChartDrawing[] | undefined>(drawings);
   drawingsRef.current = drawings;
+  /** The live chart's theme/chrome applier, published by the mount effect. */
+  const applyThemeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -160,30 +163,51 @@ export function TradeChart({
     const applyTheme = () => {
       const chart = chartRef.current;
       if (!chart) return;
+      // Chart chrome the user can switch off in Settings -> Appearance. Read
+      // from the store at apply-time rather than closed over, for the same
+      // reason the colours are read from tokens: this function is also the
+      // MutationObserver callback, and it must report current state whenever
+      // it runs.
+      const chrome = useSettingsStore.getState().prefs.appearance;
+      const gridColor = chrome.showChartGrid ? readToken('--border') : 'transparent';
       chart.applyOptions({
         layout: {
           background: { type: ColorType.Solid, color: 'transparent' },
           textColor: readToken('--muted'),
         },
         grid: {
-          vertLines: { color: readToken('--border') },
-          horzLines: { color: readToken('--border') },
+          vertLines: { color: gridColor, visible: chrome.showChartGrid },
+          horzLines: { color: gridColor, visible: chrome.showChartGrid },
         },
+        crosshair: { mode: chrome.showCrosshair ? CrosshairMode.Normal : CrosshairMode.Hidden },
         rightPriceScale: { borderColor: readToken('--border2') },
         timeScale: { borderColor: readToken('--border2') },
       });
+      // `--candle-up` / `--candle-down` default to `--green` / `--red` in
+      // tokens.css and are overridden inline on <html> when the account has
+      // picked its own colours. Reading them here — rather than the direction
+      // tokens directly — is what makes Settings -> Appearance reach a real
+      // chart, and it is why this observer also watches the two data-candle-*
+      // attributes below.
+      const upColor = readToken('--candle-up') || readToken('--green');
+      const downColor = readToken('--candle-down') || readToken('--red');
       if (seriesType === 'candlestick') {
         (seriesRef.current as ISeriesApi<'Candlestick'> | null)?.applyOptions({
-          upColor: readToken('--green'),
-          downColor: readToken('--red'),
-          borderVisible: false,
-          wickUpColor: readToken('--green'),
-          wickDownColor: readToken('--red'),
+          // Hollow up-candles: a transparent body with a coloured border, the
+          // convention many desktop terminals use to make direction readable
+          // without relying on fill alone.
+          upColor: chrome.hollowUpCandles ? 'transparent' : upColor,
+          downColor,
+          borderVisible: chrome.hollowUpCandles,
+          borderUpColor: upColor,
+          borderDownColor: downColor,
+          wickUpColor: upColor,
+          wickDownColor: downColor,
         });
       } else {
         const up = lastDirectionRef.current !== 'down';
         (seriesRef.current as ISeriesApi<'Area'> | null)?.applyOptions({
-          lineColor: readToken(up ? '--green' : '--red'),
+          lineColor: up ? upColor : downColor,
           topColor: readToken(up ? '--green-bg' : '--red-bg'),
           bottomColor: 'transparent',
           lineWidth: 2,
@@ -213,6 +237,11 @@ export function TradeChart({
     drawingsPrimitive.setDrawings(drawingsRef.current ?? []);
 
     applyTheme();
+    // Published so the preference effect below can re-run it without
+    // recreating the chart. A ref rather than state: assigning it must not
+    // re-render, and it has to be readable by an effect that deliberately does
+    // not depend on the chart's mount cycle.
+    applyThemeRef.current = applyTheme;
 
     const resizeObserver = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width;
@@ -221,7 +250,15 @@ export function TradeChart({
     resizeObserver.observe(el);
 
     const themeObserver = new MutationObserver(applyTheme);
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    // `data-candle-up`/`data-candle-down` mirror the inline custom properties
+    // written by lib/settings/apply.ts. The attributes exist ONLY so this
+    // observer has something to filter on — a MutationObserver cannot watch a
+    // single CSS custom property, and watching `style` would wake on every
+    // unrelated inline-style write to <html>.
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme', 'data-candle-up', 'data-candle-down'],
+    });
 
     return () => {
       resizeObserver.disconnect();
@@ -233,6 +270,7 @@ export function TradeChart({
       chartRef.current = null;
       seriesRef.current = null;
       drawingsPrimitiveRef.current = null;
+      applyThemeRef.current = null;
     };
     // height intentionally excluded — resized via ResizeObserver, not re-init.
     // seriesType IS a dependency — switching it tears down and recreates the
@@ -240,6 +278,24 @@ export function TradeChart({
     // not something that needs an in-place series swap).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seriesType]);
+
+  /**
+   * Re-apply chart chrome when the account's appearance settings change.
+   *
+   * The COLOURS arrive through the MutationObserver above (they are written to
+   * <html> as custom properties, which is also what makes them survive a chart
+   * remount). The three booleans have no DOM representation — nothing would
+   * paint differently for a grid toggle — so they are subscribed to here and
+   * pushed through the same applier, which keeps one code path deciding what
+   * the chart looks like.
+   */
+  const chartChrome = useSettingsStore((s) => {
+    const a = s.prefs.appearance;
+    return `${a.showChartGrid}|${a.showCrosshair}|${a.hollowUpCandles}`;
+  });
+  useEffect(() => {
+    applyThemeRef.current?.();
+  }, [chartChrome]);
 
   // The chart itself is created once on mount, so switching timeframe has to
   // re-apply the crosshair formatter — otherwise a 15m chart would keep

@@ -13,6 +13,7 @@ import {
 import { useDisciplineStore } from '@/lib/store/disciplineStore';
 import { FrictionPrompt } from '@/components/discipline/FrictionPrompt';
 import type { DockPanelContentProps } from './types';
+import { useSettingsStore } from '@/lib/store/settingsStore';
 
 export interface OrdersPanelProps extends DockPanelContentProps {
   /** Instrument being traded. Its exchange-defined lot size drives quantity
@@ -66,11 +67,22 @@ export function OrdersPanel({
   orderSymbol,
   currentPrice,
 }: OrdersPanelProps) {
+  /**
+   * Ticket defaults from Settings -> Trading, read once for the initial state.
+   *
+   * `useState(initialiser)` deliberately, not an effect that writes them in:
+   * these seed the form, they do not own it. A trader who changes the product
+   * on the ticket and then has the account preference load a moment later must
+   * not have their choice overwritten — an effect would do exactly that.
+   */
+  const tradingPrefs = useSettingsStore((s) => s.prefs.trading);
   const [side, setSide] = useState<OrderSide>(defaultSide ?? 'BUY');
   const [orderType, setOrderType] = useState<OrderType>('MARKET');
-  const [product, setProduct] = useState<ProductType>('MIS');
-  const [qtyUnit, setQtyUnit] = useState<QtyUnit>('lots');
-  const [qtyInput, setQtyInput] = useState('1');
+  const [product, setProduct] = useState<ProductType>(() => tradingPrefs.defaultProductType);
+  const [qtyUnit, setQtyUnit] = useState<QtyUnit>(() => tradingPrefs.defaultQuantityUnit);
+  const [qtyInput, setQtyInput] = useState(() => String(tradingPrefs.defaultLots));
+  /** The order awaiting the extra confirmation step, when that is switched on. */
+  const [pendingConfirm, setPendingConfirm] = useState<PlaceOrderWithOverride | null>(null);
   const [limitPrice, setLimitPrice] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -187,7 +199,7 @@ export function OrdersPanel({
     );
   }
 
-  async function submit() {
+  function submit() {
     if (disabledReason || !placementSymbol) return;
     const request: PlaceOrderWithOverride = {
       symbol: placementSymbol,
@@ -197,6 +209,25 @@ export function OrdersPanel({
       productType: product,
       ...(orderType === 'LIMIT' ? { price: Number(limitPrice) } : {}),
     };
+    /**
+     * The account's optional confirmation step.
+     *
+     * It ADDS friction and nothing else. Every existing safeguard — the
+     * discipline engine, the lot-size and margin checks above, and every
+     * server-side validation in `/sim/orders` — runs identically whether this
+     * is on or off, because they all live downstream of `place()`, which this
+     * only defers. Read from the store at click time so switching it on in
+     * another tab applies to the next order rather than the next reload.
+     */
+    if (useSettingsStore.getState().prefs.trading.confirmBeforeOrder) {
+      setPendingConfirm(request);
+      setResult(null);
+      return;
+    }
+    void send(request);
+  }
+
+  async function send(request: PlaceOrderWithOverride) {
     setSubmitting(true);
     setResult(null);
     try {
@@ -374,6 +405,90 @@ export function OrdersPanel({
         <p className="mt-2 text-center text-[10px] text-faint">
           {disabledReason ?? 'Simulated execution against live market prices — no real money.'}
         </p>
+      )}
+
+      {/*
+        The optional confirmation step (Settings -> Trading). Rendered inside
+        the panel rather than as a full-screen overlay: it is a deliberate
+        pause on this ticket, not an interruption of the whole workspace the
+        way a discipline breach is.
+
+        It is NOT a safety control and does not present itself as one — the
+        discipline prompt below is the control, and it fires regardless of
+        this.
+      */}
+      {pendingConfirm && (
+        <div
+          role="dialog"
+          aria-modal="false"
+          aria-label="Confirm order"
+          className="mt-3 rounded-lg border border-amber bg-amber-bg p-3"
+        >
+          <div className="text-xs font-bold text-text">Confirm this order</div>
+          <dl className="mt-2 space-y-1 text-[11px]">
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted">Instrument</dt>
+              <dd className="font-mono font-semibold text-text">{pendingConfirm.symbol}</dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted">Side</dt>
+              <dd className={cn('font-bold', pendingConfirm.side === 'BUY' ? 'text-up' : 'text-down')}>
+                {pendingConfirm.side}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted">Quantity</dt>
+              <dd className="font-mono font-semibold text-text">
+                {pendingConfirm.quantity} ({Math.round(pendingConfirm.quantity / lotSize)} lot
+                {Math.round(pendingConfirm.quantity / lotSize) === 1 ? '' : 's'})
+              </dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted">Type / product</dt>
+              <dd className="font-semibold text-text">
+                {pendingConfirm.type} ·{' '}
+                {PRODUCTS.find((p) => p.value === pendingConfirm.productType)?.label ?? pendingConfirm.productType}
+              </dd>
+            </div>
+            {pendingConfirm.price != null && (
+              <div className="flex justify-between gap-2">
+                <dt className="text-muted">Limit price</dt>
+                <dd className="font-mono font-semibold text-text">{fmt(pendingConfirm.price)}</dd>
+              </div>
+            )}
+            {orderValue != null && (
+              <div className="flex justify-between gap-2">
+                <dt className="text-muted">{shortOptionMargin != null ? 'Premium received' : 'Order value'}</dt>
+                <dd className="font-mono font-semibold text-text">{fmt(orderValue)}</dd>
+              </div>
+            )}
+          </dl>
+          <div className="mt-2.5 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setPendingConfirm(null)}
+              className="rounded-lg border border-border2 py-1.5 text-xs font-bold text-text transition-colors hover:bg-hover"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => {
+                const request = pendingConfirm;
+                setPendingConfirm(null);
+                void send(request);
+              }}
+              className={cn(
+                'rounded-lg py-1.5 text-xs font-bold text-white transition-opacity',
+                pendingConfirm.side === 'BUY' ? 'bg-up' : 'bg-down',
+                submitting && 'cursor-not-allowed opacity-50',
+              )}
+            >
+              {submitting ? 'Placing…' : `Place ${pendingConfirm.side}`}
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Fixed-position overlay, so its position in this tree doesn't matter —

@@ -8,6 +8,7 @@ import {
   type NotificationItem,
 } from '@/lib/notifications';
 import { qk } from './keys';
+import { useSettingsStore } from '@/lib/store/settingsStore';
 
 /**
  * The notification list, fetched once and shared by the bell and the page.
@@ -29,12 +30,31 @@ export const NOTIFICATIONS_LIMIT = 100;
 export const NOTIFICATIONS_POLL_MS = 30_000;
 
 export function useNotifications(enabled: boolean) {
+  /**
+   * Categories the account has muted in Settings -> Notifications.
+   *
+   * Filtering happens HERE, in `select`, rather than at each call site, so the
+   * bell badge, the notification drawer and the Alerts page cannot disagree
+   * about what "muted" means. `select` transforms what consumers see without
+   * touching the cached array, which is what the optimistic mark-read
+   * mutations below write into — so muting never corrupts the cache.
+   *
+   * Muting is a DELIVERY filter, not a subscription: the server has no
+   * per-category subscription table, so the event is still recorded on the
+   * account. The Settings page says exactly that rather than implying the
+   * notification was never generated.
+   */
+  const categories = useSettingsStore((s) => s.prefs.notifications.categories);
+
   return useQuery({
     queryKey: qk.notifications.list(NOTIFICATIONS_LIMIT),
     queryFn: () => fetchNotifications(NOTIFICATIONS_LIMIT),
     enabled,
     staleTime: NOTIFICATIONS_POLL_MS,
     refetchInterval: enabled ? NOTIFICATIONS_POLL_MS : (false as const),
+    // An unknown category (a producer newer than this build) is shown rather
+        // than hidden: failing open is the right direction for an alert.
+    select: (rows: NotificationItem[]) => rows.filter((n) => categories[n.category] !== false),
   });
 }
 

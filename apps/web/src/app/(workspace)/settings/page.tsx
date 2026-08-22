@@ -1,7 +1,7 @@
-import { SettingsClient } from './SettingsClient';
+import { SettingsOverview } from './SettingsOverview';
 
-export const metadata = { title: 'Settings & Plans — TradeW' };
+export const metadata = { title: 'Settings — TradeW' };
 
 export default function SettingsPage() {
-  return <SettingsClient />;
+  return <SettingsOverview />;
 }
