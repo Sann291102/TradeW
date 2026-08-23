@@ -1,0 +1,761 @@
+<title>TradeW Cutting Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+/* One committed visual world: a grading suite. Every colour painted explicitly —
+   the stage must stay TradeW-dark whatever the viewer's OS theme says. */
+:root{
+  --ink:#05080e; --ink2:#0a0f1a; --rule:#18212f; --rule2:#232f44;
+  --stage:#0d1524; --card:#131e33; --cardEdge:#1e2c47;
+  --thread:#14b8a6; --threadDim:#0e7a70;
+  --text:#e2e8f0; --muted:#8ea0c4; --faint:#64769c;
+  --red:#ef5350; --amber:#f0a53c; --green:#26a69a;
+  --sans:'Archivo',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,'Cascadia Code',monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ink);color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1460px;margin:0 auto;padding:26px 22px 60px;
+  display:grid;grid-template-columns:minmax(0,1fr) 348px;gap:30px;align-items:start}
+@media (max-width:1040px){.wrap{grid-template-columns:minmax(0,1fr);padding:18px 14px 44px}}
+
+.mast{grid-column:1/-1;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;
+  border-bottom:1px solid var(--rule);padding-bottom:16px}
+.mast h1{font-size:25px;font-weight:800;letter-spacing:-.025em;margin:0}
+.mast .dot{width:7px;height:7px;border-radius:50%;background:var(--thread);
+  box-shadow:0 0 12px var(--thread);align-self:center}
+.mast p{margin:0;color:var(--muted);font-size:13.5px;max-width:64ch;line-height:1.5}
+
+.viewer{min-width:0}
+.frame{position:relative;background:#000;border:1px solid var(--rule2);border-radius:13px;
+  overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.7);display:flex;justify-content:center}
+#fit{position:relative;overflow:hidden}
+#stage{position:absolute;top:0;left:0;transform-origin:0 0;background:var(--stage);overflow:hidden}
+
+.bar{margin-top:13px;display:flex;align-items:center;gap:11px;flex-wrap:wrap}
+button{font-family:var(--sans);cursor:pointer}
+.btn{background:var(--ink2);color:var(--text);border:1px solid var(--rule2);border-radius:8px;
+  padding:9px 15px;font-size:13px;font-weight:600;transition:border-color .15s,color .15s,background .15s}
+.btn:hover{border-color:var(--thread);color:#fff}
+.btn:focus-visible{outline:2px solid var(--thread);outline-offset:2px}
+.btn.primary{background:var(--thread);border-color:var(--thread);color:#04201d}
+.btn.primary:hover{background:#19cfbb}
+.seg{display:inline-flex;border:1px solid var(--rule2);border-radius:8px;overflow:hidden}
+.seg button{background:var(--ink2);color:var(--muted);border:0;padding:9px 13px;font-size:12px;
+  font-weight:600;font-family:var(--mono);letter-spacing:.02em}
+.seg button[aria-pressed="true"]{background:var(--thread);color:#04201d}
+.tc{font-family:var(--mono);font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.tc b{color:var(--text);font-weight:500}
+
+.scrub{position:relative;margin-top:11px;height:34px}
+.track{position:absolute;inset:13px 0 auto;height:5px;background:var(--rule);border-radius:3px;overflow:hidden}
+.fill{position:absolute;inset:0 auto 0 0;width:0;background:var(--thread)}
+.marks{position:absolute;inset:0;pointer-events:none}
+.mark{position:absolute;top:7px;width:1px;height:17px;background:var(--rule2)}
+.mark span{position:absolute;top:20px;left:0;font-family:var(--mono);font-size:9px;color:var(--faint);
+  white-space:nowrap;letter-spacing:.03em;text-transform:uppercase}
+#range{position:absolute;inset:7px 0 auto;width:100%;height:18px;margin:0;opacity:0;cursor:pointer}
+#range:focus-visible{opacity:.001;outline:2px solid var(--thread)}
+
+.rail{display:flex;flex-direction:column;gap:9px;min-width:0}
+.railhead{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--faint);margin:2px 0 2px}
+.reel{display:block;width:100%;text-align:left;background:var(--ink2);border:1px solid var(--rule);
+  border-left:2px solid var(--rule2);border-radius:0 9px 9px 0;padding:12px 14px;
+  transition:border-color .15s,background .15s}
+.reel:hover{background:#0e1524;border-left-color:var(--threadDim)}
+.reel[aria-current="true"]{border-left-color:var(--thread);background:#101a2b}
+.reel .n{font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:.1em}
+.reel[aria-current="true"] .n{color:var(--thread)}
+.reel .t{font-size:14.5px;font-weight:700;letter-spacing:-.015em;margin:3px 0 4px;color:var(--text)}
+.reel .d{font-size:12px;color:var(--muted);line-height:1.45}
+.reel .m{font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:6px}
+.spec{border:1px solid var(--rule);border-radius:10px;padding:14px;background:var(--ink2);margin-top:5px}
+.spec h3{margin:0 0 9px;font-size:10.5px;font-family:var(--mono);letter-spacing:.12em;
+  text-transform:uppercase;color:var(--faint);font-weight:500}
+.note{font-size:11.5px;color:var(--muted);line-height:1.6;margin:0}
+.note+.note{margin-top:9px;padding-top:9px;border-top:1px solid var(--rule)}
+.note b{color:var(--text);font-weight:600}
+.note code{font-family:var(--mono);font-size:10.5px;color:var(--thread)}
+kbd{font-family:var(--mono);font-size:10.5px;background:var(--stage);border:1px solid var(--rule2);
+  border-radius:4px;padding:1px 5px;color:var(--text)}
+
+body.clean .wrap{grid-template-columns:minmax(0,1fr);max-width:none;padding:0}
+body.clean .mast,body.clean .rail,body.clean .bar,body.clean .scrub{display:none}
+body.clean .frame{border:0;border-radius:0;box-shadow:none;height:100vh;align-items:center}
+body.clean .exit{display:block}
+.exit{display:none;position:fixed;top:12px;right:12px;z-index:9;background:rgba(5,8,14,.85);
+  border:1px solid var(--rule2);color:var(--muted);border-radius:7px;padding:6px 11px;font-size:11.5px}
+.exit:hover{color:#fff;border-color:var(--thread)}
+
+/* ═══════ STAGE ═══════ */
+#fx{position:absolute;inset:0;pointer-events:none}
+.sc{position:absolute;inset:0;display:none}
+.sc.on{display:block}
+.cam{position:absolute;inset:0;transform-origin:50% 50%}
+.vig{position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse 72% 58% at 50% 46%,transparent 26%,rgba(0,0,0,.8) 100%)}
+
+.orb{position:absolute;border-radius:50%;
+  background:radial-gradient(circle at 36% 32%,#c9fff5 0%,#6ee7d7 18%,#14b8a6 46%,#0a6157 78%,#04302c 100%)}
+.halo{position:absolute;border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle,rgba(20,184,166,.4) 0%,rgba(20,184,166,.09) 40%,transparent 66%)}
+
+/* glass panel — real product surface, lifted */
+.gp{position:absolute;left:0;top:0;border-radius:20px;transform-origin:50% 50%;
+  background:linear-gradient(158deg,rgba(30,45,74,.94) 0%,rgba(17,27,46,.96) 58%,rgba(13,21,36,.97) 100%);
+  border:1px solid rgba(120,160,200,.16);
+  box-shadow:0 30px 70px rgba(0,0,0,.72),inset 0 1px 0 rgba(190,225,245,.13),0 0 0 1px rgba(0,0,0,.35)}
+.gp:after{content:'';position:absolute;inset:0;border-radius:20px;pointer-events:none;
+  background:linear-gradient(160deg,rgba(255,255,255,.075),transparent 42%)}
+.gp .in{position:relative;z-index:1}
+.ph{display:flex;align-items:center;justify-content:space-between;margin-bottom:.9em}
+.pt{font-weight:700;letter-spacing:-.022em;color:var(--text)}
+.pk{font-family:var(--mono);color:var(--faint);letter-spacing:.09em;text-transform:uppercase}
+.row{display:flex;align-items:center;justify-content:space-between;gap:1em;
+  border-top:1px solid rgba(120,160,200,.13);color:var(--muted)}
+.row:first-of-type{border-top:0}
+.row b{color:var(--text);font-weight:500}
+.row .mn{font-family:var(--mono);color:var(--faint);font-variant-numeric:tabular-nums}
+.meter{border-radius:99px;background:rgba(5,10,20,.75);overflow:hidden}
+.meter i{display:block;height:100%;border-radius:99px;background:var(--thread)}
+.chip{position:absolute;left:0;top:0;border-radius:99px;transform-origin:50% 50%;
+  background:linear-gradient(150deg,rgba(30,45,74,.95),rgba(15,24,41,.96));
+  border:1px solid rgba(120,160,200,.18);color:var(--text);font-weight:600;
+  box-shadow:0 18px 44px rgba(0,0,0,.62),inset 0 1px 0 rgba(190,225,245,.12);
+  display:flex;align-items:center;white-space:nowrap}
+.chip s{border-radius:50%;background:var(--thread);box-shadow:0 0 12px var(--thread);
+  text-decoration:none;flex:none}
+
+/* burned-in caption — sound-off legibility */
+.cap{position:absolute;text-align:center;font-weight:800;letter-spacing:-.022em;
+  line-height:1.16;color:#fff;text-wrap:balance;
+  text-shadow:0 3px 22px rgba(0,0,0,.92),0 1px 4px rgba(0,0,0,.85)}
+.cap i{font-style:normal;color:var(--thread)}
+.cap u{text-decoration:none;color:var(--amber)}
+.hook{position:absolute;text-align:center;font-weight:900;letter-spacing:-.038em;line-height:1.05;
+  color:#fff;text-wrap:balance;text-shadow:0 6px 40px rgba(0,0,0,.95)}
+.hook i{font-style:normal;color:var(--thread)}
+
+.endl{position:absolute;left:0;right:0;text-align:center}
+.wm{font-weight:900;letter-spacing:-.05em;color:var(--text);line-height:1}
+.wm i{font-style:normal;color:var(--thread)}
+.tag{font-weight:500;color:var(--muted);letter-spacing:-.008em;line-height:1.32}
+.ul{position:absolute;background:var(--thread);border-radius:99px;box-shadow:0 0 22px rgba(20,184,166,.8)}
+
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.caret{display:inline-block;background:var(--thread);vertical-align:baseline}
+</style>
+
+<div class="wrap">
+  <header class="mast">
+    <span class="dot"></span>
+    <h1>TradeW Cutting Room</h1>
+    <p>Four cuts built from what the product actually does — real friction-prompt copy, real Tara
+    commands, real Sentinel wording — in every aspect you post to.</p>
+  </header>
+
+  <section class="viewer">
+    <div class="frame"><div id="fit"><div id="stage"><canvas id="fx"></canvas></div></div></div>
+    <div class="bar">
+      <button class="btn primary" id="play">Play</button>
+      <button class="btn" id="restart">Restart</button>
+      <span class="tc"><b id="tcNow">0.0s</b> / <span id="tcEnd">0.0s</span></span>
+      <span class="seg" id="aspects"></span>
+      <button class="btn" id="cleanBtn">Clean mode</button>
+    </div>
+    <div class="scrub">
+      <div class="track"><div class="fill" id="fill"></div></div>
+      <div class="marks" id="marks"></div>
+      <input id="range" type="range" min="0" max="1000" value="0" step="1" aria-label="Scrub timeline">
+    </div>
+  </section>
+
+  <aside class="rail">
+    <div class="railhead">The reel</div>
+    <div id="reels"></div>
+    <div class="spec"><h3>Cut sheet</h3><div id="spec"></div></div>
+    <div class="spec"><h3>Capture</h3>
+      <p class="note">Pick an aspect, hit <b>Clean mode</b>, then <kbd>Space</kbd>. Record with OBS at
+      60fps and crop to the stage. <kbd>Esc</kbd> exits.</p>
+      <p class="note">Captions are burned in, so these read with the sound off — but the snap and the
+      silence are doing real work. Add the audio before posting.</p>
+    </div>
+  </aside>
+</div>
+<button class="exit" id="exitBtn">Exit clean mode</button>
+
+<script>
+(function(){
+"use strict";
+var clamp=function(v,a,b){return v<a?a:v>b?b:v;};
+var p=function(t,a,b){return clamp((t-a)/(b-a),0,1);};
+var eOut=function(x){return 1-Math.pow(1-x,3);};
+var eIn=function(x){return x*x*x;};
+var eInOut=function(x){return x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2;};
+var back=function(x){var c=2.1,c3=c+1;return 1+c3*Math.pow(x-1,3)+c*Math.pow(x-1,2);};
+var L=function(a,b,x){return a+(b-a)*x;};
+var type=function(s,x){return s.slice(0,Math.round(clamp(x,0,1)*s.length));};
+var rnd=function(i){var v=Math.sin(i*12.9898)*43758.5453;return v-Math.floor(v);};
+var $=function(id){return document.getElementById(id);};
+var stage=$('stage'), fx=$('fx'), ctx=fx.getContext('2d');
+
+/* Aspects. Everything lays out from W/H + a unit U, so one design serves all four. */
+var ASPECTS=[{k:'9:16',w:1080,h:1920},{k:'4:5',w:1080,h:1350},
+             {k:'1:1',w:1080,h:1080},{k:'16:9',w:1920,h:1080}];
+var A=ASPECTS[0], W=A.w, H=A.h, U=1, CX=0, CY=0, COL=0;
+function geo(){ W=A.w; H=A.h; U=Math.min(W,H)/1080; CX=W/2; CY=H/2; COL=Math.min(W*0.88,1000*U); }
+
+/* ── deterministic FX layer: motes, thread bloom, impact bursts ── */
+var BURSTS=[];   // {t,x,y} in stage coords, filled by the active scene each frame
+var GLOWS=[];    // {x1,y1,x2,y2,a} thread segments to bloom
+function drawFX(t){
+  fx.width=W; fx.height=H;
+  ctx.clearRect(0,0,W,H);
+  // ambient motes — pure f(t), so scrubbing is exact
+  ctx.globalCompositeOperation='lighter';
+  for(var i=0;i<46;i++){
+    var sx=rnd(i)*W, sy=rnd(i+90)*H, sp=0.006+rnd(i+40)*0.016;
+    var y=(sy - t*sp*U) % H; if(y<0) y+=H;
+    var x=sx + Math.sin((t/1400)+i)*22*U;
+    var a=(0.10+rnd(i+7)*0.20)*(0.55+0.45*Math.sin(t/900+i));
+    ctx.fillStyle='rgba(140,220,210,'+a.toFixed(3)+')';
+    ctx.beginPath(); ctx.arc(x,y,(0.7+rnd(i+3)*1.5)*U,0,6.2832); ctx.fill();
+  }
+  // bloom along live threads
+  GLOWS.forEach(function(g){
+    var grd=ctx.createLinearGradient(g.x1,g.y1,g.x2,g.y2);
+    grd.addColorStop(0,'rgba(20,184,166,0)');
+    grd.addColorStop(.5,'rgba(90,240,220,'+(0.16*g.a).toFixed(3)+')');
+    grd.addColorStop(1,'rgba(20,184,166,0)');
+    ctx.strokeStyle=grd; ctx.lineWidth=13*U; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(g.x1,g.y1); ctx.lineTo(g.x2,g.y2); ctx.stroke();
+  });
+  // impact bursts
+  BURSTS.forEach(function(b){
+    var age=t-b.t; if(age<0||age>760) return;
+    var k=age/760;
+    for(var j=0;j<16;j++){
+      var ang=rnd(j+b.t*0.01)*6.2832, sp2=(0.55+rnd(j+5)*1.5)*U;
+      var d=sp2*age*(1-k*0.62), a2=(1-k)*(1-k)*0.85;
+      ctx.fillStyle='rgba(150,255,240,'+a2.toFixed(3)+')';
+      ctx.beginPath();
+      ctx.arc(b.x+Math.cos(ang)*d, b.y+Math.sin(ang)*d, (1.9*(1-k)+0.4)*U,0,6.2832);
+      ctx.fill();
+    }
+    var r=k*120*U, ra=(1-k)*0.5;
+    ctx.strokeStyle='rgba(120,245,225,'+ra.toFixed(3)+')';
+    ctx.lineWidth=2.4*U*(1-k); ctx.beginPath(); ctx.arc(b.x,b.y,r,0,6.2832); ctx.stroke();
+  });
+  ctx.globalCompositeOperation='source-over';
+  // fine grain
+  ctx.globalAlpha=0.028;
+  for(var g2=0;g2<170;g2++){
+    ctx.fillStyle=rnd(g2+Math.floor(t/60)*13)>0.5?'#fff':'#000';
+    ctx.fillRect(rnd(g2*3+Math.floor(t/60))*W, rnd(g2*7+Math.floor(t/60)*3)*H, 1.4*U,1.4*U);
+  }
+  ctx.globalAlpha=1;
+}
+
+/* helpers for building stage DOM */
+function mk(cls,html){var d=document.createElement('div');d.className=cls;if(html)d.innerHTML=html;return d;}
+function place(e,x,y,w){ e.style.left='0';e.style.top='0';
+  e.style.width=(w||0)?w+'px':''; e.style.transform='translate(-50%,-50%) translate('+x+'px,'+y+'px)'; }
+function tf(e,x,y,sc,rot,extra){
+  e.style.transform='translate(-50%,-50%) translate('+x+'px,'+y+'px) scale('+sc+') rotate('+rot+'deg)'+(extra||'');
+}
+function camera(cam,t,amp){
+  var a=(amp===undefined?1:amp);
+  cam.style.transform='translate('+(Math.sin(t/2600)*9*U*a)+'px,'+(Math.cos(t/3100)*7*U*a)+'px) scale('+
+    (1+Math.sin(t/4200)*0.012*a)+')';
+}
+
+/* ══════════════ CUT 01 — SAY WHERE YOU WANT TO GO ══════════════ */
+/* Real Tara commands, lifted verbatim from the landing page. */
+/* Fixed fractional slots, not a radial spray — panels are wide, so they spread
+   vertically and stay inside every aspect. Verified against all four. */
+var C1=[
+ {kind:'panel',title:'Option chain',key:'NIFTY',xf:0.42,yf:0.20,rot:-3,fire:900,land:2050,
+  rows:[['24800 CE','₹142.30'],['24800 PE','₹118.65'],['Max pain','24,750']]},
+ {kind:'panel',title:'Portfolio',key:'6 holdings',xf:0.58,yf:0.46,rot:2.5,fire:2500,land:3550,
+  rows:[['Concentration','38% banks'],['Sector tilt','financials'],['Open positions','3']]},
+ {kind:'panel',title:'Trade history',key:'Filtered',xf:0.44,yf:0.72,rot:-2,fire:4050,land:5100,
+  rows:[['Losing trades','7 found'],['Avg hold','14 min'],['Most common','chased entry']]},
+ {kind:'chip',title:'Learning',xf:0.86,yf:0.08,rot:-5,fire:5500,land:6000},
+ {kind:'chip',title:'Sentinel', xf:0.12,yf:0.34,rot:4,fire:5760,land:6260},
+ {kind:'chip',title:'Research', xf:0.88,yf:0.60,rot:-3,fire:6020,land:6520}
+];
+var C1LINES=[[820,'Open the option chain.'],[2420,'Show my portfolio.'],[3970,'Find my losing trades.']];
+
+function buildC1(root){
+  root.innerHTML='';
+  var cam=mk('cam'); root.appendChild(cam);
+  var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('width','100%'); svg.setAttribute('height','100%');
+  svg.style.cssText='position:absolute;inset:0'; cam.appendChild(svg);
+  root._svg=svg;
+  root._halo=mk('halo'); cam.appendChild(root._halo);
+  root._orb=mk('orb'); cam.appendChild(root._orb);
+  C1.forEach(function(n){
+    var ln=document.createElementNS('http://www.w3.org/2000/svg','line');
+    ln.setAttribute('stroke','#5ff0dc'); ln.setAttribute('stroke-linecap','round'); svg.appendChild(ln);
+    n.line=ln;
+    if(n.kind==='panel'){
+      n.el=mk('gp','<div class="in"><div class="ph"><span class="pt"></span><span class="pk"></span></div>'+
+        n.rows.map(function(){return '<div class="row"><b></b><span class="mn"></span></div>';}).join('')+'</div>');
+    } else { n.el=mk('chip','<s></s><span></span>'); }
+    cam.appendChild(n.el);
+  });
+  root._cap=mk('cap'); cam.appendChild(root._cap);
+  root._end=mk('endl','<div class="wm">Trade<i>W</i></div><div class="tag"></div>'); cam.appendChild(root._end);
+  root._ul=mk('ul'); cam.appendChild(root._ul);
+  root._hook=mk('hook'); cam.appendChild(root._hook);
+  root.appendChild(mk('vig'));
+  root._cam=cam;
+}
+function layoutC1(root){
+  // Three stacked panels have to clear each other even when H is only 1080
+  // (square and landscape), so panel scale tracks available height, not just U.
+  var VU=U*clamp(H/1920*1.5,0.78,1);
+  var pw=Math.min(W*0.56,520*VU), fs=34*U;
+  root._orb.style.cssText+=';width:'+(150*U)+'px;height:'+(150*U)+'px';
+  root._halo.style.cssText+=';width:'+(620*U)+'px;height:'+(620*U)+'px';
+  C1.forEach(function(n){
+    if(n.kind==='panel'){
+      n.el.style.width=pw+'px'; n.el.style.padding=(26*VU)+'px '+(28*VU)+'px';
+      n.el.style.borderRadius=(20*VU)+'px';
+      n.el.querySelector('.pt').textContent=n.title; n.el.querySelector('.pt').style.fontSize=(29*VU)+'px';
+      var k=n.el.querySelector('.pk'); k.textContent=n.key; k.style.fontSize=(15*VU)+'px';
+      n.el.querySelectorAll('.row').forEach(function(r,ri){
+        r.style.fontSize=(21*VU)+'px'; r.style.padding=(13*VU)+'px 0';
+        r.querySelector('b').textContent=n.rows[ri][0];
+        var m=r.querySelector('.mn'); m.textContent=n.rows[ri][1]; m.style.fontSize=(19*VU)+'px';
+      });
+    } else {
+      n.el.style.cssText+=';padding:'+(15*VU)+'px '+(28*VU)+'px;font-size:'+(24*VU)+'px;gap:'+(13*VU)+'px';
+      n.el.querySelector('s').style.cssText='width:'+(12*VU)+'px;height:'+(12*VU)+'px';
+      n.el.querySelector('span').textContent=n.title;
+    }
+  });
+  root._cap.style.cssText+=';left:'+((W-COL)/2)+'px;width:'+COL+'px;font-size:'+fs+'px;top:'+(H*0.90)+'px';
+  root._hook.style.cssText+=';left:'+((W-COL)/2)+'px;width:'+COL+'px;font-size:'+(78*U)+'px;top:'+(H*0.42)+'px';
+  root._end.style.top=(H*0.40)+'px';
+  root._end.querySelector('.wm').style.fontSize=(112*U)+'px';
+  var tg=root._end.querySelector('.tag');
+  tg.innerHTML='Tara runs the platform.<br>Say where you want to go.';
+  tg.style.cssText='font-size:'+(31*U)+'px;margin-top:'+(24*U)+'px';
+}
+function renderC1(root,t){
+  var cam=root._cam; camera(cam,t,1);
+  BURSTS.length=0; GLOWS.length=0;
+  var oR=150*U/2;
+  // HOOK: opens mid-action, no slow fade
+  var hk=root._hook, hOut=p(t,1150,1500);
+  hk.style.opacity=(t<1500? (1-hOut) : 0);
+  hk.innerHTML='It opens the screen<br>before you finish<i>.</i>';
+  hk.style.transform='translateY('+(-L(0,26*U,hOut))+'px) scale('+L(1,0.97,hOut)+')';
+
+  var intro=p(t,0,420), outro=p(t,7550,8500);
+  var kick=0;
+  C1.forEach(function(n){var s=n.fire+430; if(t>s&&t<s+320){kick=Math.max(kick,(1-p(t,s,s+320))*20);}});
+  var oS=Math.max(eOut(intro)*(1+Math.sin(t/540)*0.05)*(1-eIn(outro))+kick*0.004,0);
+  place(root._orb,CX,CY); tf(root._orb,CX,CY,oS,0);
+  place(root._halo,CX,CY); tf(root._halo,CX,CY,oS*(1+kick*0.022),0);
+  root._halo.style.opacity=(eOut(intro)*(1-eIn(outro)))*(0.8+Math.sin(t/760)*0.2);
+  root._orb.style.opacity=t>8500?0:1;
+
+  C1.forEach(function(n,i){
+    // Slot, then clamp so nothing can leave frame in any aspect.
+    var hw=n.el.offsetWidth/2, hh=n.el.offsetHeight/2, m=18*U;
+    var tx=clamp(n.xf*W, hw+m, W-hw-m), ty=clamp(n.yf*H, hh+m, H-hh-m);
+    // Flies in from off-stage along the centre→slot vector.
+    var dx=tx-CX, dy=ty-CY, len=Math.max(Math.hypot(dx,dy),1), reach=Math.max(W,H)*1.15;
+    var fromX=CX+dx/len*reach, fromY=CY+dy/len*reach;
+    var land=p(t,n.fire+420,n.land), shot=p(t,n.fire,n.fire+420);
+    var ret=p(t,7100+i*50,7900+i*50), gone=eIn(ret);
+    var bx=L(fromX,tx,back(land)), by=L(fromY,ty,back(land));
+    var cx=L(bx,CX,gone), cy=L(by,CY,gone);
+    var depth=0.80+0.20*eOut(land);
+    var sc=Math.max(depth*(1-gone*0.94),0.01);
+    n.el.style.opacity=(shot>0.5?clamp((shot-0.5)/0.5,0,1):0)*(1-gone);
+    tf(n.el,cx,cy,sc,L(n.rot*3.2,n.rot,eOut(land)));
+    var fxp=p(t,n.fire,n.fire+300);
+    var hx=L(CX,cx,eOut(fxp)), hy=L(CY,cy,eOut(fxp));
+    var alive=(t>n.fire && t<7950+i*50);
+    var snap=p(t,n.fire+300,n.fire+560);
+    n.line.setAttribute('x1',CX); n.line.setAttribute('y1',CY);
+    n.line.setAttribute('x2',hx); n.line.setAttribute('y2',hy);
+    n.line.setAttribute('stroke-opacity',alive?(0.30+0.70*(1-snap))*(1-gone*0.85):0);
+    n.line.setAttribute('stroke-width',alive?(1.9+5.2*(1-eOut(snap)))*U:0);
+    if(alive){
+      GLOWS.push({x1:CX,y1:CY,x2:hx,y2:hy,a:(1-snap)*0.9+0.25});
+      if(t>=n.fire+300 && t<n.fire+1100) BURSTS.push({t:n.fire+300,x:tx,y:ty});
+    }
+  });
+
+  var cap='',cOp=0;
+  C1LINES.forEach(function(pr){
+    if(t>pr[0]&&t<pr[0]+1550){ cap=type(pr[1],p(t,pr[0],pr[0]+520)); cOp=1-p(t,pr[0]+1250,pr[0]+1550); }
+  });
+  if(t>6300&&t<7300){ cap='No model round-trip.<br>It just <i>opens</i>.'; cOp=eOut(p(t,6300,6700))*(1-p(t,7000,7300)); }
+  root._cap.innerHTML=cap; root._cap.style.opacity=cOp;
+
+  var eI=p(t,8700,9400);
+  root._end.style.opacity=eOut(eI);
+  root._end.style.marginTop=(-L(22*U,0,eOut(eI)))+'px';
+  var uw=eOut(p(t,9200,10000))*320*U;
+  root._ul.style.cssText+=';left:'+(CX-uw/2)+'px;top:'+(H*0.40+150*U)+'px;width:'+uw+'px;height:'+(4*U)+'px;opacity:'+eOut(eI);
+}
+
+/* ══════════════ CUT 02 — IT DOESN'T STOP YOU ══════════════ */
+/* Every string here is the product's real copy. lib/discipline.ts + discipline-limits.ts */
+var FILLER='because i want to because i want to';
+var REAL='i am down three and i am trying to win it back before the close';
+function buildC2(root){
+  root.innerHTML='';
+  var cam=mk('cam'); root.appendChild(cam);
+  root._hook=mk('hook'); cam.appendChild(root._hook);
+  root._card=mk('gp','<div class="in">'+
+    '<div class="ph"><span class="pt">You&rsquo;ve hit the trade count you set</span></div>'+
+    '<div class="bd"></div>'+
+    '<div class="wait"><span class="wl">You can place it in</span><span class="wn mono">20s</span></div>'+
+    '<div class="meter"><i></i></div>'+
+    '<div class="rsn"><span class="rl">Why are you taking this trade?</span>'+
+    '<div class="box"><span class="txt"></span><i class="caret"></i></div>'+
+    '<div class="cnt mono"></div></div>'+
+    '<div class="err"></div></div>');
+  cam.appendChild(root._card);
+  root._cap=mk('cap'); cam.appendChild(root._cap);
+  root._end=mk('endl','<div class="wm">Trade<i>W</i></div><div class="tag"></div>'); cam.appendChild(root._end);
+  root.appendChild(mk('vig'));
+  root._cam=cam;
+  root._bd=root._card.querySelector('.bd'); root._wn=root._card.querySelector('.wn');
+  root._mi=root._card.querySelector('.meter i'); root._txt=root._card.querySelector('.txt');
+  root._cnt=root._card.querySelector('.cnt'); root._err=root._card.querySelector('.err');
+  root._car=root._card.querySelector('.caret'); root._wl=root._card.querySelector('.wl');
+}
+function layoutC2(root){
+  var cw=Math.min(W*0.86,900*U);
+  var c=root._card;
+  c.style.cssText+=';width:'+cw+'px;padding:'+(38*U)+'px '+(40*U)+'px;border-radius:'+(24*U)+'px';
+  c.querySelector('.pt').style.cssText='font-size:'+(38*U)+'px;line-height:1.2;text-align:left';
+  c.querySelector('.ph').style.marginBottom=(18*U)+'px';
+  root._bd.style.cssText='font-size:'+(25*U)+'px;color:#8ea0c4;line-height:1.5';
+  c.querySelector('.wait').style.cssText='display:flex;justify-content:space-between;align-items:baseline;margin-top:'+(30*U)+'px;font-size:'+(23*U)+'px;color:#8ea0c4';
+  root._wn.style.cssText='font-size:'+(34*U)+'px;color:#f0a53c;font-weight:600';
+  c.querySelector('.meter').style.cssText+=';height:'+(9*U)+'px;margin-top:'+(12*U)+'px';
+  root._mi.style.background='#f0a53c';
+  c.querySelector('.rsn').style.marginTop=(30*U)+'px';
+  c.querySelector('.rl').style.cssText='font-size:'+(21*U)+'px;color:#64769c;display:block;margin-bottom:'+(12*U)+'px';
+  c.querySelector('.box').style.cssText='border:1px solid rgba(120,160,200,.22);border-radius:'+(12*U)+
+    'px;padding:'+(20*U)+'px '+(22*U)+'px;min-height:'+(96*U)+'px;font-size:'+(25*U)+
+    'px;line-height:1.45;color:#e2e8f0;background:rgba(5,10,20,.45)';
+  root._car.style.cssText+=';width:'+(3*U)+'px;height:'+(26*U)+'px';
+  root._cnt.style.cssText='font-size:'+(19*U)+'px;margin-top:'+(10*U)+'px;text-align:right';
+  root._err.style.cssText='font-size:'+(23*U)+'px;color:#ef5350;margin-top:'+(20*U)+'px;line-height:1.4';
+  root._hook.style.cssText+=';left:'+((W-COL)/2)+'px;width:'+COL+'px;font-size:'+(72*U)+'px;top:'+(H*0.42)+'px';
+  root._cap.style.cssText+=';left:'+((W-COL)/2)+'px;width:'+COL+'px;font-size:'+(40*U)+'px;top:'+(H*0.44)+'px';
+  root._end.style.top=(H*0.40)+'px';
+  root._end.querySelector('.wm').style.fontSize=(112*U)+'px';
+  var tg=root._end.querySelector('.tag');
+  tg.innerHTML='It never blocks the trade.<br>It just asks you to say why.';
+  tg.style.cssText='font-size:'+(31*U)+'px;margin-top:'+(24*U)+'px';
+}
+function renderC2(root,t){
+  camera(root._cam,t,0.55);
+  BURSTS.length=0; GLOWS.length=0;
+  // HOOK — the claim nobody else in this category would make
+  var hOut=p(t,1500,1850);
+  root._hook.innerHTML='This app will <i>let</i> you<br>make the mistake.';
+  root._hook.style.opacity=t<1850?(1-hOut):0;
+  root._hook.style.transform='scale('+L(1,0.96,hOut)+')';
+
+  // At 12.9s the card retreats — up, smaller, dimmer — so the closing line has
+  // clean ground instead of landing on top of it.
+  var cIn=p(t,1700,2300), cOut=p(t,15200,15900), retreat=eInOut(p(t,12900,13700));
+  var cardY=L(H*0.46,H*0.30,retreat);
+  root._card.style.opacity=eOut(cIn)*(1-cOut)*L(1,0.42,retreat);
+  place(root._card,CX,cardY);
+  tf(root._card,CX,cardY,L(0.94,1,back(cIn))*L(1,0.88,retreat),0);
+  root._bd.textContent='At the start of the session you set a maximum of 3 trades. This would be number 4.';
+
+  // real 20s dwell, compressed 20s → 8s of screen time
+  var wp=p(t,2400,10400);
+  var secs=Math.max(0,Math.ceil(20*(1-wp)));
+  root._wn.textContent=secs+'s';
+  root._wl.textContent=secs>0?'You can place it in':'You can place it now';
+  root._mi.style.width=(wp*100)+'%';
+  if(secs===0){ root._wn.style.color='#26a69a'; root._mi.style.background='#26a69a'; }
+  else { root._wn.style.color='#f0a53c'; root._mi.style.background='#f0a53c'; }
+
+  // reason box: filler → rejected → real words → stops
+  var txt='', err='', n=0;
+  if(t<4400){ txt=''; }
+  else if(t<6100){ txt=type(FILLER,p(t,4400,6100)); }
+  else if(t<7600){ txt=FILLER; err=t>6600?'That reason looks like filler. Write it in your own words.':''; }
+  else if(t<8100){ txt=''; err='That reason looks like filler. Write it in your own words.'; }
+  else if(t<12600){ txt=type(REAL,p(t,8300,12100)); }
+  else { txt=REAL; }
+  n=txt.length;
+  root._txt.textContent=txt;
+  root._cnt.textContent=n+' / 40';
+  root._cnt.style.color=n>=40?'#26a69a':'#64769c';
+  root._err.textContent=err;
+  root._err.style.opacity=err?1:0;
+  root._car.style.opacity=(t<12600&&Math.sin(t/150)>0)?1:0.12;
+
+  // the beat: it's all typed, the wait is over — and nothing happens
+  root._card.style.filter='saturate('+L(1,0.5,retreat)+')';
+
+  var capIn=p(t,13500,14100), capOut=p(t,15100,15600);
+  root._cap.innerHTML='Nothing is stopping you now.<br><i>You just stopped.</i>';
+  root._cap.style.opacity=eOut(capIn)*(1-capOut);
+  root._cap.style.top=(H*0.74)+'px';
+
+  var eI=p(t,16100,16800);
+  root._end.style.opacity=eOut(eI);
+  root._end.style.marginTop=(-L(22*U,0,eOut(eI)))+'px';
+}
+
+/* ══════════════ CUT 03 — SENTINEL ASKS THE QUESTION YOU WON'T ══════════════ */
+var OBS='Price has broken above resistance, but volume is below the 20-day average and open interest is declining. This resembles a low-conviction breakout. Consider waiting for confirmation.';
+var EVID=[['Structure','Break above resistance'],['Volume','0.7× 20-day average'],
+          ['Open interest','Declining into the move'],['Resembles','Low-conviction breakout']];
+function buildC3(root){
+  root.innerHTML='';
+  var cam=mk('cam'); root.appendChild(cam);
+  root._hook=mk('hook'); cam.appendChild(root._hook);
+  root._card=mk('gp','<div class="in"><div class="ph"><span class="pk">Sentinel &middot; observation</span></div>'+
+    '<div class="obs"></div></div>');
+  cam.appendChild(root._card);
+  root._ev=EVID.map(function(){ var e=mk('gp','<div class="in"><span class="k"></span><span class="v"></span></div>');
+    cam.appendChild(e); return e; });
+  root._cap=mk('cap'); cam.appendChild(root._cap);
+  root._end=mk('endl','<div class="wm">Trade<i>W</i></div><div class="tag"></div>'); cam.appendChild(root._end);
+  root.appendChild(mk('vig'));
+  root._cam=cam; root._obs=root._card.querySelector('.obs');
+}
+function layoutC3(root){
+  var cw=Math.min(W*0.86,900*U);
+  root._card.style.cssText+=';width:'+cw+'px;padding:'+(36*U)+'px '+(38*U)+'px;border-radius:'+(24*U)+'px';
+  root._card.querySelector('.pk').style.fontSize=(18*U)+'px';
+  root._card.querySelector('.ph').style.marginBottom=(20*U)+'px';
+  root._obs.style.cssText='font-size:'+(30*U)+'px;line-height:1.46;color:#e2e8f0';
+  root._ev.forEach(function(e,i){
+    e.style.cssText+=';width:'+cw+'px;padding:'+(20*U)+'px '+(26*U)+'px;border-radius:'+(14*U)+'px';
+    var inn=e.querySelector('.in');
+    inn.style.cssText='display:flex;align-items:center;gap:'+(20*U)+'px';
+    var k=e.querySelector('.k'); k.textContent=EVID[i][0];
+    k.style.cssText='font-family:var(--mono);font-size:'+(16*U)+'px;letter-spacing:.09em;text-transform:uppercase;color:#64769c;width:'+(210*U)+'px;flex:none';
+    var v=e.querySelector('.v'); v.textContent=EVID[i][1];
+    v.style.cssText='font-size:'+(25*U)+'px;font-weight:600;color:#e2e8f0';
+  });
+  root._hook.style.cssText+=';left:'+((W-COL)/2)+'px;width:'+COL+'px;font-size:'+(70*U)+'px;top:'+(H*0.40)+'px';
+  root._cap.style.cssText+=';left:'+((W-COL)/2)+'px;width:'+COL+'px;font-size:'+(38*U)+'px;top:'+(H*0.80)+'px';
+  root._end.style.top=(H*0.40)+'px';
+  root._end.querySelector('.wm').style.fontSize=(112*U)+'px';
+  var tg=root._end.querySelector('.tag');
+  tg.innerHTML='Sentinel asks the question<br>you won&rsquo;t.';
+  tg.style.cssText='font-size:'+(31*U)+'px;margin-top:'+(24*U)+'px';
+}
+function renderC3(root,t){
+  camera(root._cam,t,0.6);
+  BURSTS.length=0; GLOWS.length=0;
+  var hOut=p(t,1600,1950);
+  root._hook.innerHTML='Every other app tells you<br>what to <i>buy</i>.';
+  root._hook.style.opacity=t<1950?(1-hOut):0;
+  root._hook.style.transform='scale('+L(1,0.96,hOut)+')';
+
+  var cIn=p(t,1800,2400), cUp=p(t,7600,8400), cOut=p(t,14800,15500);
+  root._card.style.opacity=eOut(cIn)*(1-cOut);
+  var cy=L(H*0.47,H*0.24,eInOut(cUp));
+  place(root._card,CX,cy); tf(root._card,CX,cy,L(0.95,1,back(cIn)),0);
+  root._obs.textContent=type(OBS,p(t,2300,7200));
+
+  root._ev.forEach(function(e,i){
+    var a=8200+i*330, s=p(t,a,a+560), o=p(t,14400+i*70,15100+i*70);
+    e.style.opacity=eOut(s)*(1-o);
+    var y=H*0.44+i*(92*U);
+    place(e,CX,y); tf(e,CX,y,L(0.96,1,back(s)),0);
+  });
+
+  var c1=t>5200&&t<7400, c2=t>9900&&t<13600;
+  var cap='',cOp=0;
+  if(c1){ cap='It never says <i>don&rsquo;t buy this</i>.'; cOp=eOut(p(t,5200,5600))*(1-p(t,7050,7400)); }
+  if(c2){ cap='Evidence first.<br>Then the pattern it <i>resembles</i>.'; cOp=eOut(p(t,9900,10400))*(1-p(t,13200,13600)); }
+  root._cap.innerHTML=cap; root._cap.style.opacity=cOp;
+  root._cap.style.top=(c2? H*0.82 : H*0.80)+'px';
+
+  var eI=p(t,15700,16400);
+  root._end.style.opacity=eOut(eI);
+  root._end.style.marginTop=(-L(22*U,0,eOut(eI)))+'px';
+}
+
+/* ══════════════ CUT 04 — LIFETIME FREE ══════════════ */
+var WORK=[['Strategies','submitted and reviewed'],['Quizzes','passed, not skipped'],
+          ['Participation','in the community']];
+function buildC4(root){
+  root.innerHTML='';
+  var cam=mk('cam'); root.appendChild(cam);
+  root._hook=mk('hook'); cam.appendChild(root._hook);
+  root._items=WORK.map(function(){ var e=mk('gp','<div class="in"><span class="tick">&#10003;</span>'+
+    '<span class="k"></span><span class="v"></span></div>'); cam.appendChild(e); return e; });
+  root._cap=mk('cap'); cam.appendChild(root._cap);
+  root._end=mk('endl','<div class="wm">Trade<i>W</i></div><div class="tag"></div>'); cam.appendChild(root._end);
+  root.appendChild(mk('vig'));
+  root._cam=cam;
+}
+function layoutC4(root){
+  var cw=Math.min(W*0.84,880*U);
+  root._hook.style.cssText+=';left:'+((W-COL)/2)+'px;width:'+COL+'px;font-size:'+(84*U)+'px;top:'+(H*0.30)+'px';
+  root._items.forEach(function(e,i){
+    e.style.cssText+=';width:'+cw+'px;padding:'+(24*U)+'px '+(30*U)+'px;border-radius:'+(16*U)+'px';
+    var inn=e.querySelector('.in'); inn.style.cssText='display:flex;align-items:center;gap:'+(20*U)+'px';
+    var tk=e.querySelector('.tick');
+    tk.style.cssText='color:#26a69a;font-size:'+(30*U)+'px;flex:none';
+    var k=e.querySelector('.k'); k.textContent=WORK[i][0];
+    k.style.cssText='font-size:'+(28*U)+'px;font-weight:700;color:#e2e8f0;flex:none';
+    var v=e.querySelector('.v'); v.textContent=WORK[i][1];
+    v.style.cssText='font-size:'+(23*U)+'px;color:#8ea0c4';
+  });
+  root._cap.style.cssText+=';left:'+((W-COL)/2)+'px;width:'+COL+'px;font-size:'+(38*U)+'px;top:'+(H*0.76)+'px';
+  root._end.style.top=(H*0.40)+'px';
+  root._end.querySelector('.wm').style.fontSize=(112*U)+'px';
+  var tg=root._end.querySelector('.tag');
+  tg.innerHTML='No card required.<br>Paper trading by default.';
+  tg.style.cssText='font-size:'+(31*U)+'px;margin-top:'+(24*U)+'px';
+}
+function renderC4(root,t){
+  camera(root._cam,t,0.5);
+  BURSTS.length=0; GLOWS.length=0;
+  var hUp=p(t,2200,2900), hOut=p(t,8600,9200);
+  root._hook.innerHTML='Lifetime <i>free</i>.';
+  root._hook.style.opacity=(1-hOut);
+  root._hook.style.top=L(H*0.44,H*0.20,eInOut(hUp))+'px';
+  root._hook.style.transform='scale('+L(1.06,1,eOut(p(t,0,600)))+')';
+
+  var sub=p(t,900,1500);
+  root._cap.style.opacity=t<2400?eOut(sub)*(1-p(t,2100,2400)):
+    (t>3000&&t<8400?eOut(p(t,3000,3400))*(1-p(t,8000,8400)):0);
+  root._cap.innerHTML=t<2400?'If you actually do the <u>work</u>.'
+    :'Strategies. Quizzes. Participation.<br>Do the work, keep the account.';
+  root._cap.style.top=(t<2400?H*0.56:H*0.76)+'px';
+
+  root._items.forEach(function(e,i){
+    var a=3200+i*520, s=p(t,a,a+620), o=p(t,8300+i*80,8900+i*80);
+    e.style.opacity=eOut(s)*(1-o);
+    var y=H*0.40+i*(112*U);
+    place(e,CX,y); tf(e,CX,y,L(0.95,1,back(s)),0);
+  });
+
+  var eI=p(t,9400,10100);
+  root._end.style.opacity=eOut(eI);
+  root._end.style.marginTop=(-L(22*U,0,eOut(eI)))+'px';
+}
+
+/* ══════════════ REEL ══════════════ */
+var ADS=[
+ {n:'Say where you want to go', dur:10500, build:buildC1, layout:layoutC1, render:renderC1,
+  desc:'Tara opens screens on a thread. Opens mid-action, not on a fade — the hook is in frame one.',
+  meta:'10.5s / hook @ 0.0s',
+  spec:'<p class="note"><b>Real product truth:</b> the three commands are lifted verbatim from your own landing page — <i>Open the option chain. Show my portfolio. Find my losing trades.</i> The payoff line is true too: navigation resolves with <code>no model round-trip</code>, so "it just opens" is a fact, not a boast.</p><p class="note"><b>Sound:</b> each fire is an airy whip; each landing a taut cable snap with a metallic tail. Retract is one reversed swell into silence. Logo lands dry.</p>',
+  marks:[[0,'hook'],[900,'fire 1'],[2500,'fire 2'],[4050,'fire 3'],[5500,'rapid'],[6300,'payoff'],[8700,'logo']]},
+ {n:"It doesn't stop you", dur:17500, build:buildC2, layout:layoutC2, render:renderC2,
+  desc:'The friction prompt, exactly as built: 20 seconds, 40 characters, and a filler detector that calls you out.',
+  meta:'17.5s / the hero cut',
+  spec:'<p class="note"><b>Every string is real.</b> Heading and body come from <code>lib/discipline.ts</code>; the 20s wait is <code>MIN_DWELL_MS</code>, the 40 characters are <code>MIN_REASON_LENGTH</code>, and <i>"That reason looks like filler"</i> is your actual <code>low_effort</code> message. Nothing here is invented.</p><p class="note"><b>Why this replaced the old cut:</b> the first version showed the app <i>blocking</i> an order. Your architecture forbids that — Sentinel is never a gate. This version is what the product really does, and it is a better ad for it.</p><p class="note"><b>Sound:</b> room tone and keystrokes only. Kill everything at 12.9s when the typing stops — the silence is the punchline. One warm pad under the end card.</p>',
+  marks:[[0,'hook'],[2400,'20s starts'],[4400,'filler typed'],[6600,'called out'],[8300,'real reason'],[12900,'the stop'],[16100,'logo']]},
+ {n:'The question you won’t ask', dur:17000, build:buildC3, layout:layoutC3, render:renderC3,
+  desc:'Sentinel’s real observation script, then the evidence behind it. Never "don’t buy this".',
+  meta:'17s / trust builder',
+  spec:'<p class="note"><b>Real product truth:</b> the observation is your landing page’s own example, word for word. The evidence rows mirror what a card opens into — reading, confidence, signal type.</p><p class="note"><b>Compliance:</b> this cut states the no-advice position out loud rather than hiding it, which is the safest possible framing for a finance ad in India.</p><p class="note"><b>Sound:</b> near silence under the typing. One low sub-hit when the evidence rows land.</p>',
+  marks:[[0,'hook'],[2300,'observation'],[5200,'never says'],[8200,'evidence'],[9900,'payoff'],[15700,'logo']]},
+ {n:'Lifetime free', dur:11000, build:buildC4, layout:layoutC4, render:renderC4,
+  desc:'The offer nobody scrolls past, buried on your own page. Shortest cut, best for paid.',
+  meta:'11s / conversion',
+  spec:'<p class="note"><b>Real product truth:</b> "Lifetime Free if you actually do the work — strategies, quizzes, participation" is your own Learning Hub line. It is currently the sixth bullet in a list. It should be a campaign.</p><p class="note"><b>Sound:</b> one confident music bed the whole way. This is the only cut that wants energy rather than restraint.</p>',
+  marks:[[0,'hook'],[900,'the catch'],[3200,'the work'],[9400,'logo']]}
+];
+
+var cur=0, t=0, playing=false, last=0;
+var roots=ADS.map(function(a){ var d=mk('sc'); stage.appendChild(d); a.build(d); return d; });
+
+function applyGeo(){
+  geo();
+  stage.style.width=W+'px'; stage.style.height=H+'px';
+  ADS.forEach(function(a,i){ a.layout(roots[i]); });
+  fit();
+}
+function fit(){
+  var box=$('fit'), avail=box.parentElement.clientWidth;
+  var maxH=document.body.classList.contains('clean')?window.innerHeight:Math.max(window.innerHeight-230,420);
+  var s=Math.min(avail/W, maxH/H);
+  stage.style.transform='scale('+s+')';
+  box.style.width=(W*s)+'px'; box.style.height=(H*s)+'px';
+}
+function drawMarks(){
+  var a=ADS[cur], m=$('marks'); m.innerHTML='';
+  a.marks.forEach(function(mk2){
+    var d=document.createElement('div'); d.className='mark';
+    d.innerHTML='<span>'+mk2[1]+'</span>'; d.style.left=(mk2[0]/a.dur*100)+'%'; m.appendChild(d);
+  });
+}
+function paint(){
+  var a=ADS[cur];
+  roots.forEach(function(r,i){ r.classList.toggle('on',i===cur); });
+  a.render(roots[cur],t);
+  drawFX(t);
+  $('fill').style.width=(t/a.dur*100)+'%';
+  $('range').value=Math.round(t/a.dur*1000);
+  $('tcNow').textContent=(t/1000).toFixed(1)+'s';
+  $('tcEnd').textContent=(a.dur/1000).toFixed(1)+'s';
+}
+function loop(now){
+  if(playing){
+    var dt=Math.min(now-last,60); last=now; t+=dt;
+    if(t>=ADS[cur].dur){ t=ADS[cur].dur; playing=false; $('play').textContent='Replay'; }
+    paint();
+  }
+  requestAnimationFrame(loop);
+}
+function setPlay(v){ playing=v; last=performance.now();
+  $('play').textContent=v?'Pause':(t>=ADS[cur].dur?'Replay':'Play'); }
+function select(i){
+  cur=i; t=0; setPlay(false); $('play').textContent='Play';
+  var b=document.querySelectorAll('.reel');
+  for(var j=0;j<b.length;j++){ b[j].setAttribute('aria-current',String(j===i)); }
+  $('spec').innerHTML=ADS[i].spec;
+  drawMarks(); paint();
+}
+$('reels').innerHTML=ADS.map(function(a,i){
+  return '<button class="reel" data-i="'+i+'"><span class="n">CUT '+String(i+1).padStart(2,'0')+
+   '</span><div class="t">'+a.n+'</div><div class="d">'+a.desc+'</div><div class="m">'+a.meta+'</div></button>';
+}).join('');
+$('aspects').innerHTML=ASPECTS.map(function(a,i){
+  return '<button data-a="'+i+'" aria-pressed="'+(i===0)+'">'+a.k+'</button>'; }).join('');
+$('reels').addEventListener('click',function(e){ var b=e.target.closest('.reel'); if(b) select(+b.dataset.i); });
+$('aspects').addEventListener('click',function(e){
+  var b=e.target.closest('button'); if(!b) return;
+  A=ASPECTS[+b.dataset.a];
+  [].forEach.call($('aspects').children,function(c){ c.setAttribute('aria-pressed',String(c===b)); });
+  applyGeo(); paint();
+});
+$('play').addEventListener('click',function(){ if(t>=ADS[cur].dur) t=0; setPlay(!playing); });
+$('restart').addEventListener('click',function(){ t=0; setPlay(true); });
+$('range').addEventListener('input',function(e){ t=e.target.value/1000*ADS[cur].dur; setPlay(false); paint(); });
+function clean(v){ document.body.classList.toggle('clean',v); fit(); paint(); }
+$('cleanBtn').addEventListener('click',function(){ clean(true); t=0; setPlay(true); });
+$('exitBtn').addEventListener('click',function(){ clean(false); });
+addEventListener('keydown',function(e){
+  if(e.key===' '){ e.preventDefault(); if(t>=ADS[cur].dur) t=0; setPlay(!playing); }
+  if(e.key==='Escape') clean(false);
+});
+addEventListener('resize',fit);
+applyGeo(); select(1); requestAnimationFrame(loop);
+if(!matchMedia('(prefers-reduced-motion: reduce)').matches) setPlay(true);
+})();
+</script>
+
+</body></html>
