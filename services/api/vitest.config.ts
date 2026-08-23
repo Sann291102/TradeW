@@ -109,6 +109,17 @@ export default defineConfig({
       'src/common/throttling.spec.ts',
       // Background timers run on exactly one instance (the horizontal-scaling gate).
       'src/common/leader-election.spec.ts',
+      // Fundamental research: the vendor normalizer, the ratio engine and the
+      // balance-sheet check. Every failure mode in this pipeline is a CONFIDENT
+      // WRONG NUMBER on a research page — a vendor null coerced to zero, a
+      // ratio computed against a missing operand, a balance sheet quietly
+      // "fixed" so it always reconciles, a derived figure presented as
+      // reported. The old /research page shipped exactly those, hardcoded, so
+      // the replacement's arithmetic is asserted rather than eyeballed.
+      'src/research/research-pipeline.spec.ts',
+      // The regression gate: the specific fabricated values the old page
+      // rendered must never reappear in the research render path.
+      'src/research/no-fabricated-values.spec.ts',
       // Sentinel events becoming durable notifications: the receiving end of the
       // no-direction boundary, durable dedupe, and never failing an observation.
       'src/sentinel/sentinel-event-dispatcher.spec.ts',

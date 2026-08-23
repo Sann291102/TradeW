@@ -1,0 +1,34 @@
+-- Drop the leftover DEFAULT on "Order"."updatedAt".
+--
+-- ── WHY THIS EXISTS ─────────────────────────────────────────────────────────
+--
+-- Migration 20260722100001_oms_order_lifecycle added the column as
+--
+--   ADD COLUMN "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+--
+-- because the table already held rows and a NOT NULL column needs a value for
+-- them. The schema declares only `updatedAt DateTime @updatedAt`, with no
+-- `@default`, so the database has diverged from the schema ever since.
+--
+-- That divergence is what CI's "Migration drift" job reports:
+--
+--   [*] Changed the `Order` table
+--     [*] Altered column `updatedAt` (default changed from `Some(Now)` to `None`)
+--
+-- The job has been failing on every commit since, including documentation-only
+-- ones, which is exactly how a red check stops being read.
+--
+-- ── WHY IT IS SAFE ──────────────────────────────────────────────────────────
+--
+-- `@updatedAt` means the Prisma client supplies a timestamp on every create and
+-- every update, so nothing in the application relies on the database default.
+-- It was only ever needed to backfill the rows that existed in July. Verified
+-- 2026-08-23: no `$executeRaw`/`$queryRaw` anywhere in services/ or packages/
+-- writes to "Order", so Prisma is the only writer and no INSERT omits the
+-- column. Existing rows keep their stored values — dropping a default changes
+-- nothing already written.
+--
+-- Deliberately its own migration rather than a line inside the research-cache
+-- one: this is a behavioural change to the order table, it predates that work
+-- by a month, and a reviewer should be able to see it on its own.
+ALTER TABLE "Order" ALTER COLUMN "updatedAt" DROP DEFAULT;
