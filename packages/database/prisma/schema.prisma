@@ -370,7 +370,20 @@ model Order {
   // Nullable and additive on purpose — every existing order predates this
   // column and must keep working untouched.
   executionIntentId String?          @unique
-  executionIntent   ExecutionIntent? @relation(fields: [executionIntentId], references: [id])
+  executionIntent   ExecutionIntent? @relation("IntentSubmission", fields: [executionIntentId], references: [id])
+
+  // The intent whose position this order CLOSES. Set only by the
+  // paper-execution loop's square-off, and the counterpart to the entry link
+  // above: without it, filtering the console's order list to `source=sentinel`
+  // matched the loop's entries and none of its exits, quietly under-reporting
+  // agent activity by half — an exit is as much the agent's act as the entry.
+  //
+  // Not unique, unlike the entry link. One intent submits exactly one order, so
+  // that side is a true 1:1; but a position can be flattened in more than one
+  // order (an exit that fails and is retried on a later reconcile tick), and a
+  // unique constraint there would turn an ordinary retry into a crash.
+  exitOfIntentId    String?
+  exitOfIntent      ExecutionIntent? @relation("IntentExit", fields: [exitOfIntentId], references: [id])
 
   user       User       @relation(fields: [userId], references: [id])
   instrument Instrument @relation(fields: [instrumentId], references: [id])
@@ -379,6 +392,10 @@ model Order {
   @@index([userId, placedAt])
   @@index([status])
   @@index([userId, status])
+  // The console's `source=sentinel` filter is `executionIntentId IS NOT NULL OR
+  // exitOfIntentId IS NOT NULL` over a `placedAt` window; without this the exit
+  // half of that OR is a sequential scan on every 8-second poll.
+  @@index([exitOfIntentId])
 }
 
 model Trade {
@@ -2218,6 +2235,19 @@ model ExecutionIntent {
   // (submission raised). Null otherwise.
   rejectReason String?
 
+  // The SAME refusal, as an id rather than a sentence: the first policy check
+  // that failed (`daily-loss-limit`, `max-open-positions`, …), or one of the
+  // non-policy stops (`submission-raised`, `oms-rejected`).
+  //
+  // `rejectReason` is written for a human reading one intent and interpolates
+  // live numbers ("Realized -₹110,987.50 today, at or past the -₹25,000
+  // floor"), so no two rows agree and the column cannot be grouped. Answering
+  // "why did nothing trade today?" then means reading rejections one at a time
+  // — which is the day the 2026-08-18 audit spent on the read path. This column
+  // is the groupable form of the same fact; the sentence stays for the detail
+  // it carries.
+  rejectCheckId String?
+
   decidedAt   DateTime  @default(now())
   submittedAt DateTime?
   createdAt   DateTime  @default(now())
@@ -2225,7 +2255,10 @@ model ExecutionIntent {
 
   // The order this intent produced. One intent, at most one order — enforced by
   // Order.executionIntentId being @unique on the other side.
-  order      Order?
+  order      Order?  @relation("IntentSubmission")
+  // The order(s) that closed it. Plural because a retried square-off is
+  // ordinary — see Order.exitOfIntentId.
+  exitOrders Order[] @relation("IntentExit")
   candidates ExecutionStrikeCandidate[]
   outcome    ExecutionOutcome?
 
@@ -2233,6 +2266,8 @@ model ExecutionIntent {
   @@index([status])
   @@index([symbol, decidedAt])
   @@index([sentinelRunId])
+  // Backs the rejection breakdown: a decidedAt window grouped by check.
+  @@index([rejectCheckId, decidedAt])
 }
 
 // One of the three candidate strikes evaluated for a decision, INCLUDING the

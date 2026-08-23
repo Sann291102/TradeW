@@ -4,14 +4,16 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   admin,
   type ExecutionAccountRow,
+  type ExecutionLoopStatus,
   type ExecutionProfileRow,
+  type ExecutionRejections,
   type ExecutionStats,
   type ExecutionTrace,
   type OrderRow,
   type TraceStage,
 } from '@/lib/api';
 import {
-  Empty, MetricCard, Panel, Pill, StatusIndicator, Table, Td, Th, WindowPicker, fmtNum, fmtTime, usePolling,
+  Empty, MetricCard, Panel, Pill, StatusIndicator, Table, Td, Th, WindowPicker, ago, fmtNum, fmtTime, usePolling,
 } from '@/components/ui';
 
 const STATUS_TONE: Record<string, 'good' | 'warn' | 'bad' | 'info' | 'neutral'> = {
@@ -25,12 +27,16 @@ const STATUS_TONE: Record<string, 'good' | 'warn' | 'bad' | 'info' | 'neutral'> 
   REJECTED: 'bad',
 };
 
-/** Source is structural: an order has an execution intent, or it does not. */
+/**
+ * Source is structural: an order links to an execution intent — as the
+ * submission of it, or as the square-off that closed it — or it links to
+ * neither and a person placed it.
+ */
 type SourceFilter = '' | 'sentinel' | 'user';
 
 const SOURCE_LABELS: Record<SourceFilter, string> = {
   '': 'All sources',
-  sentinel: 'Sentinel (agent)',
+  sentinel: 'Sentinel (entries + exits)',
   user: 'Manual (user)',
 };
 
@@ -48,6 +54,10 @@ export default function AdminOrdersPage() {
   );
   const execStats = usePolling(() => admin.execution.stats(hours), [hours], 15_000);
   const profiles = usePolling(() => admin.execution.profiles(), [], 20_000);
+  // Faster than the stats poll: this is the "is it alive" read, and a stale
+  // liveness indicator is worse than none.
+  const loopStatus = usePolling(() => admin.execution.status(), [], 10_000);
+  const rejections = usePolling(() => admin.execution.rejections(hours), [hours], 20_000);
 
   const byStatus = stats.data?.byStatus ?? [];
   const total = byStatus.reduce((sum, s) => sum + s.count, 0);
@@ -96,7 +106,9 @@ export default function AdminOrdersPage() {
         />
       </div>
 
-      <ExecutionSummary stats={execStats.data} loading={execStats.loading} />
+      <ExecutionSummary stats={execStats.data} status={loopStatus.data} loading={execStats.loading} />
+
+      <RejectionBreakdown data={rejections.data} loading={rejections.loading} hours={hours} />
 
       <ExecutionProfiles
         profiles={profiles.data}
@@ -150,18 +162,32 @@ export default function AdminOrdersPage() {
           </>}>
             {orders.data.map((order: OrderRow) => {
               const intent = order.executionIntent;
+              // An agent order is an ENTRY or an EXIT. The exit carries its own
+              // link (the entry column is unique and already spoken for), and
+              // reading only the entry is what made the loop look as though it
+              // opened positions and never closed them.
+              const exitOf = order.exitOfIntent;
+              const agentOrder = intent ?? exitOf;
               return (
                 <tr
                   key={order.id}
-                  onClick={() => intent && setTraceOrderId(order.id)}
-                  className={`transition-colors hover:bg-white/[0.03] ${intent ? 'cursor-pointer' : ''}`}
-                  title={intent ? 'Open the execution trace' : undefined}
+                  onClick={() => agentOrder && setTraceOrderId(order.id)}
+                  className={`transition-colors hover:bg-white/[0.03] ${agentOrder ? 'cursor-pointer' : ''}`}
+                  title={agentOrder ? 'Open the execution trace' : undefined}
                 >
                   <Td className="num text-muted">{fmtTime(order.placedAt)}</Td>
                   <Td>
-                    {intent
-                      ? <Pill tone="info">{intent.environment} · {intent.agent}</Pill>
-                      : <span className="text-faint">Manual</span>}
+                    {intent ? (
+                      <Pill tone="info">{intent.environment} · {intent.agent}</Pill>
+                    ) : exitOf ? (
+                      // Same agent, different act. Told apart rather than
+                      // merged: an operator reading this column is asking what
+                      // the loop DID, and "closed a position" is not "opened
+                      // one".
+                      <Pill tone="neutral">{exitOf.environment} · {exitOf.agent} exit</Pill>
+                    ) : (
+                      <span className="text-faint">Manual</span>
+                    )}
                   </Td>
                   <Td className="max-w-[180px] truncate text-muted">{order.user?.email ?? '—'}</Td>
                   <Td className="font-medium">{order.instrument?.symbol ?? '—'}</Td>
@@ -174,7 +200,9 @@ export default function AdminOrdersPage() {
                   <Td className="max-w-[280px] truncate text-muted">
                     {intent
                       ? `${intent.bias} ${intent.optionType} ${Number(intent.strike).toFixed(0)} · ${intent.confidence}%${intent.strategyName ? ` · ${intent.strategyName}` : ''}`
-                      : ''}
+                      : exitOf
+                        ? `square-off of ${exitOf.optionType} ${Number(exitOf.strike).toFixed(0)} · ${exitOf.profile.name}`
+                        : ''}
                   </Td>
                   <Td className="max-w-[220px] truncate text-down">{order.rejectReason ?? ''}</Td>
                 </tr>
@@ -198,7 +226,15 @@ export default function AdminOrdersPage() {
  * there is no win rate, and showing 0% would assert a losing agent where there
  * is simply no data yet.
  */
-function ExecutionSummary({ stats, loading }: { stats: ExecutionStats | null; loading: boolean }) {
+function ExecutionSummary({
+  stats,
+  status,
+  loading,
+}: {
+  stats: ExecutionStats | null;
+  status: ExecutionLoopStatus | null;
+  loading: boolean;
+}) {
   if (loading && !stats) {
     return <Panel title="Sentinel paper execution"><Empty>Loading…</Empty></Panel>;
   }
@@ -208,14 +244,27 @@ function ExecutionSummary({ stats, loading }: { stats: ExecutionStats | null; lo
   const pnlTone = stats.realizedPnl > 0 ? 'good' : stats.realizedPnl < 0 ? 'bad' : 'neutral';
 
   return (
-    <Panel title="Sentinel paper execution" subtitle="Agent-generated decisions in this window">
+    <Panel
+      title="Sentinel paper execution"
+      subtitle="Agent-generated decisions in this window"
+      right={<LoopIndicator status={status} armed={stats.enabledProfiles} />}
+    >
       <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5">
         <MetricCard
           label="Armed profiles"
           accent={stats.enabledProfiles ? 'teal' : 'slate'}
           value={fmtNum(stats.enabledProfiles)}
-          sub={stats.enabledProfiles ? 'may place paper orders' : 'none armed'}
-          tone={stats.enabledProfiles ? 'good' : 'neutral'}
+          // "Armed" is a database fact; whether anything TICKS is a fact about
+          // the API process. Saying "may place paper orders" while the loop is
+          // switched off is the exact misreading this sub-line now prevents.
+          sub={
+            !stats.enabledProfiles
+              ? 'none armed'
+              : status && !status.enabled
+                ? 'armed, but the loop is off'
+                : 'may place paper orders'
+          }
+          tone={stats.enabledProfiles ? (status && !status.enabled ? 'warn' : 'good') : 'neutral'}
         />
         <MetricCard
           label="Intents"
@@ -239,6 +288,143 @@ function ExecutionSummary({ stats, loading }: { stats: ExecutionStats | null; lo
           tone={pnlTone}
         />
       </div>
+    </Panel>
+  );
+}
+
+/**
+ * Armed, or armed AND ticking?
+ *
+ * Two switches decide whether the loop runs, and they live in different places:
+ * a profile's `enabled` column (a row an operator can see and toggle) and
+ * `PAPER_EXECUTION_ENABLED` on the API process (which no query can reach). The
+ * console used to show only the first, so an armed profile looked identical
+ * whether it was being evaluated every minute or had never been looked at —
+ * and the only hint was a footnote in small print under the profile table.
+ *
+ * Reported with the leader lease, because a replica that is not the leader also
+ * does not tick, and "enabled but not leading" is a perfectly ordinary state on
+ * a two-replica deployment that would otherwise look like a broken loop.
+ */
+function LoopIndicator({ status, armed }: { status: ExecutionLoopStatus | null; armed: number }) {
+  if (!status) return <StatusIndicator label="Loop state unknown" tone="idle" pulse={false} />;
+
+  if (!status.enabled) {
+    return (
+      <div className="flex items-center gap-2">
+        <StatusIndicator label="Loop off — PAPER_EXECUTION_ENABLED is not true" tone="warn" pulse={false} />
+        {armed > 0 && (
+          <span className="text-[11px] text-faint">
+            {armed} profile{armed === 1 ? '' : 's'} armed and waiting
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  // Enabled but not holding the lease: another replica is doing the work.
+  if (!status.isEvaluateLeader) {
+    return <StatusIndicator label="Loop on — another replica holds the lease" tone="info" pulse={false} />;
+  }
+
+  const last = status.lastEvaluateAt;
+  const intervalMs = status.intervalMs ?? 60_000;
+  // Two missed ticks is the threshold: one is a slow Sentinel evaluation
+  // (routine — the pass can outlast the interval and the guard skips it), two
+  // is a loop that has stopped advancing.
+  const overdue = last != null && Date.now() - new Date(last).getTime() > intervalMs * 2 + 30_000;
+
+  return (
+    <div className="flex items-center gap-2">
+      <StatusIndicator
+        label={
+          last === null
+            ? `Loop on — no pass yet (every ${Math.round(intervalMs / 1000)}s)`
+            : overdue
+              ? `Loop stalled — last pass ${ago(last)}`
+              : `Loop ticking — last pass ${ago(last)}`
+        }
+        tone={overdue ? 'bad' : 'good'}
+        pulse={!overdue}
+      />
+      {status.evaluating && <span className="text-[11px] text-teal">pass in flight</span>}
+    </div>
+  );
+}
+
+/**
+ * "Why did nothing trade today?", as one panel.
+ *
+ * Every refusal here was always recorded — on the intent, in a sentence written
+ * for someone reading that one intent. What was missing was the ABILITY TO
+ * COUNT them: the sentence interpolates live numbers, so two refusals for the
+ * same reason are different strings. On 2026-08-18 that gap cost a full
+ * end-to-end audit of a read path that turned out to be clean; the orders were
+ * never written, and the reason was sitting on 40-odd intents one click apart.
+ *
+ * Deliberately not hidden when empty — "no refusals in this window" is an
+ * answer an operator came here for, and a panel that vanishes looks like a
+ * panel that failed to load.
+ */
+function RejectionBreakdown({
+  data,
+  loading,
+  hours,
+}: {
+  data: ExecutionRejections | null;
+  loading: boolean;
+  hours: number;
+}) {
+  if (loading && !data) {
+    return <Panel title="Why decisions did not become orders"><Empty>Loading…</Empty></Panel>;
+  }
+  if (!data) return null;
+
+  if (data.total === 0) {
+    return (
+      <Panel title="Why decisions did not become orders" subtitle={`Last ${hours}h`}>
+        <Empty>No decision was refused in this window.</Empty>
+      </Panel>
+    );
+  }
+
+  const max = Math.max(...data.buckets.map((b) => b.count), 1);
+
+  return (
+    <Panel
+      title="Why decisions did not become orders"
+      subtitle={`${fmtNum(data.total)} refused in the last ${hours}h, by the gate that stopped them`}
+    >
+      <div className="flex flex-col gap-2 p-4">
+        {data.buckets.map((b) => (
+          <div key={b.checkId ?? 'unrecorded'} className="grid grid-cols-[190px_1fr_auto] items-center gap-3">
+            <div className="truncate text-[12px] text-muted" title={b.checkId ?? undefined}>
+              {b.label}
+            </div>
+            <div className="h-[18px] overflow-hidden rounded-sm bg-white/[0.04]">
+              <div
+                className={`h-full ${b.checkId === 'daily-loss-limit' || b.checkId === 'submission-raised' ? 'bg-down/60' : 'bg-teal/50'}`}
+                style={{ width: `${Math.max(4, (b.count / max) * 100)}%` }}
+              />
+            </div>
+            <div className="num text-right text-[12px] tabular-nums">{fmtNum(b.count)}</div>
+            {/* The full sentence behind the most recent one in this bucket —
+                the numbers the id cannot carry. */}
+            {b.lastReason && (
+              <p className="col-span-3 -mt-1 pl-[202px] text-[11px] leading-relaxed text-faint">
+                {b.lastProfileName ? `${b.lastProfileName}: ` : ''}
+                {b.lastReason}
+                {b.lastAt ? ` (${ago(b.lastAt)})` : ''}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+      <p className="border-t border-white/[0.06] px-4 py-2 text-[11px] text-faint">
+        A refusal is the system working: the gates are what stop an agent trading past its limits. Intents
+        accumulating with no orders is the expected shape when a daily bound has been hit — see the profile&rsquo;s
+        policy column for the bound itself.
+      </p>
     </Panel>
   );
 }
@@ -353,6 +539,7 @@ function ExecutionProfiles({
           <p className="border-t border-white/[0.06] px-4 py-2 text-[11px] text-faint">
             Arming a profile is one of two switches. The API must also run with{' '}
             <code className="text-muted">PAPER_EXECUTION_ENABLED=true</code> before the loop ticks on its own —
+            the indicator beside &ldquo;Sentinel paper execution&rdquo; above reports which state it is actually in.
             &ldquo;Run pass&rdquo; works either way and applies every policy gate. A{' '}
             <strong className="text-muted">USER</strong> profile trades a real TradeW account: its orders,
             positions and P&amp;L appear in that user&rsquo;s own app, because both read the same records.

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { type PolicyInput, evaluatePolicy } from './execution-policy';
+import {
+  OMS_REJECTED,
+  REJECT_CHECK_LABELS,
+  SUBMISSION_RAISED,
+  type PolicyInput,
+  evaluatePolicy,
+  rejectCheckLabel,
+} from './execution-policy';
 
 /** A profile and a market where everything is fine. Each test breaks one thing. */
 const OK: PolicyInput = {
@@ -108,5 +115,68 @@ describe('evaluatePolicy', () => {
     expect(decision.allowed).toBe(false);
     // An operator debugging a refusal needs all of them, not just the first.
     expect(decision.checks.filter((c) => !c.passed).length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+/**
+ * The refusal has to survive being stored.
+ *
+ * `reason` is a sentence with live numbers in it, so two refusals for the same
+ * cause are different strings and counting them is impossible. `failedCheckId`
+ * is the same fact in a form that groups — it is what lands on
+ * `ExecutionIntent.rejectCheckId` and what the console's breakdown counts. If
+ * these drift, an operator's answer to "why did nothing trade today?" is wrong
+ * in a way that looks plausible.
+ */
+describe('the refusal is recorded in a countable form', () => {
+  it('names the FIRST failing check, not merely some failing check', () => {
+    // Two gates broken at once. Order of evaluation decides which is reported,
+    // and it must be the same one `reason` describes — a breakdown that counts
+    // a different gate than the sentence explains is worse than no breakdown.
+    const decision = fail({ marketOpen: false, confidence: 10 });
+    expect(decision.allowed).toBe(false);
+    expect(decision.failedCheckId).toBe('market-open');
+    expect(decision.reason).toBe(decision.checks.find((c) => c.id === 'market-open')!.detail);
+  });
+
+  it('is null when the intent is allowed', () => {
+    expect(evaluatePolicy(OK).failedCheckId).toBeNull();
+  });
+
+  it('reports each gate under its own id', () => {
+    const cases: Array<[Partial<PolicyInput>, string]> = [
+      [{ enabled: false }, 'profile-enabled'],
+      [{ environment: 'LIVE' }, 'environment-paper'],
+      [{ marketOpen: false }, 'market-open'],
+      [{ minuteOfDay: 15 * 60 + 20 }, 'before-square-off'],
+      [{ confidence: 12 }, 'confidence-floor'],
+      [{ openPositions: 1 }, 'max-open-positions'],
+      [{ ordersToday: 6 }, 'max-orders-per-day'],
+      [{ realizedPnlToday: -25_001 }, 'daily-loss-limit'],
+      [{ availableCash: 10 }, 'affordable'],
+    ];
+    for (const [broken, id] of cases) {
+      expect(fail(broken).failedCheckId).toBe(id);
+    }
+  });
+
+  it('has a human label for every id it can emit, including the non-policy stops', () => {
+    // The console groups by id and renders the label. An id with no label would
+    // surface as an unlabelled bar — the kind of gap nobody notices until an
+    // operator is staring at it during an incident.
+    for (const check of evaluatePolicy({ ...OK, enabled: false }).checks) {
+      expect(REJECT_CHECK_LABELS[check.id]).toBeTruthy();
+      expect(check.label).toBe(REJECT_CHECK_LABELS[check.id]);
+    }
+    expect(rejectCheckLabel(SUBMISSION_RAISED)).toBeTruthy();
+    expect(rejectCheckLabel(OMS_REJECTED)).toBeTruthy();
+  });
+
+  it('falls back to the id itself rather than losing an unknown refusal', () => {
+    // Rows written before a check was renamed still have to render as
+    // something. Showing the raw id is worse than a label and far better than
+    // dropping the bucket.
+    expect(rejectCheckLabel('some-future-check')).toBe('some-future-check');
+    expect(rejectCheckLabel(null)).toBe('Not recorded');
   });
 });

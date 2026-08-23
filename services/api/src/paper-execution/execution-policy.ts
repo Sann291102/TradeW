@@ -35,6 +35,52 @@ export interface PolicyDecision {
   checks: PolicyCheck[];
   /** The first failing check's detail, or null when allowed. */
   reason: string | null;
+  /**
+   * The first failing check's ID, or null when allowed.
+   *
+   * `reason` is a sentence with live numbers interpolated into it, so no two
+   * refusals are ever the same string and the column it is stored in cannot be
+   * grouped. This is the same refusal in a form that can be counted — it is
+   * what `ExecutionIntent.rejectCheckId` records and what the console's
+   * "why did nothing trade today?" breakdown groups by.
+   */
+  failedCheckId: string | null;
+}
+
+/**
+ * Every id an intent's refusal can carry, and how to say it to a person.
+ *
+ * ONE map, used both to label a live check and to label a stored refusal
+ * counted days later. Two lists would drift the moment a check is renamed, and
+ * the drift would show up as an unlabelled bar on the console rather than as a
+ * failure anyone notices.
+ *
+ * The last two are not policy checks: they are the ways an intent that PASSED
+ * policy still never became a position. They belong here because the question
+ * the console asks — "why did nothing trade?" — does not distinguish them.
+ */
+export const REJECT_CHECK_LABELS: Record<string, string> = {
+  'profile-enabled': 'Profile enabled',
+  'environment-paper': 'Environment is PAPER',
+  'market-open': 'Market open',
+  'before-square-off': 'Before square-off',
+  'confidence-floor': 'Confidence floor',
+  'max-open-positions': 'Open position limit',
+  'max-orders-per-day': 'Daily order limit',
+  'daily-loss-limit': 'Daily loss limit',
+  affordable: 'Sufficient paper capital',
+  'submission-raised': 'Submission raised',
+  'oms-rejected': 'Rejected by the OMS',
+};
+
+/** The two non-policy stops, named so a caller cannot misspell one. */
+export const SUBMISSION_RAISED = 'submission-raised';
+export const OMS_REJECTED = 'oms-rejected';
+
+/** How to say a check id to a person; the id itself if it is not a known one. */
+export function rejectCheckLabel(id: string | null): string {
+  if (!id) return 'Not recorded';
+  return REJECT_CHECK_LABELS[id] ?? id;
 }
 
 export interface PolicyInput {
@@ -68,12 +114,14 @@ export const SESSION_OPEN_MINUTE = 9 * 60 + 15;
 export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   const checks: PolicyCheck[] = [];
 
-  const push = (id: string, label: string, passed: boolean, detail: string) =>
-    checks.push({ id, label, passed, detail });
+  // The label is looked up, never passed in: a check's display name lives in
+  // exactly one place, so renaming one cannot leave the stored-refusal
+  // breakdown showing the old wording.
+  const push = (id: string, passed: boolean, detail: string) =>
+    checks.push({ id, label: rejectCheckLabel(id), passed, detail });
 
   push(
     'profile-enabled',
-    'Profile enabled',
     input.enabled,
     input.enabled ? 'Profile is enabled for execution.' : 'Profile is disabled; no order may be produced.',
   );
@@ -87,14 +135,12 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   const isPaper = input.environment === 'PAPER';
   push(
     'environment-paper',
-    'Environment is PAPER',
     isPaper,
     isPaper ? 'Executing against the paper engine.' : `Refused: environment is "${input.environment}", not PAPER.`,
   );
 
   push(
     'market-open',
-    'Market open',
     input.marketOpen,
     input.marketOpen ? 'The session is open.' : 'The market is closed; no entry is taken outside the session.',
   );
@@ -105,7 +151,6 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   const beforeSquareOff = input.minuteOfDay < input.squareOffMinute;
   push(
     'before-square-off',
-    'Before square-off',
     beforeSquareOff,
     beforeSquareOff
       ? `${formatIstMinute(input.minuteOfDay)} is before the ${formatIstMinute(input.squareOffMinute)} square-off.`
@@ -115,7 +160,6 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   const confidenceOk = input.confidence >= input.minConfidence;
   push(
     'confidence-floor',
-    'Confidence floor',
     confidenceOk,
     `${input.confidence}% against this profile's ${input.minConfidence}% floor.`,
   );
@@ -123,7 +167,6 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   const positionsOk = input.openPositions < input.maxOpenPositions;
   push(
     'max-open-positions',
-    'Open position limit',
     positionsOk,
     `${input.openPositions} open against a ${input.maxOpenPositions} limit.`,
   );
@@ -131,7 +174,6 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   const ordersOk = input.ordersToday < input.maxOrdersPerDay;
   push(
     'max-orders-per-day',
-    'Daily order limit',
     ordersOk,
     `${input.ordersToday} placed today against a ${input.maxOrdersPerDay} limit.`,
   );
@@ -141,7 +183,6 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   const lossOk = input.realizedPnlToday > -Math.abs(input.maxLossPerDay);
   push(
     'daily-loss-limit',
-    'Daily loss limit',
     lossOk,
     lossOk
       ? `Realized ${formatInr(input.realizedPnlToday)} today, inside the ${formatInr(-Math.abs(input.maxLossPerDay))} floor.`
@@ -155,13 +196,17 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   const affordable = input.estimatedCost <= input.availableCash;
   push(
     'affordable',
-    'Sufficient paper capital',
     affordable,
     `Estimated ${formatInr(input.estimatedCost)} against ${formatInr(input.availableCash)} available.`,
   );
 
   const failed = checks.find((c) => !c.passed);
-  return { allowed: !failed, checks, reason: failed ? failed.detail : null };
+  return {
+    allowed: !failed,
+    checks,
+    reason: failed ? failed.detail : null,
+    failedCheckId: failed ? failed.id : null,
+  };
 }
 
 function formatIstMinute(minuteOfDay: number): string {

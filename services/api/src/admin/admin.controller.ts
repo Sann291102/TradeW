@@ -7,6 +7,7 @@ import { CognitionService } from '../cognition/cognition.service';
 import { ExecutionAccountService } from '../paper-execution/execution-account.service';
 import { ExecutionProfileService } from '../paper-execution/execution-profile.service';
 import { ExecutionQueryService } from '../paper-execution/execution-query.service';
+import { ExecutionSchedulerService } from '../paper-execution/execution-scheduler.service';
 import { ExecutionTraceService } from '../paper-execution/execution-trace.service';
 import { PaperExecutionService } from '../paper-execution/paper-execution.service';
 import { SECURITY } from '../swagger/swagger.setup';
@@ -199,6 +200,7 @@ export class AdminController {
     private readonly telemetry: TelemetryService,
     private readonly cognition: CognitionService,
     private readonly executionQuery: ExecutionQueryService,
+    private readonly executionScheduler: ExecutionSchedulerService,
     private readonly executionTrace: ExecutionTraceService,
     private readonly paperExecution: PaperExecutionService,
     private readonly executionAccounts: ExecutionAccountService,
@@ -418,6 +420,26 @@ export class AdminController {
   @Get('execution/stats')
   executionStats(@Query('hours') hours?: string) {
     return this.executionQuery.stats(Number(hours) || 24);
+  }
+
+  /**
+   * Is the loop actually ticking, or is it just armed?
+   *
+   * Answers from THIS PROCESS's live state, not from a table — see
+   * `ExecutionSchedulerService.status`. The console shows it beside the armed
+   * count, which is a database fact and cannot distinguish the two.
+   *
+   * Read-only: it starts and stops nothing.
+   */
+  @Get('execution/status')
+  executionStatus() {
+    return this.executionScheduler.status();
+  }
+
+  /** Today's refusals grouped by the gate that produced them. */
+  @Get('execution/rejections')
+  executionRejections(@Query('hours') hours?: string) {
+    return this.executionQuery.rejections(Number(hours) || 24);
   }
 
   /** The full backward+forward provenance of one intent. */

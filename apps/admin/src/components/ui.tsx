@@ -152,8 +152,14 @@ export function Th({ children, className = '' }: { children?: ReactNode; classNa
   return <th className={`whitespace-nowrap border-b border-white/[0.06] px-3 py-2 font-medium ${className}`}>{children}</th>;
 }
 
-export function Td({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <td className={`whitespace-nowrap border-b border-white/[0.04] px-3 py-1.5 ${className}`}>{children}</td>;
+/** `title` is the hover readout for a cell whose content is `truncate`d — the
+ *  only way the clipped half stays reachable without widening the table. */
+export function Td({ children, className = '', title }: { children: ReactNode; className?: string; title?: string }) {
+  return (
+    <td title={title} className={`whitespace-nowrap border-b border-white/[0.04] px-3 py-1.5 ${className}`}>
+      {children}
+    </td>
+  );
 }
 
 export function Empty({ children }: { children: ReactNode }) {

@@ -238,7 +238,27 @@ export class ExecutionLifecycleService {
 
           // The ordinary exit path — a MARKET order in the opposite direction,
           // margin-settled and charged like any other.
-          await this.orders.exitPosition(profile.accountUserId, intent.order.instrumentId, intent.order.productType);
+          const exit = await this.orders.exitPosition(
+            profile.accountUserId,
+            intent.order.instrumentId,
+            intent.order.productType,
+          );
+          // Link the exit back to the decision it closes.
+          //
+          // `Order.executionIntentId` cannot carry this: it is @unique and
+          // already holds the ENTRY, which is the idempotency guarantee at the
+          // order layer. So the exit gets its own nullable column. Without it
+          // the console's `source=sentinel` filter matched the loop's entries
+          // and none of its exits — the agent appeared to open positions it
+          // never closed, which is precisely the shape a real bug would have.
+          //
+          // Written after the order exists rather than as part of placing it,
+          // because `OrderService` knows nothing about intents and must not
+          // start to: the arrow points execution → OMS, never back.
+          await this.prisma.order.update({
+            where: { id: exit.id },
+            data: { exitOfIntentId: intent.id },
+          });
           await this.prisma.executionOutcome.updateMany({
             where: { intentId: intent.id, exitReason: 'PENDING' },
             data: { exitReason: 'SQUARE_OFF' },

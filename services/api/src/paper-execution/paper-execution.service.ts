@@ -1,12 +1,20 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { ExecutionIntentStatus, Prisma, type ProductType } from '@prisma/client';
+import { ExecutionIntentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { isTradingDay } from '../discipline/market-calendar';
 import { MarketPriceService } from '../sim/market-price.service';
 import { OrderService } from '../sim/order.service';
 import { ExecutionAccountService } from './execution-account.service';
 import { contractSymbol, deriveIdempotencyKey, istParts } from './execution-identity';
-import { SESSION_OPEN_MINUTE, type PolicyCheck, evaluatePolicy } from './execution-policy';
+import { countProfileOpenPositions } from './execution-open-positions';
+import {
+  OMS_REJECTED,
+  SESSION_OPEN_MINUTE,
+  SUBMISSION_RAISED,
+  type PolicyCheck,
+  type PolicyDecision,
+  evaluatePolicy,
+} from './execution-policy';
 import { SentinelExecutionClient, type ExecutionEvaluationDto } from './sentinel-execution.client';
 
 /**
@@ -302,7 +310,12 @@ export class PaperExecutionService {
           data: {
             status: omsRejected ? ExecutionIntentStatus.FAILED : filled ? ExecutionIntentStatus.FILLED : ExecutionIntentStatus.SUBMITTED,
             submittedAt: new Date(),
-            ...(omsRejected ? { rejectReason: `OMS rejected the order: ${order.rejectReason ?? 'no reason given'}` } : {}),
+            ...(omsRejected
+              ? {
+                  rejectReason: `OMS rejected the order: ${order.rejectReason ?? 'no reason given'}`,
+                  rejectCheckId: OMS_REJECTED,
+                }
+              : {}),
           },
         });
         if (filled && order.avgFillPrice) {
@@ -345,7 +358,14 @@ export class PaperExecutionService {
       this.logger.error(`${profile.name}: submission failed for ${symbol} — ${message}`);
       await this.prisma.executionIntent.update({
         where: { id: created.intent.id },
-        data: { status: ExecutionIntentStatus.FAILED, rejectReason: `Submission raised: ${message}` },
+        data: {
+          status: ExecutionIntentStatus.FAILED,
+          rejectReason: `Submission raised: ${message}`,
+          // Policy passed and the OMS still refused — the discipline limits
+          // inside placeOrder are the usual reason, and an operator counting
+          // today's refusals must see them alongside the policy ones.
+          rejectCheckId: SUBMISSION_RAISED,
+        },
       });
       return {
         ...base,
@@ -411,9 +431,11 @@ export class PaperExecutionService {
       // unrelated trading must not silently disarm their agent.
       //
       // Counted by walking this profile's FILLED intents and asking the
-      // position table whether each is still open — the same join the trace
-      // uses, so the console and the limit can never disagree.
-      this.countProfileOpenPositions(profileId, userId),
+      // position table whether each is still open. Shared with the console's
+      // profile list (`execution-open-positions.ts`) rather than reimplemented
+      // there — the two DID disagree, and a limit that disagrees with its own
+      // display is worse than either being wrong alone.
+      countProfileOpenPositions(this.prisma, profileId, userId),
       // Counted per PROFILE, not per account, so two profiles sharing an
       // account (possible, though not the seeded shape) get independent limits.
       this.prisma.executionIntent.count({
@@ -446,44 +468,6 @@ export class PaperExecutionService {
   }
 
   /**
-   * How many positions THIS profile currently has open.
-   *
-   * Walks the profile's own FILLED intents to their orders' instruments, then
-   * asks the position table which of those are still non-zero. A profile that
-   * has never filled anything counts zero without touching the position table
-   * at all.
-   *
-   * Note this counts distinct (instrument, productType) pairs the profile is
-   * responsible for — which is what a "position" is in this schema, since
-   * `Position` is unique on (userId, instrumentId, productType). Two intents on
-   * the same contract are one position, and that is the correct count for a
-   * concurrency limit.
-   */
-  private async countProfileOpenPositions(profileId: string, userId: string): Promise<number> {
-    const filled = await this.prisma.executionIntent.findMany({
-      where: { profileId, status: ExecutionIntentStatus.FILLED },
-      select: { order: { select: { instrumentId: true, productType: true } } },
-    });
-    const keys = new Map<string, { instrumentId: string; productType: ProductType }>();
-    for (const intent of filled) {
-      if (!intent.order) continue;
-      keys.set(`${intent.order.instrumentId}::${intent.order.productType}`, {
-        instrumentId: intent.order.instrumentId,
-        productType: intent.order.productType,
-      });
-    }
-    if (keys.size === 0) return 0;
-
-    return this.prisma.position.count({
-      where: {
-        userId,
-        quantity: { not: 0 },
-        OR: [...keys.values()].map((k) => ({ instrumentId: k.instrumentId, productType: k.productType })),
-      },
-    });
-  }
-
-  /**
    * Insert the intent and its three candidates atomically, treating a unique
    * violation on `idempotencyKey` as success-by-someone-else.
    *
@@ -503,7 +487,7 @@ export class PaperExecutionService {
     quantity: number;
     idempotencyKey: string;
     now: Date;
-    policy: { allowed: boolean; reason: string | null; checks: PolicyCheck[] };
+    policy: PolicyDecision;
   }): Promise<{ intent: { id: string; orderId?: string | null }; duplicate: boolean }> {
     const { profile, evaluation, selected, expiry, side, contract, quantity, idempotencyKey, now, policy } = args;
 
@@ -543,6 +527,8 @@ export class PaperExecutionService {
             strikeStep: evaluation.strikes.strikeStep,
           } as unknown as Prisma.InputJsonValue,
           rejectReason: policy.allowed ? null : policy.reason,
+          // The same refusal, grouped-able. See ExecutionIntent.rejectCheckId.
+          rejectCheckId: policy.allowed ? null : policy.failedCheckId,
           decidedAt: now,
           candidates: {
             create: evaluation.strikes.candidates.map((c) => ({
@@ -602,6 +588,7 @@ export class PaperExecutionService {
               data: {
                 status: policy.allowed ? ExecutionIntentStatus.PROPOSED : ExecutionIntentStatus.REJECTED,
                 rejectReason: policy.allowed ? null : policy.reason,
+                rejectCheckId: policy.allowed ? null : policy.failedCheckId,
                 decidedAt: now,
                 confidence: Math.round(evaluation.confidence),
                 sentinelRunId: evaluation.runId,

@@ -85,6 +85,12 @@ export const ADMIN_PROXY_ROUTES: RouteRule[] = [
   { method: 'GET', segments: ['execution', 'profiles'] },
   { method: 'GET', segments: ['execution', 'intents'] },
   { method: 'GET', segments: ['execution', 'stats'] },
+  // Is the loop ticking, and why did today's decisions not become orders. Both
+  // are reads of state the console cannot derive: the first is the API
+  // process's own liveness, the second a grouping the browser would otherwise
+  // do over every intent it could fetch.
+  { method: 'GET', segments: ['execution', 'status'] },
+  { method: 'GET', segments: ['execution', 'rejections'] },
   { method: 'GET', segments: ['execution', 'trace', '*'] },
   { method: 'GET', segments: ['execution', 'trace-by-order', '*'] },
   // The two writes. Arming a profile is the switch that decides whether an

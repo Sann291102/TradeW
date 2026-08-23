@@ -53,16 +53,22 @@ export class ExecutionTraceService {
   async byOrderId(orderId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      select: { executionIntentId: true },
+      // Either link resolves to the same decision. An agent's square-off has no
+      // `executionIntentId` (that column is @unique and holds the ENTRY), so
+      // looking only there made every agent EXIT untraceable — the console
+      // offered no trace on exactly the orders whose provenance is least
+      // obvious from the row itself.
+      select: { executionIntentId: true, exitOfIntentId: true },
     });
     if (!order) throw new NotFoundException(`No order ${orderId}`);
-    if (!order.executionIntentId) {
+    const intentId = order.executionIntentId ?? order.exitOfIntentId;
+    if (!intentId) {
       throw new NotFoundException(
         `Order ${orderId} was not produced by the execution loop — it has no execution intent. ` +
           'Manually placed orders have no Sentinel provenance to trace.',
       );
     }
-    return this.byIntentId(order.executionIntentId);
+    return this.byIntentId(intentId);
   }
 
   async byIntentId(intentId: string) {
