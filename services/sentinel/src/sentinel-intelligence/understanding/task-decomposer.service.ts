@@ -36,7 +36,7 @@ export class TaskDecomposerService {
       question: string,
       rationale: string,
       knowledgeQueries: string[],
-      dependsOn: string[] = [],
+      informedBy: string[] = [],
     ) => {
       subtasks.push({
         id: `${agent}#${subtasks.length + 1}`,
@@ -44,7 +44,7 @@ export class TaskDecomposerService {
         question,
         rationale,
         knowledgeQueries,
-        dependsOn,
+        informedBy,
         weight: weights[agent] ?? 0.5,
       });
     };

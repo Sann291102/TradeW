@@ -136,7 +136,10 @@ describe('buildInstitutionalCrossValidation', () => {
   it('lets live high-impact news dilute a directional consensus without taking a side', () => {
     const cv = buildInstitutionalCrossValidation(
       input({
-        signals: [signal({ name: 'ema_trend' }), signal({ name: 'news_driven_volatility', evidence: ['RBI policy in 20 minutes'] })],
+        signals: [
+          signal({ name: 'ema_trend' }),
+          signal({ name: 'news_driven_volatility', agent: 'news', evidence: ['RBI policy in 20 minutes'] }),
+        ],
       }),
     );
     const news = cv.dimensions.find((d) => d.id === 'news')!;
@@ -145,14 +148,37 @@ describe('buildInstitutionalCrossValidation', () => {
   });
 
   it('does not let the news signal vote twice as a technical signal', () => {
-    // NewsIntelligenceService emits under agent 'market-technical' — there is
-    // no 'news' member of SignalAgent — so a naive agent filter would count
-    // one piece of evidence in two dimensions.
+    // NewsIntelligenceService emits under `agent: 'news'` as of 2026-08-21, so
+    // the technical dimension excludes it structurally. This used to require a
+    // NON_TECHNICAL_SIGNALS name list, because the signal was tagged
+    // 'market-technical' and a plain agent filter counted one piece of evidence
+    // in two dimensions.
     const cv = buildInstitutionalCrossValidation(
-      input({ signals: [signal({ name: 'news_driven_volatility', evidence: ['RBI policy'] })] }),
+      input({ signals: [signal({ name: 'news_driven_volatility', agent: 'news', evidence: ['RBI policy'] })] }),
     );
     const technical = cv.dimensions.find((d) => d.id === 'technical')!;
     expect(technical.stance).toBe('abstain');
+    // And it still votes in its own dimension — excluded from technicals is not
+    // excluded from the cross-validation.
+    expect(cv.dimensions.find((d) => d.id === 'news')!.stance).not.toBe('abstain');
+  });
+
+  it('no longer treats a news-tagged signal as technical corroboration', () => {
+    // The regression this guards: retagging the signal must not leave the
+    // technical dimension counting it, and must not leave the news dimension
+    // blind to it. Both halves, in one assertion pair, because a half-applied
+    // retag is the failure mode.
+    const cv = buildInstitutionalCrossValidation(
+      input({
+        signals: [
+          signal({ name: 'ema_trend' }),
+          signal({ name: 'news_driven_volatility', agent: 'news', evidence: ['RBI policy'] }),
+        ],
+      }),
+    );
+    const technical = cv.dimensions.find((d) => d.id === 'technical')!;
+    expect(technical.evidence).not.toContain('news');
+    expect(technical.evidence).toContain('ema trend');
   });
 
   it('resolves a genuine tie to neutral rather than picking a side', () => {

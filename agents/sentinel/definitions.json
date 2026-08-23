@@ -1,5 +1,5 @@
 {
-  "$comment": "Declarative Sentinel agent definitions (AgentDefinition[] from @tradew/ai-core). Deterministic signal computation lives in services/sentinel/src/intelligence/*; these definitions govern the LLM-facing half. CORE_GUARDRAILS from ai-core are ALWAYS appended by the runtime and cannot be removed here.",
+  "$comment": "UNIMPLEMENTED — NOTHING READS THIS FILE. No code in services/, apps/ or scripts/ loads it. Sentinel runs no LLM-backed agents at all: its ten agents are deterministic TypeScript classes in services/sentinel/src/sentinel-intelligence/agents/, and the /observe path composes six deterministic signal engines. Every name, systemPromptId, allowedTools, guardrails, tier and requiredCapability entry below is therefore inert. The five names here are NOT agent ids that run; they coincide with the /observe telemetry names because both derive from SENTINEL.md §2. See docs/product-architecture/AGENT-LAYERS.md. Original intent, retained: declarative agent definitions (AgentDefinition[] from @tradew/ai-core) governing the LLM-facing half, with CORE_GUARDRAILS always appended by the runtime.",
   "agents": [
     {
       "name": "market-technical",
@@ -41,7 +41,9 @@
       "description": "Labels every observation with a SEBI-relevant category and ensures each carries its evidence. Produces no user-facing text.",
       "systemPromptId": "sentinel.compliance-audit",
       "allowedTools": [],
-      "guardrails": ["Output structured labels only. Never user-facing copy."],
+      "guardrails": [
+        "Output structured labels only. Never user-facing copy."
+      ],
       "tier": "fast"
     },
     {

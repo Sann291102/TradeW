@@ -3,9 +3,16 @@ import { ChatMessage } from '../providers/types';
 /**
  * Agent SDK — declarative agent definitions + the runtime contract.
  *
+ * ⚠️ SPECIFIED, NOT IMPLEMENTED. No runtime service loads these definitions and
+ * no route invokes them; see the notice on `impl.ts` and the layer map in
+ * `docs/product-architecture/AGENT-LAYERS.md`. The types below describe an
+ * intended LLM-backed runtime. The agents that actually run are deterministic
+ * TypeScript classes that implement a different contract entirely
+ * (`services/sentinel/src/sentinel-intelligence/agents/agent.contract.ts`).
+ *
  * Definitions are version-controlled files (agents/sentinel/, agents/tradew-ai/)
- * reviewed like code (ARCHITECTURE.md §4). A runtime service loads only its own
- * system's definitions and executes them against ai-core primitives.
+ * reviewed like code (ARCHITECTURE.md §4). A runtime service would load only its
+ * own system's definitions and execute them against ai-core primitives.
  */
 
 export interface AgentDefinition {

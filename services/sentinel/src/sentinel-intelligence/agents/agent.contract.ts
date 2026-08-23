@@ -14,6 +14,8 @@ import type {
   SupportingConcept,
   TradeLike,
   UnderstoodRequest,
+  VerdictVeto,
+  VerdictVetoCode,
 } from '../types';
 
 /**
@@ -43,11 +45,48 @@ export interface AgentContext {
   risk: RiskAssessment | null;
   trades: TradeLike[];
   account: { marginUsed?: number; marginAvailable?: number; totalCapital?: number } | undefined;
+  /**
+   * The Brain's measured live-market track record for the patterns this run's
+   * detections are about, resolved ONCE by the engine before any agent runs.
+   *
+   * Keyed by pattern name — `strategyId` with dashes as underscores, the same
+   * string `PatternRecognitionService` writes and
+   * `StrategyIntelligenceService.baseRateFor` matches on. A pattern with no
+   * recorded occurrences is present with `sample: 0`, so an agent never has to
+   * distinguish "not looked up" from "looked up and found nothing".
+   *
+   * Pre-computed for the same reason `snapshot` is: this is a Postgres read,
+   * and an agent that performed it would be doing I/O inside what is otherwise
+   * a pure function over shared state — and ten agents wanting it would issue
+   * ten scans of one table. Empty when the lookup failed or there were no
+   * detections; an agent must treat absence as "no live record", never as
+   * corroboration.
+   */
+  baseRates: ReadonlyMap<string, LiveBaseRate>;
   /** Corpus retrieval. */
   index: KnowledgeIndexService;
   /** Concept ontology + grounding. */
   graph: ReasoningGraphService;
   at: Date;
+}
+
+/**
+ * A pattern's measured performance in the live market.
+ *
+ * Deliberately a narrow projection of the Brain's `BaseRateResult` rather than
+ * the type itself: an agent needs the sample, the distribution and whether the
+ * sample is big enough to mean anything, and giving it the Brain's own type
+ * would invite an agent to start depending on the Brain's shape and, from
+ * there, on the Brain.
+ */
+export interface LiveBaseRate {
+  pattern: string;
+  /** Outcome-tagged occurrences recorded across all symbols. */
+  sample: number;
+  /** outcome → count. Empty when `sample` is 0. */
+  distribution: Record<string, number>;
+  /** True once the sample clears the Brain's own significance floor. */
+  reliable: boolean;
 }
 
 /** Every specialist agent implements exactly this. */
@@ -74,6 +113,7 @@ export class VerdictBuilder {
   private dataQuality = 1;
   private abstained = false;
   private abstentionReason: string | null = null;
+  private vetoed: VerdictVeto | null = null;
   private readonly startedAt = Date.now();
 
   constructor(
@@ -144,6 +184,20 @@ export class VerdictBuilder {
     return this;
   }
 
+  /**
+   * Raise a veto: a finding the synthesis gate must honour rather than weigh.
+   *
+   * Deliberately separate from `conclude()`. A stance and a confidence are an
+   * opinion the cross-checker is entitled to outvote; a veto is not an opinion,
+   * and expressing it as a very confident stance would leave it subject to
+   * exactly the weighting that makes it advisory. An agent that vetoes should
+   * normally also `conclude()` so the run's audit trail still reads sensibly.
+   */
+  veto(code: VerdictVetoCode, reason: string): this {
+    this.vetoed = { code, reason };
+    return this;
+  }
+
   build(): AgentVerdict {
     const citations = dedupeCitations(this.evidence.flatMap((e) => e.citations));
     return {
@@ -159,6 +213,7 @@ export class VerdictBuilder {
       abstentionReason: this.abstentionReason,
       dataQuality: this.dataQuality,
       latencyMs: Date.now() - this.startedAt,
+      veto: this.vetoed,
     };
   }
 }
