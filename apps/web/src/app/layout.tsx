@@ -2,8 +2,17 @@
 import '@tradew/ui/styles.css';
 import './globals.css';
 import { QueryProvider } from '@/components/providers/QueryProvider';
+import { siteUrl } from '@/lib/site';
 
+/**
+ * `metadataBase` resolves the relative canonicals the legal pages declare. It
+ * is CONDITIONAL because TradeW has no established public domain — see
+ * lib/site.ts. Unset, Next emits relative canonicals, which is correct;
+ * inventing a host here would tell crawlers the canonical copy of every page
+ * lives somewhere TradeW does not control.
+ */
 export const metadata = {
+  ...(siteUrl() ? { metadataBase: siteUrl()! } : {}),
   title: 'TradeW — AI Trading Operating System',
   description: 'Institutional AI trading workspace. Observations only — never investment advice.',
 };
