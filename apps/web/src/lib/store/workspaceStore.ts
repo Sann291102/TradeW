@@ -286,6 +286,40 @@ function seedNotifications(): NotificationItem[] {
  */
 export type ThemeName = 'dark' | 'light' | 'system' | 'high-contrast';
 
+/**
+ * Which trading space the Markets workspace is showing.
+ *
+ * This is a CURRENCY SWITCH, not a display-conversion setting. INR selects the
+ * rupee-denominated Indian venues (indices, equities, ETFs, MCX commodities,
+ * all fed by Dhan); USD selects the dollar-denominated global venues (crypto
+ * from Binance, spot FX from Twelve Data).
+ *
+ * Nothing is converted between the two, deliberately. Every price stays in the
+ * currency its venue actually quotes in. Converting them onto one currency
+ * would put a live FX rate inside every price and P&L figure on the screen —
+ * and a P&L computed through a rate that moves is not reproducible tomorrow,
+ * which is precisely the reasoning already recorded in schema.prisma for
+ * keeping the crypto tables separate from the rupee OMS rather than widening
+ * it. The switch changes which venues you are looking at; it never restates
+ * one venue's numbers in the other's money.
+ */
+export type MarketCurrency = 'INR' | 'USD';
+
+/**
+ * The venue whose session status the top bar's pill is describing.
+ *
+ * Published by the Markets workspace as the user moves between tabs, and read
+ * by `TopBar`'s `MarketStatus`. It exists because that pill hardcoded "· NSE"
+ * and drove its dot off the Dhan feed, so on a 24/7 Binance board it read
+ * "Status unknown · NSE" over live crypto prices — an NSE session claim
+ * printed above numbers that have nothing to do with NSE.
+ *
+ * Transient, never persisted: it describes what is on screen right now, and a
+ * stale value restored from localStorage on a cold load would be a wrong
+ * status claim before anything had been checked.
+ */
+export type MarketVenue = 'NSE' | 'CRYPTO' | 'FX';
+
 /** The palette actually painted for a given preference. */
 export type ResolvedTheme = 'dark' | 'light' | 'high-contrast';
 
@@ -339,7 +373,21 @@ interface WorkspaceStore {
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
 
-  // transient overlays (never persisted — see partialize below)
+  /**
+   * Which trading space the Markets workspace opens in. Persisted, because a
+   * trader who works in crypto should not have to re-pick USD every session —
+   * same continuity reasoning as the sidebar and workspace tabs below.
+   */
+  marketCurrency: MarketCurrency;
+  setMarketCurrency: (c: MarketCurrency) => void;
+
+  // transient overlays and published view state (never persisted — see
+  // partialize below)
+
+  /** Venue whose session the top-bar status pill is describing. See MarketVenue. */
+  marketVenue: MarketVenue;
+  setMarketVenue: (v: MarketVenue) => void;
+
   commandPaletteOpen: boolean;
   setCommandPaletteOpen: (v: boolean) => void;
   shortcutsHelpOpen: boolean;
@@ -425,6 +473,14 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
       theme: 'dark',
       setTheme: (t) => set({ theme: t }),
+
+      // INR default: TradeW's home market is Indian, and the rupee venues are
+      // the only ones that are actually placeable today.
+      marketCurrency: 'INR',
+      setMarketCurrency: (c) => set({ marketCurrency: c }),
+
+      marketVenue: 'NSE',
+      setMarketVenue: (v) => set({ marketVenue: v }),
 
       assistantMode: 'normal',
       setAssistantMode: (m) => set({ assistantMode: m }),
@@ -660,6 +716,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         assistantMode: s.assistantMode,
         assistantSpeech: s.assistantSpeech,
         sidebarCollapsed: s.sidebarCollapsed,
+        // marketCurrency is continuity state; marketVenue deliberately is NOT
+        // (it is a claim about the current screen — see MarketVenue).
+        marketCurrency: s.marketCurrency,
         workspaceTabs: s.workspaceTabs,
         activeTabId: s.activeTabId,
         notifications: s.notifications,

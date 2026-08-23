@@ -1,16 +1,19 @@
-import { CryptoClient } from './CryptoClient';
-
-export const metadata = { title: 'Crypto — TradeW' };
+import { redirect } from 'next/navigation';
 
 /**
- * Crypto market board. Real Binance prices, read-only.
+ * Crypto is a venue on the Markets workspace, not a page of its own.
  *
- * Not tradeable: the paper OMS stores order quantity as an `Int` and prices as
- * `Decimal(12,2)`, so the smallest possible crypto order would be one whole
- * BTC and any asset under ₹0.01 would round to zero. Enabling it means
- * widening those columns across Order/Trade/Position — the same arithmetic
- * that currently has no test coverage — so it is sequenced after that work.
+ * It used to render `CryptoClient` here, reached from a dedicated sidebar
+ * entry. Crypto is a market venue in exactly the way Indices and Commodities
+ * are, so it moved into /markets under the ₹/$ currency switch (see
+ * `components/markets/ExternalBoards.tsx`).
+ *
+ * This route is kept and redirects rather than being deleted: it is a public
+ * URL that has been linked and bookmarked, the TradeW assistant's route list
+ * still contains it, and repo Rule 1 is never-delete. `CryptoClient.tsx` next
+ * to this file is likewise untouched and still renders correctly if mounted —
+ * it is simply no longer what this route serves.
  */
 export default function CryptoPage() {
-  return <CryptoClient />;
+  redirect('/markets?cat=crypto');
 }

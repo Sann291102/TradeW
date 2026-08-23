@@ -9,8 +9,6 @@ import {
   SettingsIcon,
   ProfileIcon,
   ResearchIcon,
-  CryptoIcon,
-  ForexIcon,
   NewsIcon,
   OrdersIcon,
   PositionsIcon,
@@ -103,13 +101,17 @@ export const NAV_ITEMS: NavItem[] = [
 
   // ── SECONDARY ────────────────────────────────────────────────────────────
   //
-  // Crypto and Forex are absent from the canonical list but are REAL, WORKING
-  // surfaces (Binance / Twelve Data, see services/api/src/crypto). Dropping
-  // them from the nav to match a list would have hidden working features
-  // behind a URL, so they moved down rather than out. They are venues, which
-  // is why they sit next to each other under Markets' concern.
-  { href: '/crypto', label: 'Crypto', icon: CryptoIcon, group: 'secondary' },
-  { href: '/forex', label: 'Forex', icon: ForexIcon, comingSoon: true, group: 'secondary' },
+  // Crypto and Forex used to sit here. The comment that put them here said it
+  // outright — "they are venues, which is why they sit next to each other
+  // under Markets' concern" — and that reasoning has now been followed the
+  // rest of the way: a venue belongs INSIDE Markets, next to Indices and
+  // Commodities, not as two more entries in the product-area rail.
+  //
+  // They are still real, working surfaces (Binance / Twelve Data, see
+  // services/api/src/crypto) and nothing was hidden. Both are tabs on
+  // /markets, reached with the ₹/$ currency switch, and /crypto and /forex
+  // redirect there so every existing link and bookmark still resolves.
+  //
   // Profile is reachable from Settings -> Account as well; kept here because
   // it is where the sign-out button lives.
   { href: '/profile', label: 'Profile', icon: ProfileIcon, group: 'secondary' },
@@ -122,12 +124,20 @@ export const NAV_ITEMS: NavItem[] = [
  * `app/(workspace)/home` and `app/(workspace)/alerts`. Listed here so the set
  * is visible in one place rather than discovered by grepping the route tree.
  *
- *   /home   -> /dashboard      "Dashboard" is now labelled "Home"
- *   /alerts -> /notifications  "Notifications" is now labelled "Alerts"
+ *   /home   -> /dashboard              "Dashboard" is now labelled "Home"
+ *   /alerts -> /notifications          "Notifications" is now labelled "Alerts"
+ *   /crypto -> /markets?cat=crypto     Crypto is a Markets venue, not a page
+ *   /forex  -> /markets?cat=forex      Forex is a Markets venue, not a page
+ *
+ * The last two carry a query string, which is why they redirect rather than
+ * simply being renamed: the destination is a tab within Markets, and `?cat=`
+ * is what selects it (see CATEGORY_BY_PARAM in MarketsWorkspace).
  */
 export const NAV_ALIASES: Record<string, string> = {
   '/home': '/dashboard',
   '/alerts': '/notifications',
+  '/crypto': '/markets?cat=crypto',
+  '/forex': '/markets?cat=forex',
 };
 
 /** Routes that must NOT get the workspace chrome (auth / marketing). */

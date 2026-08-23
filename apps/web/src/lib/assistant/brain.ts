@@ -41,6 +41,10 @@ const KNOWN_ROUTES = new Set([
   '/dashboard',
   '/trade',
   '/markets',
+  // Both still resolve: they are now redirects onto the Markets workspace's
+  // crypto/forex venue tabs rather than pages of their own (see NAV_ALIASES).
+  // Kept in the allowlist because "open crypto" is still a thing a user asks
+  // for and it still lands on the crypto board.
   '/crypto',
   '/forex',
   '/news',
