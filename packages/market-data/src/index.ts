@@ -51,3 +51,8 @@ export * from './providers/twelvedata/twelvedata.client';
 export * from './cache/in-memory-quote-cache';
 export * from './rate-limit/token-bucket';
 export * from './registry';
+// Fundamental research — company profile, statements, ratios and the vendor
+// adapter behind them. Consumed by services/api's research module. See
+// providers/fundamentals/fundamentals.contract.ts for the no-fabrication rule
+// the whole subsystem is shaped around.
+export * from './providers/fundamentals';

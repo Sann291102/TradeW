@@ -82,6 +82,13 @@ export default defineConfig({
       // through the same components and fails if any of them names a template
       // id — the guard that keeps P7 from becoming ten dashboards.
       'src/components/sentinel/genericStrategyRendering.test.tsx',
+      // The research render path. Every failure mode here is a number on a
+      // fundamental-research page that no provider produced — an absent metric
+      // rendered as 0, a half-known range shown as a range, a derived figure
+      // presented as reported, a balance sheet whose discrepancy is hidden.
+      // The page this replaced shipped exactly that class of defect as
+      // constants, which is why the assertions lead with the absent cases.
+      'src/components/research/**/*.test.tsx',
       // Chart drawing geometry. Every failure mode here paints a *plausible*
       // annotation stating a price level that was never detected, so the
       // placement rules are asserted rather than eyeballed.

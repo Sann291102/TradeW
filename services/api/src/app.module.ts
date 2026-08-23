@@ -14,6 +14,7 @@ import { SimModule } from './sim/sim.module';
 import { DisciplineModule } from './discipline/discipline.module';
 import { CryptoModule } from './crypto/crypto.module';
 import { NewsModule } from './news/news.module';
+import { ResearchModule } from './research/research.module';
 import { NseModule } from './nse/nse.module';
 import { BrokerModule } from './broker/broker.module';
 import { MailModule } from './mail/mail.module';
@@ -74,6 +75,9 @@ import { HealthController } from './health.controller';
     MarketDataModule,
     CryptoModule,
     NewsModule,
+    // Fundamental research. Statements are free on every plan; only the AI
+    // synthesis inside it is capability-gated. See research.controller.ts.
+    ResearchModule,
     NseModule,
     BrokerModule,
     MailModule,

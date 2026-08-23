@@ -100,6 +100,28 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 ### Backtesting
 - Real EMA-cross walk-forward backtest engine against actual Dhan candle history (no look-ahead, session-aware, cost-adjusted). CLI only, no UI yet.
 
+### Fundamental research (`/research`)
+- Company profile, income statement, balance sheet and cash-flow statement from a real vendor
+  (Twelve Data), normalized into one vocabulary by
+  `packages/market-data/src/providers/fundamentals` and cached in Postgres
+  (`ResearchCompany`, `ResearchStatementFact`).
+- 21 ratios computed from those statements, each carrying its formula, its operands and the
+  period it was computed from. A ratio whose inputs are missing is reported as skipped WITH the
+  missing operand named — never as 0.00.
+- Balance-sheet reconciliation (`Assets = Liabilities + Equity`) shown, including the
+  discrepancy when it does not hold. Reported figures are never adjusted to close a gap.
+- Historical series (revenue, EBITDA, net income, EPS, FCF, operating margin, ROE) drawn only
+  where a metric has two or more comparable periods.
+- AI synthesis grounded strictly in the retrieved statements, gated on the `ai_research`
+  capability. It emits no score, rating, confidence figure or recommendation — the response
+  schema has no field for one — and the evidence it was given is rendered beside the prose.
+- **Free on every plan**: all statements, ratios, history, search. Only the AI synthesis is
+  premium.
+- Replaced a fabricated page (hardcoded P/E, ROE, EPS, market cap and shareholding; an invented
+  "87% confidence / 9.2 out of 10" AI summary; nine inert tabs). See
+  `docs/audits/SIDEBAR-FEATURE-REALITY-AUDIT.md` §4.8 and
+  `docs/implementation/RESEARCH-IMPLEMENTATION-NOTE.md`.
+
 ### Frontend shell
 - Sidebar/top bar/ticker, dark/light/high-contrast theming with no flash-of-wrong-theme, command palette, keyboard shortcuts, notifications page (real API), dashboard (mostly real data), markets workspace, trade workspace, knowledge-vault graph viewer with live updates.
 
@@ -110,16 +132,21 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 | Feature | What's missing |
 |---|---|
 | Dashboard | 5 of 14 widgets are live; the other 9 (global markets, news, risk alerts, economic calendar, etc.) render mock data |
-| Portfolio page | Real stat-card numbers are mock; Holdings/Positions/Performance/Journal tabs are all empty states |
-| Notifications | Two sources of truth — the bell drawer reads a store-seeded mock list, the `/notifications` page reads the real API; marking read in one doesn't affect the other |
+| Portfolio page | **Corrected 2026-08-23:** Portfolio, Orders and Positions are fully real against the paper OMS, including exit/convert/modify/cancel. Their limitation is upstream — no order can fill while the Dhan bridge is down, because `MarketPriceService` has no fallback price source |
+| Notifications | **Corrected 2026-08-23:** the bell, the badge and the `/notifications` page now share one store slice (`NotificationSync`), so this is no longer two sources of truth. The real remaining gap is that only ONE code path in the whole repository writes a `Notification` row (`discipline.service.ts` — the profit-target notice), so the feed is empty for almost every user |
 | Settings & Plans | Real entitlement state and a real Razorpay checkout now exist (see Payments above); remaining gap is plan **seed data** so a fresh env has plans to buy |
 | Watchlist | UI renders mock rows; **no `Watchlist` database model exists at all** — flagged as needed since the project started |
-| Learning Hub | UI shell with mock paths/categories; no lesson content |
-| Floating AI assistant | Visual dock only — no routing/answering logic behind it |
+| Learning Hub | **Corrected 2026-08-23:** courses and lessons are generated from the indexed knowledge corpus via `services/sentinel`, and progress is real and persisted. "Certificates earned" and "hours learned" remain labelled *Coming soon* |
+| Floating AI assistant | **Corrected 2026-08-23:** a real deterministic router/planner with unit tests. The LLM path (`POST /assistant/interpret`) returns 503 without an AI key and falls back to that router |
 
 ## ❌ Not built
 
-- **TradeW AI (Research pillar)** — the whole runtime. `packages/ai-core` has the primitives; nothing invokes them for research. The `/research` page is a deliberate "coming soon" placeholder.
+- **TradeW AI (Research pillar) as a standalone runtime** — `services/tradew-ai` is still a thin
+  scaffold. Note the line above this list is now out of date in one respect: `/research` is no
+  longer a placeholder. It is a working fundamental-research terminal with its own API module
+  (`services/api/src/research`), its own provider abstraction and its own grounded AI layer, which
+  invokes `packages/ai-core`'s LLM providers directly rather than through `services/tradew-ai`.
+  What remains unbuilt is the separate research *agent* runtime, not the research surface.
 - **`services/trading-engine`** (Python, real-money execution), **`services/auth`**, **`services/analytics`**, **`services/notification`** as standalone services, **`apps/mobile`** — all README-only. (`apps/admin` is now built — see the Admin operator console section above.)
 - **`packages/shared`** (fail-fast config/logger) and **`packages/sdk`** (typed client — hand-written clients are used instead). Note: `JWT_SECRET` and the two service tokens now fail-fast at boot via dedicated secret guards (`services/api/src/common/secret-validation`), so the silent-dev-default risk is closed even though `packages/shared` itself is still a placeholder.
 - **Push notifications** (sub-30s socket delivery). Email delivery templates and in-app notifications with sound have since landed; **billing/checkout has landed** (Razorpay).

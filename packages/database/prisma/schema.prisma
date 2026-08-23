@@ -2340,3 +2340,133 @@ model ExecutionOutcome {
 
   @@index([result])
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FUNDAMENTAL RESEARCH CACHE
+//
+// The `/research` workspace reads company fundamentals from an external vendor
+// (see packages/market-data/src/providers/fundamentals). These two models are a
+// CACHE of that vendor's answers, never a source of truth and never a place a
+// number may be invented.
+//
+// ── WHY A DURABLE CACHE AT ALL ──────────────────────────────────────────────
+//
+// Fundamentals endpoints are credit-metered and the vendor's entry tier allows
+// single-digit requests per minute. Statements change once a QUARTER. A
+// process-local cache would be lost on every deploy and multiplied by every
+// replica, making upstream cost a function of traffic rather than of reporting
+// periods. So the facts are persisted, keyed by the period they describe.
+//
+// ── WHAT IS NOT HERE ────────────────────────────────────────────────────────
+//
+// No computed ratios and no AI output. Ratios are recomputed from these facts on
+// every read (packages/market-data/.../ratios.ts) so a formula fix cannot leave
+// a stale derived number behind, and AI prose is not cached because its evidence
+// basis must be re-stated from whatever the cache holds at answer time.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ResearchStatementType {
+  income
+  balance
+  cash_flow
+}
+
+enum ResearchPeriodType {
+  annual
+  quarterly
+}
+
+/// Cached company identity + slow-moving descriptive fields.
+/// Separate from `Instrument`, deliberately: an Instrument is a tradeable
+/// contract (with a lot size, an expiry, a broker security id) and a company is
+/// an issuer. One company has many instruments; the option chain must not grow a
+/// `sector` column, and this table must not grow a `tickSize`.
+model ResearchCompany {
+  id       String @id @default(uuid())
+  /// Vendor-canonical symbol, uppercased by the service before write.
+  symbol   String
+  exchange String
+
+  name        String
+  currency    String
+  sector      String?
+  industry    String?
+  country     String?
+  isin        String?
+  website     String?
+  employees   Int?
+  description String?
+
+  /// Provenance — mirrors `Provenance` in the fundamentals contract. `source`
+  /// is the vendor id, `sourceTimestamp` the vendor's own stamp (null when it
+  /// publishes none — never backfilled with fetchedAt), `fetchedAt` ours.
+  source          String
+  sourceTimestamp DateTime?
+  fetchedAt       DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([symbol, exchange])
+  @@index([symbol])
+  @@index([fetchedAt])
+}
+
+/// One statement line item, for one period, for one company.
+///
+/// Fully normalized (one row per metric) rather than a wide table or a JSON
+/// blob, for three reasons: vendors differ in which lines they publish so a wide
+/// table would be mostly NULL and every NULL would be ambiguous between "not
+/// filed" and "zero"; a new line item is data rather than a migration; and the
+/// `basis` column can then be per-metric, which is what lets the UI mark Free
+/// Cash Flow as derived while Revenue beside it is reported.
+///
+/// ABSENCE IS MEANINGFUL. A metric the vendor did not publish has NO ROW. There
+/// is no zero-means-missing convention anywhere in this subsystem.
+model ResearchStatementFact {
+  id String @id @default(uuid())
+
+  symbol        String
+  statementType ResearchStatementType
+  periodType    ResearchPeriodType
+  fiscalYear    Int
+  /// 1-4 for a quarterly period, and 0 for an annual one.
+  ///
+  /// NOT NULLABLE, deliberately. This column is part of the unique key below,
+  /// and Postgres treats NULLs as DISTINCT in a unique index — so a nullable
+  /// `fiscalQuarter` would silently permit unlimited duplicate annual rows for
+  /// the same metric and year, and the cache would grow a new copy on every
+  /// refresh instead of updating one. A `0` sentinel makes the constraint
+  /// actually constrain. The service maps 0 <-> "annual, no quarter" at the
+  /// boundary, so the domain type keeps `fiscalQuarter?: number` and nothing
+  /// above the cache sees the sentinel.
+  fiscalQuarter Int
+  periodEnd     DateTime
+
+  metric   String
+  /// Decimal(30,4): total assets of a large issuer in rupees runs to 15 digits
+  /// before the decimal point, and per-share figures need four after it. Never
+  /// a float — a balance sheet that fails to reconcile because of binary
+  /// rounding would be indistinguishable from one that fails because the vendor
+  /// dropped a line.
+  value    Decimal @db.Decimal(30, 4)
+  currency String
+  /// 'reported' | 'derived'. Stored, not inferred: whether Free Cash Flow came
+  /// off the filing or out of `OCF − |CapEx|` is exactly what a reader
+  /// cross-checking against an annual report needs to know.
+  basis    String  @default("reported")
+
+  source          String
+  sourceTimestamp DateTime?
+  fetchedAt       DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([symbol, statementType, periodType, fiscalYear, fiscalQuarter, metric])
+  /// The read path: "every fact for this symbol's income statement, annual,
+  /// newest first".
+  @@index([symbol, statementType, periodType, periodEnd])
+  /// The staleness sweep.
+  @@index([fetchedAt])
+}
