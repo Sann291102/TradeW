@@ -9,8 +9,51 @@ import { ALL_NSE_INDICES } from '@/lib/mock/indices';
 import { FO_STOCK_UNIVERSE } from '@/lib/mock/foUniverse';
 import { useDhanLiveFeed, type DhanFeedStatus } from '@/lib/hooks/useDhanLiveFeed';
 import { fmt, pct } from '@/lib/format';
+import { useWorkspaceStore, type MarketCurrency } from '@/lib/store/workspaceStore';
+import { CryptoBoard, ForexBoard, CRYPTO_PRECISION, FX_PRECISION } from './ExternalBoards';
+import { InstrumentDetailPane, type UsdVenue } from './InstrumentDetailPane';
+import type { BoardRow } from './GlobalMarketBoard';
 
-const CATEGORIES = ['Indices', 'Stocks', 'ETFs', 'Commodities'] as const;
+/**
+ * Categories, grouped by the currency the venue actually quotes in.
+ *
+ * The rupee venues are the Dhan-fed Indian markets this page has always shown.
+ * The dollar venues are Crypto and Forex, which used to be two separate
+ * sidebar entries with their own routes — they are venues, exactly like
+ * Commodities, so they belong here rather than beside Portfolio and Settings.
+ *
+ * The two lists never mix on screen. See `MarketCurrency` in workspaceStore
+ * for why nothing is converted between them.
+ */
+const INR_CATEGORIES = ['Indices', 'Stocks', 'ETFs', 'Commodities'] as const;
+const USD_CATEGORIES = ['Crypto', 'Forex'] as const;
+
+type Category = (typeof INR_CATEGORIES)[number] | (typeof USD_CATEGORIES)[number];
+
+const CATEGORIES_BY_CURRENCY: Record<MarketCurrency, readonly Category[]> = {
+  INR: INR_CATEGORIES,
+  USD: USD_CATEGORIES,
+};
+
+/** `?cat=` deep-link values, lower-cased. `/crypto` and `/forex` redirect to
+ *  `/markets?cat=crypto|forex`, so these two names are load-bearing URLs, not
+ *  just internal state. */
+const CATEGORY_BY_PARAM: Record<string, Category> = {
+  indices: 'Indices',
+  stocks: 'Stocks',
+  etfs: 'ETFs',
+  commodities: 'Commodities',
+  crypto: 'Crypto',
+  forex: 'Forex',
+};
+
+function currencyOf(cat: Category): MarketCurrency {
+  return (USD_CATEGORIES as readonly string[]).includes(cat) ? 'USD' : 'INR';
+}
+
+function venueOf(cat: Category): UsdVenue | null {
+  return cat === 'Crypto' ? 'CRYPTO' : cat === 'Forex' ? 'FX' : null;
+}
 
 /** The Dhan bridge's index symbols, mapped onto the matching `ALL_NSE_INDICES`
  *  row name — NSE's own index list uses full names ("NIFTY 50"), the bridge
@@ -115,6 +158,49 @@ function QuoteList({ rows, emptyMessage }: { rows: QuoteRow[]; emptyMessage: str
   );
 }
 
+/**
+ * Currency switch — ₹ INR / $ USD.
+ *
+ * This is what lets a trader move between the Indian venues and the global
+ * ones. It selects which markets are on screen; it does not convert anything,
+ * and the label says so on hover rather than leaving the question open.
+ */
+function CurrencySwitch({
+  value,
+  onChange,
+}: {
+  value: MarketCurrency;
+  onChange: (c: MarketCurrency) => void;
+}) {
+  const OPTIONS: { id: MarketCurrency; label: string; title: string }[] = [
+    { id: 'INR', label: '₹ INR', title: 'Indian venues — indices, stocks, ETFs and commodities, quoted in rupees' },
+    { id: 'USD', label: '$ USD', title: 'Global venues — crypto and spot forex, quoted in US dollars' },
+  ];
+  return (
+    <div
+      role="group"
+      aria-label="Market currency"
+      className="flex items-center rounded-lg border border-border2 p-0.5 text-xs font-bold"
+    >
+      {OPTIONS.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          aria-pressed={value === o.id}
+          title={o.title}
+          onClick={() => onChange(o.id)}
+          className={cn(
+            'rounded-md px-2.5 py-1 transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+            value === o.id ? 'bg-teal-bg text-teal' : 'text-muted hover:text-text',
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function LiveBadge({ status }: { status: DhanFeedStatus }) {
   if (status === 'live') return <Badge tone="positive" className="px-1.5 py-0 text-[9px]">LIVE</Badge>;
   if (status === 'closed') return <Badge tone="neutral" className="px-1.5 py-0 text-[9px]">CLOSED</Badge>;
@@ -143,20 +229,101 @@ function LiveBadge({ status }: { status: DhanFeedStatus }) {
 export function MarketsWorkspace() {
   const searchParams = useSearchParams();
   const sectorParam = searchParams.get('sector');
-  const [cat, setCat] = useState<(typeof CATEGORIES)[number]>(sectorParam ? 'Stocks' : 'Indices');
+  const catParam = searchParams.get('cat');
+
+  const marketCurrency = useWorkspaceStore((s) => s.marketCurrency);
+  const setMarketCurrency = useWorkspaceStore((s) => s.setMarketCurrency);
+  const setMarketVenue = useWorkspaceStore((s) => s.setMarketVenue);
+  const hasHydrated = useWorkspaceStore((s) => s.hasHydrated);
+
+  // `?cat=` wins on first render — a link to /markets?cat=crypto (which is what
+  // /crypto now redirects to) has to land on Crypto regardless of anything
+  // stored.
+  //
+  // The stored currency is deliberately NOT read here. The workspace store is
+  // created with `skipHydration: true` and rehydrates in an effect after mount
+  // (see useHydrated.ts), so at this point `marketCurrency` is always its
+  // default 'INR' — reading it would look like it worked and silently ignore
+  // what the trader actually last chose. It is adopted in the effect below,
+  // once hydration has really happened.
+  const initialCat: Category =
+    (catParam ? CATEGORY_BY_PARAM[catParam.toLowerCase()] : undefined) ??
+    (sectorParam ? 'Stocks' : 'Indices');
+
+  const [cat, setCat] = useState<Category>(initialCat);
+  // Whether the trader has picked a tab (or arrived on an explicit link) since
+  // mount. Guards the one-shot hydration adoption below from yanking the view
+  // out from under a click that lands in the same tick as rehydration.
+  const [touched, setTouched] = useState<boolean>(!!catParam || !!sectorParam);
   const [sector, setSector] = useState<string | null>(sectorParam);
   const [indexFilter, setIndexFilter] = useState('');
   const [stockFilter, setStockFilter] = useState('');
   const [etfFilter, setEtfFilter] = useState('');
 
+  // The instrument expanded in the detail pane, and the board rows behind it.
+  // Both are scoped to the USD venues: the rupee categories already open their
+  // instruments on /trade, which is the correct destination for an instrument
+  // the OMS can actually price.
+  const [selected, setSelected] = useState<{ venue: UsdVenue; symbol: string } | null>(null);
+  const [cryptoRows, setCryptoRows] = useState<BoardRow[]>([]);
+  const [fxRows, setFxRows] = useState<BoardRow[]>([]);
+
+  const currency = currencyOf(cat);
+  const venue = venueOf(cat);
+
   // a new ?sector= link (clicking a different heatmap tile while already on
   // this page) should re-open the filter, not be stuck on the first value
   useEffect(() => {
     if (sectorParam) {
+      setTouched(true);
       setSector(sectorParam);
       setCat('Stocks');
     }
   }, [sectorParam]);
+
+  // Same for a new ?cat= link arriving while already on this page — the
+  // /crypto and /forex redirects both land that way.
+  useEffect(() => {
+    const fromParam = catParam ? CATEGORY_BY_PARAM[catParam.toLowerCase()] : undefined;
+    if (fromParam) {
+      setTouched(true);
+      setCat(fromParam);
+      setSector(null);
+    }
+  }, [catParam]);
+
+  // Adopt the stored currency once localStorage has actually been read, unless
+  // the URL or the trader has already chosen a tab. This is what makes the
+  // switch stick between visits; see `initialCat` for why it cannot be done
+  // during the first render.
+  useEffect(() => {
+    if (!hasHydrated || touched) return;
+    setTouched(true);
+    if (marketCurrency !== 'INR') setCat(CATEGORIES_BY_CURRENCY[marketCurrency][0]);
+  }, [hasHydrated, touched, marketCurrency]);
+
+  // Keep the stored currency in step with the tab actually being viewed, so
+  // the next visit reopens where the trader left off. Gated on hydration:
+  // writing before the store has been read would persist the pre-hydration
+  // default over whatever was saved, which is the same bug from the other end.
+  useEffect(() => {
+    if (!hasHydrated) return;
+    setMarketCurrency(currency);
+  }, [hasHydrated, currency, setMarketCurrency]);
+
+  // Publish the venue for the top bar's session pill, and hand it back to NSE
+  // on unmount — the pill is global chrome and must not keep claiming "Crypto
+  // 24/7" after the user has navigated to Portfolio.
+  useEffect(() => {
+    setMarketVenue(venue === 'CRYPTO' ? 'CRYPTO' : venue === 'FX' ? 'FX' : 'NSE');
+    return () => setMarketVenue('NSE');
+  }, [venue, setMarketVenue]);
+
+  // Close the expanded chart when the tab changes. Leaving a BTCUSDT chart
+  // open under the Forex board would attribute it to the wrong venue.
+  useEffect(() => {
+    setSelected(null);
+  }, [cat]);
 
   const { quotes: liveIndices, stocks: liveStocks, etfs: liveEtfs, commodities: liveCommodities, status } = useDhanLiveFeed();
   const live = status === 'live' || status === 'closed';
@@ -211,26 +378,83 @@ export function MarketsWorkspace() {
 
   return (
     <div className="mx-auto max-w-[1200px] space-y-4 p-4">
-      <div role="tablist" aria-label="Market categories" className="flex flex-wrap gap-1.5">
-        {CATEGORIES.map((c) => (
-          <button
-            key={c}
-            role="tab"
-            aria-selected={cat === c}
-            onClick={() => {
-              setCat(c);
-              if (c !== 'Stocks') setSector(null);
-            }}
-            className={cn(
-              'rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
-              cat === c ? 'bg-teal-bg text-teal' : 'text-muted hover:bg-hover hover:text-text',
-            )}
-          >
-            {c}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div role="tablist" aria-label="Market categories" className="flex flex-wrap gap-1.5">
+          {CATEGORIES_BY_CURRENCY[currency].map((c) => (
+            <button
+              key={c}
+              role="tab"
+              aria-selected={cat === c}
+              onClick={() => {
+                setTouched(true);
+                setCat(c);
+                if (c !== 'Stocks') setSector(null);
+              }}
+              className={cn(
+                'rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+                cat === c ? 'bg-teal-bg text-teal' : 'text-muted hover:bg-hover hover:text-text',
+              )}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+
+        <CurrencySwitch
+          value={currency}
+          onChange={(next) => {
+            if (next === currency) return;
+            setTouched(true);
+            // Land on the new space's first venue. Switching currency is a
+            // change of market, so the sector filter and any expanded chart
+            // from the old space go with it.
+            setCat(CATEGORIES_BY_CURRENCY[next][0]);
+            setSector(null);
+          }}
+        />
       </div>
 
+      {venue ? (
+        <>
+          {venue === 'CRYPTO' ? (
+            <CryptoBoard
+              onSelectSymbol={(symbol) =>
+                // Clicking the open instrument again collapses the pane, so the
+                // row is a toggle rather than a one-way door.
+                setSelected((prev) =>
+                  prev?.symbol === symbol && prev.venue === 'CRYPTO' ? null : { venue: 'CRYPTO', symbol },
+                )
+              }
+              selectedSymbol={selected?.venue === 'CRYPTO' ? selected.symbol : null}
+              onRowsChange={setCryptoRows}
+            />
+          ) : (
+            <ForexBoard
+              onSelectSymbol={(symbol) =>
+                setSelected((prev) =>
+                  prev?.symbol === symbol && prev.venue === 'FX' ? null : { venue: 'FX', symbol },
+                )
+              }
+              selectedSymbol={selected?.venue === 'FX' ? selected.symbol : null}
+              onRowsChange={setFxRows}
+            />
+          )}
+
+          {selected && (
+            <InstrumentDetailPane
+              venue={selected.venue}
+              symbol={selected.symbol}
+              row={
+                (selected.venue === 'CRYPTO' ? cryptoRows : fxRows).find(
+                  (r) => r.symbol === selected.symbol,
+                ) ?? null
+              }
+              precision={selected.venue === 'CRYPTO' ? CRYPTO_PRECISION : FX_PRECISION}
+              onClose={() => setSelected(null)}
+            />
+          )}
+        </>
+      ) : (
       <Card
         title={
           cat === 'Stocks' && sectorMeta
@@ -358,6 +582,7 @@ export function MarketsWorkspace() {
           <QuoteList rows={commodityRows} emptyMessage="No commodities available." />
         )}
       </Card>
+      )}
     </div>
   );
 }

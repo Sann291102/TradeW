@@ -89,16 +89,33 @@ const RAZORPAY_SCRIPT = 'https://checkout.razorpay.com';
 const RAZORPAY_FRAME = 'https://api.razorpay.com https://checkout.razorpay.com';
 const RAZORPAY_CONNECT = 'https://*.razorpay.com https://lumberjack.razorpay.com';
 
+// TradingView Advanced Chart widget (components/charts/TradingViewWidget.tsx),
+// used by the Markets workspace for the crypto and FX venues. The loader script
+// comes from s3.tradingview.com and injects an iframe served from
+// tradingview-widget.com; both origins are required or the embed renders an
+// empty box with a console CSP violation and no other symptom.
+//
+// Scoped deliberately: this is a THIRD-PARTY FRAME on a trading surface, so it
+// gets frame-src and script-src and nothing else. It is not added to
+// connect-src — the widget talks to TradingView from inside its own iframe,
+// which is that frame's origin, not this one. Nothing on our side fetches from
+// TradingView, and no TradingView script may open a connection from our page.
+//
+// Same named-constant treatment as Razorpay above, for the same reason: the
+// external-origin footprint stays auditable in one place.
+const TRADINGVIEW_SCRIPT = 'https://s3.tradingview.com';
+const TRADINGVIEW_FRAME = 'https://www.tradingview-widget.com https://s.tradingview.com https://www.tradingview.com';
+
 const csp = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline' ${RAZORPAY_SCRIPT}${isProd ? '' : " 'unsafe-eval'"}`,
+  `script-src 'self' 'unsafe-inline' ${RAZORPAY_SCRIPT} ${TRADINGVIEW_SCRIPT}${isProd ? '' : " 'unsafe-eval'"}`,
   // Tailwind and the design system inject style tags; inline styles are not a
   // script-execution vector.
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
   `connect-src ${connectSources} ${RAZORPAY_CONNECT}`,
-  `frame-src 'self' ${RAZORPAY_FRAME}`,
+  `frame-src 'self' ${RAZORPAY_FRAME} ${TRADINGVIEW_FRAME}`,
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",

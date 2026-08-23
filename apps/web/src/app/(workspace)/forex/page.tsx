@@ -1,19 +1,14 @@
-import { ForexClient } from './ForexClient';
-
-export const metadata = { title: 'Forex — TradeW' };
+import { redirect } from 'next/navigation';
 
 /**
- * Foreign-exchange board. Real interbank spot from Twelve Data, read-only.
+ * Forex is a venue on the Markets workspace, not a page of its own — see the
+ * note in the sibling `crypto/page.tsx` for the reasoning and for why this
+ * route redirects instead of being removed.
  *
- * Not sourced from Dhan: verified 2026-07-28, Dhan carries no live currency
- * contracts at all — every NSE/BSE FUT/OPTCUR row in its scrip master expired
- * on or before 2026-06-26. Not sourced from Binance either: it lists no
- * fiat/fiat pair, only EUR against a dollar stablecoin.
- *
- * Not tradeable, for the same reason as crypto: spot FX quotes to 4-5 decimals
- * in fractional units, and the OMS stores quantity as an `Int` with prices at
- * `Decimal(12,2)` — EUR/USD at 1.13703 would round to 1.14.
+ * The board itself is unchanged: real interbank spot from Twelve Data, still
+ * read-only. It is now a tab on /markets under the $ side of the currency
+ * switch, and `ForexClient.tsx` next to this file is untouched.
  */
 export default function ForexPage() {
-  return <ForexClient />;
+  redirect('/markets?cat=forex');
 }

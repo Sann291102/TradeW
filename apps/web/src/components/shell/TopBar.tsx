@@ -59,9 +59,51 @@ function PaperLiveToggle() {
 /** Market status pill — session state dot + label (mirrors the canonical #mktPill).
  *  Driven by the Dhan live-feed bridge's own IST session-hours check
  *  (services/market-data/scripts/live-feed-server.ts), not a static label —
- *  it reflects whether NSE is actually open right now. */
+ *  it reflects whether NSE is actually open right now.
+ *
+ *  Venue-aware since crypto and FX moved into the Markets workspace. The pill
+ *  used to hardcode "· NSE" and take its dot from the Dhan feed regardless of
+ *  what was on screen, so a 24/7 Binance board sat under "Status unknown ·
+ *  NSE" — an NSE session claim printed over prices that have nothing to do
+ *  with NSE, and wrong in both halves. `marketVenue` is published by the
+ *  Markets workspace; every other route leaves it at 'NSE', which is what
+ *  those routes are actually about. */
 function MarketStatus() {
   const { status } = useDhanLiveFeed();
+  const venue = useWorkspaceStore((s) => s.marketVenue);
+
+  // Crypto never closes, and neither claim below depends on the Dhan bridge —
+  // reporting a Dhan outage as a crypto-market state would be the same
+  // category error the venue split is here to fix.
+  if (venue === 'CRYPTO') {
+    return (
+      <div className="hidden items-center gap-2 rounded-full bg-hover px-3 py-1.5 text-xs text-muted sm:flex">
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-up opacity-60" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-up" />
+        </span>
+        <span>Market open</span>
+        <span className="text-faint">· Crypto 24/7</span>
+      </div>
+    );
+  }
+
+  // Spot FX runs continuously from Sunday 21:00 UTC to Friday 21:00 UTC. That
+  // is a real, checkable schedule, but nothing in this app checks it — so the
+  // pill states the venue and declines to assert a session, rather than
+  // guessing one from a clock this component does not own.
+  if (venue === 'FX') {
+    return (
+      <div className="hidden items-center gap-2 rounded-full bg-hover px-3 py-1.5 text-xs text-muted sm:flex">
+        <span className="relative flex h-2 w-2">
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-faint" />
+        </span>
+        <span>Weekdays</span>
+        <span className="text-faint">· Interbank FX</span>
+      </div>
+    );
+  }
+
   const open = status === 'live';
   // 'loading' is NOT 'closed'. Collapsing the two made the pill assert "Market
   // closed" during the seconds before the first tick arrives — and for as long

@@ -83,6 +83,13 @@ export default defineConfig({
       // and the failure modes (a gap mitigated by the candle that created it,
       // a bearish gap tested with the bullish rule) look correct on screen.
       'src/lib/charts/fvg.test.ts',
+      // Vendor symbol -> TradingView symbol for the crypto/FX venues. Squarely
+      // in this file's "a mistake is an exposure, not a rendering bug" rule: a
+      // wrong prefix points the embedded chart at a different exchange from the
+      // one the board is quoting, and because the widget renders in a
+      // cross-origin iframe there is nothing that can detect the mismatch at
+      // runtime. It draws a plausible chart of the wrong market.
+      'src/lib/markets/tradingViewSymbols.test.ts',
       // Chart-detection routing. Pins the collision between "mark the fair
       // value gaps" (draw) and "what is a fair value gap" (explain), which
       // reach the same matcher with the same words.
