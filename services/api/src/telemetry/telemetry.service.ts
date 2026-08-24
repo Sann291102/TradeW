@@ -187,6 +187,15 @@ export class TelemetryService implements TelemetrySink, OnModuleInit, OnModuleDe
 
   recordApiCall(record: ApiCallRecord): void {
     push(this.apiCalls, record);
+    // Live fan-out for the admin system graph, which lights a route node the
+    // moment the route is hit. Gated on `listenerCount` because unlike the AI
+    // and agent events below, this one is on the path of EVERY request the API
+    // serves — including order placement. With no console attached the check is
+    // a property read and the emit never happens; with one attached the cost is
+    // a synchronous callback that writes to an SSE socket. The alternative,
+    // polling `ApiCallLog` from the browser, would put the same load on
+    // Postgres once per second per open tab and still be two seconds late.
+    if (this.bus.listenerCount('api') > 0) this.bus.emit('api', record);
   }
 
   aiCall(event: AiCallEvent): void {

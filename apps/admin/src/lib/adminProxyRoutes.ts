@@ -109,6 +109,22 @@ export const ADMIN_PROXY_ROUTES: RouteRule[] = [
   { method: 'POST', segments: ['execution', 'accounts', '*', 'agent-trading'] },
   { method: 'POST', segments: ['execution', 'profiles'] },
 
+  // --- System graph (read-only projection of the whole platform) ------------
+  // Every rule here is a GET. There is deliberately no write on this surface:
+  // the visualisation is never the source of truth, so the console has no way
+  // to pin, hide or delete a node, and no way to erase a historical
+  // relationship. The SSE stream is absent for the same reason the other two
+  // are — it is served by a dedicated Route Handler at /api/stream/graph.
+  { method: 'GET', segments: ['graph', 'meta'] },
+  { method: 'GET', segments: ['graph', 'overview'] },
+  { method: 'GET', segments: ['graph', 'nodes'] },
+  { method: 'GET', segments: ['graph', 'neighborhood'] },
+  { method: 'GET', segments: ['graph', 'search'] },
+  { method: 'GET', segments: ['graph', 'node'] },
+  { method: 'GET', segments: ['graph', 'clusters'] },
+  { method: 'GET', segments: ['graph', 'path'] },
+  { method: 'GET', segments: ['graph', 'events'] },
+
   // --- Knowledge workspace (read-only vault) --------------------------------
   { method: 'GET', segments: ['knowledge', 'tree'] },
   { method: 'GET', segments: ['knowledge', 'file'] },
