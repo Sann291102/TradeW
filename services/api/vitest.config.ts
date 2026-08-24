@@ -130,6 +130,18 @@ export default defineConfig({
       // The regression gate: the specific fabricated values the old page
       // rendered must never reappear in the research render path.
       'src/research/no-fabricated-values.spec.ts',
+      // Telemetry attribution: an operator principal must never be written
+      // into a column that foreign-keys to `User`. A `createMany` batch throws
+      // as a whole, so this one mistake discarded unrelated rows too.
+      'src/telemetry/telemetry-attribution.spec.ts',
+      // The system graph. Every case here is a WRONG-BUT-PLAUSIBLE failure: a
+      // guarded route drawn as public on a screen a security review reads, a
+      // refuting relation flattened into an ordinary link, a hub that vanishes
+      // at the zoom level where it matters, a filter that blanks the page
+      // instead of degrading. Route discovery is asserted against a real Nest
+      // testing container, so it proves what the framework would actually
+      // serve rather than what a regex over the source suggests.
+      'src/graph/graph.projection.spec.ts',
       // Sentinel events becoming durable notifications: the receiving end of the
       // no-direction boundary, durable dedupe, and never failing an observation.
       'src/sentinel/sentinel-event-dispatcher.spec.ts',

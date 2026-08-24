@@ -32,6 +32,7 @@ import { AdminModule } from './admin/admin.module';
 import { PaperExecutionModule } from './paper-execution/paper-execution.module';
 import { CognitionModule } from './cognition/cognition.module';
 import { ControlModule } from './control/control.module';
+import { GraphModule } from './graph/graph.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -107,6 +108,11 @@ import { HealthController } from './health.controller';
     // The Admin Control Plane boundary. Signed, replay-protected, narrow.
     // Remove this line to disable remote control of this deployment entirely.
     ControlModule,
+    // The system graph. MUST STAY LAST: it reads the container's own module
+    // registry to discover routes and controllers, so any module registered
+    // after it would be missing from the graph — silently, which is the worst
+    // way for an operations map to be wrong. See graph/graph.module.ts.
+    GraphModule,
   ],
   controllers: [HealthController],
   providers: [

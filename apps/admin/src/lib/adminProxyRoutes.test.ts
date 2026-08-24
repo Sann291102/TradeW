@@ -27,6 +27,8 @@ describe('isAllowedAdminRoute — the real client surface is allowed', () => {
     '/cognition/proposals',
     '/knowledge/tree', '/knowledge/file', '/knowledge/recent',
     '/knowledge/search', '/knowledge/graph', '/knowledge/activity',
+    '/graph/meta', '/graph/overview', '/graph/nodes', '/graph/neighborhood',
+    '/graph/search', '/graph/node', '/graph/clusters', '/graph/path', '/graph/events',
   ];
   const POST = [
     '/users/set-admin',
@@ -72,9 +74,23 @@ describe('isAllowedAdminRoute — everything else is denied', () => {
     expect(isAllowedAdminRoute('GET', [])).toBe(false);
   });
 
+  /**
+   * The system graph is a READ surface. It names every route this API serves,
+   * which of them are unguarded and which execution profiles are armed — and
+   * it is a projection, never a store. A write rule appearing here would mean
+   * the console could alter a map of the platform, or erase a historical
+   * relationship, through a path whose whole purpose is to display one.
+   */
+  it('forwards no write on the system graph', () => {
+    for (const path of ['/graph/nodes', '/graph/node', '/graph/meta', '/graph/neighborhood', '/graph/clusters']) {
+      expect(isAllowedAdminRoute('POST', seg(path))).toBe(false);
+    }
+  });
+
   it('denies the SSE stream routes — they belong to /api/stream, not the proxy', () => {
     expect(isAllowedAdminRoute('GET', seg('/stream'))).toBe(false);
     expect(isAllowedAdminRoute('GET', seg('/knowledge/stream'))).toBe(false);
+    expect(isAllowedAdminRoute('GET', seg('/graph/stream'))).toBe(false);
   });
 
   describe('Sentinel paper execution', () => {
