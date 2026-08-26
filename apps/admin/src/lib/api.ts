@@ -137,7 +137,15 @@ export interface ExecutionIntentRow { id: string; decidedAt: string; status: str
  * process, so an armed profile reads identically whether the loop evaluates it
  * every minute or has never started. This is the process's own live state.
  */
-export interface ExecutionLoopStatus { enabled: boolean; intervalMs: number | null; reconcileMs: number | null; isEvaluateLeader: boolean; isReconcileLeader: boolean; evaluating: boolean; reconciling: boolean; startedAt: string | null; lastEvaluateAt: string | null; lastReconcileAt: string | null; }
+export interface MarketSession { phase: 'weekend' | 'holiday' | 'pre-market' | 'active' | 'post-market'; isOpen: boolean; isTradingDay: boolean; minuteOfDay: number; dayKey: string; reason: string; }
+export interface ExecutionLoopStatus { enabled: boolean; intervalMs: number | null; reconcileMs: number | null; isEvaluateLeader: boolean; isReconcileLeader: boolean; evaluating: boolean; reconciling: boolean; startedAt: string | null; lastEvaluateAt: string | null; lastReconcileAt: string | null; session?: MarketSession; }
+export type SystemExecutionMode = 'ON' | 'OFF' | 'EMERGENCY_STOP';
+export interface SystemExecutionControl { mode: SystemExecutionMode; reason: string | null; updatedBy: string | null; updatedAt: string | null; isDefault: boolean; }
+export interface MarketDataFeedHealth { available: boolean; marketOpen: boolean | null; asOf: number | null; ageMs: number | null; error?: string; }
+export interface ExecutionHealth { generatedAt: string; status: 'RUNNING' | 'HALTED' | 'PAUSED' | 'IDLE' | 'DISABLED'; loop: ExecutionLoopStatus; control: SystemExecutionControl; marketData: MarketDataFeedHealth; today: { armedProfiles: number; intentsByStatus: Array<{ status: string; count: number }>; orders: number; fills: number; openPositions: number; rejections: number; realizedPnl: number; closedOutcomes: number }; latest: { execution: ExecutionLatest | null; rejection: ExecutionLatest | null; failure: ExecutionLatest | null }; }
+export interface ExecutionLatest { id: string; decidedAt: string; status: string; symbol: string; contractSymbol: string; confidence: number; profileName: string; rejectReason: string | null; rejectCheckId: string | null; }
+export interface GroupPerformance { key: string; count: number; wins: number; losses: number; scratches: number; winRate: number | null; netPnl: number; avgPnl: number; expectancy: number; }
+export interface ExecutionAnalytics { hours: number; generatedAt: string; summary: { count: number; wins: number; losses: number; scratches: number; winRate: number | null; netPnl: number; grossProfit: number; grossLoss: number; avgWin: number | null; avgLoss: number | null; expectancy: number | null; profitFactor: number | null; avgHoldingSeconds: number | null; largestWin: number; largestLoss: number; maxDrawdown: number }; byStrategy: GroupPerformance[]; byConfidenceBand: GroupPerformance[]; byInstrument: GroupPerformance[]; byStrikeRole: GroupPerformance[]; byRegime: GroupPerformance[]; byHourOfDay: GroupPerformance[]; byExitReason: GroupPerformance[]; bySide: GroupPerformance[]; }
 /** One reason today's decisions did not become orders, and how many times. */
 export interface RejectionBucket { checkId: string | null; label: string; count: number; lastAt: string | null; lastReason: string | null; lastProfileName: string | null; }
 export interface ExecutionRejections { hours: number; total: number; buckets: RejectionBucket[]; }
@@ -212,6 +220,12 @@ export const admin = {
     setAgentTrading: (userId: string, enabled: boolean) => adminApi<ExecutionAccountRow>(`/execution/accounts/${encodeURIComponent(userId)}/agent-trading`, { method: 'POST', body: JSON.stringify({ enabled }) }),
     upsertProfile: (body: Record<string, unknown>) => adminApi(`/execution/profiles`, { method: 'POST', body: JSON.stringify(body) }),
     authorization: (id: string) => adminApi<ExecutionAuthorization>(`/execution/profiles/${encodeURIComponent(id)}/authorization`),
+    // ---- "Is the loop alive" health, performance analytics, and the kill switch.
+    health: () => adminApi<ExecutionHealth>('/execution/health'),
+    analytics: (hours = 24 * 30) => adminApi<ExecutionAnalytics>(`/execution/analytics?hours=${hours}`),
+    control: () => adminApi<SystemExecutionControl>('/execution/control'),
+    setControl: (mode: SystemExecutionMode, reason?: string) =>
+      adminApi<SystemExecutionControl>('/execution/control', { method: 'POST', body: JSON.stringify({ mode, reason }) }),
   },
   cognition: {
     overview: () => adminApi<CognitionOverview>('/cognition/overview'),

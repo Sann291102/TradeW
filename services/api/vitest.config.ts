@@ -96,6 +96,10 @@ export default defineConfig({
       //    performance breakdowns (strategy, confidence, strike, regime, hour).
       //    The measurement half of the outcome→intelligence foundation.
       'src/paper-execution/execution-analytics.spec.ts',
+      //  · health — the "is the loop alive" headline is DERIVED from real
+      //    process/DB state (env flag, leader lease, kill-switch mode), never a
+      //    hard-coded label, and the day's counts come from the intent rows.
+      'src/paper-execution/execution-health.spec.ts',
       // Who is allowed to use a paid capability, and until when.
       // Active pricing served to every surface. Asserts across the API boundary
       // that no route can produce a withdrawn annual Sentinel term.

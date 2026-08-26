@@ -167,6 +167,40 @@ export class MarketPriceService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * A real liveness probe of the market-data feed, for the execution health
+   * surface: is the bridge reachable, does it report the market open, and how
+   * old is its freshest tick?
+   *
+   * `asOf` is the newest `updatedAt` across every quote in the snapshot — the
+   * honest "last successful market-data timestamp" the console asks for. Never
+   * throws: a health check that fails when the thing it checks is down is
+   * useless, so an unreachable bridge is reported as `available: false` with the
+   * reason, not raised.
+   */
+  async feedHealth(): Promise<{
+    available: boolean;
+    marketOpen: boolean | null;
+    asOf: number | null;
+    ageMs: number | null;
+    error?: string;
+  }> {
+    try {
+      const snap = await this.getSnapshot();
+      const all = [...snap.indices, ...snap.stocks, ...snap.etfs, ...snap.commodities];
+      const times = all.map((q) => parseTickTime(q.updatedAt)).filter((t): t is number => t != null);
+      const asOf = times.length ? Math.max(...times) : null;
+      return {
+        available: true,
+        marketOpen: snap.marketOpen,
+        asOf,
+        ageMs: asOf != null ? Math.max(0, Date.now() - asOf) : null,
+      };
+    } catch (err) {
+      return { available: false, marketOpen: null, asOf: null, ageMs: null, error: (err as Error).message };
+    }
+  }
+
   private async getSnapshot(): Promise<BridgeSnapshot> {
     if (this.snapshotCache && Date.now() - this.snapshotCache.at < QUOTES_CACHE_TTL_MS) {
       return this.snapshotCache.snapshot;

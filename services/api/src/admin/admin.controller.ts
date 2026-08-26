@@ -6,6 +6,7 @@ import { AdminService } from './admin.service';
 import { CognitionService } from '../cognition/cognition.service';
 import { ExecutionAccountService } from '../paper-execution/execution-account.service';
 import { ExecutionAnalyticsService } from '../paper-execution/execution-analytics.service';
+import { ExecutionHealthService } from '../paper-execution/execution-health.service';
 import { ExecutionProfileService } from '../paper-execution/execution-profile.service';
 import { ExecutionQueryService } from '../paper-execution/execution-query.service';
 import { ExecutionSchedulerService } from '../paper-execution/execution-scheduler.service';
@@ -226,6 +227,7 @@ export class AdminController {
     private readonly executionProfiles: ExecutionProfileService,
     private readonly systemControl: SystemExecutionControlService,
     private readonly executionAnalytics: ExecutionAnalyticsService,
+    private readonly executionHealth: ExecutionHealthService,
   ) {}
 
   // -------------------------------------------------------------- overview
@@ -455,6 +457,18 @@ export class AdminController {
   @Get('execution/status')
   executionStatus() {
     return this.executionScheduler.status();
+  }
+
+  /**
+   * "Is Sentinel paper trading actually alive?" — one payload the console's
+   * status header reads. Every field is derived from real state: the loop's own
+   * timers/leases, the shared NSE session, a live feed-freshness probe, the
+   * kill-switch mode, today's counts, and the latest execution/refusal/failure.
+   * Nothing is a hard-coded label. Read-only.
+   */
+  @Get('execution/health')
+  getExecutionHealth() {
+    return this.executionHealth.health();
   }
 
   /** Today's refusals grouped by the gate that produced them. */

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { SimModule } from '../sim/sim.module';
 import { ExecutionAccountService } from './execution-account.service';
 import { ExecutionAnalyticsService } from './execution-analytics.service';
+import { ExecutionHealthService } from './execution-health.service';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
 import { ExecutionProfileService } from './execution-profile.service';
 import { ExecutionQueryService } from './execution-query.service';
@@ -45,6 +46,7 @@ import { SystemExecutionControlService } from './system-execution-control.servic
     ExecutionQueryService,
     ExecutionAnalyticsService,
     ExecutionSchedulerService,
+    ExecutionHealthService,
     SystemExecutionControlService,
   ],
   exports: [
@@ -55,6 +57,9 @@ import { SystemExecutionControlService } from './system-execution-control.servic
     // Exported so the console can read execution performance analytics — a
     // pure projection of closed outcomes, no writes.
     ExecutionAnalyticsService,
+    // Exported so the console can render one "is the loop alive" health payload,
+    // every field derived from real process/DB state.
+    ExecutionHealthService,
     // Exported so the admin console can list eligible accounts and grant/revoke
     // consent. It is the only way to set `User.agentPaperTradingEnabledAt`, and
     // it audits every change — see setAgentPaperTrading.
