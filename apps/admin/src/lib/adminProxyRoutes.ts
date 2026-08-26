@@ -93,6 +93,15 @@ export const ADMIN_PROXY_ROUTES: RouteRule[] = [
   { method: 'GET', segments: ['execution', 'rejections'] },
   { method: 'GET', segments: ['execution', 'trace', '*'] },
   { method: 'GET', segments: ['execution', 'trace-by-order', '*'] },
+  // Consolidated "is the loop actually alive" health, and the performance
+  // analytics read (both derived from real rows/process state, never cached).
+  { method: 'GET', segments: ['execution', 'health'] },
+  { method: 'GET', segments: ['execution', 'analytics'] },
+  // The global kill switch. The read shows the current mode; the write is the
+  // one control that halts (or resumes) ALL automatic entries at once, audited
+  // upstream with the acting operator (`execution.system-control.set`).
+  { method: 'GET', segments: ['execution', 'control'] },
+  { method: 'POST', segments: ['execution', 'control'] },
   // The two writes. Arming a profile is the switch that decides whether an
   // autonomous agent may place orders, so it is listed here individually and
   // audited upstream (`execution.profile.enabled`) — never reachable through a

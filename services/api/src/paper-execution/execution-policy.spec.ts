@@ -25,6 +25,10 @@ const OK: PolicyInput = {
   marketOpen: true,
   availableCash: 1_000_000,
   estimatedCost: 9_750,
+  // A fresh, timestamped quote: 1s old against a 20s limit, strict mode off.
+  quoteAgeMs: 1_000,
+  maxQuoteAgeMs: 20_000,
+  requireFreshQuote: false,
 };
 
 const fail = (over: Partial<PolicyInput>) => evaluatePolicy({ ...OK, ...over });
@@ -97,6 +101,31 @@ describe('evaluatePolicy', () => {
     expect(fail({ estimatedCost: 1_000_000, availableCash: 1_000_000 }).allowed).toBe(true);
   });
 
+  describe('market-data freshness (DO NOT TRADE on a stale price)', () => {
+    it('refuses a quote older than the freshness limit', () => {
+      const decision = fail({ quoteAgeMs: 45_000, maxQuoteAgeMs: 20_000 });
+      expect(decision.allowed).toBe(false);
+      expect(decision.failedCheckId).toBe('fresh-market-data');
+      expect(decision.reason).toContain('stale');
+    });
+
+    it('admits a quote inside the freshness limit, including exactly at it', () => {
+      expect(fail({ quoteAgeMs: 19_999, maxQuoteAgeMs: 20_000 }).allowed).toBe(true);
+      expect(fail({ quoteAgeMs: 20_000, maxQuoteAgeMs: 20_000 }).allowed).toBe(true);
+    });
+
+    it('admits an UNTIMED quote by default, so a feed without timestamps is not a global halt', () => {
+      expect(fail({ quoteAgeMs: null, requireFreshQuote: false }).allowed).toBe(true);
+    });
+
+    it('refuses an untimed quote in strict mode', () => {
+      const decision = fail({ quoteAgeMs: null, requireFreshQuote: true });
+      expect(decision.allowed).toBe(false);
+      expect(decision.failedCheckId).toBe('fresh-market-data');
+      expect(decision.reason).toContain('no quote timestamp');
+    });
+  });
+
   it('reports the first failing check as the reason, in plain language', () => {
     const decision = fail({ confidence: 40 });
     expect(decision.allowed).toBe(false);
@@ -148,6 +177,7 @@ describe('the refusal is recorded in a countable form', () => {
       [{ enabled: false }, 'profile-enabled'],
       [{ environment: 'LIVE' }, 'environment-paper'],
       [{ marketOpen: false }, 'market-open'],
+      [{ quoteAgeMs: 120_000 }, 'fresh-market-data'],
       [{ minuteOfDay: 15 * 60 + 20 }, 'before-square-off'],
       [{ confidence: 12 }, 'confidence-floor'],
       [{ openPositions: 1 }, 'max-open-positions'],

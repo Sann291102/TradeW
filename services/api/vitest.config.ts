@@ -81,6 +81,25 @@ export default defineConfig({
       //    labelling a real account SYSTEM_PAPER to skip the consent check, and
       //    marking it USER_PAPER without ever asking.
       'src/paper-execution/execution-account.spec.ts',
+      //  · system-control — the global kill switch's pure gate (ON/OFF/
+      //    EMERGENCY_STOP → allow-entries / force-square-off) and the service's
+      //    fail-closed read and audited write.
+      'src/paper-execution/system-execution-control.spec.ts',
+      //  · market-session — the one authoritative NSE session classifier
+      //    (weekend / holiday / pre-market / active / post-market), calendar-aware.
+      'src/paper-execution/market-session.spec.ts',
+      //  · lifecycle recovery — a PROPOSED intent orphaned by a crash mid-submit
+      //    is failed out on the next reconcile, guarded on status so it can never
+      //    clobber an intent that has since become an order.
+      'src/paper-execution/execution-lifecycle-recovery.spec.ts',
+      //  · analytics — win rate / expectancy / profit factor / drawdown and the
+      //    performance breakdowns (strategy, confidence, strike, regime, hour).
+      //    The measurement half of the outcome→intelligence foundation.
+      'src/paper-execution/execution-analytics.spec.ts',
+      //  · health — the "is the loop alive" headline is DERIVED from real
+      //    process/DB state (env flag, leader lease, kill-switch mode), never a
+      //    hard-coded label, and the day's counts come from the intent rows.
+      'src/paper-execution/execution-health.spec.ts',
       // Who is allowed to use a paid capability, and until when.
       // Active pricing served to every surface. Asserts across the API boundary
       // that no route can produce a withdrawn annual Sentinel term.

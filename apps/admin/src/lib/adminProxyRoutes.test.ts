@@ -140,6 +140,14 @@ describe('isAllowedAdminRoute — everything else is denied', () => {
       expect(isAllowedAdminRoute('POST', seg('/execution/profiles/abc/authorization'))).toBe(false);
     });
 
+    it('allows the health/analytics reads and the global kill switch', () => {
+      expect(isAllowedAdminRoute('GET', seg('/execution/health'))).toBe(true);
+      expect(isAllowedAdminRoute('GET', seg('/execution/analytics'))).toBe(true);
+      expect(isAllowedAdminRoute('GET', seg('/execution/control'))).toBe(true);
+      // The one system-wide write besides account binding: the runtime halt.
+      expect(isAllowedAdminRoute('POST', seg('/execution/control'))).toBe(true);
+    });
+
     it('does not forward an execution route the console has no rule for', () => {
       // Deny-by-default has to hold for this namespace too — a future admin
       // endpoint under /execution must stay unreachable until listed.

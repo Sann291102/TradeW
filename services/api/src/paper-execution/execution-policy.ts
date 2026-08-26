@@ -63,6 +63,7 @@ export const REJECT_CHECK_LABELS: Record<string, string> = {
   'profile-enabled': 'Profile enabled',
   'environment-paper': 'Environment is PAPER',
   'market-open': 'Market open',
+  'fresh-market-data': 'Market data fresh',
   'before-square-off': 'Before square-off',
   'confidence-floor': 'Confidence floor',
   'max-open-positions': 'Open position limit',
@@ -71,11 +72,19 @@ export const REJECT_CHECK_LABELS: Record<string, string> = {
   affordable: 'Sufficient paper capital',
   'submission-raised': 'Submission raised',
   'oms-rejected': 'Rejected by the OMS',
+  'recovery-orphaned': 'Recovered — orphaned by a restart',
 };
 
-/** The two non-policy stops, named so a caller cannot misspell one. */
+/** The non-policy stops, named so a caller cannot misspell one. */
 export const SUBMISSION_RAISED = 'submission-raised';
 export const OMS_REJECTED = 'oms-rejected';
+/**
+ * A PROPOSED intent that never became an order — the process died between
+ * claiming the decision and submitting it. Recovery fails it under this id so
+ * it is counted as its own bucket, distinct from a policy refusal or an OMS
+ * rejection: it is neither, it is a crash the loop cleaned up after.
+ */
+export const RECOVERY_ORPHANED = 'recovery-orphaned';
 
 /** How to say a check id to a person; the id itself if it is not a known one. */
 export function rejectCheckLabel(id: string | null): string {
@@ -106,6 +115,35 @@ export interface PolicyInput {
   availableCash: number;
   /** Premium × quantity for a long option — the full cost and the full risk. */
   estimatedCost: number;
+
+  // ---- Market-data freshness (data-quality gate, not a risk gate) ---------
+  //
+  // Age, in milliseconds, of the live quote the decision priced against — `now`
+  // minus the feed's own last-tick timestamp. Null when the feed provided no
+  // timestamp for this read (see `requireFreshQuote` for how that is treated).
+  quoteAgeMs: number | null;
+  /** A quote older than this is refused. Trade only on live data. */
+  maxQuoteAgeMs: number;
+  /**
+   * When true, a quote with NO timestamp (`quoteAgeMs === null`) is refused
+   * rather than admitted — a strict mode for a deployment that would rather not
+   * trade at all than trade blind. Default behaviour (false) admits an untimed
+   * quote, so a feed that never learned to stamp ticks is not silently halted.
+   */
+  requireFreshQuote: boolean;
+}
+
+/**
+ * Is the priced quote fresh enough to act on?
+ *
+ * Pure and exported so the freshness rule is asserted directly and reused by
+ * the console's "how stale is the feed" read, rather than re-implemented there.
+ * A missing timestamp is fresh unless the deployment demands one — a feed that
+ * does not stamp its ticks must not become an accidental global halt.
+ */
+export function isQuoteFresh(quoteAgeMs: number | null, maxQuoteAgeMs: number, requireFreshQuote: boolean): boolean {
+  if (quoteAgeMs === null) return !requireFreshQuote;
+  return quoteAgeMs <= maxQuoteAgeMs;
 }
 
 /** IST minute-of-day the Indian equity session opens (09:15). */
@@ -143,6 +181,25 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
     'market-open',
     input.marketOpen,
     input.marketOpen ? 'The session is open.' : 'The market is closed; no entry is taken outside the session.',
+  );
+
+  // Market-data freshness — a DATA-QUALITY gate, deliberately right after
+  // market-open because a stale quote and a shut market are the same failure to
+  // a trader: the price you would act on is not the price that is trading. A
+  // paper fill against a price the feed stopped updating minutes ago is not a
+  // realistic approximation of anything, so the correct outcome is NO TRADE with
+  // a recorded reason — never a silent fill at a dangerous last-known price.
+  const fresh = isQuoteFresh(input.quoteAgeMs, input.maxQuoteAgeMs, input.requireFreshQuote);
+  push(
+    'fresh-market-data',
+    fresh,
+    input.quoteAgeMs === null
+      ? input.requireFreshQuote
+        ? 'Refused: the feed provided no quote timestamp and this deployment requires a fresh, timestamped quote.'
+        : 'The feed provided no quote timestamp; freshness could not be checked (admitted — strict mode is off).'
+      : fresh
+        ? `Quote is ${(input.quoteAgeMs / 1000).toFixed(1)}s old, within the ${(input.maxQuoteAgeMs / 1000).toFixed(0)}s freshness limit.`
+        : `Refused: quote is ${(input.quoteAgeMs / 1000).toFixed(1)}s old, past the ${(input.maxQuoteAgeMs / 1000).toFixed(0)}s freshness limit — the market-data feed appears stale.`,
   );
 
   // Entering a position minutes before the profile's own square-off would open

@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { SimModule } from '../sim/sim.module';
 import { ExecutionAccountService } from './execution-account.service';
+import { ExecutionAnalyticsService } from './execution-analytics.service';
+import { ExecutionHealthService } from './execution-health.service';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
 import { ExecutionProfileService } from './execution-profile.service';
 import { ExecutionQueryService } from './execution-query.service';
@@ -8,6 +10,7 @@ import { ExecutionSchedulerService } from './execution-scheduler.service';
 import { ExecutionTraceService } from './execution-trace.service';
 import { PaperExecutionService } from './paper-execution.service';
 import { SentinelExecutionClient } from './sentinel-execution.client';
+import { SystemExecutionControlService } from './system-execution-control.service';
 
 /**
  * The Sentinel paper-execution capability.
@@ -41,13 +44,22 @@ import { SentinelExecutionClient } from './sentinel-execution.client';
     ExecutionLifecycleService,
     ExecutionTraceService,
     ExecutionQueryService,
+    ExecutionAnalyticsService,
     ExecutionSchedulerService,
+    ExecutionHealthService,
+    SystemExecutionControlService,
   ],
   exports: [
     PaperExecutionService,
     ExecutionLifecycleService,
     ExecutionTraceService,
     ExecutionQueryService,
+    // Exported so the console can read execution performance analytics — a
+    // pure projection of closed outcomes, no writes.
+    ExecutionAnalyticsService,
+    // Exported so the console can render one "is the loop alive" health payload,
+    // every field derived from real process/DB state.
+    ExecutionHealthService,
     // Exported so the admin console can list eligible accounts and grant/revoke
     // consent. It is the only way to set `User.agentPaperTradingEnabledAt`, and
     // it audits every change — see setAgentPaperTrading.
@@ -56,6 +68,10 @@ import { SentinelExecutionClient } from './sentinel-execution.client';
     // A read of this process's own state — the one question the database
     // cannot answer, and the reason `execution/status` exists.
     ExecutionSchedulerService,
+    // Exported so the console can read and flip the global kill switch, and so
+    // the scheduler/health surface can report the current mode. It is the only
+    // way to set `SystemExecutionControl.mode`, and it audits every change.
+    SystemExecutionControlService,
     // Exported for the console's create/rebind route. Omitting this while
     // `AdminController` injected it took the ENTIRE API down at boot on
     // 2026-08-18 with "Nest can't resolve dependencies of the AdminController

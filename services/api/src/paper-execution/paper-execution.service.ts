@@ -1,7 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ExecutionIntentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { isTradingDay } from '../discipline/market-calendar';
 import { MarketPriceService } from '../sim/market-price.service';
 import { OrderService } from '../sim/order.service';
 import { ExecutionAccountService } from './execution-account.service';
@@ -9,13 +8,14 @@ import { contractSymbol, deriveIdempotencyKey, istParts } from './execution-iden
 import { countProfileOpenPositions } from './execution-open-positions';
 import {
   OMS_REJECTED,
-  SESSION_OPEN_MINUTE,
   SUBMISSION_RAISED,
   type PolicyCheck,
   type PolicyDecision,
   evaluatePolicy,
 } from './execution-policy';
+import { classifyMarketSession } from './market-session';
 import { SentinelExecutionClient, type ExecutionEvaluationDto } from './sentinel-execution.client';
+import { SystemExecutionControlService, type SystemControlGate } from './system-execution-control.service';
 
 /**
  * The Sentinel paper-execution loop.
@@ -61,6 +61,7 @@ export type RunOutcome =
   | 'rejected'
   | 'failed'
   | 'skipped-disabled'
+  | 'skipped-halted'
   | 'skipped-market-closed'
   | 'skipped-no-signal';
 
@@ -76,9 +77,6 @@ export interface ExecutionRunResult {
   checks: PolicyCheck[];
 }
 
-/** IST minute-of-day the Indian equity session closes (15:30). */
-const SESSION_CLOSE_MINUTE = 15 * 60 + 30;
-
 @Injectable()
 export class PaperExecutionService {
   private readonly logger = new Logger(PaperExecutionService.name);
@@ -89,7 +87,28 @@ export class PaperExecutionService {
     private readonly orders: OrderService,
     private readonly marketPrice: MarketPriceService,
     private readonly accounts: ExecutionAccountService,
+    private readonly systemControl: SystemExecutionControlService,
   ) {}
+
+  /**
+   * A live quote older than this (ms) is treated as stale and refused. Default
+   * 20s — comfortably longer than the api→sentinel→api round trip that produces
+   * the price, short enough to catch a feed that has actually stopped ticking.
+   * Env-tunable, so a deployment on a slower feed can widen it deliberately.
+   */
+  static maxQuoteAgeMs(): number {
+    const raw = Number(process.env.PAPER_EXECUTION_MAX_QUOTE_AGE_MS);
+    return Number.isFinite(raw) && raw > 0 ? raw : 20_000;
+  }
+
+  /**
+   * Strict mode: when true, a quote with no timestamp is refused rather than
+   * admitted. Off by default so a feed that does not stamp its ticks is not
+   * silently turned into a system-wide halt — see execution-policy `isQuoteFresh`.
+   */
+  static requireFreshQuote(): boolean {
+    return (process.env.PAPER_EXECUTION_REQUIRE_FRESH_QUOTE ?? 'false').toLowerCase() === 'true';
+  }
 
   /**
    * Run one profile once.
@@ -98,7 +117,15 @@ export class PaperExecutionService {
    * be asserted deterministically — a loop whose correctness depends on the
    * clock must not be testable only during market hours.
    */
-  async runProfile(profileId: string, now: Date = new Date()): Promise<ExecutionRunResult> {
+  async runProfile(
+    profileId: string,
+    now: Date = new Date(),
+    // The batch caller reads the global kill switch ONCE per tick and threads it
+    // down, so N profiles do not each re-read the same singleton. A direct
+    // caller (the console's "run once" route) passes nothing and this reads it
+    // itself — a manual fire must honour the halt exactly as a scheduled one does.
+    opts: { control?: SystemControlGate } = {},
+  ): Promise<ExecutionRunResult> {
     const profile = await this.prisma.executionProfile.findUnique({
       where: { id: profileId },
       include: { account: { select: { id: true, email: true } } },
@@ -118,6 +145,29 @@ export class PaperExecutionService {
         outcome: 'rejected',
         verdict: null,
         reason: `Refused: profile environment is "${profile.environment}", not PAPER.`,
+      };
+    }
+
+    // ---- 1a. THE GLOBAL KILL SWITCH ---------------------------------------
+    //
+    // Checked before the account read and before Sentinel, because "the whole
+    // system is halted" is the most fundamental answer there is — more so than
+    // "the market is shut" or "you may not trade this account". A halted loop
+    // spends nothing: no account read, no Sentinel evaluation, no market data.
+    //
+    // Read once by the batch caller and threaded in; a direct call reads it here.
+    // Either way it is read FRESH, never cached — a kill switch with a TTL is a
+    // kill switch with a delay.
+    const control = opts.control ?? (await this.systemControl.gate());
+    if (!control.allowNewEntries) {
+      return {
+        ...base,
+        outcome: 'skipped-halted',
+        verdict: null,
+        reason:
+          control.mode === 'EMERGENCY_STOP'
+            ? 'System paper execution is under EMERGENCY_STOP — no new entries; open positions are being squared off.'
+            : 'System paper execution is OFF — no new entries are being opened.',
       };
     }
 
@@ -148,18 +198,15 @@ export class PaperExecutionService {
       };
     }
 
-    const { minuteOfDay } = istParts(now);
-    const sessionOpen =
-      isTradingDay(now) && minuteOfDay >= SESSION_OPEN_MINUTE && minuteOfDay < SESSION_CLOSE_MINUTE;
-    if (!sessionOpen) {
-      return {
-        ...base,
-        outcome: 'skipped-market-closed',
-        verdict: null,
-        reason: isTradingDay(now)
-          ? 'Outside the 09:15–15:30 IST session.'
-          : 'Not an NSE trading day.',
-      };
+    // One authoritative session read: which DAY the exchange trades (shared NSE
+    // calendar — weekend/holiday aware) and which WINDOW of it is the session.
+    // A new entry may only open in the `active` phase; every other phase carries
+    // its own reason, so a skip is attributable to pre-market / post-market /
+    // weekend / holiday rather than a bare "market closed".
+    const session = classifyMarketSession(now);
+    const minuteOfDay = session.minuteOfDay;
+    if (!session.isOpen) {
+      return { ...base, outcome: 'skipped-market-closed', verdict: null, reason: session.reason };
     }
 
     // ---- 2. Ask the one canonical Sentinel ---------------------------------
@@ -233,6 +280,11 @@ export class PaperExecutionService {
       decidedAt: now,
     });
 
+    // Market-data freshness: age of the tick this price came from, `now` minus
+    // the feed's own timestamp. Null when the feed did not stamp the tick — the
+    // policy's `requireFreshQuote` decides whether that is admitted or refused.
+    const quoteAgeMs = price.asOf != null ? Math.max(0, now.getTime() - price.asOf) : null;
+
     const facts = await this.gatherFacts(profile.accountUserId, profile.id, now);
     const policy = evaluatePolicy({
       enabled: profile.enabled,
@@ -250,6 +302,9 @@ export class PaperExecutionService {
       marketOpen: price.marketOpen,
       availableCash: facts.availableCash,
       estimatedCost,
+      quoteAgeMs,
+      maxQuoteAgeMs: PaperExecutionService.maxQuoteAgeMs(),
+      requireFreshQuote: PaperExecutionService.requireFreshQuote(),
     });
 
     const created = await this.createIntent({
@@ -380,6 +435,11 @@ export class PaperExecutionService {
 
   /** Every enabled profile, one pass each. One profile's failure never stops the rest. */
   async runAllEnabled(now: Date = new Date()): Promise<ExecutionRunResult[]> {
+    // Read the kill switch ONCE for the whole batch. When it forbids new entries
+    // the pass is still walked so every profile reports `skipped-halted` (the
+    // console must see WHY nothing traded), but not one account read or Sentinel
+    // evaluation is spent — `runProfile` short-circuits on the threaded gate.
+    const control = await this.systemControl.gate();
     const profiles = await this.prisma.executionProfile.findMany({
       where: { enabled: true, environment: 'PAPER' },
       select: { id: true, name: true },
@@ -387,7 +447,7 @@ export class PaperExecutionService {
     const results: ExecutionRunResult[] = [];
     for (const profile of profiles) {
       try {
-        results.push(await this.runProfile(profile.id, now));
+        results.push(await this.runProfile(profile.id, now, { control }));
       } catch (err) {
         this.logger.error(`profile ${profile.name} raised during its pass`, err as Error);
         results.push({

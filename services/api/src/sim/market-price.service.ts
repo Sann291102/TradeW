@@ -21,6 +21,21 @@ export interface LivePrice {
    * the order path.
    */
   underlyingSpot?: number;
+  /**
+   * Epoch-ms timestamp of the live tick this price came from — the feed's own
+   * `updatedAt`, NOT the moment this service read it. Null when the feed did not
+   * stamp the tick.
+   *
+   * This is the market-data FRESHNESS signal the paper-execution loop gates on:
+   * a price whose tick is minutes old is a stale price, and an automatic entry
+   * must never fill against one (see execution-policy.ts `fresh-market-data`).
+   * For an option leg the bridge exposes no per-contract tick time, so this
+   * carries the UNDERLYING feed's last-tick time — the option overlay ticks off
+   * the same websocket, so a live underlying is the precondition for a live
+   * option price, and a stalled underlying feed is exactly the condition to
+   * refuse on.
+   */
+  asOf?: number | null;
 }
 
 interface BridgeQuote {
@@ -29,6 +44,8 @@ interface BridgeQuote {
   bid: number;
   ask: number;
   marketStatus: 'open' | 'closed';
+  /** ISO timestamp of the tick this quote came from (the bridge's `updatedAt`). */
+  updatedAt?: string;
 }
 interface BridgeSnapshot {
   marketOpen: boolean;
@@ -150,6 +167,40 @@ export class MarketPriceService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * A real liveness probe of the market-data feed, for the execution health
+   * surface: is the bridge reachable, does it report the market open, and how
+   * old is its freshest tick?
+   *
+   * `asOf` is the newest `updatedAt` across every quote in the snapshot — the
+   * honest "last successful market-data timestamp" the console asks for. Never
+   * throws: a health check that fails when the thing it checks is down is
+   * useless, so an unreachable bridge is reported as `available: false` with the
+   * reason, not raised.
+   */
+  async feedHealth(): Promise<{
+    available: boolean;
+    marketOpen: boolean | null;
+    asOf: number | null;
+    ageMs: number | null;
+    error?: string;
+  }> {
+    try {
+      const snap = await this.getSnapshot();
+      const all = [...snap.indices, ...snap.stocks, ...snap.etfs, ...snap.commodities];
+      const times = all.map((q) => parseTickTime(q.updatedAt)).filter((t): t is number => t != null);
+      const asOf = times.length ? Math.max(...times) : null;
+      return {
+        available: true,
+        marketOpen: snap.marketOpen,
+        asOf,
+        ageMs: asOf != null ? Math.max(0, Date.now() - asOf) : null,
+      };
+    } catch (err) {
+      return { available: false, marketOpen: null, asOf: null, ageMs: null, error: (err as Error).message };
+    }
+  }
+
   private async getSnapshot(): Promise<BridgeSnapshot> {
     if (this.snapshotCache && Date.now() - this.snapshotCache.at < QUOTES_CACHE_TTL_MS) {
       return this.snapshotCache.snapshot;
@@ -248,6 +299,7 @@ export class MarketPriceService {
     return this.prisma.instrument.upsert({ where: { symbol: canonicalSymbol }, create: { symbol: canonicalSymbol, ...data }, update: data });
   }
 
+
   /** Live LTP/bid/ask for an already-resolved instrument. */
   async getPrice(instrument: Instrument): Promise<LivePrice> {
     if (instrument.type === 'OPTION') return this.getOptionPrice(instrument);
@@ -271,6 +323,7 @@ export class MarketPriceService {
       bid: quote.bid > 0 ? quote.bid : quote.ltp * 0.9995,
       ask: quote.ask > 0 ? quote.ask : quote.ltp * 1.0005,
       marketOpen: quote.marketStatus === 'open',
+      asOf: parseTickTime(quote.updatedAt),
     };
   }
 
@@ -305,11 +358,24 @@ export class MarketPriceService {
     }
 
     let marketOpen = false;
+    let asOf: number | null = null;
     try {
-      marketOpen = (await this.getSnapshot()).marketOpen;
+      const snap = await this.getSnapshot();
+      marketOpen = snap.marketOpen;
+      // Freshness proxy for the option leg: the UNDERLYING index's last tick.
+      // The bridge exposes no per-contract tick time, but the option price is
+      // overlaid from the same websocket the underlying ticks on, so a stalled
+      // underlying feed is exactly the "stop trading" condition — and a live one
+      // is the precondition for the overlaid option price being live too.
+      const underlyingQuote = [...snap.indices, ...snap.stocks, ...snap.etfs].find(
+        (q) => q.symbol === instrument.underlying,
+      );
+      asOf = parseTickTime(underlyingQuote?.updatedAt);
     } catch {
       // Non-fatal: a missing market-open flag must not block a placeable order;
       // the matching engine's own market-hours guard is the authority anyway.
+      // `asOf` stays null, which the freshness gate treats per its strict-mode
+      // setting rather than as a hard stop.
     }
     return {
       ltp: leg.ltp,
@@ -320,6 +386,19 @@ export class MarketPriceService {
       // underlying price the Option Chain table displays, so the margin a
       // trader is charged is derived from the number on their screen.
       underlyingSpot: chain.spot != null && chain.spot > 0 ? chain.spot : undefined,
+      asOf,
     };
   }
+}
+
+/**
+ * The bridge's `updatedAt` (an ISO string) as epoch ms, or null when it is
+ * absent or unparseable. Null — never `Date.now()` — because a defaulted "now"
+ * would report a stalled feed as perfectly fresh, which is the exact failure the
+ * freshness gate exists to catch.
+ */
+function parseTickTime(updatedAt: string | undefined): number | null {
+  if (!updatedAt) return null;
+  const ms = Date.parse(updatedAt);
+  return Number.isFinite(ms) ? ms : null;
 }

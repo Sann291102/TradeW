@@ -3,6 +3,18 @@ import { ExecutionIntentStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderService } from '../sim/order.service';
 import { istParts } from './execution-identity';
+import { RECOVERY_ORPHANED } from './execution-policy';
+
+/**
+ * How long a PROPOSED intent may sit with no order before recovery fails it.
+ *
+ * Long enough that a normal in-flight submission — createIntent → placeOrder,
+ * a few seconds at most — is never mistaken for an orphan and failed out from
+ * under the leader that is actively submitting it. Anything older than this
+ * that is still PROPOSED-with-no-order is a decision whose process died between
+ * claiming the key and placing the order.
+ */
+const STALE_PROPOSED_MS = 2 * 60_000;
 
 /**
  * Carries an execution past the order and through to a recorded outcome.
@@ -46,10 +58,18 @@ export class ExecutionLifecycleService {
    * Idempotent by construction: each transition is guarded by the status it
    * moves FROM, so running this twice in a row is a no-op the second time.
    */
-  async reconcile(): Promise<{ filled: number; failed: number; closed: number }> {
+  async reconcile(): Promise<{ filled: number; failed: number; closed: number; recovered: number }> {
     let filled = 0;
     let failed = 0;
     let closed = 0;
+
+    // ---- RESTART RECOVERY: orphaned PROPOSED intents ----------------------
+    //
+    // Run FIRST, every reconcile, so a crash between claiming a decision and
+    // submitting it self-heals on the next tick rather than leaving a decision
+    // that is neither an order nor a recorded refusal. In-memory scheduler state
+    // is never assumed authoritative — the database is, and this reconciles it.
+    const recovered = await this.recoverStuckIntents();
 
     // ---- SUBMITTED → FILLED / FAILED --------------------------------------
     const submitted = await this.prisma.executionIntent.findMany({
@@ -193,7 +213,58 @@ export class ExecutionLifecycleService {
       );
     }
 
-    return { filled, failed, closed };
+    return { filled, failed, closed, recovered };
+  }
+
+  /**
+   * Fail any PROPOSED intent that never became an order and is older than the
+   * staleness window — the classic "process restarted mid-submit" orphan.
+   *
+   * ## Why this is safe against a live submission
+   *
+   * A PROPOSED intent that a leader is submitting RIGHT NOW is seconds old; the
+   * `STALE_PROPOSED_MS` floor excludes it, so recovery never fails an intent out
+   * from under an in-flight `placeOrder`. Only a decision old enough that no
+   * submission could still be running is touched.
+   *
+   * ## Why the status guard is the real safety, not the age
+   *
+   * The update is conditional on `status: PROPOSED` in the WHERE clause. If a
+   * submission completes between the read and the write, that intent is now
+   * SUBMITTED/FILLED and the guarded update matches zero rows — it can never
+   * fail an intent that has since become an order. The age filter only keeps the
+   * candidate set small and the intent obvious; the status guard is what makes
+   * the write correct under a race.
+   */
+  async recoverStuckIntents(now: Date = new Date()): Promise<number> {
+    const threshold = new Date(now.getTime() - STALE_PROPOSED_MS);
+    const orphans = await this.prisma.executionIntent.findMany({
+      where: { status: ExecutionIntentStatus.PROPOSED, order: { is: null }, decidedAt: { lt: threshold } },
+      select: { id: true, profileId: true, contractSymbol: true },
+    });
+    if (orphans.length === 0) return 0;
+
+    let recovered = 0;
+    for (const orphan of orphans) {
+      const res = await this.prisma.executionIntent.updateMany({
+        // Status in the WHERE clause is the guard: a concurrent submission that
+        // moved this to SUBMITTED between the read above and here matches zero
+        // rows, so recovery can never clobber an intent that became an order.
+        where: { id: orphan.id, status: ExecutionIntentStatus.PROPOSED },
+        data: {
+          status: ExecutionIntentStatus.FAILED,
+          rejectReason:
+            'Recovered on reconcile: the decision was proposed but no order was ever submitted — ' +
+            'the process most likely restarted between claiming the decision and placing the order.',
+          rejectCheckId: RECOVERY_ORPHANED,
+        },
+      });
+      if (res.count === 1) {
+        recovered++;
+        this.logger.warn(`recovered orphaned intent ${orphan.id} (${orphan.contractSymbol}) — proposed but never submitted; marked FAILED.`);
+      }
+    }
+    return recovered;
   }
 
   /**
@@ -204,7 +275,14 @@ export class ExecutionLifecycleService {
    * bound to a profile — established by walking this profile's own FILLED
    * intents, never by scanning the account for anything that happens to be open.
    */
-  async squareOff(now: Date = new Date()): Promise<{ exited: number; errors: number }> {
+  async squareOff(
+    now: Date = new Date(),
+    // Under EMERGENCY_STOP the scheduler passes `forceAll`, which flattens every
+    // open agent position immediately, ignoring each profile's own square-off
+    // minute. That is the one difference between OFF and EMERGENCY_STOP: OFF lets
+    // positions run to their scheduled close, EMERGENCY_STOP closes them now.
+    opts: { forceAll?: boolean } = {},
+  ): Promise<{ exited: number; errors: number }> {
     const { minuteOfDay } = istParts(now);
     const profiles = await this.prisma.executionProfile.findMany({
       where: { enabled: true, environment: 'PAPER' },
@@ -214,7 +292,7 @@ export class ExecutionLifecycleService {
     let errors = 0;
 
     for (const profile of profiles) {
-      if (minuteOfDay < profile.squareOffMinute) continue;
+      if (!opts.forceAll && minuteOfDay < profile.squareOffMinute) continue;
 
       const holding = await this.prisma.executionIntent.findMany({
         where: { profileId: profile.id, status: ExecutionIntentStatus.FILLED },

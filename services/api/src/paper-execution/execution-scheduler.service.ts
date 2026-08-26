@@ -1,7 +1,9 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { LeaderElectionService } from '../common/leader-election';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
+import { classifyMarketSession, type MarketSession } from './market-session';
 import { PaperExecutionService } from './paper-execution.service';
+import { SystemExecutionControlService } from './system-execution-control.service';
 
 /**
  * The clock behind the paper-execution loop.
@@ -35,6 +37,16 @@ const EVALUATE_JOB = 'paper-execution-evaluate';
 const RECONCILE_JOB = 'paper-execution-reconcile';
 
 /**
+ * Delay before the one-off startup recovery pass. Leadership is acquired
+ * asynchronously at boot (a DB round trip), so firing recovery synchronously in
+ * `onModuleInit` would usually no-op on `isLeader === false`. A short beat lets
+ * the lease settle so the leader recovers immediately rather than waiting a full
+ * reconcile interval. It is only a FAST PATH — the continuous reconcile tick
+ * runs the same recovery every interval, so nothing depends on this firing.
+ */
+const STARTUP_RECOVERY_DELAY_MS = 3_000;
+
+/**
  * What the admin console reads to tell an ARMED profile from a TICKING loop.
  *
  * Every field is this process's own live state. Nothing is persisted: a status
@@ -56,6 +68,11 @@ export interface ExecutionLoopStatus {
   startedAt: string | null;
   lastEvaluateAt: string | null;
   lastReconcileAt: string | null;
+  /**
+   * The current NSE session, so the console can tell "alive but the market is
+   * shut" from "not ticking". Computed fresh, from the shared calendar.
+   */
+  session: MarketSession;
 }
 
 @Injectable()
@@ -63,6 +80,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
   private readonly logger = new Logger(ExecutionSchedulerService.name);
   private evaluateTimer: ReturnType<typeof setInterval> | null = null;
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+  private startupTimer: ReturnType<typeof setTimeout> | null = null;
   private evaluating = false;
   private reconciling = false;
   private lastEvaluateAt: Date | null = null;
@@ -73,6 +91,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     private readonly execution: PaperExecutionService,
     private readonly lifecycle: ExecutionLifecycleService,
     private readonly leader: LeaderElectionService,
+    private readonly systemControl: SystemExecutionControlService,
   ) {}
 
   private get enabled(): boolean {
@@ -93,11 +112,22 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     this.reconcileTimer = setInterval(() => void this.reconcileTick(), reconcileMs);
     this.startedAt = new Date();
     this.logger.log(`paper execution loop started — evaluate every ${evaluateMs}ms, reconcile every ${reconcileMs}ms.`);
+
+    // RESTART RECOVERY. A reconcile pass reconciles the database against reality
+    // (SUBMITTED→FILLED, FILLED→CLOSED), squares off anything past its window,
+    // and fails intents orphaned by a crash mid-submit — so a process that
+    // restarted holding open positions resumes safely rather than assuming its
+    // in-memory state was authoritative. Fired once, shortly after boot, so the
+    // leader does this at startup instead of waiting a full reconcile interval;
+    // the recurring tick is the guarantee, this is only the fast path.
+    this.startupTimer = setTimeout(() => void this.reconcileTick(), STARTUP_RECOVERY_DELAY_MS);
+    this.startupTimer.unref?.();
   }
 
   onModuleDestroy(): void {
     if (this.evaluateTimer) clearInterval(this.evaluateTimer);
     if (this.reconcileTimer) clearInterval(this.reconcileTimer);
+    if (this.startupTimer) clearTimeout(this.startupTimer);
   }
 
   private async evaluateTick(): Promise<void> {
@@ -112,6 +142,13 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     // loop alive", and a tick that started and then threw is still a live loop.
     this.lastEvaluateAt = new Date();
     try {
+      // The evaluate tick only ever OPENS positions, and an entry may open only
+      // in the active session. Outside it, skip the whole batch — no profile
+      // read, no Sentinel evaluation — while the heartbeat above still records a
+      // live loop. Reconcile and square-off run on their own tick regardless, so
+      // an open position is never left untended just because entries are paused.
+      const session = classifyMarketSession();
+      if (!session.isOpen) return;
       const results = await this.execution.runAllEnabled();
       const acted = results.filter((r) => r.outcome === 'executed' || r.outcome === 'rejected' || r.outcome === 'failed');
       if (acted.length) {
@@ -130,13 +167,21 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     this.reconciling = true;
     this.lastReconcileAt = new Date();
     try {
+      // The kill switch also drives lifecycle cleanup: under EMERGENCY_STOP the
+      // gate reports `forceSquareOff`, and square-off flattens every open agent
+      // position now rather than waiting for each profile's own square-off
+      // minute. Read here, in the reconcile tick, because that is the tick that
+      // owns exits — the evaluate tick only ever OPENS positions.
+      const control = await this.systemControl.gate();
       // Square-off runs FIRST. Both passes read the same positions, and running
       // reconcile first would see a position still open, skip it, and leave the
       // outcome unrecorded for a whole extra tick after the exit filled.
-      await this.lifecycle.squareOff();
+      await this.lifecycle.squareOff(new Date(), { forceAll: control.forceSquareOff });
       const result = await this.lifecycle.reconcile();
-      if (result.filled || result.failed || result.closed) {
-        this.logger.log(`reconcile: ${result.filled} filled, ${result.closed} closed, ${result.failed} failed.`);
+      if (result.filled || result.failed || result.closed || result.recovered) {
+        this.logger.log(
+          `reconcile: ${result.filled} filled, ${result.closed} closed, ${result.failed} failed, ${result.recovered} recovered.`,
+        );
       }
     } catch (err) {
       this.logger.error('reconcile tick failed', err as Error);
@@ -180,6 +225,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
       startedAt: this.startedAt?.toISOString() ?? null,
       lastEvaluateAt: this.lastEvaluateAt?.toISOString() ?? null,
       lastReconcileAt: this.lastReconcileAt?.toISOString() ?? null,
+      session: classifyMarketSession(),
     };
   }
 }
