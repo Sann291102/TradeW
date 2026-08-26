@@ -4,6 +4,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { istParts } from './execution-identity';
 import { countProfileOpenPositions } from './execution-open-positions';
 import { rejectCheckLabel } from './execution-policy';
+import {
+  STATE_DESCRIPTIONS,
+  STATE_LABELS,
+  environmentFor,
+  isExecutingState,
+  type ExecutionProfileState,
+} from './execution-state';
 
 /**
  * Read models for the admin console's execution views.
@@ -38,6 +45,11 @@ export class ExecutionQueryService {
             paperWallet: true,
           },
         },
+        // The stored qualification verdict. Included rather than recomputed
+        // per row: the console lists every profile on every poll, and
+        // re-measuring an equity curve N times a minute to render a badge is
+        // the kind of read that makes a page time out on the day it matters.
+        qualification: true,
         _count: { select: { intents: true } },
       },
     });
@@ -68,6 +80,55 @@ export class ExecutionQueryService {
           environment: p.environment,
           accountScope: p.accountScope,
           enabled: p.enabled,
+          // ---- The state machine, as the console renders it -----------------
+          state: p.state,
+          stateLabel: STATE_LABELS[p.state as ExecutionProfileState],
+          stateDescription: STATE_DESCRIPTIONS[p.state as ExecutionProfileState],
+          // Derived from the STATE, never from the `environment` column — see
+          // execution-state.ts. So a row whose environment says LIVE while its
+          // state does not authorize live renders as "not executing", which is
+          // what would actually happen.
+          executingEnvironment: environmentFor(p.state as ExecutionProfileState),
+          mayExecute: isExecutingState(p.state as ExecutionProfileState),
+          autoTradeEnabled: p.accountScope === 'SYSTEM_PAPER' ? true : p.autoTradeEnabled,
+          autoTradeEnabledAt: p.autoTradeEnabledAt?.toISOString() ?? null,
+          paperArmedAt: p.paperArmedAt?.toISOString() ?? null,
+          paperArmedBy: p.paperArmedBy,
+          liveArmedAt: p.liveArmedAt?.toISOString() ?? null,
+          liveArmedBy: p.liveArmedBy,
+          disarmedAt: p.disarmedAt?.toISOString() ?? null,
+          pausedAt: p.pausedAt?.toISOString() ?? null,
+          pausedReason: p.pausedReason,
+          resumeState: p.resumeState,
+          // Denormalised execution telemetry — the five clocks §7 asks the
+          // console to answer.
+          lastRunAt: p.lastRunAt?.toISOString() ?? null,
+          lastDecisionAt: p.lastDecisionAt?.toISOString() ?? null,
+          lastOrderAt: p.lastOrderAt?.toISOString() ?? null,
+          lastFillAt: p.lastFillAt?.toISOString() ?? null,
+          lastErrorAt: p.lastErrorAt?.toISOString() ?? null,
+          lastError: p.lastError,
+          qualification: p.qualification
+            ? {
+                passed: p.qualification.passed,
+                evaluatedAt: p.qualification.evaluatedAt.toISOString(),
+                trades: p.qualification.trades,
+                wins: p.qualification.wins,
+                losses: p.qualification.losses,
+                winRate: p.qualification.winRate,
+                netPnl: Number(p.qualification.netPnl),
+                maxDrawdownPct: p.qualification.maxDrawdownPct,
+                maxLosingStreak: p.qualification.maxLosingStreak,
+                tradingDays: p.qualification.tradingDays,
+                criticalErrors: p.qualification.criticalErrors,
+                unmet: (p.qualification.results as unknown as { id: string; label: string; met: boolean; detail: string }[])
+                  .filter((r) => !r.met)
+                  .map((r) => ({ id: r.id, label: r.label, detail: r.detail })),
+              }
+            : null,
+          // Live eligibility is a CONJUNCTION the console must not have to
+          // re-derive: qualified AND not already live. Stated once, here.
+          liveEligible: (p.qualification?.passed ?? false) && p.state === 'PAPER_QUALIFIED',
           account: {
             id: p.account.id,
             email: p.account.email,
@@ -245,6 +306,56 @@ export class ExecutionQueryService {
   }
 
   /**
+   * Recent execution PASSES, including the ones that produced nothing.
+   *
+   * ## The gap this closes
+   *
+   * `intents()` above lists DECISIONS, and a decision only exists when Sentinel
+   * published a side. Most passes do not produce one — the market is shut, the
+   * read is neutral, the profile was disarmed a second ago — and those passes
+   * were previously invisible in every table. So a console could show "0
+   * intents today" for a loop that had run 400 times and for one that had never
+   * started, with nothing to tell them apart.
+   *
+   * This is the other half. §24's telemetry list is answered per row: profile,
+   * user, environment, symbol, outcome, reason, the ids it produced, the gate
+   * that stopped it, and the latency.
+   */
+  async runs(params: { profileId?: string; limit?: number; hours?: number; outcome?: string }) {
+    const hours = params.hours ?? 24;
+    const rows = await this.prisma.executionRun.findMany({
+      where: {
+        startedAt: { gte: new Date(Date.now() - hours * 3_600_000) },
+        ...(params.profileId ? { profileId: params.profileId } : {}),
+        ...(params.outcome ? { outcome: params.outcome } : {}),
+      },
+      orderBy: { startedAt: 'desc' },
+      take: Math.min(Math.max(params.limit ?? 100, 1), 500),
+      include: { profile: { select: { name: true, agent: true } } },
+    });
+
+    return rows.map((r) => ({
+      id: r.id,
+      profileId: r.profileId,
+      profileName: r.profile.name,
+      agent: r.profile.agent,
+      environment: r.environment,
+      symbol: r.symbol,
+      trigger: r.trigger,
+      outcome: r.outcome,
+      reason: r.reason,
+      intentId: r.intentId,
+      orderId: r.orderId,
+      rejectCheckId: r.rejectCheckId,
+      rejectLabel: r.rejectCheckId ? rejectCheckLabel(r.rejectCheckId) : null,
+      error: r.error,
+      startedAt: r.startedAt.toISOString(),
+      finishedAt: r.finishedAt?.toISOString() ?? null,
+      latencyMs: r.latencyMs,
+    }));
+  }
+
+  /**
    * Headline numbers for the console.
    *
    * `pnl` sums CLOSED outcomes only. Including open positions' mark-to-market
@@ -253,23 +364,38 @@ export class ExecutionQueryService {
    */
   async stats(hours = 24) {
     const since = new Date(Date.now() - hours * 3_600_000);
-    const [byStatus, byVerdict, outcomes, profiles] = await Promise.all([
-      this.prisma.executionIntent.groupBy({
-        by: ['status'],
-        where: { decidedAt: { gte: since } },
-        _count: { _all: true },
-      }),
-      this.prisma.executionIntent.groupBy({
-        by: ['symbol'],
-        where: { decidedAt: { gte: since } },
-        _count: { _all: true },
-      }),
-      this.prisma.executionOutcome.findMany({
-        where: { createdAt: { gte: since }, result: { not: 'OPEN' } },
-        select: { result: true, realizedPnl: true, holdingSeconds: true },
-      }),
-      this.prisma.executionProfile.count({ where: { enabled: true } }),
-    ]);
+    const [byStatus, byVerdict, outcomes, profiles, byState, runsInWindow, liveArmed, qualified] =
+      await Promise.all([
+        this.prisma.executionIntent.groupBy({
+          by: ['status'],
+          where: { decidedAt: { gte: since } },
+          _count: { _all: true },
+        }),
+        this.prisma.executionIntent.groupBy({
+          by: ['symbol'],
+          where: { decidedAt: { gte: since } },
+          _count: { _all: true },
+        }),
+        this.prisma.executionOutcome.findMany({
+          where: { createdAt: { gte: since }, result: { not: 'OPEN' } },
+          select: { result: true, realizedPnl: true, holdingSeconds: true },
+        }),
+        // "Armed" now means "in an executing state", counted from the authority
+        // rather than from its `enabled` mirror.
+        this.prisma.executionProfile.count({
+          where: { state: { in: ['PAPER_ARMED', 'PAPER_RUNNING', 'PAPER_QUALIFIED', 'LIVE_ARMED', 'LIVE_RUNNING'] } },
+        }),
+        this.prisma.executionProfile.groupBy({ by: ['state'], _count: { _all: true } }),
+        // Passes, not decisions — the number that distinguishes a dead loop
+        // from a quiet market.
+        this.prisma.executionRun.groupBy({
+          by: ['outcome'],
+          where: { startedAt: { gte: since } },
+          _count: { _all: true },
+        }),
+        this.prisma.executionProfile.count({ where: { state: { in: ['LIVE_ARMED', 'LIVE_RUNNING'] } } }),
+        this.prisma.executionProfile.count({ where: { state: 'PAPER_QUALIFIED' } }),
+      ]);
 
     const wins = outcomes.filter((o) => o.result === 'WIN').length;
     const losses = outcomes.filter((o) => o.result === 'LOSS').length;
@@ -277,6 +403,15 @@ export class ExecutionQueryService {
 
     return {
       enabledProfiles: profiles,
+      liveArmedProfiles: liveArmed,
+      qualifiedProfiles: qualified,
+      byState: byState.map((s) => ({
+        state: s.state,
+        label: STATE_LABELS[s.state as ExecutionProfileState],
+        count: s._count._all,
+      })),
+      byRunOutcome: runsInWindow.map((r) => ({ outcome: r.outcome, count: r._count._all })),
+      passes: runsInWindow.reduce((n, r) => n + r._count._all, 0),
       byStatus: byStatus.map((s) => ({ status: s.status, count: s._count._all })),
       bySymbol: byVerdict.map((s) => ({ symbol: s.symbol, count: s._count._all })),
       closed: outcomes.length,

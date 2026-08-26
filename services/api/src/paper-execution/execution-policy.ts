@@ -61,7 +61,18 @@ export interface PolicyDecision {
  */
 export const REJECT_CHECK_LABELS: Record<string, string> = {
   'profile-enabled': 'Profile enabled',
+  'environment-authorized': 'Environment matches the arming',
+  // RETIRED, and kept only so historical rows still label. Every refusal
+  // written before 2026-08-24 carries this id, and dropping it from the map
+  // would make those intents render as an unlabelled bar on the console's
+  // rejection breakdown — the one screen an operator reads to find out why
+  // nothing traded.
   'environment-paper': 'Environment is PAPER',
+  'profile-not-armed': 'Profile not armed',
+  'autotrade-disabled': 'AutoTrade switched off by the account holder',
+  'live-not-authorized': 'Live execution not authorized',
+  'paper-not-qualified': 'Paper qualification not met',
+  'market-unavailable': 'Market data unavailable',
   'market-open': 'Market open',
   'before-square-off': 'Before square-off',
   'confidence-floor': 'Confidence floor',
@@ -86,7 +97,16 @@ export function rejectCheckLabel(id: string | null): string {
 export interface PolicyInput {
   /** From ExecutionProfile. */
   enabled: boolean;
+  /** `ExecutionProfile.environment` — a RECORD of the engine, on the row. */
   environment: string;
+  /**
+   * The engine the profile's STATE authorizes, from `environmentFor`.
+   *
+   * The two are compared rather than either being trusted alone. See the
+   * `environment-authorized` check below for why this replaced a literal
+   * "must be PAPER".
+   */
+  authorizedEnvironment: 'PAPER' | 'LIVE';
   minConfidence: number;
   maxOpenPositions: number;
   maxOrdersPerDay: number;
@@ -126,17 +146,37 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
     input.enabled ? 'Profile is enabled for execution.' : 'Profile is disabled; no order may be produced.',
   );
 
-  // THE ENVIRONMENT CHECK IS NOT DECORATIVE. `ExecutionEnvironment` has exactly
-  // one member, so a non-PAPER value here means the row was written by
-  // something other than this application (a direct SQL edit, a restore from a
-  // future schema). Refusing it costs nothing and is the difference between
-  // "live money is unrepresentable" and "live money is unrepresentable unless
-  // someone gets a row past Prisma".
-  const isPaper = input.environment === 'PAPER';
+  // ---- THE ENVIRONMENT CHECK IS NOT DECORATIVE ---------------------------
+  //
+  // It used to read `input.environment === 'PAPER'`, which was exactly right
+  // while `ExecutionEnvironment` had one member: any other value meant the row
+  // had been written by something other than this application, and refusing it
+  // was free.
+  //
+  // LIVE exists now, and leaving that literal in place made `ARM_LIVE` a button
+  // that could never do anything — a correctly qualified, correctly armed,
+  // deployment-enabled live profile was still refused here, several gates
+  // before the adapter resolver was ever consulted. The end-to-end journey
+  // harness caught it: the refusal arrived with the reason "environment is
+  // LIVE, not PAPER" from the risk policy rather than from the live boundary.
+  //
+  // So the check now compares the row against what the profile's STATE
+  // authorizes. It keeps the original guarantee — a row whose `environment` was
+  // edited to LIVE while its state says PAPER_ARMED is still refused, because
+  // `authorizedEnvironment` comes from `environmentFor(state)` and not from the
+  // row — and it stops being a permanent veto on a feature the state machine
+  // exists to enable.
+  //
+  // Note the direction of trust: the STATE decides, the column is checked
+  // against it. Never the reverse.
+  const environmentMatches = input.environment === input.authorizedEnvironment;
   push(
-    'environment-paper',
-    isPaper,
-    isPaper ? 'Executing against the paper engine.' : `Refused: environment is "${input.environment}", not PAPER.`,
+    'environment-authorized',
+    environmentMatches,
+    environmentMatches
+      ? `Executing against the ${input.authorizedEnvironment.toLowerCase()} engine, as this profile's state authorizes.`
+      : `Refused: the row says "${input.environment}" but this profile's state authorizes ${input.authorizedEnvironment}. ` +
+        'That mismatch means the row was not written by this application.',
   );
 
   push(

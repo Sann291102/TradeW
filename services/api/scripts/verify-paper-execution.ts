@@ -51,6 +51,13 @@ import { ExecutionLifecycleService } from '../src/paper-execution/execution-life
 import { ExecutionTraceService } from '../src/paper-execution/execution-trace.service';
 import { ExecutionQueryService } from '../src/paper-execution/execution-query.service';
 import { SentinelExecutionClient, type ExecutionEvaluationDto } from '../src/paper-execution/sentinel-execution.client';
+import { ExecutionStateService } from '../src/paper-execution/execution-state.service';
+import { ExecutionQualificationService } from '../src/paper-execution/execution-qualification.service';
+import { ExecutionAdapterResolver } from '../src/paper-execution/execution-adapter.resolver';
+import { PaperExecutionAdapter } from '../src/paper-execution/paper-execution.adapter';
+import { BrokerExecutionAdapter } from '../src/paper-execution/broker-execution.adapter';
+import { DhanAuthService } from '../src/broker/dhan-auth.service';
+import { TelemetryService } from '../src/telemetry/telemetry.service';
 import { evaluateStrikeCandidates } from '../../sentinel/src/execution/strike-candidates';
 
 const FEED = (process.env.DHAN_LIVE_URL ?? 'http://localhost:4600').replace(/\/$/, '');
@@ -98,6 +105,22 @@ async function main() {
       ExecutionTraceService,
       ExecutionQueryService,
       SentinelExecutionClient,
+      // The execution state machine (2026-08-24). Arming is no longer a column
+      // this script may write: `enabled` is a derived mirror now, and setting
+      // it directly would leave the profile reading "armed" while `state` said
+      // DISABLED — which the executor, which selects on `state`, would
+      // correctly refuse to run. So the script arms the way an operator does.
+      ExecutionStateService,
+      ExecutionQualificationService,
+      // Both engines and the object that chooses between them. The BROKER
+      // adapter is constructed here deliberately: this harness proves that a
+      // PAPER profile does not reach it even when it is present and wired,
+      // which is a stronger claim than proving it when it is absent.
+      PaperExecutionAdapter,
+      BrokerExecutionAdapter,
+      ExecutionAdapterResolver,
+      DhanAuthService,
+      TelemetryService,
     ],
   }).compile();
 
@@ -108,6 +131,9 @@ async function main() {
   const query = moduleRef.get(ExecutionQueryService);
   const sentinel = moduleRef.get(SentinelExecutionClient);
   const positions = moduleRef.get(PositionService);
+  const state = moduleRef.get(ExecutionStateService);
+  const qualification = moduleRef.get(ExecutionQualificationService);
+  const resolver = moduleRef.get(ExecutionAdapterResolver);
 
   // ---------------------------------------------------------------- 1. chain
   section('1. Live market data');
@@ -181,15 +207,60 @@ async function main() {
   // and Phase B reach the same conclusion about the same contract in the same
   // decision window, so on ONE profile the second would correctly collapse to a
   // duplicate and never exercise the order path.
-  const mkProfile = (suffix: string) =>
-    prisma.executionProfile.upsert({
+  //
+  // Created DISABLED and then armed through `ExecutionStateService`, which is
+  // the only writer of `state` and the only thing that keeps `enabled` in step
+  // with it. Writing `enabled: true` in the upsert — as this script used to —
+  // now produces a profile that looks armed to every console query and is
+  // refused by the executor, because the executor selects on `state`.
+  const mkProfile = async (suffix: string) => {
+    const created = await prisma.executionProfile.upsert({
       where: { name: `${SCRATCH}-${suffix}` },
-      create: { name: `${SCRATCH}-${suffix}`, agent: 'sentinel-alpha', symbol: 'NIFTY', accountUserId: account.id, enabled: true, lots: 1 },
-      update: { enabled: true, accountUserId: account.id },
+      create: {
+        name: `${SCRATCH}-${suffix}`,
+        agent: 'sentinel-alpha',
+        symbol: 'NIFTY',
+        accountUserId: account.id,
+        lots: 1,
+        // Never armed on creation, exactly as `ExecutionProfileService.upsert`
+        // does it. Arming is the separate act below.
+        state: 'DISABLED',
+        enabled: false,
+      },
+      update: { accountUserId: account.id },
     });
+    await state.apply(created.id, 'ARM_PAPER', 'script:verify-paper-execution', {
+      reason: 'runtime verification harness',
+      silent: true,
+    });
+    return prisma.executionProfile.findUniqueOrThrow({ where: { id: created.id } });
+  };
   const gateProfile = await mkProfile('gate');
   const execProfile = await mkProfile('exec');
   check('profiles created on the existing account model', gateProfile.environment === 'PAPER' && execProfile.environment === 'PAPER');
+  check(
+    'arming goes through the state machine, and `enabled` mirrors it',
+    gateProfile.state === 'PAPER_ARMED' && gateProfile.enabled === true,
+    `${gateProfile.state} / enabled=${gateProfile.enabled}`,
+  );
+  // A SYSTEM_PAPER account has no holder, so arming IS the activation for it —
+  // there is no AutoTrade switch a machine account could reach. Asserted so a
+  // future change that starts demanding one on this path is caught here rather
+  // than as a silently silent agent.
+  check(
+    'a SYSTEM_PAPER profile needs no AutoTrade switch',
+    gateProfile.accountScope === 'SYSTEM_PAPER',
+    gateProfile.accountScope,
+  );
+  // THE BOUNDARY, asserted on a profile that is genuinely armed and genuinely
+  // executing: the engine it resolves is PAPER, and the broker adapter — which
+  // is constructed and injected in this very container — is not what it gets.
+  const armedAdapter = resolver.resolve('PAPER_ARMED', gateProfile.name);
+  check(
+    'an armed PAPER profile resolves the paper engine, never the broker',
+    armedAdapter.engine === 'PAPER' && !(armedAdapter instanceof BrokerExecutionAdapter),
+    armedAdapter.engine,
+  );
 
   const wallet0 = await prisma.paperWallet.findUnique({ where: { userId: account.id } });
   console.log(`        starting cash ₹${Number(wallet0!.cashBalance).toLocaleString('en-IN')}`);
@@ -355,20 +426,123 @@ async function main() {
 
   // ------------------------------------------------------------- 10. PAPER only
   section('10. Environment safety');
+  //
+  // ## What changed here on 2026-08-24, and why the weaker check is now better
+  //
+  // This section used to assert "ExecutionEnvironment has exactly one member".
+  // That was a real guarantee while LIVE was unrepresentable — but it was a
+  // guarantee about the SCHEMA, and it could only ever hold for as long as live
+  // trading did not exist. LIVE exists now, so the assertion has been replaced
+  // by the ones that actually protect a user's money: not "live cannot be
+  // written down", but "live cannot be REACHED without a second, explicit,
+  // audited administrative act".
   const enumValues: string[] = await prisma.$queryRawUnsafe(
     `SELECT unnest(enum_range(NULL::"ExecutionEnvironment"))::text AS v`,
   ).then((rows) => (rows as { v: string }[]).map((r) => r.v));
-  check('ExecutionEnvironment has exactly one member', enumValues.length === 1 && enumValues[0] === 'PAPER', enumValues.join(','));
+  check(
+    'ExecutionEnvironment models both engines',
+    enumValues.includes('PAPER') && enumValues.includes('LIVE'),
+    enumValues.join(','),
+  );
   const allIntents = await prisma.executionIntent.count({ where: { profileId: { in: [gateProfile.id, execProfile.id] } } });
   const paperIntents = await prisma.executionIntent.count({
     where: { profileId: { in: [gateProfile.id, execProfile.id] }, environment: 'PAPER' },
   });
   check('every intent this run created is PAPER', allIntents === paperIntents && allIntents > 0, `${paperIntents}/${allIntents}`);
+  const brokerTouched = await prisma.executionIntent.count({
+    where: { profileId: { in: [gateProfile.id, execProfile.id] }, brokerOrderId: { not: null } },
+  });
+  // The invariant, on real rows this run just wrote: a paper intent that ever
+  // carried a broker order id would mean the boundary had been crossed.
+  check('no intent from a paper profile carries a broker order id', brokerTouched === 0, `${brokerTouched} found`);
+
+  // --------------------------------------------- 11. The paper→live boundary
+  section('11. Paper → live boundary');
+  //
+  // The three refusals §11 requires, asserted against the REAL state machine on
+  // a REAL profile — not against a table of expected values.
+
+  // 11a. An armed paper profile cannot be armed live. Not "should not": the
+  // transition is refused, with a reason naming the prerequisite.
+  const armLiveFromPaper = await state
+    .apply(execProfile.id, 'ARM_LIVE', 'script:verify-paper-execution')
+    .then(() => null)
+    .catch((err: Error) => err.message);
+  check(
+    'ARM_LIVE is refused from a paper-running profile',
+    armLiveFromPaper != null && /qualification/i.test(armLiveFromPaper),
+    armLiveFromPaper ?? 'IT WAS ALLOWED — this is a live-safety failure',
+  );
+
+  // 11b. Qualification is measured, and passing it changes no authorization.
+  const verdict = await qualification.evaluate(execProfile.id, { promote: true });
+  const afterQualification = await prisma.executionProfile.findUniqueOrThrow({ where: { id: execProfile.id } });
+  check(
+    'qualification produces a measured verdict with its criteria attached',
+    typeof verdict.passed === 'boolean' && verdict.results.length > 0,
+    `${verdict.passed ? 'PASSED' : 'not yet'} — ${verdict.metrics.trades} closed trades, ${verdict.unmet.length} criteria short`,
+  );
+  check(
+    'qualification NEVER moves a profile into a live state',
+    afterQualification.state !== 'LIVE_ARMED' && afterQualification.state !== 'LIVE_RUNNING',
+    afterQualification.state,
+  );
+  check('qualification records no live arm', afterQualification.liveArmedAt === null);
+
+  // 11c. And a profile that is merely qualified still resolves the PAPER engine.
+  const qualifiedAdapter = resolver.resolve('PAPER_QUALIFIED', execProfile.name);
+  check(
+    'a PAPER_QUALIFIED profile still resolves the paper engine',
+    qualifiedAdapter.engine === 'PAPER' && !(qualifiedAdapter instanceof BrokerExecutionAdapter),
+    qualifiedAdapter.engine,
+  );
+
+  // 11d. Disarm takes effect on the very next pass, from whatever state.
+  await state.apply(execProfile.id, 'DISARM', 'script:verify-paper-execution', { reason: 'end of verification' });
+  const afterDisarm = await execution.runProfile(execProfile.id, marketHours);
+  check(
+    'a disarmed profile produces no order on the next pass',
+    afterDisarm.outcome === 'skipped-disabled' && afterDisarm.orderId === null,
+    `${afterDisarm.outcome}: ${afterDisarm.reason}`,
+  );
+  const disarmedRow = await prisma.executionProfile.findUniqueOrThrow({ where: { id: execProfile.id } });
+  check('disarming clears the `enabled` mirror too', disarmedRow.enabled === false, `enabled=${disarmedRow.enabled}`);
+
+  // ---------------------------------------------------- 12. Pass observability
+  section('12. Per-pass observability');
+  const runRows = await prisma.executionRun.findMany({
+    where: { profileId: { in: [gateProfile.id, execProfile.id] } },
+    orderBy: { startedAt: 'asc' },
+  });
+  // Every pass, including the ones that decided nothing — the record that makes
+  // "is the loop actually doing anything?" answerable without inference.
+  check('every pass left a run row', runRows.length > 0, `${runRows.length} passes recorded`);
+  check(
+    'each run row carries its outcome, environment and latency',
+    runRows.every((r) => r.outcome && r.environment && r.latencyMs !== null),
+  );
+  for (const r of runRows.slice(-6)) {
+    console.log(`        ${r.environment} ${r.outcome.padEnd(22)} ${String(r.latencyMs).padStart(5)}ms  ${(r.reason ?? '').slice(0, 70)}`);
+  }
+  const transitions = await prisma.executionStateTransition.findMany({
+    where: { profileId: { in: [gateProfile.id, execProfile.id] } },
+    orderBy: { createdAt: 'asc' },
+  });
+  check('every state change left an audit row naming its actor', transitions.length > 0 && transitions.every((t) => !!t.actor), `${transitions.length} transitions`);
+  for (const t of transitions) console.log(`        ${t.fromState} → ${t.toState} by ${t.actor}${t.reason ? ` (${t.reason})` : ''}`);
 
   // ------------------------------------------------------------------ cleanup
   if (!KEEP) {
     section('Cleanup');
     const scratchProfileIds = [gateProfile.id, execProfile.id];
+    // These three cascade on the profile delete below, but are removed
+    // explicitly for the same reason the outcome and candidate rows are: the
+    // cleanup should read as a list of everything this script created, so a
+    // future model that does NOT cascade is noticed here rather than left
+    // behind in the database.
+    await prisma.executionRun.deleteMany({ where: { profileId: { in: scratchProfileIds } } });
+    await prisma.executionStateTransition.deleteMany({ where: { profileId: { in: scratchProfileIds } } });
+    await prisma.executionQualification.deleteMany({ where: { profileId: { in: scratchProfileIds } } });
     await prisma.executionOutcome.deleteMany({ where: { intent: { profileId: { in: scratchProfileIds } } } });
     await prisma.executionStrikeCandidate.deleteMany({ where: { intent: { profileId: { in: scratchProfileIds } } } });
     await prisma.order.updateMany({ where: { userId: account.id }, data: { executionIntentId: null } });

@@ -122,7 +122,48 @@ export interface OrderExecutionIntent { id: string; agent: string; symbol: strin
 export interface OrderExitOfIntent { id: string; agent: string; symbol: string; optionType: string; strike: string; status: string; environment: string; profile: { name: string }; }
 export type ExecutionAccountScope = 'SYSTEM_PAPER' | 'USER_PAPER';
 export interface ExecutionProfileAccount { id: string; email: string; agentPaperTradingEnabled: boolean; agentPaperTradingEnabledAt: string | null; agentPaperTradingGrantedBy: string | null; }
-export interface ExecutionProfileRow { id: string; name: string; agent: string; symbol: string; strategyId: string | null; strategyName: string | null; environment: string; accountScope: ExecutionAccountScope; enabled: boolean; account: ExecutionProfileAccount; wallet: { startingBalance: number; cashBalance: number; marginUsed: number; realizedPnl: number } | null; policy: { lots: number; productType: string; orderType: string; minConfidence: number; maxOpenPositions: number; maxOrdersPerDay: number; maxLossPerDay: number; squareOffMinute: number }; openPositions: number; intentsToday: number; intentsTotal: number; }
+/**
+ * The execution state machine, as the server names it.
+ *
+ * Mirrors `ExecutionProfileState` in services/api. The console renders BADGES
+ * from these, never a green/grey boolean: "armed" and "running" and "qualified"
+ * and "paused" are four different situations and the old single pill showed all
+ * four identically — §23's "avoid ambiguous green 'active' indicators when the
+ * system is actually disabled".
+ */
+export type ExecutionProfileState =
+  | 'DISABLED'
+  | 'PAPER_ARMED'
+  | 'PAPER_RUNNING'
+  | 'PAPER_QUALIFIED'
+  | 'LIVE_ARMED'
+  | 'LIVE_RUNNING'
+  | 'PAUSED'
+  | 'DISARMED'
+  | 'ERROR';
+
+/** The operator verbs `POST /execution/profiles/:id/state` accepts. */
+export type ExecutionStateAction =
+  | 'ARM_PAPER'
+  | 'DISARM'
+  | 'PAUSE'
+  | 'RESUME'
+  | 'ARM_LIVE'
+  | 'DISARM_LIVE'
+  | 'CLEAR_ERROR';
+
+/** One criterion the paper record is measured against, met or not. */
+export interface QualificationCriterionRow { id: string; label: string; met: boolean; required: number; actual: number | null; detail: string; }
+/** The stored qualification verdict, as it rides along on a profile row. */
+export interface ProfileQualification { passed: boolean; evaluatedAt: string; trades: number; wins: number; losses: number; winRate: number | null; netPnl: number; maxDrawdownPct: number; maxLosingStreak: number; tradingDays: number; criticalErrors: number; unmet: Array<{ id: string; label: string; detail: string }>; }
+/** The full verdict from `/execution/profiles/:id/qualification`. */
+export interface ExecutionQualification { profileId: string; evaluatedAt: string; passed: boolean; metrics: { trades: number; wins: number; losses: number; scratches: number; winRate: number | null; netPnl: number; grossProfit: number; grossLoss: number; maxDrawdownPct: number; maxLosingStreak: number; tradingDays: number; criticalErrors: number; firstTradeAt: string | null; lastTradeAt: string | null }; criteria: Record<string, number>; results: QualificationCriterionRow[]; unmet: QualificationCriterionRow[]; }
+/** One state transition, for the per-profile history. */
+export interface ExecutionTransitionRow { id: string; at: string; from: ExecutionProfileState; to: ExecutionProfileState; environment: string; actor: string; reason: string | null; fromLabel: string; toLabel: string; }
+/** One execution PASS — including the ones that decided nothing. */
+export interface ExecutionRunRow { id: string; profileId: string; profileName: string; agent: string; environment: string; symbol: string; trigger: string; outcome: string; reason: string | null; intentId: string | null; orderId: string | null; rejectCheckId: string | null; rejectLabel: string | null; error: string | null; startedAt: string; finishedAt: string | null; latencyMs: number | null; }
+
+export interface ExecutionProfileRow { id: string; name: string; agent: string; symbol: string; strategyId: string | null; strategyName: string | null; environment: string; accountScope: ExecutionAccountScope; enabled: boolean; state: ExecutionProfileState; stateLabel: string; stateDescription: string; executingEnvironment: 'PAPER' | 'LIVE' | null; mayExecute: boolean; autoTradeEnabled: boolean; autoTradeEnabledAt: string | null; paperArmedAt: string | null; paperArmedBy: string | null; liveArmedAt: string | null; liveArmedBy: string | null; disarmedAt: string | null; pausedAt: string | null; pausedReason: string | null; resumeState: ExecutionProfileState | null; lastRunAt: string | null; lastDecisionAt: string | null; lastOrderAt: string | null; lastFillAt: string | null; lastErrorAt: string | null; lastError: string | null; qualification: ProfileQualification | null; liveEligible: boolean; account: ExecutionProfileAccount; wallet: { startingBalance: number; cashBalance: number; marginUsed: number; realizedPnl: number } | null; policy: { lots: number; productType: string; orderType: string; minConfidence: number; maxOpenPositions: number; maxOrdersPerDay: number; maxLossPerDay: number; squareOffMinute: number }; openPositions: number; intentsToday: number; intentsTotal: number; }
 /** A TradeW account a USER_PAPER profile may target. Carries no credential. */
 export interface ExecutionAccountRow { id: string; email: string; country: string; createdAt: string; agentPaperTradingEnabled: boolean; agentPaperTradingEnabledAt: string | null; agentPaperTradingGrantedBy: string | null; wallet: { startingBalance: number; cashBalance: number; marginUsed: number; realizedPnl: number } | null; orders: number; positions: number; boundProfiles: number; }
 export interface AccountCheck { id: string; label: string; passed: boolean; detail: string; }
@@ -137,14 +178,16 @@ export interface ExecutionIntentRow { id: string; decidedAt: string; status: str
  * process, so an armed profile reads identically whether the loop evaluates it
  * every minute or has never started. This is the process's own live state.
  */
-export interface ExecutionLoopStatus { enabled: boolean; intervalMs: number | null; reconcileMs: number | null; isEvaluateLeader: boolean; isReconcileLeader: boolean; evaluating: boolean; reconciling: boolean; startedAt: string | null; lastEvaluateAt: string | null; lastReconcileAt: string | null; }
+export interface ExecutionLoopStatus { enabled: boolean; liveEnabled: boolean; intervalMs: number | null; reconcileMs: number | null; qualifyMs: number | null; isEvaluateLeader: boolean; isReconcileLeader: boolean; evaluating: boolean; reconciling: boolean; startedAt: string | null; lastEvaluateAt: string | null; lastReconcileAt: string | null; lastQualifyAt: string | null; }
 /** One reason today's decisions did not become orders, and how many times. */
 export interface RejectionBucket { checkId: string | null; label: string; count: number; lastAt: string | null; lastReason: string | null; lastProfileName: string | null; }
 export interface ExecutionRejections { hours: number; total: number; buckets: RejectionBucket[]; }
-export interface ExecutionStats { enabledProfiles: number; byStatus: Array<{ status: string; count: number }>; bySymbol: Array<{ symbol: string; count: number }>; closed: number; wins: number; losses: number; scratches: number; winRate: number | null; realizedPnl: number; avgHoldingSeconds: number | null; }
+export interface ExecutionStats { enabledProfiles: number; liveArmedProfiles: number; qualifiedProfiles: number; byState: Array<{ state: ExecutionProfileState; label: string; count: number }>; byRunOutcome: Array<{ outcome: string; count: number }>; passes: number; byStatus: Array<{ status: string; count: number }>; bySymbol: Array<{ symbol: string; count: number }>; closed: number; wins: number; losses: number; scratches: number; winRate: number | null; realizedPnl: number; avgHoldingSeconds: number | null; }
 export interface TraceStage { id: string; label: string; present: boolean; at: string | null; summary: string; detail?: Record<string, unknown>; }
 export interface ExecutionTrace { intentId: string; orderId: string | null; status: string; environment: string; symbol: string; contractSymbol: string; agent: string; profileName: string; decidedAt: string; stages: TraceStage[]; }
-export interface ExecutionRunResult { outcome: string; profileId: string; profileName: string; reason: string; intentId: string | null; orderId: string | null; verdict: string | null; checks: Array<{ id: string; label: string; passed: boolean; detail: string }>; }
+export interface ExecutionRunResult { outcome: string; profileId: string; profileName: string; reason: string; intentId: string | null; orderId: string | null; brokerOrderId: string | null; environment: 'PAPER' | 'LIVE' | null; state: ExecutionProfileState; verdict: string | null; rejectCheckId: string | null; latencyMs: number; checks: Array<{ id: string; label: string; passed: boolean; detail: string }>; }
+/** The result of one state transition. `changed:false` means it was a no-op. */
+export interface ExecutionStateResult { changed: boolean; from: ExecutionProfileState; to: ExecutionProfileState; reason: string | null; }
 export interface UserRow { id: string; email: string; country: string; experienceLevel: string | null; isAdmin: boolean; createdAt: string; _count: { orders: number; trades: number; notifications: number }; subscriptions: Array<{ status: string; planId: string }>; }
 /** `userAgent` and `metadata` were always on the wire — `AdminService.auditEvents`
  *  selects the whole row — but were undeclared here, so the Audit page could not
@@ -207,6 +250,17 @@ export const admin = {
     traceByOrder: (orderId: string) => adminApi<ExecutionTrace>(`/execution/trace-by-order/${encodeURIComponent(orderId)}`),
     setEnabled: (id: string, enabled: boolean) => adminApi(`/execution/profiles/${encodeURIComponent(id)}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),
     run: (id: string) => adminApi<ExecutionRunResult>(`/execution/profiles/${encodeURIComponent(id)}/run`, { method: 'POST', body: '{}' }),
+    // ---- The state machine. One call, one verb; the server decides whether
+    // the verb is legal from where the profile actually is. ARM_LIVE is
+    // refused unless the profile is PAPER_QUALIFIED with a passing snapshot,
+    // and nothing this client can send waives that.
+    transition: (id: string, action: ExecutionStateAction, reason?: string) =>
+      adminApi<ExecutionStateResult>(`/execution/profiles/${encodeURIComponent(id)}/state`, { method: 'POST', body: JSON.stringify({ action, reason }) }),
+    stateHistory: (id: string) => adminApi<ExecutionTransitionRow[]>(`/execution/profiles/${encodeURIComponent(id)}/state-history`),
+    qualification: (id: string) => adminApi<ExecutionQualification>(`/execution/profiles/${encodeURIComponent(id)}/qualification`),
+    evaluateQualification: (id: string) => adminApi<ExecutionQualification>(`/execution/profiles/${encodeURIComponent(id)}/qualification/evaluate`, { method: 'POST', body: '{}' }),
+    runs: (q: Record<string, string | number | undefined> = {}) => adminApi<ExecutionRunRow[]>(`/execution/runs?${qs(q)}`),
+    profileRuns: (id: string, limit = 50) => adminApi<ExecutionRunRow[]>(`/execution/profiles/${encodeURIComponent(id)}/runs?limit=${limit}`),
     // ---- Account binding. No endpoint here sends or receives a credential.
     accounts: (q?: string) => adminApi<ExecutionAccountRow[]>(`/execution/accounts?${qs({ q, limit: 100 })}`),
     setAgentTrading: (userId: string, enabled: boolean) => adminApi<ExecutionAccountRow>(`/execution/accounts/${encodeURIComponent(userId)}/agent-trading`, { method: 'POST', body: JSON.stringify({ enabled }) }),

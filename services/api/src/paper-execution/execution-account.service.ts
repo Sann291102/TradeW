@@ -46,6 +46,8 @@ export class ExecutionAccountService {
    */
   async authorize(profile: {
     environment: string;
+    /** From `environmentFor(state)`. Optional; defaults to PAPER. */
+    authorizedEnvironment?: 'PAPER' | 'LIVE';
     accountScope: AccountScope;
     accountUserId: string;
     symbol: string;
@@ -68,6 +70,7 @@ export class ExecutionAccountService {
 
     return authorizeAccount({
       environment: profile.environment,
+      authorizedEnvironment: profile.authorizedEnvironment,
       declaredScope: profile.accountScope,
       symbol: profile.symbol,
       agent: profile.agent,

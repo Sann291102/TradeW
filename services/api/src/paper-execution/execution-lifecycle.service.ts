@@ -78,6 +78,14 @@ export class ExecutionLifecycleService {
             where: { id: intent.id },
             data: { status: ExecutionIntentStatus.FILLED },
           });
+          // The console's "last fill" column. Stamped here as well as in the
+          // executor because a MARKET order fills inside `placeOrder` while a
+          // resting one fills HERE, minutes later — recording it in only one of
+          // the two places would show a profile that had never filled anything.
+          await tx.executionProfile.update({
+            where: { id: intent.profileId },
+            data: { lastFillAt: order.updatedAt },
+          });
           // `upsert`, not `create`: a MARKET order fills inside `placeOrder`, so
           // `PaperExecutionService` may already have written the entry row. This
           // path is for orders the MATCHING ENGINE filled later.
@@ -206,8 +214,25 @@ export class ExecutionLifecycleService {
    */
   async squareOff(now: Date = new Date()): Promise<{ exited: number; errors: number }> {
     const { minuteOfDay } = istParts(now);
+    // Selected by STATE, and deliberately including PAUSED and DISARMED.
+    //
+    // Square-off is not execution, it is the RISK CONTROL that closes what
+    // execution opened. A profile disarmed at 14:00 with an open position must
+    // still be flattened at 15:10 — refusing to square off a stood-down profile
+    // would leave an unattended intraday option position overnight, which is
+    // the one outcome worse than an unwanted entry.
+    //
+    // Live profiles are excluded: `OrderService.exitPosition` closes a PAPER
+    // position against the paper wallet, and calling it for a position that
+    // lives in a broker's book would book a fictional exit against a real
+    // holding. Live square-off is the broker's own bracket/GTT, not this loop's.
     const profiles = await this.prisma.executionProfile.findMany({
-      where: { enabled: true, environment: 'PAPER' },
+      where: {
+        environment: 'PAPER',
+        state: {
+          in: ['PAPER_ARMED', 'PAPER_RUNNING', 'PAPER_QUALIFIED', 'PAUSED', 'DISARMED', 'ERROR'],
+        },
+      },
     });
 
     let exited = 0;

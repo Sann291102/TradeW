@@ -90,6 +90,24 @@ export const qk = {
     performance: (strategyId: string) => ['sentinel', 'performance', strategyId] as const,
   },
 
+  /**
+   * Sentinel AutoTrade.
+   *
+   * `status` is one entry, not one per field, because the endpoint answers the
+   * whole question at once — eligibility, state and today's numbers — and
+   * splitting it would put three requests behind a panel that renders as a
+   * single unit.
+   *
+   * Deliberately NOT nested under `qk.sentinel`: enabling AutoTrade must
+   * invalidate orders, positions and the portfolio, and none of those should be
+   * swept by a Sentinel observation refresh. Separate prefixes keep the two
+   * invalidation stories from crossing.
+   */
+  autoTrade: {
+    all: ['autotrade'] as const,
+    status: () => ['autotrade', 'status'] as const,
+  },
+
   billing: {
     all: ['billing'] as const,
     catalog: () => ['billing', 'catalog'] as const,
