@@ -5,6 +5,7 @@ import { AdminAccessGuard } from './admin-access.guard';
 import { AdminService } from './admin.service';
 import { CognitionService } from '../cognition/cognition.service';
 import { ExecutionAccountService } from '../paper-execution/execution-account.service';
+import { ExecutionAnalyticsService } from '../paper-execution/execution-analytics.service';
 import { ExecutionProfileService } from '../paper-execution/execution-profile.service';
 import { ExecutionQueryService } from '../paper-execution/execution-query.service';
 import { ExecutionSchedulerService } from '../paper-execution/execution-scheduler.service';
@@ -224,6 +225,7 @@ export class AdminController {
     private readonly executionAccounts: ExecutionAccountService,
     private readonly executionProfiles: ExecutionProfileService,
     private readonly systemControl: SystemExecutionControlService,
+    private readonly executionAnalytics: ExecutionAnalyticsService,
   ) {}
 
   // -------------------------------------------------------------- overview
@@ -459,6 +461,19 @@ export class AdminController {
   @Get('execution/rejections')
   executionRejections(@Query('hours') hours?: string) {
     return this.executionQuery.rejections(Number(hours) || 24);
+  }
+
+  /**
+   * Performance analytics over closed outcomes — win rate, expectancy, profit
+   * factor, drawdown, and breakdowns by strategy / confidence band / instrument
+   * / strike role / regime / time of day / exit reason / side.
+   *
+   * Measurement only: nothing here changes a Sentinel weight or a policy. It is
+   * the read side of the outcome→intelligence foundation. Defaults to 30 days.
+   */
+  @Get('execution/analytics')
+  getExecutionAnalytics(@Query('hours') hours?: string) {
+    return this.executionAnalytics.analytics(Number(hours) || 24 * 30);
   }
 
   // ---- Global kill switch -------------------------------------------------

@@ -92,6 +92,10 @@ export default defineConfig({
       //    is failed out on the next reconcile, guarded on status so it can never
       //    clobber an intent that has since become an order.
       'src/paper-execution/execution-lifecycle-recovery.spec.ts',
+      //  · analytics — win rate / expectancy / profit factor / drawdown and the
+      //    performance breakdowns (strategy, confidence, strike, regime, hour).
+      //    The measurement half of the outcome→intelligence foundation.
+      'src/paper-execution/execution-analytics.spec.ts',
       // Who is allowed to use a paid capability, and until when.
       // Active pricing served to every surface. Asserts across the API boundary
       // that no route can produce a withdrawn annual Sentinel term.
