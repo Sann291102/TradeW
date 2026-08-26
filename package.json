@@ -27,7 +27,10 @@
     "dev:market-data": "npm run live:server -w @tradew/market-data-service",
     "dev:admin": "npm run dev -w @tradew/admin",
     "ontology:validate": "npm run ontology:validate -w @tradew/sentinel",
-    "ontology:seed": "npm run ontology:seed -w @tradew/sentinel"
+    "ontology:seed": "npm run ontology:seed -w @tradew/sentinel",
+    "//reel": "Renders the Cutting Room ad reel to uploadable MP4s. Needs playwright + an ffmpeg with libx264; see scripts/cutting-room/README.md.",
+    "reel:build": "node scripts/cutting-room/build-harness.mjs",
+    "reel:render": "node scripts/cutting-room/render.mjs"
   },
   "engines": {
     "node": ">=20"

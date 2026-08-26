@@ -1,0 +1,764 @@
+<title>TradeW Explainers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+:root{
+  --ink:#05080e;--ink2:#0a0f1a;--rule:#18212f;--rule2:#232f44;
+  --stage:#0d1524;--card:#131e33;--cardEdge:#1e2c47;
+  --thread:#14b8a6;--threadDim:#0e7a70;
+  --text:#e2e8f0;--muted:#8ea0c4;--faint:#64769c;
+  --red:#ef5350;--amber:#f0a53c;--green:#26a69a;
+  --sans:'Archivo',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,'Cascadia Code',monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ink);color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1460px;margin:0 auto;padding:26px 22px 60px;
+  display:grid;grid-template-columns:minmax(0,1fr) 348px;gap:30px;align-items:start}
+@media(max-width:1040px){.wrap{grid-template-columns:minmax(0,1fr);padding:18px 14px 44px}}
+.mast{grid-column:1/-1;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;
+  border-bottom:1px solid var(--rule);padding-bottom:16px}
+.mast h1{font-size:25px;font-weight:800;letter-spacing:-.025em;margin:0}
+.mast .dot{width:7px;height:7px;border-radius:50%;background:var(--thread);
+  box-shadow:0 0 12px var(--thread);align-self:center}
+.mast p{margin:0;color:var(--muted);font-size:13.5px;max-width:64ch;line-height:1.5}
+.viewer{min-width:0}
+.frame{position:relative;background:#000;border:1px solid var(--rule2);border-radius:13px;
+  overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.7);display:flex;justify-content:center}
+#fit{position:relative;overflow:hidden}
+#stage{position:absolute;top:0;left:0;transform-origin:0 0;background:var(--stage);overflow:hidden}
+.bar{margin-top:13px;display:flex;align-items:center;gap:11px;flex-wrap:wrap}
+button{font-family:var(--sans);cursor:pointer}
+.btn{background:var(--ink2);color:var(--text);border:1px solid var(--rule2);border-radius:8px;
+  padding:9px 15px;font-size:13px;font-weight:600;transition:border-color .15s,color .15s,background .15s}
+.btn:hover{border-color:var(--thread);color:#fff}
+.btn:focus-visible{outline:2px solid var(--thread);outline-offset:2px}
+.btn.primary{background:var(--thread);border-color:var(--thread);color:#04201d}
+.btn.primary:hover{background:#19cfbb}
+.seg{display:inline-flex;border:1px solid var(--rule2);border-radius:8px;overflow:hidden}
+.seg button{background:var(--ink2);color:var(--muted);border:0;padding:9px 13px;font-size:12px;
+  font-weight:600;font-family:var(--mono);letter-spacing:.02em}
+.seg button[aria-pressed="true"]{background:var(--thread);color:#04201d}
+.tc{font-family:var(--mono);font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.tc b{color:var(--text);font-weight:500}
+.scrub{position:relative;margin-top:11px;height:34px}
+.track{position:absolute;inset:13px 0 auto;height:5px;background:var(--rule);border-radius:3px;overflow:hidden}
+.fill{position:absolute;inset:0 auto 0 0;width:0;background:var(--thread)}
+.marks{position:absolute;inset:0;pointer-events:none}
+.mark{position:absolute;top:7px;width:1px;height:17px;background:var(--rule2)}
+.mark span{position:absolute;top:20px;left:0;font-family:var(--mono);font-size:9px;color:var(--faint);
+  white-space:nowrap;letter-spacing:.03em;text-transform:uppercase}
+#range{position:absolute;inset:7px 0 auto;width:100%;height:18px;margin:0;opacity:0;cursor:pointer}
+#range:focus-visible{opacity:.001;outline:2px solid var(--thread)}
+.rail{display:flex;flex-direction:column;gap:9px;min-width:0}
+.railhead{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--faint);margin:2px 0 2px}
+.reel{display:block;width:100%;text-align:left;background:var(--ink2);border:1px solid var(--rule);
+  border-left:2px solid var(--rule2);border-radius:0 9px 9px 0;padding:10px 12px;
+  transition:border-color .15s,background .15s}
+.reel:hover{background:#0e1524;border-left-color:var(--threadDim)}
+.reel[aria-current="true"]{border-left-color:var(--thread);background:#101a2b}
+.reel .n{font-family:var(--mono);font-size:9px;color:var(--faint);letter-spacing:.1em}
+.reel[aria-current="true"] .n{color:var(--thread)}
+.reel .t{font-size:13px;font-weight:700;letter-spacing:-.015em;margin:2px 0 3px;color:var(--text)}
+.reel .d{font-size:11px;color:var(--muted);line-height:1.4}
+.spec{border:1px solid var(--rule);border-radius:10px;padding:14px;background:var(--ink2);margin-top:5px}
+.spec h3{margin:0 0 9px;font-size:10.5px;font-family:var(--mono);letter-spacing:.12em;
+  text-transform:uppercase;color:var(--faint);font-weight:500}
+.note{font-size:11.5px;color:var(--muted);line-height:1.6;margin:0}
+.note b{color:var(--text);font-weight:600}
+.note code{font-family:var(--mono);font-size:10.5px;color:var(--thread)}
+
+#fx{position:absolute;inset:0;pointer-events:none}
+.sc{position:absolute;inset:0;display:none}
+.sc.on{display:block}
+.cam{position:absolute;inset:0;transform-origin:50% 50%}
+.vig{position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse 72% 58% at 50% 46%,transparent 26%,rgba(0,0,0,.8) 100%)}
+
+.gp{position:absolute;left:0;top:0;border-radius:20px;transform-origin:50% 50%;
+  background:linear-gradient(158deg,rgba(30,45,74,.94) 0%,rgba(17,27,46,.96) 58%,rgba(13,21,36,.97) 100%);
+  border:1px solid rgba(120,160,200,.16);
+  box-shadow:0 30px 70px rgba(0,0,0,.72),inset 0 1px 0 rgba(190,225,245,.13),0 0 0 1px rgba(0,0,0,.35)}
+.gp:after{content:'';position:absolute;inset:0;border-radius:20px;pointer-events:none;
+  background:linear-gradient(160deg,rgba(255,255,255,.075),transparent 42%)}
+.gp .in{position:relative;z-index:1}
+.ph{display:flex;align-items:center;justify-content:space-between;margin-bottom:.9em}
+.pt{font-weight:700;letter-spacing:-.022em;color:var(--text)}
+.pk{font-family:var(--mono);color:var(--faint);letter-spacing:.09em;text-transform:uppercase}
+.row{display:flex;align-items:center;justify-content:space-between;gap:1em;
+  border-top:1px solid rgba(120,160,200,.13);color:var(--muted)}
+.row:first-of-type{border-top:0}
+.row b{color:var(--text);font-weight:500}
+.row .mn{font-family:var(--mono);color:var(--faint);font-variant-numeric:tabular-nums}
+
+.cap{position:absolute;text-align:center;font-weight:800;letter-spacing:-.022em;
+  line-height:1.16;color:#fff;text-wrap:balance;
+  text-shadow:0 3px 22px rgba(0,0,0,.92),0 1px 4px rgba(0,0,0,.85)}
+.cap i{font-style:normal;color:var(--thread)}
+.cap u{text-decoration:none;color:var(--amber)}
+.hook{position:absolute;text-align:center;font-weight:900;letter-spacing:-.038em;line-height:1.05;
+  color:#fff;text-wrap:balance;text-shadow:0 6px 40px rgba(0,0,0,.95)}
+.hook i{font-style:normal;color:var(--thread)}
+.endl{position:absolute;left:0;right:0;text-align:center}
+.wm{font-weight:900;letter-spacing:-.05em;color:var(--text);line-height:1}
+.wm i{font-style:normal;color:var(--thread)}
+.tag{font-weight:500;color:var(--muted);letter-spacing:-.008em;line-height:1.32}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.caret{display:inline-block;background:var(--thread);vertical-align:baseline}
+
+body.clean .wrap{grid-template-columns:minmax(0,1fr);max-width:none;padding:0}
+body.clean .mast,body.clean .rail,body.clean .bar,body.clean .scrub{display:none}
+body.clean .frame{border:0;border-radius:0;box-shadow:none;height:100vh;align-items:center}
+body.clean .exit{display:block}
+.exit{display:none;position:fixed;top:12px;right:12px;z-index:9;background:rgba(5,8,14,.85);
+  border:1px solid var(--rule2);color:var(--muted);border-radius:7px;padding:6px 11px;font-size:11.5px}
+.exit:hover{color:#fff;border-color:var(--thread)}
+</style>
+
+<div class="wrap">
+  <header class="mast">
+    <span class="dot"></span>
+    <h1>TradeW Explainers</h1>
+    <p>Twenty videos, one per feature, grounded in real product strings and constants.
+    Same visual language as the Cutting Room.</p>
+  </header>
+  <section class="viewer">
+    <div class="frame"><div id="fit"><div id="stage"><canvas id="fx"></canvas></div></div></div>
+    <div class="bar">
+      <button class="btn primary" id="play">Play</button>
+      <button class="btn" id="restart">Restart</button>
+      <span class="tc"><b id="tcNow">0.0s</b> / <span id="tcEnd">0.0s</span></span>
+      <span class="seg" id="aspects"></span>
+      <button class="btn" id="cleanBtn">Clean mode</button>
+    </div>
+    <div class="scrub">
+      <div class="track"><div class="fill" id="fill"></div></div>
+      <div class="marks" id="marks"></div>
+      <input id="range" type="range" min="0" max="1000" value="0" step="1" aria-label="Scrub timeline">
+    </div>
+  </section>
+  <aside class="rail">
+    <div class="railhead">Explainers</div>
+    <div id="reels" style="max-height:78vh;overflow-y:auto"></div>
+    <div class="spec"><h3>Source</h3><div id="spec"></div></div>
+  </aside>
+</div>
+<button class="exit" id="exitBtn">Exit clean mode</button>
+
+<script>
+(function(){
+"use strict";
+var clamp=function(v,a,b){return v<a?a:v>b?b:v;};
+var p=function(t,a,b){return clamp((t-a)/(b-a),0,1);};
+var eOut=function(x){return 1-Math.pow(1-x,3);};
+var eIn=function(x){return x*x*x;};
+var eInOut=function(x){return x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2;};
+var back=function(x){var c=2.1,c3=c+1;return 1+c3*Math.pow(x-1,3)+c*Math.pow(x-1,2);};
+var L=function(a,b,x){return a+(b-a)*x;};
+var type=function(s,x){return s.slice(0,Math.round(clamp(x,0,1)*s.length));};
+var rnd=function(i){var v=Math.sin(i*12.9898)*43758.5453;return v-Math.floor(v);};
+var $=function(id){return document.getElementById(id);};
+var stage=$('stage'), fx=$('fx'), ctx=fx.getContext('2d');
+
+var ASPECTS=[{k:'9:16',w:1080,h:1920},{k:'4:5',w:1080,h:1350},
+             {k:'1:1',w:1080,h:1080},{k:'16:9',w:1920,h:1080}];
+var A=ASPECTS[0], W=A.w, H=A.h, U=1, CX=0, CY=0, COL=0;
+function geo(){ W=A.w; H=A.h; U=Math.min(W,H)/1080; CX=W/2; CY=H/2; COL=Math.min(W*0.88,1000*U); }
+
+var BURSTS=[], GLOWS=[];
+function drawFX(t){
+  fx.width=W; fx.height=H; ctx.clearRect(0,0,W,H);
+  ctx.globalCompositeOperation='lighter';
+  for(var i=0;i<46;i++){
+    var sx=rnd(i)*W, sy=rnd(i+90)*H, sp=0.006+rnd(i+40)*0.016;
+    var y=(sy-t*sp*U)%H; if(y<0) y+=H;
+    var x=sx+Math.sin((t/1400)+i)*22*U;
+    var a=(0.10+rnd(i+7)*0.20)*(0.55+0.45*Math.sin(t/900+i));
+    ctx.fillStyle='rgba(140,220,210,'+a.toFixed(3)+')';
+    ctx.beginPath(); ctx.arc(x,y,(0.7+rnd(i+3)*1.5)*U,0,6.2832); ctx.fill();
+  }
+  GLOWS.forEach(function(g){
+    var grd=ctx.createLinearGradient(g.x1,g.y1,g.x2,g.y2);
+    grd.addColorStop(0,'rgba(20,184,166,0)');
+    grd.addColorStop(.5,'rgba(90,240,220,'+(0.16*g.a).toFixed(3)+')');
+    grd.addColorStop(1,'rgba(20,184,166,0)');
+    ctx.strokeStyle=grd; ctx.lineWidth=13*U; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(g.x1,g.y1); ctx.lineTo(g.x2,g.y2); ctx.stroke();
+  });
+  BURSTS.forEach(function(b){
+    var age=t-b.t; if(age<0||age>760) return;
+    var k=age/760;
+    for(var j=0;j<16;j++){
+      var ang=rnd(j+b.t*0.01)*6.2832, sp2=(0.55+rnd(j+5)*1.5)*U;
+      var d=sp2*age*(1-k*0.62), a2=(1-k)*(1-k)*0.85;
+      ctx.fillStyle='rgba(150,255,240,'+a2.toFixed(3)+')';
+      ctx.beginPath();
+      ctx.arc(b.x+Math.cos(ang)*d,b.y+Math.sin(ang)*d,(1.9*(1-k)+0.4)*U,0,6.2832); ctx.fill();
+    }
+    var r=k*120*U, ra=(1-k)*0.5;
+    ctx.strokeStyle='rgba(120,245,225,'+ra.toFixed(3)+')';
+    ctx.lineWidth=2.4*U*(1-k); ctx.beginPath(); ctx.arc(b.x,b.y,r,0,6.2832); ctx.stroke();
+  });
+  ctx.globalCompositeOperation='source-over';
+  ctx.globalAlpha=0.028;
+  for(var g2=0;g2<170;g2++){
+    ctx.fillStyle=rnd(g2+Math.floor(t/60)*13)>0.5?'#fff':'#000';
+    ctx.fillRect(rnd(g2*3+Math.floor(t/60))*W,rnd(g2*7+Math.floor(t/60)*3)*H,1.4*U,1.4*U);
+  }
+  ctx.globalAlpha=1;
+}
+
+function mk(cls,html){var d=document.createElement('div');d.className=cls;if(html)d.innerHTML=html;return d;}
+function place(e,x,y){e.style.left='0';e.style.top='0';
+  e.style.transform='translate(-50%,-50%) translate('+x+'px,'+y+'px)';}
+function tf(e,x,y,sc,rot){
+  e.style.transform='translate(-50%,-50%) translate('+x+'px,'+y+'px) scale('+sc+') rotate('+rot+'deg)';}
+function camera(cam,t,amp){
+  var a=amp===undefined?1:amp;
+  cam.style.transform='translate('+(Math.sin(t/2600)*9*U*a)+'px,'+(Math.cos(t/3100)*7*U*a)+'px) scale('+
+    (1+Math.sin(t/4200)*0.012*a)+')';}
+
+/* ── shared scene skeleton ── */
+function buildScene(root){
+  root.innerHTML='';
+  var cam=mk('cam'); root.appendChild(cam);
+  root._hook=mk('hook'); cam.appendChild(root._hook);
+  root._cam=cam; return cam;
+}
+function addEndCard(root,cam){
+  root._cap=mk('cap'); cam.appendChild(root._cap);
+  root._end=mk('endl','<div class="wm">Trade<i>W</i></div><div class="tag"></div>');
+  cam.appendChild(root._end); root.appendChild(mk('vig'));
+}
+function layoutHCE(root,endTag){
+  root._hook.style.cssText+=';left:'+((W-COL)/2)+'px;width:'+COL+'px;font-size:'+(72*U)+'px;top:'+(H*0.40)+'px';
+  root._cap.style.cssText+=';left:'+((W-COL)/2)+'px;width:'+COL+'px;font-size:'+(38*U)+'px;top:'+(H*0.82)+'px';
+  root._end.style.top=(H*0.40)+'px';
+  root._end.querySelector('.wm').style.fontSize=(112*U)+'px';
+  var tg=root._end.querySelector('.tag');
+  tg.innerHTML=endTag; tg.style.cssText='font-size:'+(31*U)+'px;margin-top:'+(24*U)+'px';
+}
+function rHook(el,t,text,tOut){
+  var i2=eOut(p(t,0,500)),o=p(t,tOut-350,tOut);
+  el.innerHTML=text; el.style.opacity=i2*(1-o);
+  el.style.transform='translateY('+(-L(0,20*U,o))+'px) scale('+L(1.04,1,i2)+')';
+}
+function rCap(el,t,text,tIn,tOut){
+  el.innerHTML=text; el.style.opacity=eOut(p(t,tIn,tIn+500))*(1-p(t,tOut,tOut+300));
+}
+function rEnd(el,t,tIn){
+  var e2=eOut(p(t,tIn,tIn+700));
+  el.style.opacity=e2; el.style.marginTop=(-L(22*U,0,e2))+'px';
+}
+
+/* ══════════ PANEL FACTORY ══════════ */
+function panelV(cfg){
+  return {
+    build:function(r){
+      var cam=buildScene(r);
+      var html='<div class="in"><div class="ph"><span class="pt"></span><span class="pk"></span></div>';
+      cfg.rows.forEach(function(){html+='<div class="row"><b></b><span class="mn"></span></div>';});
+      html+='</div>';
+      r._panel=mk('gp',html); cam.appendChild(r._panel);
+      addEndCard(r,cam);
+    },
+    layout:function(r){
+      layoutHCE(r,cfg.endTag);
+      var cw=Math.min(W*0.86,900*U),c=r._panel;
+      c.style.cssText+=';width:'+cw+'px;padding:'+(36*U)+'px '+(38*U)+'px;border-radius:'+(24*U)+'px';
+      c.querySelector('.pt').textContent=cfg.title;
+      c.querySelector('.pt').style.fontSize=(34*U)+'px';
+      if(cfg.key){var k2=c.querySelector('.pk');k2.textContent=cfg.key;k2.style.fontSize=(16*U)+'px';}
+      c.querySelectorAll('.row').forEach(function(r2,i){
+        r2.style.cssText='font-size:'+(23*U)+'px;padding:'+(14*U)+'px 0';
+        r2.querySelector('b').textContent=cfg.rows[i][0];
+        var m=r2.querySelector('.mn');m.textContent=cfg.rows[i][1];m.style.fontSize=(21*U)+'px';
+      });
+    },
+    render:function(r,t){
+      camera(r._cam,t,0.5); BURSTS.length=0; GLOWS.length=0;
+      rHook(r._hook,t,cfg.hook,cfg.hookOut);
+      var ci=p(t,cfg.contentIn,cfg.contentIn+600),co=p(t,cfg.contentOut,cfg.contentOut+500);
+      r._panel.style.opacity=eOut(ci)*(1-co);
+      var cy=H*0.46;
+      place(r._panel,CX,cy); tf(r._panel,CX,cy,L(0.94,1,back(ci)),0);
+      if(t>=cfg.contentIn+300&&t<cfg.contentIn+1000) BURSTS.push({t:cfg.contentIn+300,x:CX,y:cy});
+      rCap(r._cap,t,cfg.cap,cfg.capIn,cfg.capOut);
+      rEnd(r._end,t,cfg.endIn);
+    }
+  };
+}
+
+/* ══════════ REVEAL FACTORY ══════════ */
+function revealV(cfg){
+  var gap=cfg.gap||420;
+  return {
+    build:function(r){
+      var cam=buildScene(r);
+      r._items=cfg.items.map(function(item){
+        var e=mk('gp','<div class="in"><span class="ri">'+(item.icon||'')+
+          '</span><span class="rk"></span><span class="rv"></span></div>');
+        cam.appendChild(e); return e;
+      });
+      addEndCard(r,cam);
+    },
+    layout:function(r){
+      layoutHCE(r,cfg.endTag);
+      var cw=Math.min(W*0.84,880*U);
+      r._items.forEach(function(e,i){
+        e.style.cssText+=';width:'+cw+'px;padding:'+(22*U)+'px '+(28*U)+'px;border-radius:'+(14*U)+'px';
+        var inn=e.querySelector('.in');
+        inn.style.cssText='display:flex;align-items:center;gap:'+(16*U)+'px';
+        var ri=e.querySelector('.ri');
+        ri.style.cssText='font-size:'+(28*U)+'px;flex:none;min-width:'+(40*U)+'px;text-align:center;color:'+(cfg.items[i].color||'#26a69a');
+        e.querySelector('.rk').textContent=cfg.items[i].title;
+        e.querySelector('.rk').style.cssText='font-size:'+(26*U)+'px;font-weight:700;color:#e2e8f0';
+        var rv=e.querySelector('.rv');
+        rv.textContent=cfg.items[i].subtitle;
+        rv.style.cssText='font-size:'+(20*U)+'px;color:#8ea0c4;margin-left:auto';
+      });
+    },
+    render:function(r,t){
+      camera(r._cam,t,0.5); BURSTS.length=0; GLOWS.length=0;
+      rHook(r._hook,t,cfg.hook,cfg.hookOut);
+      var n=cfg.items.length;
+      var spacing=Math.min(95*U,(H*0.50)/n);
+      var totalH=(n-1)*spacing;
+      var startY=H*0.52-totalH/2;
+      r._items.forEach(function(e,i){
+        var s0=cfg.contentIn+i*gap,s=p(t,s0,s0+560);
+        var o=p(t,cfg.contentOut+i*60,cfg.contentOut+500+i*60);
+        e.style.opacity=eOut(s)*(1-o);
+        var y=startY+i*spacing;
+        place(e,CX,y); tf(e,CX,y,L(0.95,1,back(s)),0);
+        if(t>=s0&&t<s0+400) BURSTS.push({t:s0,x:CX,y:y});
+      });
+      rCap(r._cap,t,cfg.cap,cfg.capIn,cfg.capOut);
+      rEnd(r._end,t,cfg.endIn);
+    }
+  };
+}
+
+/* ══════════ TYPING FACTORY ══════════ */
+function typingV(cfg){
+  return {
+    build:function(r){
+      var cam=buildScene(r);
+      r._tcard=mk('gp','<div class="in">'+
+        '<div class="ph"><span class="pt">'+cfg.cardTitle+'</span></div>'+
+        (cfg.cardBody?'<div class="bd"></div>':'')+
+        '<div class="rsn">'+(cfg.inputLabel?'<span class="rl">'+cfg.inputLabel+'</span>':'')+
+        '<div class="box"><span class="txt"></span><i class="caret"></i></div>'+
+        (cfg.counter?'<div class="cnt mono"></div>':'')+
+        '<div class="err"></div></div></div>');
+      cam.appendChild(r._tcard);
+      r._txt=r._tcard.querySelector('.txt');
+      r._car=r._tcard.querySelector('.caret');
+      r._err=r._tcard.querySelector('.err');
+      if(cfg.counter) r._cnt=r._tcard.querySelector('.cnt');
+      if(cfg.cardBody) r._bd=r._tcard.querySelector('.bd');
+      addEndCard(r,cam);
+    },
+    layout:function(r){
+      layoutHCE(r,cfg.endTag);
+      var cw=Math.min(W*0.86,900*U),c=r._tcard;
+      c.style.cssText+=';width:'+cw+'px;padding:'+(36*U)+'px '+(38*U)+'px;border-radius:'+(24*U)+'px';
+      c.querySelector('.pt').style.fontSize=(34*U)+'px';
+      if(r._bd){
+        r._bd.textContent=cfg.cardBody;
+        r._bd.style.cssText='font-size:'+(24*U)+'px;color:#8ea0c4;line-height:1.5;margin-bottom:'+(18*U)+'px';
+      }
+      var rl=c.querySelector('.rl');
+      if(rl) rl.style.cssText='font-size:'+(20*U)+'px;color:#64769c;display:block;margin-bottom:'+(12*U)+'px';
+      c.querySelector('.box').style.cssText='border:1px solid rgba(120,160,200,.22);border-radius:'+(12*U)+
+        'px;padding:'+(20*U)+'px;min-height:'+(80*U)+'px;font-size:'+(24*U)+
+        'px;line-height:1.4;color:#e2e8f0;background:rgba(5,10,20,.45)';
+      r._car.style.cssText+=';width:'+(3*U)+'px;height:'+(24*U)+'px';
+      if(r._cnt) r._cnt.style.cssText='font-size:'+(18*U)+'px;margin-top:'+(10*U)+'px;text-align:right;color:#64769c';
+      r._err.style.cssText='font-size:'+(22*U)+'px;color:#ef5350;margin-top:'+(16*U)+'px;line-height:1.4';
+    },
+    render:function(r,t){
+      camera(r._cam,t,0.55); BURSTS.length=0; GLOWS.length=0;
+      rHook(r._hook,t,cfg.hook,cfg.hookOut);
+      var ci=p(t,cfg.contentIn,cfg.contentIn+600),co=p(t,cfg.contentOut,cfg.contentOut+500);
+      r._tcard.style.opacity=eOut(ci)*(1-co);
+      var cy=H*0.46;
+      place(r._tcard,CX,cy); tf(r._tcard,CX,cy,L(0.94,1,back(ci)),0);
+      var txt='',err='';
+      cfg.phases.forEach(function(ph){
+        if(t<ph.start) return;
+        if(ph.type==='type'){txt=type(ph.text,p(t,ph.start,ph.end));err='';}
+        if(ph.type==='error'){err=ph.text;}
+        if(ph.type==='clear'){txt='';err='';}
+      });
+      var n=txt.length;
+      r._txt.textContent=txt;
+      r._car.style.opacity=(t<cfg.contentOut&&Math.sin(t/150)>0)?1:0.12;
+      if(r._cnt){r._cnt.textContent=n+' / '+cfg.counter;r._cnt.style.color=n>=cfg.counter?'#26a69a':'#64769c';}
+      r._err.textContent=err; r._err.style.opacity=err?1:0;
+      rCap(r._cap,t,cfg.cap,cfg.capIn,cfg.capOut);
+      rEnd(r._end,t,cfg.endIn);
+    }
+  };
+}
+
+function vid(meta,fac){meta.build=fac.build;meta.layout=fac.layout;meta.render=fac.render;return meta;}
+
+/* ══════════ THE 20 EXPLAINERS ══════════ */
+var ADS=[
+
+/* 01 */ vid({n:'The 20-Second Rule',dur:12000,
+  desc:'The discipline timer, counting down from 20. Real MIN_DWELL_MS constant.',
+  meta:'12s',marks:[[0,'hook'],[1600,'card'],[9000,'caption'],[10500,'logo']],
+  spec:'<p class="note"><b>Source:</b> <code>MIN_DWELL_MS = 20_000</code> in discipline-limits.ts</p>'},
+  panelV({hook:'It makes you wait<br><i>twenty seconds</i>.',hookOut:1500,
+    title:'Discipline',key:'ACTIVE',rows:[['Dwell time','20 seconds'],['Minimum reason','40 characters'],['Filler detection','On']],
+    contentIn:1600,contentOut:9000,
+    cap:'Not a paywall.<br>A speed bump <i>you</i> asked for.',capIn:9000,capOut:10500,
+    endTag:'Your guardrails.<br>Not ours.',endIn:10500})),
+
+/* 02 */ vid({n:'Filler Gets Caught',dur:14000,
+  desc:'The filler detector in action. Real low_effort rejection message.',
+  meta:'14s',marks:[[0,'hook'],[1700,'card'],[2500,'filler'],[5000,'rejected'],[7000,'real'],[11500,'caption'],[12500,'logo']],
+  spec:'<p class="note"><b>Source:</b> <code>validateReason()</code> low_effort detection in discipline-limits.ts</p>'},
+  typingV({hook:'Write anything.<br>It’ll <i>know</i>.',hookOut:1500,
+    cardTitle:'Why are you taking this trade?',cardBody:null,inputLabel:'',
+    phases:[
+      {type:'type',text:'because i want to because i want to',start:2500,end:4500},
+      {type:'error',text:'That reason looks like filler. Write it in your own words.',start:5000},
+      {type:'clear',start:6500},
+      {type:'type',text:'i am down three and i am trying to win it back before the close',start:7000,end:10500}
+    ],counter:40,
+    contentIn:1700,contentOut:11500,
+    cap:'40 characters.<br>In your own <i>words</i>.',capIn:11500,capOut:12800,
+    endTag:'Discipline, not restriction.',endIn:12800})),
+
+/* 03 */ vid({n:'Words That Rewrite',dur:14000,
+  desc:'Vocabulary rewriting: “buy” becomes “observe”. SEBI-safe, automatic.',
+  meta:'14s',marks:[[0,'hook'],[1600,'rewrites'],[9500,'caption'],[12000,'logo']],
+  spec:'<p class="note"><b>Source:</b> REWRITES array in <code>vocabulary.ts</code></p>'},
+  revealV({hook:'Every other app<br>says <i>“buy”</i>.',hookOut:1500,
+    items:[
+      {icon:'→',title:'“buy”',subtitle:'observe',color:'#14b8a6'},
+      {icon:'→',title:'“stop-loss”',subtitle:'invalidation level',color:'#14b8a6'},
+      {icon:'→',title:'“target”',subtitle:'projected level',color:'#14b8a6'},
+      {icon:'→',title:'“I recommend”',subtitle:'Sentinel observes',color:'#14b8a6'}
+    ],gap:480,
+    contentIn:1600,contentOut:9500,
+    cap:'SEBI-safe vocabulary.<br><i>Automatic.</i>',capIn:9500,capOut:12000,
+    endTag:'Observation, not advice.',endIn:12000})),
+
+/* 04 */ vid({n:'Four Gates, One Publish',dur:14000,
+  desc:'The publication gate: all four conditions must pass. Fixed threshold.',
+  meta:'14s',marks:[[0,'hook'],[1600,'gates'],[9500,'caption'],[12000,'logo']],
+  spec:'<p class="note"><b>Source:</b> <code>PUBLICATION_CONFIDENCE_THRESHOLD = 70</code> in publication-gate.ts</p>'},
+  revealV({hook:'Sentinel sees everything.<br>Posts <i>almost nothing</i>.',hookOut:1500,
+    items:[
+      {icon:'✓',title:'Confidence ≥ 70',subtitle:'composite score',color:'#26a69a'},
+      {icon:'✓',title:'Mandatory confirmations',subtitle:'validated',color:'#26a69a'},
+      {icon:'✓',title:'No conflicting evidence',subtitle:'cross-checked',color:'#26a69a'},
+      {icon:'✓',title:'Cross-module corroboration',subtitle:'multi-source',color:'#26a69a'}
+    ],gap:480,
+    contentIn:1600,contentOut:9500,
+    cap:'All four. Or it stays <i>silent</i>.',capIn:9500,capOut:12000,
+    endTag:'The threshold is fixed.<br>The weights adapt.',endIn:12000})),
+
+/* 05 */ vid({n:'16 Signals, One Card',dur:13000,
+  desc:'Nine technical, five behavioural, trap detection — converging to one surface.',
+  meta:'13s',marks:[[0,'hook'],[1600,'signals'],[9000,'caption'],[11000,'logo']],
+  spec:'<p class="note"><b>Source:</b> Sentinel’s composite surfacing gate — ≥2 corroborating sources</p>'},
+  revealV({hook:'16 signals.<br><i>One</i> card.',hookOut:1500,
+    items:[
+      {icon:'9',title:'Technical signals',subtitle:'structure, momentum, volume',color:'#14b8a6'},
+      {icon:'5',title:'Behavioural signals',subtitle:'overtrading, revenge, tilt',color:'#f0a53c'},
+      {icon:'⚑',title:'Trap detection',subtitle:'false breakout, news trap',color:'#ef5350'}
+    ],gap:550,
+    contentIn:1600,contentOut:9000,
+    cap:'Never one signal <i>alone</i>.',capIn:9000,capOut:11000,
+    endTag:'Composite, not compulsive.',endIn:11000})),
+
+/* 06 */ vid({n:'Never Invent. Never Drop.',dur:12000,
+  desc:'The strategy parser: deterministic regex-only. Unrecognised phrases reported back.',
+  meta:'12s',marks:[[0,'hook'],[1600,'rules'],[9000,'caption'],[10500,'logo']],
+  spec:'<p class="note"><b>Source:</b> <code>parser.py</code> — deterministic regex, no LLM</p>'},
+  revealV({hook:'Most parsers guess.<br><i>This one refuses.</i>',hookOut:1500,
+    items:[
+      {icon:'✓',title:'Direction found',subtitle:'long / short',color:'#26a69a'},
+      {icon:'✓',title:'Stop extracted',subtitle:'invalidation level',color:'#26a69a'},
+      {icon:'⚠',title:'Unrecognised phrase',subtitle:'reported, not ignored',color:'#f0a53c'}
+    ],gap:500,
+    contentIn:1600,contentOut:9000,
+    cap:'Deterministic. <i>Regex-only.</i>',capIn:9000,capOut:10500,
+    endTag:'What it finds, it reports.<br>What it doesn’t, it says so.',endIn:10500})),
+
+/* 07 */ vid({n:'₹10 Lakh Paper Wallet',dur:12000,
+  desc:'Paper trading with real matching engine. 3-second polling against live quotes.',
+  meta:'12s',marks:[[0,'hook'],[1600,'card'],[9000,'caption'],[10500,'logo']],
+  spec:'<p class="note"><b>Source:</b> <code>POLL_MS = 3_000</code> in matching-engine.service.ts</p>'},
+  panelV({hook:'₹10,00,000.<br><i>Not real.</i>',hookOut:1500,
+    title:'Paper Trading',key:'LIVE',rows:[['Matching interval','3 seconds'],['Starting capital','₹10,00,000'],['Order types','LIMIT / SL / SL_M']],
+    contentIn:1600,contentOut:9000,
+    cap:'3-second matching.<br>Real prices. <i>Paper money.</i>',capIn:9000,capOut:10500,
+    endTag:'Practice before you pay.',endIn:10500})),
+
+/* 08 */ vid({n:'The Gap Between Candles',dur:12000,
+  desc:'Fair Value Gap: three candles where first and third don’t overlap. Pure arithmetic.',
+  meta:'12s',marks:[[0,'hook'],[1600,'candles'],[9000,'caption'],[10500,'logo']],
+  spec:'<p class="note"><b>Source:</b> <code>fvg.ts</code> — bullish = a.high &lt; c.low</p>'},
+  revealV({hook:'Three candles.<br><i>One gap.</i>',hookOut:1500,
+    items:[
+      {icon:'A',title:'First candle',subtitle:'establishes the high',color:'#64769c'},
+      {icon:'B',title:'Second candle',subtitle:'moves away',color:'#14b8a6'},
+      {icon:'C',title:'Third candle',subtitle:'doesn’t touch A’s high',color:'#64769c'},
+      {icon:'■',title:'The gap',subtitle:'a.high < c.low',color:'#14b8a6'}
+    ],gap:440,
+    contentIn:1600,contentOut:9000,
+    cap:'Arithmetic on three bars.<br><i>No ML.</i>',capIn:9000,capOut:10500,
+    endTag:'The chart tells you.<br>If you look.',endIn:10500})),
+
+/* 09 */ vid({n:'1R. 2R. 3R. Still Watching.',dur:14000,
+  desc:'In-trade monitoring: R-multiple milestones, structure break detection.',
+  meta:'14s',marks:[[0,'hook'],[1600,'milestones'],[10000,'caption'],[12000,'logo']],
+  spec:'<p class="note"><b>Source:</b> <code>INTRADE_TITLES</code> in dispatcher.py, state_machine.py</p>'},
+  revealV({hook:'Most apps close the tab<br><i>after entry</i>.',hookOut:1500,
+    items:[
+      {icon:'✓',title:'1R reached',subtitle:'first milestone',color:'#26a69a'},
+      {icon:'✓',title:'2R reached',subtitle:'risk covered',color:'#26a69a'},
+      {icon:'✓',title:'3R reached',subtitle:'runner',color:'#26a69a'},
+      {icon:'⚠',title:'Structure break',subtitle:'invalidation signal',color:'#f0a53c'}
+    ],gap:520,
+    contentIn:1600,contentOut:10000,
+    cap:'In-trade monitoring.<br>Not post-trade <i>regret</i>.',capIn:10000,capOut:12000,
+    endTag:'It watches so<br>you don’t have to.',endIn:12000})),
+
+/* 10 */ vid({n:'66 Concepts. 15 Domains.',dur:14000,
+  desc:'The concept knowledge graph: 15 domains, 13 relation types, Hebbian weights.',
+  meta:'14s',marks:[[0,'hook'],[1600,'domains'],[10000,'caption'],[12000,'logo']],
+  spec:'<p class="note"><b>Source:</b> <code>domains.ts</code>, <code>relations.ts</code> — 66 concepts, 13 relation types</p>'},
+  revealV({hook:'Trading has a<br><i>vocabulary</i>.',hookOut:1500,
+    items:[
+      {icon:'●',title:'Market structure',subtitle:'price action, volume',color:'#14b8a6'},
+      {icon:'●',title:'Options + derivatives',subtitle:'Greeks, OI, IV',color:'#14b8a6'},
+      {icon:'●',title:'Risk management',subtitle:'position sizing, exposure',color:'#14b8a6'},
+      {icon:'●',title:'Trading psychology',subtitle:'tilt, revenge, FOMO',color:'#f0a53c'},
+      {icon:'●',title:'13 relation types',subtitle:'causes, confirms, contradicts',color:'#64769c'}
+    ],gap:400,
+    contentIn:1600,contentOut:10000,
+    cap:'13 relation types.<br><i>Hebbian weights.</i>',capIn:10000,capOut:12000,
+    endTag:'Knowledge, not keywords.',endIn:12000})),
+
+/* 11 */ vid({n:'Banned. Not Rewritten.',dur:12000,
+  desc:'The compliance gate: 12 regex patterns that REJECT, not rewrite.',
+  meta:'12s',marks:[[0,'hook'],[1600,'terms'],[8500,'caption'],[10500,'logo']],
+  spec:'<p class="note"><b>Source:</b> <code>compliance.py</code> — BANNED list, FORBIDDEN_METADATA_KEYS</p>'},
+  revealV({hook:'Some words don’t get<br><i>softened</i>.',hookOut:1500,
+    items:[
+      {icon:'✗',title:'“guaranteed returns”',subtitle:'REJECTED',color:'#ef5350'},
+      {icon:'✗',title:'“sure shot”',subtitle:'REJECTED',color:'#ef5350'},
+      {icon:'✗',title:'“risk-free”',subtitle:'REJECTED',color:'#ef5350'}
+    ],gap:500,
+    contentIn:1600,contentOut:8500,
+    cap:'12 regex patterns.<br>Zero <i>loopholes</i>.',capIn:8500,capOut:10500,
+    endTag:'Compliance is a gate,<br>not a filter.',endIn:10500})),
+
+/* 12 */ vid({n:'Binary Parser, Live Feed',dur:12000,
+  desc:'Hand-written binary parser on the Dhan WebSocket. Every tick, parsed live.',
+  meta:'12s',marks:[[0,'hook'],[1600,'card'],[9000,'caption'],[10500,'logo']],
+  spec:'<p class="note"><b>Source:</b> Dhan WebSocket integration, binary parser</p>'},
+  panelV({hook:'Every tick.<br><i>Parsed live.</i>',hookOut:1500,
+    title:'Market Data',key:'STREAMING',rows:[['F&O stocks','212'],['Indices','5'],['NSE ETFs','all'],['MCX commodities','5']],
+    contentIn:1600,contentOut:9000,
+    cap:'Hand-written binary parser.<br><i>Not a wrapper.</i>',capIn:9000,capOut:10500,
+    endTag:'The feed is the foundation.',endIn:10500})),
+
+/* 13 */ vid({n:'Three States. One Watch.',dur:12000,
+  desc:'Sentinel watch state machine: IDLE → FORMING → CONFIRMED with cooldown.',
+  meta:'12s',marks:[[0,'hook'],[1600,'states'],[9000,'caption'],[10500,'logo']],
+  spec:'<p class="note"><b>Source:</b> <code>WatchState</code> enum in state_machine.py</p>'},
+  revealV({hook:'IDLE. FORMING.<br><i>CONFIRMED.</i>',hookOut:1500,
+    items:[
+      {icon:'○',title:'IDLE',subtitle:'no pattern detected',color:'#64769c'},
+      {icon:'◔',title:'FORMING',subtitle:'partial match, watching',color:'#f0a53c'},
+      {icon:'●',title:'CONFIRMED',subtitle:'all conditions met + cooldown',color:'#26a69a'}
+    ],gap:550,
+    contentIn:1600,contentOut:9000,
+    cap:'State machine, not a <i>flag</i>.',capIn:9000,capOut:10500,
+    endTag:'Structure before conviction.',endIn:10500})),
+
+/* 14 */ vid({n:'Walk Forward. No Look-Ahead.',dur:13000,
+  desc:'EMA-cross backtest: real candle history, session-aware, cost-adjusted.',
+  meta:'13s',marks:[[0,'hook'],[1600,'rules'],[9500,'caption'],[11000,'logo']],
+  spec:'<p class="note"><b>Source:</b> backtest engine, <code>isEmaCrossLong()</code> — 4 clauses at bar close</p>'},
+  revealV({hook:'Most backtests cheat.<br><i>This one can’t.</i>',hookOut:1500,
+    items:[
+      {icon:'✓',title:'Real candle history',subtitle:'Dhan OHLCV',color:'#26a69a'},
+      {icon:'✓',title:'No look-ahead bias',subtitle:'bar-close decisions only',color:'#26a69a'},
+      {icon:'✓',title:'Session-aware',subtitle:'respects market hours',color:'#26a69a'},
+      {icon:'✓',title:'Cost-adjusted',subtitle:'slippage + commissions',color:'#26a69a'}
+    ],gap:460,
+    contentIn:1600,contentOut:9500,
+    cap:'Session-aware. Cost-adjusted.<br><i>Real candles.</i>',capIn:9500,capOut:11000,
+    endTag:'The past, honestly.',endIn:11000})),
+
+/* 15 */ vid({n:'17 Perceptors. Off By Default.',dur:12000,
+  desc:'The cognition network: 4 layers, online Hebbian weights, proposals never self-execute.',
+  meta:'12s',marks:[[0,'hook'],[1600,'layers'],[9000,'caption'],[10500,'logo']],
+  spec:'<p class="note"><b>Source:</b> <code>cognition/</code> — layers.ts, network.ts, percept.ts, weights.ts</p>'},
+  revealV({hook:'A neural layer that<br><i>proposes</i>.',hookOut:1500,
+    items:[
+      {icon:'L1',title:'Perception',subtitle:'raw signal intake',color:'#14b8a6'},
+      {icon:'L2',title:'Correlation',subtitle:'cross-signal patterns',color:'#14b8a6'},
+      {icon:'L3',title:'Evaluation',subtitle:'confidence scoring',color:'#14b8a6'},
+      {icon:'L4',title:'Proposal',subtitle:'never self-executes',color:'#f0a53c'}
+    ],gap:460,
+    contentIn:1600,contentOut:9000,
+    cap:'Off by default.<br>On by <i>intent</i>.',capIn:9000,capOut:10500,
+    endTag:'Augmentation, not automation.',endIn:10500})),
+
+/* 16 */ vid({n:'One Token. One Use.',dur:12000,
+  desc:'HMAC override tokens: stateless verification, DB unique index prevents replay.',
+  meta:'12s',marks:[[0,'hook'],[1600,'steps'],[9000,'caption'],[10500,'logo']],
+  spec:'<p class="note"><b>Source:</b> <code>issueOverrideToken</code> / <code>verifyOverrideToken</code> in discipline-limits.ts</p>'},
+  revealV({hook:'Override once.<br><i>Never replay.</i>',hookOut:1500,
+    items:[
+      {icon:'1',title:'HMAC token issued',subtitle:'signed, timestamped',color:'#14b8a6'},
+      {icon:'2',title:'Verified stateless',subtitle:'no session lookup',color:'#14b8a6'},
+      {icon:'3',title:'DB unique index',subtitle:'replay = rejected',color:'#26a69a'}
+    ],gap:520,
+    contentIn:1600,contentOut:9000,
+    cap:'Stateless verification.<br>No session <i>tricks</i>.',capIn:9000,capOut:10500,
+    endTag:'Security you don’t<br>have to trust.',endIn:10500})),
+
+/* 17 */ vid({n:'CE + PE. Not a Single Strike.',dur:12000,
+  desc:'Option chain watching both sides: CE/PE pair with Greeks, OI, IV.',
+  meta:'12s',marks:[[0,'hook'],[1600,'card'],[9000,'caption'],[10500,'logo']],
+  spec:'<p class="note"><b>Source:</b> watch options as CE/PE pair, not a single strike</p>'},
+  panelV({hook:'Options come in<br><i>pairs</i>.',hookOut:1500,
+    title:'Option Chain',key:'NIFTY 24800',rows:[['​24800 CE','₹142.30'],['​24800 PE','₹118.65'],['Max pain','24,750'],['OI ratio','1.42']],
+    contentIn:1600,contentOut:9000,
+    cap:'The full chain.<br><i>Both sides.</i>',capIn:9000,capOut:10500,
+    endTag:'See the whole picture.',endIn:10500})),
+
+/* 18 */ vid({n:'Say It. It Opens.',dur:13000,
+  desc:'Tara commands: no model round-trip, zero-latency navigation.',
+  meta:'13s',marks:[[0,'hook'],[1600,'commands'],[9500,'caption'],[11000,'logo']],
+  spec:'<p class="note"><b>Source:</b> Landing page commands — verbatim product strings</p>'},
+  revealV({hook:'No menu. No search.<br><i>Just say it.</i>',hookOut:1500,
+    items:[
+      {icon:'▶',title:'Open the option chain',subtitle:'opens instantly',color:'#14b8a6'},
+      {icon:'▶',title:'Show my portfolio',subtitle:'zero round-trip',color:'#14b8a6'},
+      {icon:'▶',title:'Find my losing trades',subtitle:'filtered, not searched',color:'#14b8a6'}
+    ],gap:520,
+    contentIn:1600,contentOut:9500,
+    cap:'No model round-trip.<br>It just <i>opens</i>.',capIn:9500,capOut:11000,
+    endTag:'Navigate by intent.',endIn:11000})),
+
+/* 19 */ vid({n:'Two Sources Minimum',dur:12000,
+  desc:'Sentinel requires ≥2 corroborating sources before surfacing anything.',
+  meta:'12s',marks:[[0,'hook'],[1600,'sources'],[9000,'caption'],[10500,'logo']],
+  spec:'<p class="note"><b>Source:</b> <code>MIN_CORROBORATING_SOURCES = 2</code> in publication-gate.ts</p>'},
+  revealV({hook:'One signal is <i>noise</i>.',hookOut:1500,
+    items:[
+      {icon:'✗',title:'Single source',subtitle:'not surfaced',color:'#ef5350'},
+      {icon:'✓',title:'Two sources agree',subtitle:'pattern confirmed',color:'#26a69a'}
+    ],gap:600,
+    contentIn:1600,contentOut:9000,
+    cap:'≥2 corroborating sources.<br><i>Always.</i>',capIn:9000,capOut:10500,
+    endTag:'Conviction from convergence.',endIn:10500})),
+
+/* 20 */ vid({n:'Earn It. Keep It.',dur:12000,
+  desc:'Lifetime free if you do the work: strategies, quizzes, participation.',
+  meta:'12s',marks:[[0,'hook'],[1600,'checklist'],[9000,'caption'],[10500,'logo']],
+  spec:'<p class="note"><b>Source:</b> Learning Hub entitlement model</p>'},
+  revealV({hook:'Lifetime <i>free</i>.',hookOut:1500,
+    items:[
+      {icon:'✓',title:'Strategies',subtitle:'submitted and reviewed',color:'#26a69a'},
+      {icon:'✓',title:'Quizzes',subtitle:'passed, not skipped',color:'#26a69a'},
+      {icon:'✓',title:'Participation',subtitle:'in the community',color:'#26a69a'}
+    ],gap:520,
+    contentIn:1600,contentOut:9000,
+    cap:'No credit card.<br>No trial <i>expiry</i>.',capIn:9000,capOut:10500,
+    endTag:'Earn it. Keep it.',endIn:10500}))
+
+];
+
+/* ══════════ PLAYBACK ══════════ */
+var cur=0, t=0, playing=false, last=0;
+var roots=ADS.map(function(a){var d=mk('sc');stage.appendChild(d);a.build(d);return d;});
+
+function applyGeo(){
+  geo(); stage.style.width=W+'px'; stage.style.height=H+'px';
+  ADS.forEach(function(a,i){a.layout(roots[i]);}); fit();
+}
+function fit(){
+  var box=$('fit'), avail=box.parentElement.clientWidth;
+  var maxH=document.body.classList.contains('clean')?window.innerHeight:Math.max(window.innerHeight-230,420);
+  var s=Math.min(avail/W, maxH/H);
+  stage.style.transform='scale('+s+')';
+  box.style.width=(W*s)+'px'; box.style.height=(H*s)+'px';
+}
+function drawMarks(){
+  var a=ADS[cur], m=$('marks'); m.innerHTML='';
+  a.marks.forEach(function(mk2){
+    var d=document.createElement('div'); d.className='mark';
+    d.innerHTML='<span>'+mk2[1]+'</span>'; d.style.left=(mk2[0]/a.dur*100)+'%'; m.appendChild(d);
+  });
+}
+function paint(){
+  var a=ADS[cur];
+  roots.forEach(function(r,i){r.classList.toggle('on',i===cur);});
+  a.render(roots[cur],t);
+  drawFX(t);
+  $('fill').style.width=(t/a.dur*100)+'%';
+  $('range').value=Math.round(t/a.dur*1000);
+  $('tcNow').textContent=(t/1000).toFixed(1)+'s';
+  $('tcEnd').textContent=(a.dur/1000).toFixed(1)+'s';
+}
+function loop(now){
+  if(playing){
+    var dt=Math.min(now-last,60); last=now; t+=dt;
+    if(t>=ADS[cur].dur){t=ADS[cur].dur;playing=false;$('play').textContent='Replay';}
+    paint();
+  }
+  requestAnimationFrame(loop);
+}
+function setPlay(v){playing=v;last=performance.now();
+  $('play').textContent=v?'Pause':(t>=ADS[cur].dur?'Replay':'Play');}
+function select(i){
+  cur=i;t=0;setPlay(false);$('play').textContent='Play';
+  var b=document.querySelectorAll('.reel');
+  for(var j=0;j<b.length;j++){b[j].setAttribute('aria-current',String(j===i));}
+  $('spec').innerHTML=ADS[i].spec;
+  drawMarks();paint();
+}
+$('reels').innerHTML=ADS.map(function(a,i){
+  return '<button class="reel" data-i="'+i+'"><span class="n">EX '+String(i+1).padStart(2,'0')+
+   '</span><div class="t">'+a.n+'</div><div class="d">'+a.desc+'</div></button>';
+}).join('');
+$('aspects').innerHTML=ASPECTS.map(function(a,i){
+  return '<button data-a="'+i+'" aria-pressed="'+(i===0)+'">'+a.k+'</button>';}).join('');
+$('reels').addEventListener('click',function(e){var b=e.target.closest('.reel');if(b) select(+b.dataset.i);});
+$('aspects').addEventListener('click',function(e){
+  var b=e.target.closest('button'); if(!b) return;
+  A=ASPECTS[+b.dataset.a];
+  [].forEach.call($('aspects').children,function(c){c.setAttribute('aria-pressed',String(c===b));});
+  applyGeo();paint();
+});
+$('play').addEventListener('click',function(){if(t>=ADS[cur].dur) t=0;setPlay(!playing);});
+$('restart').addEventListener('click',function(){t=0;setPlay(true);});
+$('range').addEventListener('input',function(e){t=e.target.value/1000*ADS[cur].dur;setPlay(false);paint();});
+function clean(v){document.body.classList.toggle('clean',v);fit();paint();}
+$('cleanBtn').addEventListener('click',function(){clean(true);t=0;setPlay(true);});
+$('exitBtn').addEventListener('click',function(){clean(false);});
+addEventListener('keydown',function(e){
+  if(e.key===' '){e.preventDefault();if(t>=ADS[cur].dur) t=0;setPlay(!playing);}
+  if(e.key==='Escape') clean(false);
+});
+addEventListener('resize',fit);
+applyGeo();select(0);requestAnimationFrame(loop);
+if(!matchMedia('(prefers-reduced-motion: reduce)').matches) setPlay(true);
+})();
+</script>
