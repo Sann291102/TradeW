@@ -110,6 +110,145 @@ export interface ResearchAnalysis {
   disclaimer: string;
 }
 
+export type NewsSentiment = 'positive' | 'negative' | 'neutral';
+export type ResearchEventClassification =
+  | 'analyst'
+  | 'earnings'
+  | 'management'
+  | 'corporate_action'
+  | 'major_announcement'
+  | 'other';
+export type ResearchEventImpact = 'high' | 'medium' | 'low' | 'unknown';
+
+export interface ResearchNewsItem {
+  id: string;
+  title: string;
+  source: string;
+  publishedAt: string;
+  url: string;
+  summary: string;
+  categories: string[];
+  sentiment: NewsSentiment;
+  eventClassification: ResearchEventClassification;
+  eventImpact: ResearchEventImpact;
+}
+
+export interface ResearchNews {
+  symbol: string;
+  companyName: string | null;
+  items: ResearchNewsItem[];
+}
+
+export type AnalystRating = 'buy' | 'hold' | 'sell';
+
+export interface AnalystResearchItem {
+  articleId: string;
+  title: string;
+  source: string;
+  publishedAt: string;
+  url: string;
+  brokerName?: string;
+  analystName?: string;
+  rating?: AnalystRating;
+  previousRating?: AnalystRating;
+  priceTarget?: number;
+  currency?: string;
+  commentary?: string;
+}
+
+export interface AnalystResearch {
+  symbol: string;
+  coverageNote: string;
+  distribution: { buy: number; hold: number; sell: number };
+  targetRange: { low: number; high: number; average: number; currency: string } | null;
+  items: AnalystResearchItem[];
+}
+
+export interface EarningsHistoryRow {
+  periodEnd: string;
+  fiscalYear: number;
+  fiscalQuarter?: number;
+  periodType: PeriodType;
+  currency?: string;
+  revenue?: number;
+  eps?: number;
+  netIncome?: number;
+  revenueGrowthPct?: number;
+  epsGrowthPct?: number;
+}
+
+export interface UpcomingEarningsEvent {
+  symbol: string | null;
+  company: string | null;
+  purpose: string | null;
+  date: string | null;
+}
+
+export interface EarningsIntelligence {
+  symbol: string;
+  history: EarningsHistoryRow[];
+  upcoming: UpcomingEarningsEvent[];
+  recentEarningsNews: ResearchNewsItem[];
+  unavailableDetails: string[];
+}
+
+export type ValuationMetricSource = 'provider' | 'calculated';
+
+export interface ValuationMetric {
+  key: string;
+  label: string;
+  value: number;
+  unit: 'x' | 'percent' | 'currency' | 'ratio';
+  source: ValuationMetricSource;
+  detail: string;
+}
+
+export interface ValuationScenario {
+  label: string;
+  basis: string;
+  impliedPrice?: number;
+  reason?: string;
+}
+
+export interface ResearchValuation {
+  symbol: string;
+  currency: string | null;
+  metrics: ValuationMetric[];
+  scenarios: ValuationScenario[];
+  unavailableDetails: string[];
+}
+
+export interface PeerComparisonRow {
+  symbol: string;
+  name: string;
+  exchange: string;
+  sector?: string;
+  industry?: string;
+  metrics: Partial<Record<'pe' | 'pb' | 'ps' | 'ev_ebitda' | 'revenue_growth' | 'net_margin' | 'roe', number>>;
+  source: 'cached-research-company';
+}
+
+export interface PeerResearch {
+  symbol: string;
+  subject: { sector?: string; industry?: string };
+  peers: PeerComparisonRow[];
+  unavailableDetails: string[];
+}
+
+export interface KnowledgeGraphRelation {
+  relation: string;
+  targetId: string;
+  targetLabel: string;
+  targetType: string;
+  weight: number;
+}
+
+export interface ResearchKnowledgeGraph {
+  symbol: string;
+  nodeId: string;
+  relationships: KnowledgeGraphRelation[];
+}
+
 export interface ResearchSearchResponse {
   query: string;
   results: SymbolSearchHit[];

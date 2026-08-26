@@ -1,11 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Badge, Card, CandleLoader, buttonClasses, cn } from '@tradew/ui';
 import { fetchResearchSnapshot } from '@/lib/research/api';
-import type { PeriodType, ResearchSnapshot, StatementType, SymbolSearchHit } from '@/lib/research/types';
+import { fetchResearchPreferences, saveResearchPreferences } from '@/lib/research/storage';
+import { RESEARCH_SECTIONS, type ResearchSectionKey } from '@/lib/research/sections';
+import type { PeriodType, ResearchAnalysis, ResearchSnapshot, StatementType, SymbolSearchHit } from '@/lib/research/types';
 import { asOf } from '@/lib/research/format';
 import { useSignedIn } from '@/lib/query/usePortfolio';
 import { SymbolSearch } from '@/components/research/SymbolSearch';
@@ -17,6 +19,16 @@ import { HistoryChart } from '@/components/research/HistoryChart';
 import { OwnershipPanel, SegmentsPanel } from '@/components/research/OwnershipPanel';
 import { AiResearchPanel } from '@/components/research/AiResearchPanel';
 import { DataUnavailable } from '@/components/research/DataUnavailable';
+import { NewsAndEventsPanel } from '@/components/research/NewsAndEventsPanel';
+import { AnalystResearchPanel } from '@/components/research/AnalystResearchPanel';
+import { TechnicalAnalysisPanel } from '@/components/research/TechnicalAnalysisPanel';
+import { EarningsIntelligencePanel } from '@/components/research/EarningsIntelligencePanel';
+import { ValuationPanel } from '@/components/research/ValuationPanel';
+import { PeerResearchPanel } from '@/components/research/PeerResearchPanel';
+import { KnowledgeGraphPanel } from '@/components/research/KnowledgeGraphPanel';
+import { SignalsPanel } from '@/components/research/SignalsPanel';
+import { SavedResearchPanel } from '@/components/research/SavedResearchPanel';
+import { WatchlistButton } from '@/components/research/WatchlistButton';
 import { downloadFile, toCsv, todayStamp } from '@/lib/settings/export';
 
 /**
@@ -43,16 +55,6 @@ import { downloadFile, toCsv, todayStamp } from '@/lib/settings/export';
  * most of what a research surface is for.
  */
 
-const SECTIONS = [
-  { key: 'overview', label: 'Overview' },
-  { key: 'financials', label: 'Financials' },
-  { key: 'ratios', label: 'Ratios' },
-  { key: 'history', label: 'Historical' },
-  { key: 'ownership', label: 'Ownership' },
-  { key: 'ai', label: 'AI research' },
-] as const;
-type SectionKey = (typeof SECTIONS)[number]['key'];
-
 const STATEMENTS: Array<{ key: StatementType; label: string; field: 'income' | 'balance' | 'cashFlow' }> = [
   { key: 'income', label: 'Profit & Loss', field: 'income' },
   { key: 'balance', label: 'Balance Sheet', field: 'balance' },
@@ -70,8 +72,9 @@ export function ResearchClient() {
 
   const symbol = (params.get('symbol') || DEFAULT_SYMBOL).toUpperCase();
   const periodType: PeriodType = params.get('period') === 'quarterly' ? 'quarterly' : 'annual';
-  const section = (SECTIONS.find((s) => s.key === params.get('section'))?.key ?? 'overview') as SectionKey;
+  const section = (RESEARCH_SECTIONS.find((s) => s.key === params.get('section'))?.key ?? 'overview') as ResearchSectionKey;
   const [statement, setStatement] = useState<StatementType>('income');
+  const [latestAnalysis, setLatestAnalysis] = useState<ResearchAnalysis | null>(null);
 
   const setParam = useCallback(
     (patch: Record<string, string>) => {
@@ -97,6 +100,19 @@ export function ResearchClient() {
     (hit: SymbolSearchHit) => setParam({ symbol: hit.symbol.toUpperCase() }),
     [setParam],
   );
+
+  useEffect(() => {
+    if (!signedIn) return;
+    void (async () => {
+      try {
+        const prefs = await fetchResearchPreferences();
+        const nextHistory = [{ symbol, periodType, viewedAt: new Date().toISOString() }, ...prefs.history.filter((entry) => !(entry.symbol === symbol && entry.periodType === periodType))].slice(0, 30);
+        await saveResearchPreferences({ ...prefs, history: nextHistory });
+      } catch {
+        // History tracking is a convenience; a failed write must not block reading.
+      }
+    })();
+  }, [periodType, signedIn, symbol]);
 
   if (!signedIn) {
     return (
@@ -144,6 +160,16 @@ export function ResearchClient() {
     <Shell symbol={symbol} onSelect={onSelect} periodType={periodType} setParam={setParam} section={section} snapshot={snapshot}>
       <CompanyHeader overview={snapshot.overview} />
 
+      {snapshot.overview.available && (
+        <div className="flex justify-end">
+          <WatchlistButton
+            symbol={snapshot.overview.data.profile.symbol}
+            name={snapshot.overview.data.profile.name}
+            exchange={snapshot.overview.data.profile.exchange}
+          />
+        </div>
+      )}
+
       {section === 'overview' && <OverviewPane snapshot={snapshot} onGoTo={(s) => setParam({ section: s })} />}
 
       {section === 'financials' && (
@@ -180,7 +206,21 @@ export function ResearchClient() {
           <SegmentsPanel section={snapshot.segments} />
         </div>
       )}
-      {section === 'ai' && <AiResearchPanel symbol={symbol} periodType={periodType} />}
+      {section === 'news' && <NewsAndEventsPanel symbol={symbol} />}
+      {section === 'analyst' && <AnalystResearchPanel symbol={symbol} />}
+      {section === 'technicals' && (
+        <TechnicalAnalysisPanel
+          symbol={symbol}
+          exchange={snapshot.overview.available ? snapshot.overview.data.profile.exchange : undefined}
+        />
+      )}
+      {section === 'earnings' && <EarningsIntelligencePanel symbol={symbol} periodType={periodType} />}
+      {section === 'valuation' && <ValuationPanel symbol={symbol} periodType={periodType} />}
+      {section === 'peers' && <PeerResearchPanel symbol={symbol} periodType={periodType} />}
+      {section === 'graph' && <KnowledgeGraphPanel symbol={symbol} />}
+      {section === 'signals' && <SignalsPanel snapshot={snapshot} />}
+      {section === 'saved' && <SavedResearchPanel symbol={symbol} periodType={periodType} latestAnalysis={latestAnalysis} />}
+      {section === 'ai' && <AiResearchPanel symbol={symbol} periodType={periodType} onAnalysisReady={setLatestAnalysis} />}
 
       <p className="px-1 text-[10.5px] text-faint">
         Fundamental data provided by <span className="font-semibold">{snapshot.provider}</span>. Retrieved{' '}
@@ -206,7 +246,7 @@ function Shell({
   symbol: string;
   onSelect: (hit: SymbolSearchHit) => void;
   periodType: PeriodType;
-  section: SectionKey;
+  section: ResearchSectionKey;
   setParam: (patch: Record<string, string>) => void;
   disabled?: boolean;
   snapshot?: ResearchSnapshot;
@@ -225,7 +265,7 @@ function Shell({
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <nav role="tablist" aria-label="Research section" className="flex flex-wrap gap-1">
-          {SECTIONS.map((s) => (
+          {RESEARCH_SECTIONS.map((s) => (
             <button
               key={s.key}
               role="tab"
@@ -270,7 +310,7 @@ function Shell({
 }
 
 /** The overview pane: the latest statement at a glance, plus reconciliation. */
-function OverviewPane({ snapshot, onGoTo }: { snapshot: ResearchSnapshot; onGoTo: (s: SectionKey) => void }) {
+function OverviewPane({ snapshot, onGoTo }: { snapshot: ResearchSnapshot; onGoTo: (s: ResearchSectionKey) => void }) {
   return (
     <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
       <Card

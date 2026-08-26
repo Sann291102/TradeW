@@ -32,7 +32,15 @@ import { DataUnavailable } from './DataUnavailable';
  * changes — every statement, ratio and chart stays fully readable, which is the
  * entitlement boundary the product intends.
  */
-export function AiResearchPanel({ symbol, periodType }: { symbol: string; periodType: PeriodType }) {
+export function AiResearchPanel({
+  symbol,
+  periodType,
+  onAnalysisReady,
+}: {
+  symbol: string;
+  periodType: PeriodType;
+  onAnalysisReady?: (analysis: ResearchAnalysis) => void;
+}) {
   const [state, setState] = useState<
     | { status: 'idle' }
     | { status: 'loading' }
@@ -46,6 +54,7 @@ export function AiResearchPanel({ symbol, periodType }: { symbol: string; period
     try {
       const section = await fetchResearchAnalysis(symbol, periodType);
       setState({ status: 'done', section });
+      if (section.available) onAnalysisReady?.(section.data);
     } catch (err) {
       setState({
         status: 'error',

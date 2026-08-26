@@ -133,7 +133,7 @@ export class AdminService {
       GROUP BY bucket
       ORDER BY bucket ASC
     `;
-    return rows.map((r) => ({
+    return rows.map((r: any) => ({
       bucket: r.bucket,
       ok: Number(r.ok ?? 0),
       client: Number(r.client ?? 0),
@@ -163,7 +163,7 @@ export class AdminService {
       GROUP BY bucket
       ORDER BY bucket ASC
     `;
-    return rows.map((r) => ({
+    return rows.map((r: any) => ({
       bucket: r.bucket,
       total: Number(r.total ?? 0),
       errors: Number(r.errors ?? 0),
@@ -211,8 +211,8 @@ export class AdminService {
       where: { createdAt: { gte: since }, statusCode: { gte: 400 } },
       _count: { _all: true },
     });
-    const errorByPath = new Map(errors.map((e) => [e.path, e._count._all]));
-    return rows.map((r) => ({
+    const errorByPath = new Map(errors.map((e: any) => [e.path, e._count._all]));
+    return rows.map((r: any) => ({
       method: r.method,
       path: r.path,
       count: r._count._all,
@@ -262,9 +262,9 @@ export class AdminService {
         _count: { _all: true },
       }),
     ]);
-    const failureByAgent = new Map(failures.map((f) => [f.agent, f._count._all]));
+    const failureByAgent = new Map(failures.map((f: any) => [f.agent, f._count._all]));
     return rows
-      .map((r) => ({
+      .map((r: any) => ({
         system: r.system,
         agent: r.agent,
         calls: r._count._all,
@@ -301,9 +301,9 @@ export class AdminService {
       }),
     ]);
     const failKey = (p: string, m: string) => `${p}::${m}`;
-    const failByModel = new Map(failures.map((f) => [failKey(f.provider, f.model), f._count._all]));
+    const failByModel = new Map(failures.map((f: any) => [failKey(f.provider, f.model), f._count._all]));
     return rows
-      .map((r) => ({
+      .map((r: any) => ({
         provider: r.provider,
         model: r.model,
         calls: r._count._all,

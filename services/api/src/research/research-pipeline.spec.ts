@@ -14,6 +14,7 @@ import {
 } from '@tradew/market-data';
 import { FIXTURE_SYMBOL, startFixtureServer } from './__fixtures__/twelvedata-fixture';
 import { parseSections } from './research-analysis.service';
+import { buildValuationScenarios, classifyNewsEvent, classifySentiment, parseCompanyNews, parsePriceTarget } from './research.service';
 
 /**
  * The research pipeline, from the vendor's wire format to the numbers a user
@@ -457,5 +458,97 @@ describe('AI analysis parsing', () => {
 
   it('drops a section with an empty body rather than rendering a blank card', () => {
     expect(parseSections(JSON.stringify({ sections: [{ heading: 'Risks', body: '   ' }] }))).toEqual([]);
+  });
+});
+
+describe('research extensions', () => {
+  it('classifies company-news items from RSS without inventing structure', () => {
+    const items = parseCompanyNews(`
+      <rss><channel>
+        <item>
+          <title><![CDATA[Broker upgrades RELIANCE, raises price target to Rs. 3200]]></title>
+          <link>https://example.com/reliance-upgrade</link>
+          <guid>rel-1</guid>
+          <pubDate>Tue, 24 Aug 2026 09:30:00 GMT</pubDate>
+          <description><![CDATA[Analyst says earnings momentum remains strong.]]></description>
+          <source>Example Wire</source>
+        </item>
+      </channel></rss>
+    `);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.eventClassification).toBe('analyst');
+    expect(items[0]?.sentiment).toBe('positive');
+    expect(items[0]?.categories).toContain('Analyst');
+  });
+
+  it('extracts only the price target that is actually present in the article text', () => {
+    expect(parsePriceTarget('Broker raises price target to Rs. 3,200 after upgrade')).toBe(3200);
+    expect(parsePriceTarget('Analyst reiterated buy without mentioning a target')).toBeUndefined();
+  });
+
+  it('keeps event and sentiment classification deterministic', () => {
+    expect(classifyNewsEvent('Company reports quarterly earnings and revenue beat')).toBe('earnings');
+    expect(classifyNewsEvent('CEO resigns after board review')).toBe('management');
+    expect(classifySentiment('record profit growth and strong beat')).toBe('positive');
+    expect(classifySentiment('downgrade after weak quarter and lawsuit')).toBe('negative');
+  });
+
+  it('builds valuation scenarios only from available statement and ratio inputs', () => {
+    const scenarios = buildValuationScenarios(
+      {
+        symbol: 'RELIANCE',
+        currency: 'INR',
+        sharesOutstanding: 100,
+        provenance: { source: 'test', sourceTimestamp: null, fetchedAt: new Date().toISOString() },
+      },
+      {
+        symbol: 'RELIANCE',
+        statementType: 'income',
+        periodType: 'annual',
+        periods: [
+          {
+            fiscalYear: 2026,
+            periodEnd: '2026-03-31',
+            periodType: 'annual',
+            currency: 'INR',
+            facts: {
+              [INCOME_METRICS.eps]: {
+                metric: INCOME_METRICS.eps,
+                value: 20,
+                currency: 'INR',
+                basis: 'reported',
+                provenance: { source: 'test', sourceTimestamp: '2026-03-31', fetchedAt: new Date().toISOString() },
+              },
+              [INCOME_METRICS.revenue]: {
+                metric: INCOME_METRICS.revenue,
+                value: 5000,
+                currency: 'INR',
+                basis: 'reported',
+                provenance: { source: 'test', sourceTimestamp: '2026-03-31', fetchedAt: new Date().toISOString() },
+              },
+            },
+          },
+        ],
+      },
+      {
+        available: true,
+        provenance: { source: 'test', sourceTimestamp: null, fetchedAt: new Date().toISOString() },
+        data: {
+          ratios: [
+            { key: 'pe', label: 'P/E', group: 'valuation', value: 18, unit: 'x', formula: 'Price / EPS', inputs: [], periodEnd: '2026-03-31' },
+            { key: 'ps', label: 'P/S', group: 'valuation', value: 3, unit: 'x', formula: 'Market cap / Revenue', inputs: [], periodEnd: '2026-03-31' },
+          ],
+          skipped: [],
+          basisPeriodEnd: '2026-03-31',
+          periodType: 'annual',
+          currency: 'INR',
+          marketInputs: null,
+        },
+      },
+    );
+
+    expect(scenarios.find((scenario) => scenario.label === 'Base case')?.impliedPrice).toBe(360);
+    expect(scenarios.some((scenario) => scenario.impliedPrice !== undefined)).toBe(true);
   });
 });

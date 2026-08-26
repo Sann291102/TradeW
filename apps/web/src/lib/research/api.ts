@@ -2,11 +2,17 @@
 
 import { api, ApiError } from '../api';
 import type {
+  AnalystResearch,
+  EarningsIntelligence,
   PeriodType,
+  ResearchKnowledgeGraph,
   ResearchAnalysis,
+  ResearchNews,
   ResearchSearchResponse,
   ResearchSection,
   ResearchSnapshot,
+  ResearchValuation,
+  PeerResearch,
 } from './types';
 
 /**
@@ -54,4 +60,32 @@ export async function fetchResearchAnalysis(
     }
     throw err;
   }
+}
+
+export function fetchResearchNews(symbol: string): Promise<ResearchSection<ResearchNews>> {
+  return api(`/research/${encodeURIComponent(symbol)}/news`) as Promise<ResearchSection<ResearchNews>>;
+}
+
+export function fetchAnalystResearch(symbol: string): Promise<ResearchSection<AnalystResearch>> {
+  return api(`/research/${encodeURIComponent(symbol)}/analyst`) as Promise<ResearchSection<AnalystResearch>>;
+}
+
+export function fetchEarningsIntelligence(symbol: string, period: PeriodType): Promise<ResearchSection<EarningsIntelligence>> {
+  return api(`/research/${encodeURIComponent(symbol)}/earnings?period=${period}`) as Promise<
+    ResearchSection<EarningsIntelligence>
+  >;
+}
+
+export function fetchResearchValuation(symbol: string, period: PeriodType): Promise<ResearchSection<ResearchValuation>> {
+  return api(`/research/${encodeURIComponent(symbol)}/valuation?period=${period}`) as Promise<
+    ResearchSection<ResearchValuation>
+  >;
+}
+
+export function fetchPeerResearch(symbol: string, period: PeriodType): Promise<ResearchSection<PeerResearch>> {
+  return api(`/research/${encodeURIComponent(symbol)}/peers?period=${period}`) as Promise<ResearchSection<PeerResearch>>;
+}
+
+export function fetchKnowledgeGraph(symbol: string): Promise<ResearchSection<ResearchKnowledgeGraph>> {
+  return api(`/research/${encodeURIComponent(symbol)}/graph`) as Promise<ResearchSection<ResearchKnowledgeGraph>>;
 }

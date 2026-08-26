@@ -31,6 +31,8 @@ export const ALLOWED_PREFERENCE_KEYS = [
   'notifications',
   /** Privacy toggles the app can actually honour. */
   'privacy',
+  /** Research watchlist and saved research notes/history. */
+  'research',
 ] as const;
 
 export type PreferenceKey = (typeof ALLOWED_PREFERENCE_KEYS)[number];

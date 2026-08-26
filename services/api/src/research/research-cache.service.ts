@@ -120,8 +120,8 @@ export class ResearchCacheService {
     // One stale fact makes the whole statement stale. Mixing a refreshed
     // revenue line with a months-old net income would produce a period that
     // never existed in any filing.
-    const newest = Math.max(...rows.map((r: { fetchedAt: Date }) => r.fetchedAt.getTime()));
-    if (Date.now() - newest > maxAgeMs) return null;
+    const oldest = Math.min(...rows.map((r: { fetchedAt: Date }) => r.fetchedAt.getTime()));
+    if (Date.now() - oldest > maxAgeMs) return null;
 
     const byPeriod = new Map<string, StatementPeriod>();
     for (const row of rows) {
@@ -171,6 +171,19 @@ export class ResearchCacheService {
     const symbol = statement.symbol.toUpperCase();
     const writes = [];
     for (const period of statement.periods) {
+      const metrics = Object.keys(period.facts);
+      writes.push(
+        this.prisma.researchStatementFact.deleteMany({
+          where: {
+            symbol,
+            statementType: statement.statementType as never,
+            periodType: statement.periodType as never,
+            fiscalYear: period.fiscalYear,
+            fiscalQuarter: period.fiscalQuarter ?? ANNUAL_QUARTER,
+            metric: { notIn: metrics },
+          },
+        }),
+      );
       for (const fact of Object.values(period.facts)) {
         const data = {
           periodEnd: new Date(`${period.periodEnd}T00:00:00.000Z`),

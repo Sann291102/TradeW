@@ -1,8 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import { useQuery } from '@tanstack/react-query';
 import { Card, Sparkline, cn } from '@tradew/ui';
 import { WATCHLIST } from '@/lib/mock/market';
+import { fetchResearchPreferences } from '@/lib/research/storage';
+import { useSignedIn } from '@/lib/query/usePortfolio';
 
 /** Reference shows 5 rows; the full WATCHLIST const carries 2 more (kept for
  *  other consumers, e.g. the terminal panel) — sliced here to match density
@@ -24,9 +27,28 @@ import { PlusIcon } from '@/components/shell/icons';
  * series regardless (no OHLC-history endpoint from the bridge yet).
  */
 export function WatchlistWidget() {
+  const signedIn = useSignedIn();
+  const prefs = useQuery({
+    queryKey: ['research', 'prefs'],
+    queryFn: fetchResearchPreferences,
+    enabled: signedIn,
+    staleTime: 60_000,
+    retry: 1,
+  });
   const { quotes, stocks, status } = useDhanLiveFeed();
   const live = status === 'live' || status === 'closed';
   const liveBySymbol = live ? new Map([...(quotes ?? []), ...(stocks ?? [])].map((q) => [q.symbol, q])) : null;
+  const entries =
+    prefs.data && prefs.data.watchlist.length > 0
+      ? prefs.data.watchlist.slice(0, DASHBOARD_ROWS).map((entry) => ({
+          symbol: entry.symbol,
+          name: entry.name,
+          ltp: liveBySymbol?.get(entry.symbol)?.ltp ?? 0,
+          changePct: liveBySymbol?.get(entry.symbol)?.changePct ?? 0,
+          spark: [] as number[],
+          href: `/research?symbol=${encodeURIComponent(entry.symbol)}`,
+        }))
+      : WATCHLIST.slice(0, DASHBOARD_ROWS).map((entry) => ({ ...entry, href: '/markets' }));
 
   return (
     <Card
@@ -45,23 +67,27 @@ export function WatchlistWidget() {
       }
     >
       <ul className="divide-y divide-border">
-        {WATCHLIST.slice(0, DASHBOARD_ROWS).map((w) => {
+        {entries.map((w) => {
           const liveMatch = liveBySymbol?.get(w.symbol);
           const ltp = liveMatch?.ltp ?? w.ltp;
           const changePct = liveMatch?.changePct ?? w.changePct;
           const up = changePct >= 0;
           return (
             <li key={w.symbol}>
-              <Link href="/markets" className="flex items-center gap-3 rounded py-1.5 transition-colors duration-micro hover:bg-hover">
+              <Link href={w.href} className="flex items-center gap-3 rounded py-1.5 transition-colors duration-micro hover:bg-hover">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold text-text">{w.symbol}</div>
                   <div className="truncate text-[11px] text-faint">{w.name}</div>
                 </div>
-                <Sparkline data={w.spark} width={56} height={20} aria-label={`${w.symbol} trend`} />
+                {w.spark.length > 0 ? (
+                  <Sparkline data={w.spark} width={56} height={20} aria-label={`${w.symbol} trend`} />
+                ) : (
+                  <div className="w-14 text-center text-[10px] text-faint">Research</div>
+                )}
                 <div className="w-20 text-right">
-                  <div className="font-mono text-sm tabular-nums text-text">{fmt(ltp)}</div>
+                  <div className="font-mono text-sm tabular-nums text-text">{ltp ? fmt(ltp) : '—'}</div>
                   <div className={cn('font-mono text-[11px] tabular-nums', up ? 'text-up' : 'text-down')}>
-                    {pct(changePct)}
+                    {ltp ? pct(changePct) : 'saved'}
                   </div>
                 </div>
               </Link>

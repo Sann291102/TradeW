@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { EntitlementsModule } from '../entitlements/entitlements.module';
+import { NseModule } from '../nse/nse.module';
 import { ResearchController } from './research.controller';
 import { ResearchService } from './research.service';
 import { ResearchCacheService } from './research-cache.service';
@@ -19,7 +20,7 @@ import { ResearchAnalysisService } from './research-analysis.service';
  * environment variable being able to do the same in production.
  */
 @Module({
-  imports: [PrismaModule, EntitlementsModule],
+  imports: [PrismaModule, EntitlementsModule, NseModule],
   controllers: [ResearchController],
   providers: [ResearchService, ResearchCacheService, ResearchAnalysisService],
   exports: [ResearchService],

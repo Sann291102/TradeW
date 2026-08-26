@@ -13,6 +13,7 @@ import type {
   ResearchSection,
   StatementPeriod,
 } from '@/lib/research/types';
+import { parseResearchPreferences } from '@/lib/research/storage';
 
 /**
  * What the research components put on screen.
@@ -389,5 +390,41 @@ describe('history chart', () => {
     expect((html.match(/<rect/g) ?? []).length).toBe(2);
     expect(html).toContain('2026');
     expect(html).toContain('2025');
+  });
+});
+
+describe('research preference storage', () => {
+  it('keeps only valid watchlist, saved-research and history entries', () => {
+    const parsed = parseResearchPreferences({
+      watchlist: [{ symbol: 'reliance', name: 'Reliance Industries', exchange: 'NSE', addedAt: '2026-08-25T00:00:00.000Z' }],
+      saved: [
+        {
+          id: '1',
+          symbol: 'reliance',
+          kind: 'note',
+          title: 'Core thesis',
+          body: 'Margins remain resilient.',
+          periodType: 'annual',
+          createdAt: '2026-08-25T00:00:00.000Z',
+        },
+      ],
+      history: [{ symbol: 'reliance', periodType: 'quarterly', viewedAt: '2026-08-25T00:00:00.000Z' }],
+    });
+
+    expect(parsed.watchlist[0]?.symbol).toBe('RELIANCE');
+    expect(parsed.saved[0]?.kind).toBe('note');
+    expect(parsed.history[0]?.periodType).toBe('quarterly');
+  });
+
+  it('drops malformed entries rather than inventing defaults', () => {
+    const parsed = parseResearchPreferences({
+      watchlist: [{ symbol: 12 }],
+      saved: [{ id: '1', symbol: 'RELIANCE', kind: 'bogus', title: 'x', body: 'y' }],
+      history: [{ viewedAt: 'now' }],
+    });
+
+    expect(parsed.watchlist).toEqual([]);
+    expect(parsed.saved).toEqual([]);
+    expect(parsed.history).toEqual([]);
   });
 });

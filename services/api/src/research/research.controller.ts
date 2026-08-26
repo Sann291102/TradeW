@@ -114,6 +114,45 @@ export class ResearchController {
     return this.research.segmentsSection(cleanSymbol(symbol));
   }
 
+  @ApiOperation({ summary: 'Company-specific news with sentiment and event classification' })
+  @Get(':symbol/news')
+  news(@Param('symbol') symbol: string) {
+    return this.research.companyNewsSection(cleanSymbol(symbol));
+  }
+
+  @ApiOperation({ summary: 'Structured analyst coverage derived from company news when available' })
+  @Get(':symbol/analyst')
+  analyst(@Param('symbol') symbol: string) {
+    return this.research.analystResearchSection(cleanSymbol(symbol));
+  }
+
+  @ApiOperation({ summary: 'Earnings history and upcoming earnings events' })
+  @ApiQuery({ name: 'period', required: false, enum: ['annual', 'quarterly'] })
+  @Get(':symbol/earnings')
+  earnings(@Param('symbol') symbol: string, @Query('period') period?: string) {
+    return this.research.earningsSection(cleanSymbol(symbol), periodType(period));
+  }
+
+  @ApiOperation({ summary: 'Valuation metrics and scenario framing' })
+  @ApiQuery({ name: 'period', required: false, enum: ['annual', 'quarterly'] })
+  @Get(':symbol/valuation')
+  valuation(@Param('symbol') symbol: string, @Query('period') period?: string) {
+    return this.research.valuationSection(cleanSymbol(symbol), periodType(period));
+  }
+
+  @ApiOperation({ summary: 'Peer and sector comparison from cached/local graph data' })
+  @ApiQuery({ name: 'period', required: false, enum: ['annual', 'quarterly'] })
+  @Get(':symbol/peers')
+  peers(@Param('symbol') symbol: string, @Query('period') period?: string) {
+    return this.research.peerSection(cleanSymbol(symbol), periodType(period));
+  }
+
+  @ApiOperation({ summary: 'Knowledge-graph relationships for the selected company' })
+  @Get(':symbol/graph')
+  graph(@Param('symbol') symbol: string) {
+    return this.research.knowledgeGraphSection(cleanSymbol(symbol));
+  }
+
   /**
    * PREMIUM — the only gated route on this controller.
    *
