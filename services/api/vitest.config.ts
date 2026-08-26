@@ -88,6 +88,10 @@ export default defineConfig({
       //  · market-session — the one authoritative NSE session classifier
       //    (weekend / holiday / pre-market / active / post-market), calendar-aware.
       'src/paper-execution/market-session.spec.ts',
+      //  · lifecycle recovery — a PROPOSED intent orphaned by a crash mid-submit
+      //    is failed out on the next reconcile, guarded on status so it can never
+      //    clobber an intent that has since become an order.
+      'src/paper-execution/execution-lifecycle-recovery.spec.ts',
       // Who is allowed to use a paid capability, and until when.
       // Active pricing served to every surface. Asserts across the API boundary
       // that no route can produce a withdrawn annual Sentinel term.

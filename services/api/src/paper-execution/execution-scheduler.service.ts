@@ -37,6 +37,16 @@ const EVALUATE_JOB = 'paper-execution-evaluate';
 const RECONCILE_JOB = 'paper-execution-reconcile';
 
 /**
+ * Delay before the one-off startup recovery pass. Leadership is acquired
+ * asynchronously at boot (a DB round trip), so firing recovery synchronously in
+ * `onModuleInit` would usually no-op on `isLeader === false`. A short beat lets
+ * the lease settle so the leader recovers immediately rather than waiting a full
+ * reconcile interval. It is only a FAST PATH — the continuous reconcile tick
+ * runs the same recovery every interval, so nothing depends on this firing.
+ */
+const STARTUP_RECOVERY_DELAY_MS = 3_000;
+
+/**
  * What the admin console reads to tell an ARMED profile from a TICKING loop.
  *
  * Every field is this process's own live state. Nothing is persisted: a status
@@ -70,6 +80,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
   private readonly logger = new Logger(ExecutionSchedulerService.name);
   private evaluateTimer: ReturnType<typeof setInterval> | null = null;
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+  private startupTimer: ReturnType<typeof setTimeout> | null = null;
   private evaluating = false;
   private reconciling = false;
   private lastEvaluateAt: Date | null = null;
@@ -101,11 +112,22 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     this.reconcileTimer = setInterval(() => void this.reconcileTick(), reconcileMs);
     this.startedAt = new Date();
     this.logger.log(`paper execution loop started — evaluate every ${evaluateMs}ms, reconcile every ${reconcileMs}ms.`);
+
+    // RESTART RECOVERY. A reconcile pass reconciles the database against reality
+    // (SUBMITTED→FILLED, FILLED→CLOSED), squares off anything past its window,
+    // and fails intents orphaned by a crash mid-submit — so a process that
+    // restarted holding open positions resumes safely rather than assuming its
+    // in-memory state was authoritative. Fired once, shortly after boot, so the
+    // leader does this at startup instead of waiting a full reconcile interval;
+    // the recurring tick is the guarantee, this is only the fast path.
+    this.startupTimer = setTimeout(() => void this.reconcileTick(), STARTUP_RECOVERY_DELAY_MS);
+    this.startupTimer.unref?.();
   }
 
   onModuleDestroy(): void {
     if (this.evaluateTimer) clearInterval(this.evaluateTimer);
     if (this.reconcileTimer) clearInterval(this.reconcileTimer);
+    if (this.startupTimer) clearTimeout(this.startupTimer);
   }
 
   private async evaluateTick(): Promise<void> {
@@ -156,8 +178,10 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
       // outcome unrecorded for a whole extra tick after the exit filled.
       await this.lifecycle.squareOff(new Date(), { forceAll: control.forceSquareOff });
       const result = await this.lifecycle.reconcile();
-      if (result.filled || result.failed || result.closed) {
-        this.logger.log(`reconcile: ${result.filled} filled, ${result.closed} closed, ${result.failed} failed.`);
+      if (result.filled || result.failed || result.closed || result.recovered) {
+        this.logger.log(
+          `reconcile: ${result.filled} filled, ${result.closed} closed, ${result.failed} failed, ${result.recovered} recovered.`,
+        );
       }
     } catch (err) {
       this.logger.error('reconcile tick failed', err as Error);
