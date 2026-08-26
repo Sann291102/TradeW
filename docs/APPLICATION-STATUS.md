@@ -75,6 +75,7 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 - Square-off orders link back to the decision they close (`Order.exitOfIntentId`, 2026-08-20), so the `source=sentinel` filter and the per-order trace cover an agent's exits as well as its entries.
 - Every refusal is stored twice: as a sentence for a human (`rejectReason`) and as the failing gate's id (`rejectCheckId`) so refusals can be counted.
 - ⚠️ **Expected behaviour, not a gap:** intents can accumulate with zero orders when a daily-loss gate trips (see `knowledge/Gotchas/2026-08-18 - Paper orders invisible in Admin_Web is usually no order, not a read bug.md`). The console's rejection breakdown now answers that in one glance.
+- **Hardening pass (2026-08-26 — this branch):** a **global kill switch** (`SystemExecutionControl` — ON / OFF / EMERGENCY_STOP, runtime, audited, no redeploy; EMERGENCY_STOP force-flattens open positions); a **stale/missing market-data guard** (`fresh-market-data` — a quote older than `PAPER_EXECUTION_MAX_QUOTE_AGE_MS` is refused, no fill against a dead feed); one **authoritative `MarketSessionService`** (calendar-aware weekend/holiday/pre/active/post); **restart recovery** (a PROPOSED intent orphaned by a crash mid-submit is failed out under `recovery-orphaned`, guarded on status); **performance analytics** (`/admin/execution/analytics` — win rate, expectancy, profit factor, drawdown, breakdowns by strategy / confidence / strike / regime / hour — measurement only, no self-modification); a **consolidated health surface** (`/admin/execution/health` — a RUNNING/HALTED/PAUSED/IDLE/DISABLED headline *derived* from real process + DB state, plus a live feed-freshness probe); and a **real-Postgres integration harness** proving the full lifecycle + rejection matrix. See `docs/runbooks/PAPER-EXECUTION.md`.
 
 ### Sentinel (AI safety layer)
 - 16-signal observation pipeline: 9 technical, 5 behavioural (revenge trading, overtrading, sizing drift, pacing, loss streaks), 6 trap-detection (bull/bear trap, liquidity sweep, low-volume breakout, FOMO entry, expiry risk), 1 news.
@@ -152,7 +153,7 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 - **Push notifications** (sub-30s socket delivery). Email delivery templates and in-app notifications with sound have since landed; **billing/checkout has landed** (Razorpay).
 - **Portfolio Intelligence** (the one Sentinel Brain subsystem never started).
 - **Risk engine** — no position limits, exposure caps, daily loss limits, or kill switches. Only pre-trade margin checks exist.
-- **Holiday calendar** — every weekday is treated as a trading day.
+- ~~**Holiday calendar** — every weekday is treated as a trading day.~~ **Closed.** The shared NSE calendar (`@tradew/market-data/calendar/nse-calendar.ts`, `NSE_HOLIDAYS_2026`) is honoured across `services/api`, `services/sentinel` and the paper-execution loop; the loop's `MarketSessionService` classifies weekend / holiday / pre-market / active / post-market and refuses entries on anything but `active`.
 - **n8n workflow integrations** — `workflows/` is empty.
 
 ---
