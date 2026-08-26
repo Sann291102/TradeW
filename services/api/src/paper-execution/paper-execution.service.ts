@@ -1,10 +1,12 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { ExecutionIntentStatus, Prisma } from '@prisma/client';
+import { ExecutionEnvironment, ExecutionIntentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { isTradingDay } from '../discipline/market-calendar';
 import { MarketPriceService } from '../sim/market-price.service';
-import { OrderService } from '../sim/order.service';
+import { TelemetryService } from '../telemetry/telemetry.service';
 import { ExecutionAccountService } from './execution-account.service';
+import { ExecutionAdapterResolver } from './execution-adapter.resolver';
+import { LiveExecutionNotAuthorizedError, type AdapterResult } from './execution-adapter';
 import { contractSymbol, deriveIdempotencyKey, istParts } from './execution-identity';
 import { countProfileOpenPositions } from './execution-open-positions';
 import {
@@ -15,15 +17,25 @@ import {
   type PolicyDecision,
   evaluatePolicy,
 } from './execution-policy';
+import {
+  AUTOTRADE_DISABLED,
+  LIVE_NOT_AUTHORIZED,
+  PROFILE_NOT_ARMED,
+  type ExecutionProfileState,
+  isExecutingState,
+  stateRefusal,
+} from './execution-state';
+import { ExecutionStateService } from './execution-state.service';
 import { SentinelExecutionClient, type ExecutionEvaluationDto } from './sentinel-execution.client';
 
 /**
- * The Sentinel paper-execution loop.
+ * The Sentinel execution loop.
  *
  * ## What this service is, in one line
  *
  * It turns a Sentinel observation that already cleared Sentinel's own gates
- * into an order placed through the EXISTING `OrderService`, and records why.
+ * into an order placed through whichever ENGINE the profile's state authorizes,
+ * and records why.
  *
  * ## What it deliberately is not
  *
@@ -33,26 +45,38 @@ import { SentinelExecutionClient, type ExecutionEvaluationDto } from './sentinel
  * is not a strategy engine, a market-data engine or a second Sentinel; every
  * judgement it acts on arrives from `POST /execution/evaluate`.
  *
+ * It is also NOT the thing that decides paper-versus-live. It holds no adapter
+ * and imports neither; it asks `ExecutionAdapterResolver` for one, and the
+ * resolver decides from the profile's STATE. That is the §12 boundary — see
+ * `execution-adapter.ts` for why it is a separate object rather than an `if`.
+ *
  * The entire "execution" contribution of this file is: decide whether to act,
- * make the act idempotent, call `placeOrder`, and keep the provenance.
+ * make the act idempotent, ask for an adapter, submit, and keep the provenance.
  *
  * ## Order of operations, and why it is that order
  *
- *   1. Cheap local preflight (enabled, PAPER, trading day, session window).
- *      Before the network call, so a closed market costs nothing.
- *   2. Ask Sentinel. If it publishes no side, stop — nothing is recorded,
- *      because "Sentinel stayed silent" is the normal resting state and
- *      writing a row for it every minute would bury the real decisions.
- *   3. Resolve the contract and read its live price. This is where the
- *      selected strike becomes a real, tradable `Instrument`.
+ *   1. Cheap local preflight: the STATE MACHINE first (armed? paused? which
+ *      engine?), then AutoTrade, then the trading day and session window.
+ *      Before the network call, so a disarmed profile or a closed market costs
+ *      nothing.
+ *   2. Ask Sentinel. If it publishes no side, stop — no intent is written,
+ *      because "Sentinel stayed silent" is the normal resting state and a row
+ *      per quiet minute would bury the real decisions. A RUN row is still
+ *      written; that is what `ExecutionRun` is for.
+ *   3. Resolve the contract and read its live price. This is where the selected
+ *      strike becomes a real, tradable `Instrument` at a real, current price.
  *   4. Claim the idempotency key by INSERTING the intent — before any order
- *      exists. A racing replica loses here, on a database constraint, not on
- *      a check-then-act window.
+ *      exists. A racing replica loses here, on a database constraint, not on a
+ *      check-then-act window.
  *   5. Apply risk policy, recording the result on the intent either way.
- *   6. Submit through `OrderService`.
+ *   6. RE-READ THE AUTHORIZATION. Everything above took seconds; an
+ *      administrator may have disarmed the profile during them, and §15
+ *      requires that to stop THIS pass.
+ *   7. Resolve the adapter for the state we just re-read, and submit.
  *
- * Step 4 preceding step 6 is the load-bearing part: the intent is the thing
- * that is unique, so two concurrent decisions cannot both reach `placeOrder`.
+ * Step 4 preceding step 7 is the load-bearing part for idempotency: the intent
+ * is the thing that is unique, so two concurrent decisions cannot both reach an
+ * adapter. Step 6 preceding step 7 is the load-bearing part for control.
  */
 
 export type RunOutcome =
@@ -71,9 +95,17 @@ export interface ExecutionRunResult {
   reason: string;
   intentId: string | null;
   orderId: string | null;
+  /** The broker's own order handle. Null for every paper pass, always. */
+  brokerOrderId: string | null;
+  /** The engine this pass would have used, per the profile's state. */
+  environment: 'PAPER' | 'LIVE' | null;
+  state: ExecutionProfileState;
   /** Sentinel's verdict, when it was consulted. */
   verdict: ExecutionEvaluationDto['verdict'] | null;
   checks: PolicyCheck[];
+  /** The groupable form of the refusal, matching ExecutionIntent.rejectCheckId. */
+  rejectCheckId: string | null;
+  latencyMs: number;
 }
 
 /** IST minute-of-day the Indian equity session closes (15:30). */
@@ -86,9 +118,11 @@ export class PaperExecutionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sentinel: SentinelExecutionClient,
-    private readonly orders: OrderService,
     private readonly marketPrice: MarketPriceService,
     private readonly accounts: ExecutionAccountService,
+    private readonly adapters: ExecutionAdapterResolver,
+    private readonly state: ExecutionStateService,
+    private readonly telemetry: TelemetryService,
   ) {}
 
   /**
@@ -98,27 +132,77 @@ export class PaperExecutionService {
    * be asserted deterministically — a loop whose correctness depends on the
    * clock must not be testable only during market hours.
    */
-  async runProfile(profileId: string, now: Date = new Date()): Promise<ExecutionRunResult> {
+  async runProfile(
+    profileId: string,
+    now: Date = new Date(),
+    trigger: 'scheduler' | 'manual' = 'scheduler',
+  ): Promise<ExecutionRunResult> {
+    const startedAt = Date.now();
     const profile = await this.prisma.executionProfile.findUnique({
       where: { id: profileId },
       include: { account: { select: { id: true, email: true } } },
     });
     if (!profile) throw new NotFoundException(`No execution profile ${profileId}`);
 
-    const base = { profileId: profile.id, profileName: profile.name, intentId: null, orderId: null, checks: [] };
+    const profileState = profile.state as ExecutionProfileState;
+    const engine = this.adapters.engineFor(profileState);
 
-    if (!profile.enabled) {
-      return { ...base, outcome: 'skipped-disabled', verdict: null, reason: 'Profile is disabled.' };
-    }
-    // Belt and braces against a row that did not come from this application —
-    // see the same check in `evaluatePolicy`.
-    if (profile.environment !== 'PAPER') {
-      return {
+    const base = {
+      profileId: profile.id,
+      profileName: profile.name,
+      intentId: null,
+      orderId: null,
+      brokerOrderId: null,
+      environment: engine,
+      state: profileState,
+      checks: [] as PolicyCheck[],
+      rejectCheckId: null,
+    };
+
+    // Every return below goes through here, so a pass can never finish without
+    // leaving a record of itself — the gap that made "is the loop doing
+    // anything?" unanswerable before `ExecutionRun` existed.
+    const finish = async (result: Omit<ExecutionRunResult, 'latencyMs'>): Promise<ExecutionRunResult> => {
+      const full: ExecutionRunResult = { ...result, latencyMs: Date.now() - startedAt };
+      await this.recordRun(profile, full, trigger, startedAt).catch((err) =>
+        // Telemetry must never be the reason a trade did not happen, nor the
+        // reason a caller sees an error for a pass that succeeded.
+        this.logger.error(`could not record the execution run for ${profile.name}`, err as Error),
+      );
+      return full;
+    };
+
+    // ---- 1. THE STATE MACHINE ---------------------------------------------
+    //
+    // First, and from the row just read — not from a value the scheduler
+    // cached when it selected this profile. §2: "Never rely only on a frontend
+    // button being visible or hidden", and the server-side corollary is never
+    // to rely on a selection made a tick ago.
+    if (!isExecutingState(profileState)) {
+      return finish({
         ...base,
-        outcome: 'rejected',
+        outcome: 'skipped-disabled',
         verdict: null,
-        reason: `Refused: profile environment is "${profile.environment}", not PAPER.`,
-      };
+        reason: stateRefusal(profileState),
+        rejectCheckId: PROFILE_NOT_ARMED,
+      });
+    }
+
+    // ---- 1a. The account holder's own switch -------------------------------
+    //
+    // A SYSTEM_PAPER account has no holder, so arming is the activation for it.
+    // A USER_PAPER profile needs the person whose money it is to have said yes,
+    // and to still be saying yes — read every pass, never cached.
+    if (profile.accountScope === 'USER_PAPER' && !profile.autoTradeEnabled) {
+      return finish({
+        ...base,
+        outcome: 'skipped-disabled',
+        verdict: null,
+        reason:
+          'AutoTrade is switched off by the account holder. The profile is armed, but no order will be produced ' +
+          'until they enable it.',
+        rejectCheckId: AUTOTRADE_DISABLED,
+      });
     }
 
     // ---- 1b. WHOSE account may this profile trade? -------------------------
@@ -133,53 +217,78 @@ export class PaperExecutionService {
     // cache. See ExecutionAccountService.
     const accountAuth = await this.accounts.authorize({
       environment: profile.environment,
+      // From the state, not the row — see `authorizeAccount`.
+      authorizedEnvironment: engine ?? 'PAPER',
       accountScope: profile.accountScope,
       accountUserId: profile.accountUserId,
       symbol: profile.symbol,
       agent: profile.agent,
     });
     if (!accountAuth.authorized) {
-      return {
+      return finish({
         ...base,
         outcome: 'rejected',
         verdict: null,
         reason: accountAuth.reason ?? 'Account authorization failed.',
         checks: accountAuth.checks,
-      };
+        rejectCheckId: accountAuth.checks.find((c) => !c.passed)?.id ?? 'account-authorization',
+      });
     }
 
     const { minuteOfDay } = istParts(now);
     const sessionOpen =
       isTradingDay(now) && minuteOfDay >= SESSION_OPEN_MINUTE && minuteOfDay < SESSION_CLOSE_MINUTE;
     if (!sessionOpen) {
-      return {
+      return finish({
         ...base,
         outcome: 'skipped-market-closed',
         verdict: null,
         reason: isTradingDay(now)
           ? 'Outside the 09:15–15:30 IST session.'
           : 'Not an NSE trading day.',
-      };
+        rejectCheckId: 'market-open',
+      });
     }
 
     // ---- 2. Ask the one canonical Sentinel ---------------------------------
-    const evaluation = await this.sentinel.evaluate({
-      symbol: profile.symbol,
-      userId: profile.accountUserId,
-      strategyId: profile.strategyId,
-      minConfidence: profile.minConfidence,
-    });
+    let evaluation: ExecutionEvaluationDto;
+    try {
+      evaluation = await this.sentinel.evaluate({
+        symbol: profile.symbol,
+        userId: profile.accountUserId,
+        strategyId: profile.strategyId,
+        minConfidence: profile.minConfidence,
+      });
+    } catch (err) {
+      // Sentinel being unreachable is a FAULT, not a quiet market, and the two
+      // must never read the same in the console. It is recorded as a failure
+      // against the profile without moving it to ERROR: an upstream outage is
+      // transient and does not deserve an operator-cleared halt.
+      const message = (err as Error).message;
+      this.logger.warn(`${profile.name}: Sentinel evaluation failed — ${message}`);
+      await this.noteError(profile.id, `Sentinel evaluation failed: ${message}`);
+      return finish({
+        ...base,
+        outcome: 'failed',
+        verdict: null,
+        reason: `Sentinel evaluation failed: ${message}`,
+        rejectCheckId: 'market-unavailable',
+      });
+    }
 
     if (!evaluation.executable || !evaluation.strikes.selected || !evaluation.expiry) {
-      // Nothing is written. Sentinel declining to publish is the designed
+      // No intent is written. Sentinel declining to publish is the designed
       // resting state, and a row per quiet minute would make the intent table
-      // useless as a record of decisions.
-      return {
+      // useless as a record of decisions. The RUN row above still records it,
+      // which is the distinction §8 asks for: "Do not report 'no decision' when
+      // there was actually a decision that failed downstream."
+      return finish({
         ...base,
         outcome: 'skipped-no-signal',
         verdict: evaluation.verdict,
         reason: evaluation.reason,
-      };
+        rejectCheckId: null,
+      });
     }
 
     const selected = evaluation.strikes.selected;
@@ -204,18 +313,21 @@ export class PaperExecutionService {
     let price;
     try {
       // Resolves through the broker scrip master and upserts the Instrument row
-      // — the same path a human order ticket takes for an option contract.
+      // — the same path a human order ticket takes for an option contract. The
+      // price is the CURRENT one from the live bridge; §5 forbids a hardcoded
+      // number and this is where that is honoured.
       instrument = await this.marketPrice.resolveInstrument(symbol);
       price = await this.marketPrice.getPrice(instrument);
     } catch (err) {
       const message = (err as Error).message;
       this.logger.warn(`${profile.name}: could not price ${symbol} — ${message}`);
-      return {
+      return finish({
         ...base,
         outcome: 'failed',
         verdict: evaluation.verdict,
         reason: `Selected contract ${symbol} could not be resolved or priced: ${message}`,
-      };
+        rejectCheckId: 'market-unavailable',
+      });
     }
 
     const quantity = profile.lots * instrument.lotSize;
@@ -235,8 +347,12 @@ export class PaperExecutionService {
 
     const facts = await this.gatherFacts(profile.accountUserId, profile.id, now);
     const policy = evaluatePolicy({
-      enabled: profile.enabled,
+      enabled: isExecutingState(profileState),
       environment: profile.environment,
+      // From the STATE, never from the row — see the `environment-authorized`
+      // check. `engine` is non-null here: a non-executing state returned at
+      // step 1.
+      authorizedEnvironment: engine ?? 'PAPER',
       minConfidence: profile.minConfidence,
       maxOpenPositions: profile.maxOpenPositions,
       maxOrdersPerDay: profile.maxOrdersPerDay,
@@ -263,10 +379,15 @@ export class PaperExecutionService {
       idempotencyKey,
       now,
       policy,
+      environment: (engine ?? 'PAPER') as ExecutionEnvironment,
     });
 
+    // A decision was reached, whatever happens to it downstream. Promote the
+    // profile from armed to running, and stamp the decision clock.
+    await this.markDecision(profile.id, now);
+
     if (created.duplicate) {
-      return {
+      return finish({
         ...base,
         outcome: 'duplicate',
         verdict: evaluation.verdict,
@@ -274,115 +395,214 @@ export class PaperExecutionService {
         orderId: created.intent.orderId ?? null,
         reason: 'This decision was already recorded; no second order was created.',
         checks: policy.checks,
-      };
+        rejectCheckId: null,
+      });
     }
 
     if (!policy.allowed) {
-      return {
+      return finish({
         ...base,
         outcome: 'rejected',
         verdict: evaluation.verdict,
         intentId: created.intent.id,
         reason: policy.reason ?? 'Rejected by execution policy.',
         checks: policy.checks,
-      };
+        rejectCheckId: policy.failedCheckId,
+      });
     }
 
-    // ---- 6. Submit through the EXISTING order service ----------------------
+    // ---- 6. RE-READ THE AUTHORIZATION, immediately before submitting -------
+    //
+    // §15: "If a Sentinel worker is currently running, the execution layer must
+    // re-check authorization immediately before creating an order. Do NOT
+    // assume that checking authorization only at scheduler startup is
+    // sufficient."
+    //
+    // Everything between step 1 and here involved a network call to Sentinel
+    // and two to the market-data bridge — seconds, during which an operator may
+    // have hit Disarm or Pause, or the account holder may have switched
+    // AutoTrade off. Their decision must win over a pass that started before it.
+    const live = await this.state.currentAuthorization(profile.id);
+    if (!live.mayExecute) {
+      await this.refuseIntent(created.intent.id, stateRefusal(live.state), PROFILE_NOT_ARMED);
+      return finish({
+        ...base,
+        outcome: 'rejected',
+        state: live.state,
+        environment: live.environment,
+        verdict: evaluation.verdict,
+        intentId: created.intent.id,
+        reason: `${stateRefusal(live.state)} (changed while this pass was in flight)`,
+        checks: policy.checks,
+        rejectCheckId: PROFILE_NOT_ARMED,
+      });
+    }
+    if (live.accountScope === 'USER_PAPER' && !live.autoTradeEnabled) {
+      const reason = 'AutoTrade was switched off by the account holder while this pass was in flight.';
+      await this.refuseIntent(created.intent.id, reason, AUTOTRADE_DISABLED);
+      return finish({
+        ...base,
+        outcome: 'rejected',
+        state: live.state,
+        environment: live.environment,
+        verdict: evaluation.verdict,
+        intentId: created.intent.id,
+        reason,
+        checks: policy.checks,
+        rejectCheckId: AUTOTRADE_DISABLED,
+      });
+    }
+
+    // ---- 7. Submit through the adapter the STATE authorizes ----------------
+    let adapter;
     try {
-      const order = await this.orders.placeOrder(profile.accountUserId, {
+      adapter = this.adapters.resolve(live.state, profile.name);
+    } catch (err) {
+      // The resolver refusing is a hard stop, and the most likely cause is a
+      // live-armed profile on a deployment where live is switched off. Recorded
+      // as a refusal with its own check id rather than as a crash.
+      const message = (err as Error).message;
+      await this.refuseIntent(created.intent.id, message, LIVE_NOT_AUTHORIZED);
+      return finish({
+        ...base,
+        outcome: 'rejected',
+        state: live.state,
+        environment: live.environment,
+        verdict: evaluation.verdict,
+        intentId: created.intent.id,
+        reason: message,
+        checks: policy.checks,
+        rejectCheckId: LIVE_NOT_AUTHORIZED,
+      });
+    }
+
+    let result: AdapterResult;
+    try {
+      result = await adapter.submit({
+        userId: profile.accountUserId,
         symbol,
         side,
         type: profile.orderType,
         quantity,
         productType: profile.productType,
-      });
-
-      // The link is written in the same statement that advances the intent, so
-      // a submitted intent always has its order and an order produced by this
-      // loop always names its intent.
-      const filled = order.status === 'FILLED';
-      const omsRejected = order.status === 'REJECTED';
-      await this.prisma.$transaction(async (tx) => {
-        await tx.order.update({ where: { id: order.id }, data: { executionIntentId: created.intent.id } });
-        await tx.executionIntent.update({
-          where: { id: created.intent.id },
-          data: {
-            status: omsRejected ? ExecutionIntentStatus.FAILED : filled ? ExecutionIntentStatus.FILLED : ExecutionIntentStatus.SUBMITTED,
-            submittedAt: new Date(),
-            ...(omsRejected
-              ? {
-                  rejectReason: `OMS rejected the order: ${order.rejectReason ?? 'no reason given'}`,
-                  rejectCheckId: OMS_REJECTED,
-                }
-              : {}),
-          },
-        });
-        if (filled && order.avgFillPrice) {
-          await tx.executionOutcome.create({
-            data: {
-              intentId: created.intent.id,
-              entryPrice: order.avgFillPrice,
-              quantity: order.filledQuantity,
-              // Opened, not closed. `realizedPnl` stays 0 and `result` stays
-              // OPEN until `reconcile` sees the position flatten — writing a
-              // win/loss here would be a guess about a trade that has not
-              // finished.
-              realizedPnl: 0,
-              charges: order.charges ?? 0,
-              result: 'OPEN',
-              exitReason: 'PENDING',
-              entryAt: new Date(),
-            },
-          });
-        }
-      });
-
-      this.logger.log(
-        `${profile.name}: ${order.status} ${side} ${quantity} ${symbol} @ ${order.avgFillPrice ?? 'resting'} (intent ${created.intent.id})`,
-      );
-
-      return {
-        ...base,
-        outcome: omsRejected ? 'failed' : 'executed',
-        verdict: evaluation.verdict,
         intentId: created.intent.id,
-        orderId: order.id,
-        reason: omsRejected
-          ? `OMS rejected the order: ${order.rejectReason ?? 'no reason given'}`
-          : `${order.status} — ${side} ${quantity} ${symbol}.`,
-        checks: policy.checks,
-      };
+        profileId: profile.id,
+      });
     } catch (err) {
       const message = (err as Error).message;
+      const isAuthz = err instanceof LiveExecutionNotAuthorizedError;
       this.logger.error(`${profile.name}: submission failed for ${symbol} — ${message}`);
-      await this.prisma.executionIntent.update({
-        where: { id: created.intent.id },
-        data: {
-          status: ExecutionIntentStatus.FAILED,
-          rejectReason: `Submission raised: ${message}`,
-          // Policy passed and the OMS still refused — the discipline limits
-          // inside placeOrder are the usual reason, and an operator counting
-          // today's refusals must see them alongside the policy ones.
-          rejectCheckId: SUBMISSION_RAISED,
-        },
-      });
-      return {
+      await this.refuseIntent(
+        created.intent.id,
+        isAuthz ? message : `Submission raised: ${message}`,
+        isAuthz ? LIVE_NOT_AUTHORIZED : SUBMISSION_RAISED,
+      );
+      await this.noteError(profile.id, message);
+      return finish({
         ...base,
         outcome: 'failed',
+        state: live.state,
+        environment: live.environment,
         verdict: evaluation.verdict,
         intentId: created.intent.id,
-        reason: `Submission raised: ${message}`,
+        reason: isAuthz ? message : `Submission raised: ${message}`,
         checks: policy.checks,
-      };
+        rejectCheckId: isAuthz ? LIVE_NOT_AUTHORIZED : SUBMISSION_RAISED,
+      });
     }
+
+    const venueRejected = result.status === 'REJECTED';
+    const filled = result.status === 'FILLED';
+
+    // The link is written in the same statement that advances the intent, so a
+    // submitted intent always has its order and an order produced by this loop
+    // always names its intent.
+    await this.prisma.$transaction(async (tx) => {
+      if (result.orderId) {
+        await tx.order.update({ where: { id: result.orderId }, data: { executionIntentId: created.intent.id } });
+      }
+      await tx.executionIntent.update({
+        where: { id: created.intent.id },
+        data: {
+          status: venueRejected
+            ? ExecutionIntentStatus.FAILED
+            : filled
+              ? ExecutionIntentStatus.FILLED
+              : ExecutionIntentStatus.SUBMITTED,
+          submittedAt: new Date(),
+          // Null on every paper pass — asserted, not assumed.
+          brokerOrderId: result.brokerOrderId,
+          brokerOrderStatus: result.brokerOrderId ? result.status : null,
+          brokerSubmittedAt: result.brokerOrderId ? new Date() : null,
+          ...(venueRejected
+            ? {
+                rejectReason: `${result.engine === 'LIVE' ? 'The broker' : 'The OMS'} rejected the order: ${result.rejectReason ?? 'no reason given'}`,
+                rejectCheckId: OMS_REJECTED,
+              }
+            : {}),
+        },
+      });
+      if (filled && result.avgFillPrice != null) {
+        await tx.executionOutcome.create({
+          data: {
+            intentId: created.intent.id,
+            entryPrice: result.avgFillPrice,
+            quantity: result.filledQuantity,
+            // Opened, not closed. `realizedPnl` stays 0 and `result` stays OPEN
+            // until `reconcile` sees the position flatten — writing a win/loss
+            // here would be a guess about a trade that has not finished.
+            realizedPnl: 0,
+            charges: result.charges ?? 0,
+            result: 'OPEN',
+            exitReason: 'PENDING',
+            entryAt: new Date(),
+          },
+        });
+      }
+      await tx.executionProfile.update({
+        where: { id: profile.id },
+        data: {
+          lastOrderAt: new Date(),
+          ...(filled ? { lastFillAt: new Date() } : {}),
+        },
+      });
+    });
+
+    this.logger.log(
+      `${profile.name}: ${result.engine} ${result.status} ${side} ${quantity} ${symbol} @ ${result.avgFillPrice ?? 'resting'} (intent ${created.intent.id})`,
+    );
+
+    return finish({
+      ...base,
+      outcome: venueRejected ? 'failed' : 'executed',
+      state: live.state,
+      environment: live.environment,
+      verdict: evaluation.verdict,
+      intentId: created.intent.id,
+      orderId: result.orderId,
+      brokerOrderId: result.brokerOrderId,
+      reason: venueRejected
+        ? `${result.engine === 'LIVE' ? 'The broker' : 'The OMS'} rejected the order: ${result.rejectReason ?? 'no reason given'}`
+        : `${result.status} — ${side} ${quantity} ${symbol}.`,
+      checks: policy.checks,
+      rejectCheckId: venueRejected ? OMS_REJECTED : null,
+    });
   }
 
-  /** Every enabled profile, one pass each. One profile's failure never stops the rest. */
+  /**
+   * Every profile the state machine currently authorizes, one pass each.
+   *
+   * Selected by STATE, not by `enabled`. The two are kept in sync by
+   * `ExecutionStateService`, but the executor asks the authority rather than
+   * its mirror — so a hand-edited `enabled=true` on a DISARMED row selects
+   * nothing.
+   *
+   * One profile's failure never stops the rest (§19).
+   */
   async runAllEnabled(now: Date = new Date()): Promise<ExecutionRunResult[]> {
     const profiles = await this.prisma.executionProfile.findMany({
-      where: { enabled: true, environment: 'PAPER' },
-      select: { id: true, name: true },
+      where: { state: { in: ['PAPER_ARMED', 'PAPER_RUNNING', 'PAPER_QUALIFIED', 'LIVE_ARMED', 'LIVE_RUNNING'] } },
+      select: { id: true, name: true, state: true },
     });
     const results: ExecutionRunResult[] = [];
     for (const profile of profiles) {
@@ -397,12 +617,106 @@ export class PaperExecutionService {
           reason: (err as Error).message,
           intentId: null,
           orderId: null,
+          brokerOrderId: null,
+          environment: this.adapters.engineFor(profile.state as ExecutionProfileState),
+          state: profile.state as ExecutionProfileState,
           verdict: null,
           checks: [],
+          rejectCheckId: SUBMISSION_RAISED,
+          latencyMs: 0,
         });
       }
     }
     return results;
+  }
+
+  // ------------------------------------------------------------------ private
+
+  /**
+   * The per-pass observability record (§24), plus the live telemetry event the
+   * admin console's SSE stream renders.
+   *
+   * Written for EVERY pass including the quiet ones — that is the whole point.
+   * Failures here are logged and swallowed by the caller: telemetry must never
+   * be the reason an execution result is lost.
+   */
+  private async recordRun(
+    profile: { id: string; accountUserId: string; symbol: string },
+    result: ExecutionRunResult,
+    trigger: 'scheduler' | 'manual',
+    startedAtMs: number,
+  ): Promise<void> {
+    const startedAt = new Date(startedAtMs);
+    await this.prisma.$transaction([
+      this.prisma.executionRun.create({
+        data: {
+          profileId: profile.id,
+          userId: profile.accountUserId,
+          environment: (result.environment ?? 'PAPER') as ExecutionEnvironment,
+          symbol: profile.symbol,
+          trigger,
+          outcome: result.outcome,
+          reason: result.reason.slice(0, 1000),
+          intentId: result.intentId,
+          orderId: result.orderId,
+          rejectCheckId: result.rejectCheckId,
+          error: result.outcome === 'failed' ? result.reason.slice(0, 1000) : null,
+          startedAt,
+          finishedAt: new Date(),
+          latencyMs: result.latencyMs,
+        },
+      }),
+      this.prisma.executionProfile.update({
+        where: { id: profile.id },
+        data: { lastRunAt: new Date() },
+      }),
+    ]);
+
+    // The console's live stream. Emitted through the EXISTING telemetry bus,
+    // which `GET /admin/stream` already fans out over SSE — §16: "Do not
+    // introduce unnecessary infrastructure if the repository already has a
+    // realtime/event mechanism."
+    //
+    // `detail` is deliberately one short line. The bus feeds a browser, and the
+    // rule on this channel is that nothing rendered from it may carry more than
+    // a person can read at a glance; the full record is the ExecutionRun row
+    // written immediately above.
+    this.telemetry.agentActivity({
+      runId: result.intentId ?? `run:${profile.id}:${startedAtMs}`,
+      system: 'sentinel-execution',
+      agent: result.profileName,
+      state: result.outcome === 'executed' ? 'done' : result.outcome === 'failed' ? 'error' : 'idle',
+      detail: `${result.environment ?? 'PAPER'} ${result.outcome}: ${result.reason}`.slice(0, 200),
+      durationMs: result.latencyMs,
+      at: Date.now(),
+    });
+  }
+
+  /** A decision was reached: stamp the clock and promote armed → running. */
+  private async markDecision(profileId: string, now: Date): Promise<void> {
+    await this.prisma.executionProfile
+      .update({ where: { id: profileId }, data: { lastDecisionAt: now } })
+      .catch(() => undefined);
+    // Silent: on every pass after the first, there is nothing to promote.
+    await this.state.noteRunning(profileId).catch(() => undefined);
+  }
+
+  /** Record a fault on the profile WITHOUT halting it — see `markError` for the halt. */
+  private async noteError(profileId: string, message: string): Promise<void> {
+    await this.prisma.executionProfile
+      .update({
+        where: { id: profileId },
+        data: { lastError: message.slice(0, 500), lastErrorAt: new Date() },
+      })
+      .catch(() => undefined);
+  }
+
+  /** Turn an already-created intent into a refusal, with a groupable reason. */
+  private async refuseIntent(intentId: string, reason: string, checkId: string): Promise<void> {
+    await this.prisma.executionIntent.update({
+      where: { id: intentId },
+      data: { status: ExecutionIntentStatus.REJECTED, rejectReason: reason, rejectCheckId: checkId },
+    });
   }
 
   /**
@@ -454,10 +768,9 @@ export class PaperExecutionService {
       }),
       this.prisma.paperWallet.findUnique({ where: { userId }, select: { cashBalance: true } }),
     ]);
-    const positions = profileOpenPositions;
 
     return {
-      openPositions: positions,
+      openPositions: profileOpenPositions,
       ordersToday,
       realizedPnlToday: Number(realized._sum.realizedPnl ?? 0),
       // A wallet that does not exist yet is not zero capital — `ensureWallet`
@@ -488,8 +801,10 @@ export class PaperExecutionService {
     idempotencyKey: string;
     now: Date;
     policy: PolicyDecision;
+    environment: ExecutionEnvironment;
   }): Promise<{ intent: { id: string; orderId?: string | null }; duplicate: boolean }> {
-    const { profile, evaluation, selected, expiry, side, contract, quantity, idempotencyKey, now, policy } = args;
+    const { profile, evaluation, selected, expiry, side, contract, quantity, idempotencyKey, now, policy, environment } =
+      args;
 
     try {
       const intent = await this.prisma.executionIntent.create({
@@ -497,7 +812,7 @@ export class PaperExecutionService {
           profileId: profile.id,
           idempotencyKey,
           status: policy.allowed ? ExecutionIntentStatus.PROPOSED : ExecutionIntentStatus.REJECTED,
-          environment: 'PAPER',
+          environment,
           sentinelRunId: evaluation.runId,
           agent: profile.agent,
           strategyId: evaluation.strategyId ?? profile.strategyId,
@@ -593,6 +908,7 @@ export class PaperExecutionService {
                 confidence: Math.round(evaluation.confidence),
                 sentinelRunId: evaluation.runId,
                 underlyingSpot: evaluation.spot ?? undefined,
+                environment,
               },
             });
             if (claimed.count === 1) {

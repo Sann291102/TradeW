@@ -109,6 +109,32 @@ export const ADMIN_PROXY_ROUTES: RouteRule[] = [
   { method: 'POST', segments: ['execution', 'accounts', '*', 'agent-trading'] },
   { method: 'POST', segments: ['execution', 'profiles'] },
 
+  // --- The execution state machine (2026-08-24) ------------------------------
+  //
+  // `state` is the single write that arms, disarms, pauses, resumes and — with
+  // ARM_LIVE — authorizes real broker orders. It is listed as ONE rule because
+  // upstream it is one endpoint taking an action, and the action is validated
+  // against `OPERATOR_ACTIONS` there. Listing it here does NOT widen what an
+  // operator may do: ARM_LIVE is still refused unless the profile is
+  // PAPER_QUALIFIED with a passing snapshot, and no value in this request body
+  // can waive that.
+  { method: 'POST', segments: ['execution', 'profiles', '*', 'state'] },
+  { method: 'GET', segments: ['execution', 'profiles', '*', 'state-history'] },
+  // Paper qualification. The GET is a pure read; the POST re-measures and may
+  // promote PAPER_RUNNING → PAPER_QUALIFIED. Neither can reach a live state —
+  // that is ARM_LIVE above, and the transition table refuses it from anywhere
+  // else.
+  { method: 'GET', segments: ['execution', 'profiles', '*', 'qualification'] },
+  { method: 'POST', segments: ['execution', 'profiles', '*', 'qualification', 'evaluate'] },
+  // Per-pass telemetry, including the passes that decided nothing.
+  { method: 'GET', segments: ['execution', 'runs'] },
+  { method: 'GET', segments: ['execution', 'profiles', '*', 'runs'] },
+  // "Would this user see AutoTrade, and why not." A read of the same decision
+  // the user's own endpoint returns. There is deliberately NO console route
+  // that switches a user's AutoTrade on — that is the account holder's act and
+  // an operator must not be able to perform it for them.
+  { method: 'GET', segments: ['execution', 'autotrade', '*'] },
+
   // --- System graph (read-only projection of the whole platform) ------------
   // Every rule here is a GET. There is deliberately no write on this surface:
   // the visualisation is never the source of truth, so the console has no way

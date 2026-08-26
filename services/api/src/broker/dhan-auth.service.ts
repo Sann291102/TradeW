@@ -539,6 +539,73 @@ export class DhanAuthService {
     return null;
   }
 
+  /**
+   * The access token belonging to ONE named user, for a server-side call made
+   * on that user's behalf.
+   *
+   * ## Why this is separate from `currentAccessToken`
+   *
+   * That one answers "which credential does the shared market-data bridge run
+   * on" and deliberately falls back to `DHAN_ACCESS_TOKEN` — a deployment-wide
+   * token, correct for a public price feed and catastrophically wrong for an
+   * ORDER. Placing a trade with the feed-default operator's credential would
+   * put an agent's order in a stranger's brokerage account.
+   *
+   * So this method resolves strictly by `(provider, userId)`, has NO env
+   * fallback of any kind, and returns null rather than a token belonging to
+   * anybody else. Live execution refuses when it gets null; it never
+   * substitutes.
+   *
+   * ## What the caller may do with the return value
+   *
+   * Send it to Dhan in a request header, and nothing else. It must not be
+   * logged, returned in an HTTP response, attached to an intent, put in an
+   * agent prompt, or held beyond the call. `BrokerExecutionAdapter` is the only
+   * caller, and it does exactly that — see its docstring.
+   *
+   * NOT exposed over HTTP by any route. In-process only, like
+   * `currentAccessToken`.
+   */
+  async accessTokenForUser(
+    userId: string,
+  ): Promise<{ accessToken: string; brokerClientId: string | null } | null> {
+    const row = await this.prisma.brokerCredential.findUnique({
+      where: { provider_userId: { provider: PROVIDER, userId } },
+    });
+    if (!row) return null;
+    // An expired token is refused rather than handed out to fail at the venue:
+    // "your broker session has expired" is a fixable answer, and a 401 from
+    // Dhan in the middle of an order submission is not.
+    if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) return null;
+
+    const opened = this.open(row.accessToken, userId);
+    if (!opened) return null;
+    return { accessToken: opened, brokerClientId: row.brokerClientId };
+  }
+
+  /**
+   * Whether this user could place a live order — WITHOUT opening the credential.
+   *
+   * The eligibility check needs to know that a usable broker connection exists;
+   * it has no business decrypting anything to find out. Reads only the
+   * metadata columns, exactly as `status` does.
+   */
+  async liveExecutionReadiness(
+    userId: string,
+  ): Promise<{ connected: boolean; expired: boolean; brokerClientId: string | null; expiresAt: string | null }> {
+    const row = await this.prisma.brokerCredential.findUnique({
+      where: { provider_userId: { provider: PROVIDER, userId } },
+      select: { brokerClientId: true, expiresAt: true },
+    });
+    if (!row) return { connected: false, expired: false, brokerClientId: null, expiresAt: null };
+    return {
+      connected: true,
+      expired: row.expiresAt ? row.expiresAt.getTime() <= Date.now() : false,
+      brokerClientId: row.brokerClientId,
+      expiresAt: row.expiresAt?.toISOString() ?? null,
+    };
+  }
+
   // --------------------------------------------------------- crypto boundary
 
   /**

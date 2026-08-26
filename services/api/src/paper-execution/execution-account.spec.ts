@@ -133,15 +133,34 @@ describe('authorizeAccount — USER_PAPER (real TradeW accounts)', () => {
   });
 });
 
-describe('authorizeAccount — paper-only and account validity', () => {
-  it('refuses any environment that is not PAPER, on either scope', () => {
+describe('authorizeAccount — environment and account validity', () => {
+  it('refuses an environment the profile’s state does not authorize, on either scope', () => {
+    // The row says one thing and the state authorizes another, which can only
+    // happen outside this application. `authorizedEnvironment` defaults to
+    // PAPER here, so this is the "hand-edited row claims LIVE" case.
     for (const declaredScope of ['SYSTEM_PAPER', 'USER_PAPER'] as const) {
       for (const environment of ['LIVE', 'live', 'PROD', '']) {
         const r = auth({ environment, declaredScope, account: declaredScope === 'USER_PAPER' ? USER_ACCOUNT : SYSTEM_ACCOUNT });
         expect(r.authorized).toBe(false);
-        expect(check(r, 'environment-paper').passed).toBe(false);
+        expect(check(r, 'environment-authorized').passed).toBe(false);
       }
     }
+  });
+
+  it('ADMITS a live row when the state authorizes live', () => {
+    // The other direction, and the regression the end-to-end journey harness
+    // caught: while this check read `=== 'PAPER'`, a correctly qualified,
+    // correctly live-armed profile was refused by the ACCOUNT gate — before any
+    // policy or adapter was consulted — which made ARM_LIVE unable to do
+    // anything at all.
+    const r = auth({
+      environment: 'LIVE',
+      authorizedEnvironment: 'LIVE',
+      declaredScope: 'USER_PAPER',
+      account: USER_ACCOUNT,
+    });
+    expect(check(r, 'environment-authorized').passed).toBe(true);
+    expect(r.authorized).toBe(true);
   });
 
   it('refuses a profile whose account row does not exist', () => {

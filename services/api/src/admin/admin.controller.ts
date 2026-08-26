@@ -4,11 +4,15 @@ import { IsBoolean, IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, M
 import { AdminAccessGuard } from './admin-access.guard';
 import { AdminService } from './admin.service';
 import { CognitionService } from '../cognition/cognition.service';
+import { AutoTradeService } from '../paper-execution/autotrade.service';
 import { ExecutionAccountService } from '../paper-execution/execution-account.service';
 import { ExecutionProfileService } from '../paper-execution/execution-profile.service';
+import { ExecutionQualificationService } from '../paper-execution/execution-qualification.service';
 import { ExecutionQueryService } from '../paper-execution/execution-query.service';
 import { ExecutionSchedulerService } from '../paper-execution/execution-scheduler.service';
+import { ExecutionStateService } from '../paper-execution/execution-state.service';
 import { ExecutionTraceService } from '../paper-execution/execution-trace.service';
+import { OPERATOR_ACTIONS, type ExecutionStateAction } from '../paper-execution/execution-state';
 import { PaperExecutionService } from '../paper-execution/paper-execution.service';
 import { SECURITY } from '../swagger/swagger.setup';
 import { TelemetryService } from '../telemetry/telemetry.service';
@@ -59,6 +63,39 @@ class SetProfileEnabledDto {
   @ApiProperty({ description: 'True lets this execution profile trade on the next pass, false stops it.' })
   @IsBoolean()
   enabled!: boolean;
+}
+
+/**
+ * One transition of one execution profile's state machine.
+ *
+ * An ACTION, never a target state. `{ state: 'LIVE_ARMED' }` would be a request
+ * body that names an outcome, and the server would then be in the business of
+ * deciding whether that outcome is reachable from wherever the profile happens
+ * to be — with the client having already asserted the answer. An action names
+ * the INTENT and lets `evaluateTransition` decide the outcome, so `ARM_LIVE`
+ * from an unqualified profile is a refusal rather than a state assignment the
+ * server has to argue with.
+ *
+ * The enum is `OPERATOR_ACTIONS`, not every `ExecutionStateAction`: the
+ * system-driven ones (`NOTE_RUNNING`, `MARK_QUALIFIED`, …) are not reachable
+ * over HTTP at all. An operator must not be able to declare a profile qualified.
+ */
+class ExecutionStateActionDto {
+  @ApiProperty({
+    enum: OPERATOR_ACTIONS as unknown as string[],
+    description:
+      'ARM_PAPER arms for paper execution. DISARM is the stop button and works from any state. ' +
+      'PAUSE/RESUME suspend and restore without losing the state. ARM_LIVE is permitted ONLY from ' +
+      'PAPER_QUALIFIED with a passing qualification snapshot. DISARM_LIVE returns the profile to ' +
+      'PAPER_QUALIFIED. CLEAR_ERROR acknowledges a fault and leaves the profile DISARMED.',
+  })
+  @IsIn(OPERATOR_ACTIONS as unknown as string[])
+  action!: ExecutionStateAction;
+
+  @ApiPropertyOptional({ description: 'Free-text operator note, recorded on the transition.' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }
 
 class SetAgentPaperTradingDto {
@@ -205,6 +242,9 @@ export class AdminController {
     private readonly paperExecution: PaperExecutionService,
     private readonly executionAccounts: ExecutionAccountService,
     private readonly executionProfiles: ExecutionProfileService,
+    private readonly executionState: ExecutionStateService,
+    private readonly executionQualification: ExecutionQualificationService,
+    private readonly autoTrade: AutoTradeService,
   ) {}
 
   // -------------------------------------------------------------- overview
@@ -436,6 +476,27 @@ export class AdminController {
     return this.executionScheduler.status();
   }
 
+  /**
+   * Every execution PASS in the window, including the ones that decided nothing.
+   *
+   * The read that answers "is the loop working?" without inference. See
+   * `ExecutionQueryService.runs`.
+   */
+  @Get('execution/runs')
+  executionRuns(
+    @Query('limit') limit?: string,
+    @Query('hours') hours?: string,
+    @Query('profileId') profileId?: string,
+    @Query('outcome') outcome?: string,
+  ) {
+    return this.executionQuery.runs({
+      limit: Number(limit) || 100,
+      hours: Number(hours) || 24,
+      profileId,
+      outcome,
+    });
+  }
+
   /** Today's refusals grouped by the gate that produced them. */
   @Get('execution/rejections')
   executionRejections(@Query('hours') hours?: string) {
@@ -455,29 +516,116 @@ export class AdminController {
   }
 
   /**
-   * Turn one profile on or off.
+   * THE ARM/DISARM/PAUSE/LIVE SURFACE — one endpoint, one action vocabulary.
    *
-   * The env flag `PAPER_EXECUTION_ENABLED` still gates the scheduler, so this
-   * alone cannot start the loop — enabling is deliberately two acts in two
-   * places (see ExecutionSchedulerService).
+   * Every state change a human can make goes through here, so there is exactly
+   * one place to read to know what an operator is able to do. The action is
+   * validated against `OPERATOR_ACTIONS`, the transition against
+   * `evaluateTransition`, and the write is a compare-and-set that records who
+   * did it — see ExecutionStateService.
+   *
+   * `ARM_LIVE` is the one that matters: it is refused unless the profile is in
+   * PAPER_QUALIFIED *and* its stored qualification snapshot still passes. There
+   * is no parameter, header or body field on this route that can waive that.
+   */
+  @Post('execution/profiles/:id/state')
+  executionProfileState(
+    @Param('id') id: string,
+    @Body() body: ExecutionStateActionDto,
+    @Req() req: { user?: { sub?: string } },
+  ) {
+    return this.executionState.apply(id, body.action, `admin:${req.user?.sub ?? 'unknown'}`, {
+      reason: body.reason ?? null,
+    });
+  }
+
+  /** One profile's full transition history — who armed it, when, and why. */
+  @Get('execution/profiles/:id/state-history')
+  executionProfileStateHistory(@Param('id') id: string, @Query('limit') limit?: string) {
+    return this.executionState.history(id, Number(limit) || 50);
+  }
+
+  /**
+   * Turn one profile on or off. RETAINED for the older console build.
+   *
+   * Mapped onto `ARM_PAPER`/`DISARM` rather than writing `enabled` directly, so
+   * a caller using the old shape still produces an audited transition and
+   * cannot leave `enabled` and `state` disagreeing. Prefer the `/state`
+   * endpoint above, which can express the other five acts.
    */
   @Post('execution/profiles/:id/enabled')
-  setExecutionProfileEnabled(@Param('id') id: string, @Body() body: SetProfileEnabledDto) {
-    return this.admin.setExecutionProfileEnabled(id, body.enabled);
+  setExecutionProfileEnabled(
+    @Param('id') id: string,
+    @Body() body: SetProfileEnabledDto,
+    @Req() req: { user?: { sub?: string } },
+  ) {
+    return this.executionState.setEnabled(id, body.enabled, `admin:${req.user?.sub ?? 'unknown'}`);
   }
 
   /**
    * Run one profile's pass immediately, instead of waiting for the timer.
    *
-   * This is the same `runProfile` the scheduler calls — not a test double and
-   * not a shortcut past any check. An operator triggering it gets exactly the
-   * behaviour the loop would have had on its next tick, including every policy
-   * gate and the idempotency key, so a hand-run during an active decision
-   * window correctly reports `duplicate` rather than opening a second position.
+   * A DIAGNOSTIC, and §7 keeps it as one: armed profiles now execute
+   * automatically, so this is no longer the way trading happens. It is the way
+   * an operator asks "what would the next tick do?" and gets the answer now.
+   *
+   * It is the same `runProfile` the scheduler calls — not a test double and not
+   * a shortcut past any check. An operator triggering it gets exactly the
+   * behaviour the loop would have had on its next tick, including the state
+   * machine, the AutoTrade switch, every policy gate and the idempotency key,
+   * so a hand-run during an active decision window correctly reports
+   * `duplicate` rather than opening a second position. A disarmed profile
+   * reports `skipped-disabled` here exactly as it would on a tick.
    */
   @Post('execution/profiles/:id/run')
   runExecutionProfile(@Param('id') id: string) {
-    return this.paperExecution.runProfile(id);
+    return this.paperExecution.runProfile(id, new Date(), 'manual');
+  }
+
+  // ---- Paper qualification (§10) ------------------------------------------
+
+  /**
+   * Where this profile stands against its paper-qualification criteria.
+   *
+   * A READ. It recomputes when no snapshot exists yet, but never promotes —
+   * `promote` is false, so a GET cannot move the state machine. The sweep in
+   * `ExecutionSchedulerService` is what promotes.
+   */
+  @Get('execution/profiles/:id/qualification')
+  executionQualificationStatus(@Param('id') id: string) {
+    return this.executionQualification.current(id);
+  }
+
+  /**
+   * Re-measure now, and promote or demote if the verdict changed.
+   *
+   * Passing here can move a profile PAPER_RUNNING → PAPER_QUALIFIED. It can
+   * NEVER move one to a live state; that requires `ARM_LIVE` above. §10's
+   * "qualification does not automatically enable live trading" is enforced by
+   * the transition table, not by this endpoint's restraint.
+   */
+  @Post('execution/profiles/:id/qualification/evaluate')
+  evaluateExecutionQualification(@Param('id') id: string) {
+    return this.executionQualification.evaluate(id, { promote: true });
+  }
+
+  /** Recent passes for one profile — including the ones that produced nothing. */
+  @Get('execution/profiles/:id/runs')
+  executionProfileRuns(@Param('id') id: string, @Query('limit') limit?: string) {
+    return this.executionQuery.runs({ profileId: id, limit: Number(limit) || 50 });
+  }
+
+  /**
+   * "Would this user see AutoTrade, and if not, why?"
+   *
+   * The same decision the user's own `/autotrade/status` returns, answered for
+   * a named account so support can see it without impersonating anybody. Reads
+   * only; nothing here activates anything, and there is no route by which an
+   * operator can switch on a user's AutoTrade — that is the user's own act.
+   */
+  @Get('execution/autotrade/:userId')
+  executionAutoTradeFor(@Param('userId') userId: string) {
+    return this.autoTrade.status(userId);
   }
 
   // ---- Account binding ----------------------------------------------------

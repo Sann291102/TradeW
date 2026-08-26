@@ -567,36 +567,22 @@ export class AdminService {
     return user;
   }
 
-  /**
-   * Arm or disarm one execution profile.
-   *
-   * Audited like `setAdmin` and for the same reason: this is the switch that
-   * decides whether an autonomous agent may place orders, so "who turned it on,
-   * and when" has to survive in a table rather than in a log line that ages out.
-   *
-   * `environment` is echoed back deliberately — an operator arming a profile
-   * should see PAPER in the response confirming what they just armed.
-   */
-  async setExecutionProfileEnabled(id: string, enabled: boolean) {
-    const profile = await this.prisma.executionProfile.update({
-      where: { id },
-      data: { enabled },
-      select: { id: true, name: true, agent: true, symbol: true, environment: true, enabled: true },
-    });
-    await this.prisma.auditEvent.create({
-      data: {
-        eventType: enabled ? 'execution.profile.enabled' : 'execution.profile.disabled',
-        metadata: {
-          profileId: profile.id,
-          profileName: profile.name,
-          agent: profile.agent,
-          symbol: profile.symbol,
-          environment: profile.environment,
-        },
-      },
-    });
-    return profile;
-  }
+  // ---- Arming moved to ExecutionStateService, 2026-08-24 -----------------
+  //
+  // `setExecutionProfileEnabled` used to live here and wrote
+  // `ExecutionProfile.enabled` directly. It has been REMOVED rather than
+  // deprecated, because leaving it would have left two writers of the arming
+  // decision — and the second one knew nothing about the state machine that
+  // replaced the boolean. A profile armed through this method would have read
+  // `enabled=true` while its `state` still said DISABLED, which the executor
+  // (which selects on `state`) would correctly refuse to run, producing an
+  // agent that looks armed in the console and never trades. That is precisely
+  // the class of bug §2 describes.
+  //
+  // `AdminController` now delegates the same route to
+  // `ExecutionStateService.setEnabled`, which maps it onto ARM_PAPER/DISARM,
+  // keeps `enabled` in sync as a derived mirror, and writes both an
+  // `ExecutionStateTransition` and the `AuditEvent` this method used to write.
 
   // -------------------------------------------------------------- health
 

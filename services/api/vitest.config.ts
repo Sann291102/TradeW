@@ -81,6 +81,33 @@ export default defineConfig({
       //    labelling a real account SYSTEM_PAPER to skip the consent check, and
       //    marking it USER_PAPER without ever asking.
       'src/paper-execution/execution-account.spec.ts',
+      //  · state    — THE authorization model, replacing the single `enabled`
+      //    boolean. Every case is a way real money gets spent by accident:
+      //    ARM_LIVE reachable from somewhere other than PAPER_QUALIFIED, a
+      //    metrics sweep standing a live agent down on its own, RESUME
+      //    guessing LIVE from a missing column, DISARM refusing to work from
+      //    the state you most need to stop.
+      'src/paper-execution/execution-state.spec.ts',
+      //  · qualification — the arithmetic that decides whether a profile may
+      //    be CONSIDERED for live. Drawdown measured against cumulative P&L
+      //    instead of account equity turns a 0.8% dip into an "80% drawdown"
+      //    and fires the criterion on a profitable strategy; a NaN threshold
+      //    from a typo'd env var silently makes a criterion unpassable; a null
+      //    win rate read as 0% libels a strategy that has not traded.
+      'src/paper-execution/execution-qualification.spec.ts',
+      //  · eligibility — who may use AutoTrade. §14's rule is that hiding a
+      //    button is not security, so the decision the UI renders and the
+      //    decision the activation endpoint enforces are the same function,
+      //    asserted here once.
+      'src/paper-execution/autotrade-eligibility.spec.ts',
+      //  · THE PAPER/LIVE BOUNDARY. The single most important suite in this
+      //    repository: a paper-enabled Sentinel must never place a real broker
+      //    order. It asserts not merely that the broker adapter was not
+      //    RETURNED but that no broker request was MADE — those are different
+      //    claims and only the second is the safety property. It also pins the
+      //    credential rules: the token reaches a request header and appears in
+      //    no body, no result and no persisted row.
+      'src/paper-execution/paper-live-boundary.spec.ts',
       // Who is allowed to use a paid capability, and until when.
       // Active pricing served to every surface. Asserts across the API boundary
       // that no route can produce a withdrawn annual Sentinel term.

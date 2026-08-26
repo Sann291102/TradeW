@@ -8,6 +8,7 @@ import { buildDashboardModel } from '@/lib/sentinel/dashboardModel';
 import { findMarket } from '@/lib/sentinel/markets';
 import { SentinelWatchProvider, useSentinelWatch } from '@/lib/sentinel/WatchContext';
 import type { StrategyMode } from '@/lib/sentinel/types';
+import { AutoTradePanel } from '@/components/sentinel/AutoTradePanel';
 import { SentinelConnectionBanner } from '@/components/sentinel/SentinelConnectionBanner';
 import { WatchContextBadge } from '@/components/sentinel/WatchContextBadge';
 import { SentinelDashboard } from '@/components/sentinel/dashboard/SentinelDashboard';
@@ -118,7 +119,16 @@ function SentinelWorkspaceInner() {
             well, where it would only render its own copy of the same message.
           */}
           {unavailable.kind !== 'unauthenticated' && unavailable.kind !== 'entitlement-required' && (
-            <div className="mt-4">
+            <div className="mt-4 space-y-4">
+              {/*
+                Rendered here too, for the same reason the strategy workspace is:
+                a fault takes away only what it actually broke. `/observe` being
+                down does not stop the execution loop — it reads Sentinel through
+                a different call on the server — so an agent may well still be
+                trading this account, and that is precisely the moment a user
+                most needs to be able to see and stop it.
+              */}
+              <AutoTradePanel />
               <SentinelStrategyWorkspace />
             </div>
           )}
@@ -139,6 +149,17 @@ function SentinelWorkspaceInner() {
       <main className="mx-auto max-w-[1600px] px-4 py-5 sm:px-6">
         {/* Above the dashboard, not instead of it. */}
         {reconnecting && <SentinelConnectionBanner fault={reconnecting} updatedAt={updatedAt} />}
+
+        {/*
+          AutoTrade sits ABOVE the reading, because it is the one thing on this
+          page that is acting rather than observing, and a user must not have to
+          scroll to find out whether an agent is trading their account.
+
+          It renders null for everyone the server has not marked `visible` — no
+          entitlement check happens here; see AutoTradePanel.
+        */}
+        <AutoTradePanel className="mb-4" />
+
         <SentinelDashboard
           model={model}
           symbol={symbol}

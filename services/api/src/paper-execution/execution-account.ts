@@ -52,8 +52,17 @@ export interface AccountAuthorization {
 export type AccountScope = 'SYSTEM_PAPER' | 'USER_PAPER';
 
 export interface AccountAuthorizationInput {
-  /** From the profile. */
+  /** `ExecutionProfile.environment` — a RECORD of the engine, on the row. */
   environment: string;
+  /**
+   * The engine the profile's STATE authorizes (`environmentFor`).
+   *
+   * Compared against the row rather than either being trusted alone — the same
+   * rule, and the same reasoning, as `execution-policy.ts`'s
+   * `environment-authorized` check. Defaults to PAPER so a caller that predates
+   * the live boundary keeps its exact previous behaviour.
+   */
+  authorizedEnvironment?: 'PAPER' | 'LIVE';
   declaredScope: AccountScope;
   symbol: string;
   agent: string;
@@ -95,14 +104,30 @@ export function authorizeAccount(input: AccountAuthorizationInput): AccountAutho
   const push = (id: string, label: string, passed: boolean, detail: string) =>
     checks.push({ id, label, passed, detail });
 
-  const isPaper = input.environment === 'PAPER';
+  // ---- THE ENVIRONMENT CHECK, and why it stopped saying "must be PAPER" ---
+  //
+  // This read `input.environment === 'PAPER'` while LIVE was unrepresentable,
+  // which was correct then and became a permanent veto on live execution the
+  // moment the state machine could authorize it: a correctly qualified,
+  // correctly live-armed profile was refused HERE, by the account gate, before
+  // any policy or adapter was consulted.
+  //
+  // It now compares the row against what the STATE authorizes. The guarantee is
+  // unchanged in the direction that matters — editing the `environment` column
+  // to LIVE grants nothing, because `authorizedEnvironment` is derived from the
+  // state and the mismatch is refused — and a legitimately live-armed profile
+  // is no longer refused for being what it is.
+  const authorized = input.authorizedEnvironment ?? 'PAPER';
+  const environmentMatches = input.environment === authorized;
   push(
-    'environment-paper',
-    'Environment is PAPER',
-    isPaper,
-    isPaper
-      ? 'Paper environment — the live broker path is unreachable from here.'
-      : `Refused: environment is "${input.environment}", not PAPER.`,
+    'environment-authorized',
+    'Environment matches the arming',
+    environmentMatches,
+    environmentMatches
+      ? authorized === 'PAPER'
+        ? 'Paper environment — the live broker path is unreachable from here.'
+        : 'Live environment, as this profile’s state authorizes. The broker path is reachable.'
+      : `Refused: the row says "${input.environment}" but this profile's state authorizes ${authorized}.`,
   );
 
   const account = input.account;

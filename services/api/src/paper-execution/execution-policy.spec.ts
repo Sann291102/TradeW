@@ -12,6 +12,7 @@ import {
 const OK: PolicyInput = {
   enabled: true,
   environment: 'PAPER',
+  authorizedEnvironment: 'PAPER',
   minConfidence: 70,
   maxOpenPositions: 1,
   maxOrdersPerDay: 6,
@@ -40,15 +41,34 @@ describe('evaluatePolicy', () => {
     expect(decision.checks.length).toBeGreaterThan(5);
   });
 
-  it('refuses any environment that is not PAPER', () => {
-    // `ExecutionEnvironment` has one member, so a non-PAPER value can only come
-    // from outside this application. Refusing it is what makes "live money is
-    // unrepresentable" true even against a hand-edited row.
+  it('refuses an environment the profile’s state does not authorize', () => {
+    // The row says one thing, the state authorizes another. That can only come
+    // from outside this application — a direct SQL edit, a restore from a
+    // future schema — and refusing it is what keeps "live money is
+    // unreachable" true even against a hand-edited row.
+    //
+    // Note the direction: `authorizedEnvironment` comes from
+    // `environmentFor(state)`, so editing the COLUMN to LIVE does not grant
+    // anything. It only makes the row inconsistent, and inconsistent is
+    // refused.
     for (const environment of ['LIVE', 'live', 'PROD', '']) {
-      const decision = fail({ environment });
+      const decision = fail({ environment, authorizedEnvironment: 'PAPER' });
       expect(decision.allowed).toBe(false);
-      expect(decision.checks.find((c) => c.id === 'environment-paper')!.passed).toBe(false);
+      expect(decision.checks.find((c) => c.id === 'environment-authorized')!.passed).toBe(false);
     }
+  });
+
+  it('ADMITS a live row when the state authorizes live', () => {
+    // The regression this check exists to prevent in the other direction.
+    //
+    // While this read `environment === 'PAPER'`, a correctly qualified,
+    // correctly live-armed, deployment-enabled profile was refused HERE —
+    // several gates before the adapter resolver was consulted — which made
+    // ARM_LIVE a button that could never do anything. The end-to-end journey
+    // harness caught it; this pins it.
+    const decision = evaluatePolicy({ ...OK, environment: 'LIVE', authorizedEnvironment: 'LIVE' });
+    expect(decision.allowed).toBe(true);
+    expect(decision.checks.find((c) => c.id === 'environment-authorized')!.passed).toBe(true);
   });
 
   it('refuses a disabled profile', () => {
@@ -146,7 +166,7 @@ describe('the refusal is recorded in a countable form', () => {
   it('reports each gate under its own id', () => {
     const cases: Array<[Partial<PolicyInput>, string]> = [
       [{ enabled: false }, 'profile-enabled'],
-      [{ environment: 'LIVE' }, 'environment-paper'],
+      [{ environment: 'LIVE' }, 'environment-authorized'],
       [{ marketOpen: false }, 'market-open'],
       [{ minuteOfDay: 15 * 60 + 20 }, 'before-square-off'],
       [{ confidence: 12 }, 'confidence-floor'],
