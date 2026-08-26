@@ -77,3 +77,7 @@ tradew-azure-*.zip
 # are build artifacts, not sources.
 scripts/cutting-room/.harness/
 scripts/cutting-room/out/
+
+# Explainer render products (same pattern as Cutting Room above).
+scripts/explainer/.harness/
+scripts/explainer/out/
