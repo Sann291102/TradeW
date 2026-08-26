@@ -1,7 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ExecutionIntentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { isTradingDay } from '../discipline/market-calendar';
 import { MarketPriceService } from '../sim/market-price.service';
 import { OrderService } from '../sim/order.service';
 import { ExecutionAccountService } from './execution-account.service';
@@ -9,12 +8,12 @@ import { contractSymbol, deriveIdempotencyKey, istParts } from './execution-iden
 import { countProfileOpenPositions } from './execution-open-positions';
 import {
   OMS_REJECTED,
-  SESSION_OPEN_MINUTE,
   SUBMISSION_RAISED,
   type PolicyCheck,
   type PolicyDecision,
   evaluatePolicy,
 } from './execution-policy';
+import { classifyMarketSession } from './market-session';
 import { SentinelExecutionClient, type ExecutionEvaluationDto } from './sentinel-execution.client';
 import { SystemExecutionControlService, type SystemControlGate } from './system-execution-control.service';
 
@@ -77,9 +76,6 @@ export interface ExecutionRunResult {
   verdict: ExecutionEvaluationDto['verdict'] | null;
   checks: PolicyCheck[];
 }
-
-/** IST minute-of-day the Indian equity session closes (15:30). */
-const SESSION_CLOSE_MINUTE = 15 * 60 + 30;
 
 @Injectable()
 export class PaperExecutionService {
@@ -202,18 +198,15 @@ export class PaperExecutionService {
       };
     }
 
-    const { minuteOfDay } = istParts(now);
-    const sessionOpen =
-      isTradingDay(now) && minuteOfDay >= SESSION_OPEN_MINUTE && minuteOfDay < SESSION_CLOSE_MINUTE;
-    if (!sessionOpen) {
-      return {
-        ...base,
-        outcome: 'skipped-market-closed',
-        verdict: null,
-        reason: isTradingDay(now)
-          ? 'Outside the 09:15–15:30 IST session.'
-          : 'Not an NSE trading day.',
-      };
+    // One authoritative session read: which DAY the exchange trades (shared NSE
+    // calendar — weekend/holiday aware) and which WINDOW of it is the session.
+    // A new entry may only open in the `active` phase; every other phase carries
+    // its own reason, so a skip is attributable to pre-market / post-market /
+    // weekend / holiday rather than a bare "market closed".
+    const session = classifyMarketSession(now);
+    const minuteOfDay = session.minuteOfDay;
+    if (!session.isOpen) {
+      return { ...base, outcome: 'skipped-market-closed', verdict: null, reason: session.reason };
     }
 
     // ---- 2. Ask the one canonical Sentinel ---------------------------------

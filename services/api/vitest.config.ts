@@ -85,6 +85,9 @@ export default defineConfig({
       //    EMERGENCY_STOP → allow-entries / force-square-off) and the service's
       //    fail-closed read and audited write.
       'src/paper-execution/system-execution-control.spec.ts',
+      //  · market-session — the one authoritative NSE session classifier
+      //    (weekend / holiday / pre-market / active / post-market), calendar-aware.
+      'src/paper-execution/market-session.spec.ts',
       // Who is allowed to use a paid capability, and until when.
       // Active pricing served to every surface. Asserts across the API boundary
       // that no route can produce a withdrawn annual Sentinel term.

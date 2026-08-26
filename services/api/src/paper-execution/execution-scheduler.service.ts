@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { LeaderElectionService } from '../common/leader-election';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
+import { classifyMarketSession, type MarketSession } from './market-session';
 import { PaperExecutionService } from './paper-execution.service';
 import { SystemExecutionControlService } from './system-execution-control.service';
 
@@ -57,6 +58,11 @@ export interface ExecutionLoopStatus {
   startedAt: string | null;
   lastEvaluateAt: string | null;
   lastReconcileAt: string | null;
+  /**
+   * The current NSE session, so the console can tell "alive but the market is
+   * shut" from "not ticking". Computed fresh, from the shared calendar.
+   */
+  session: MarketSession;
 }
 
 @Injectable()
@@ -114,6 +120,13 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     // loop alive", and a tick that started and then threw is still a live loop.
     this.lastEvaluateAt = new Date();
     try {
+      // The evaluate tick only ever OPENS positions, and an entry may open only
+      // in the active session. Outside it, skip the whole batch — no profile
+      // read, no Sentinel evaluation — while the heartbeat above still records a
+      // live loop. Reconcile and square-off run on their own tick regardless, so
+      // an open position is never left untended just because entries are paused.
+      const session = classifyMarketSession();
+      if (!session.isOpen) return;
       const results = await this.execution.runAllEnabled();
       const acted = results.filter((r) => r.outcome === 'executed' || r.outcome === 'rejected' || r.outcome === 'failed');
       if (acted.length) {
@@ -188,6 +201,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
       startedAt: this.startedAt?.toISOString() ?? null,
       lastEvaluateAt: this.lastEvaluateAt?.toISOString() ?? null,
       lastReconcileAt: this.lastReconcileAt?.toISOString() ?? null,
+      session: classifyMarketSession(),
     };
   }
 }
