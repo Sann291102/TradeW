@@ -95,6 +95,26 @@ export class PaperExecutionService {
   ) {}
 
   /**
+   * A live quote older than this (ms) is treated as stale and refused. Default
+   * 20s — comfortably longer than the api→sentinel→api round trip that produces
+   * the price, short enough to catch a feed that has actually stopped ticking.
+   * Env-tunable, so a deployment on a slower feed can widen it deliberately.
+   */
+  static maxQuoteAgeMs(): number {
+    const raw = Number(process.env.PAPER_EXECUTION_MAX_QUOTE_AGE_MS);
+    return Number.isFinite(raw) && raw > 0 ? raw : 20_000;
+  }
+
+  /**
+   * Strict mode: when true, a quote with no timestamp is refused rather than
+   * admitted. Off by default so a feed that does not stamp its ticks is not
+   * silently turned into a system-wide halt — see execution-policy `isQuoteFresh`.
+   */
+  static requireFreshQuote(): boolean {
+    return (process.env.PAPER_EXECUTION_REQUIRE_FRESH_QUOTE ?? 'false').toLowerCase() === 'true';
+  }
+
+  /**
    * Run one profile once.
    *
    * `now` is injectable so the session-window and decision-bucket behaviour can
@@ -267,6 +287,11 @@ export class PaperExecutionService {
       decidedAt: now,
     });
 
+    // Market-data freshness: age of the tick this price came from, `now` minus
+    // the feed's own timestamp. Null when the feed did not stamp the tick — the
+    // policy's `requireFreshQuote` decides whether that is admitted or refused.
+    const quoteAgeMs = price.asOf != null ? Math.max(0, now.getTime() - price.asOf) : null;
+
     const facts = await this.gatherFacts(profile.accountUserId, profile.id, now);
     const policy = evaluatePolicy({
       enabled: profile.enabled,
@@ -284,6 +309,9 @@ export class PaperExecutionService {
       marketOpen: price.marketOpen,
       availableCash: facts.availableCash,
       estimatedCost,
+      quoteAgeMs,
+      maxQuoteAgeMs: PaperExecutionService.maxQuoteAgeMs(),
+      requireFreshQuote: PaperExecutionService.requireFreshQuote(),
     });
 
     const created = await this.createIntent({
