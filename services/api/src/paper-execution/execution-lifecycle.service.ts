@@ -204,7 +204,14 @@ export class ExecutionLifecycleService {
    * bound to a profile — established by walking this profile's own FILLED
    * intents, never by scanning the account for anything that happens to be open.
    */
-  async squareOff(now: Date = new Date()): Promise<{ exited: number; errors: number }> {
+  async squareOff(
+    now: Date = new Date(),
+    // Under EMERGENCY_STOP the scheduler passes `forceAll`, which flattens every
+    // open agent position immediately, ignoring each profile's own square-off
+    // minute. That is the one difference between OFF and EMERGENCY_STOP: OFF lets
+    // positions run to their scheduled close, EMERGENCY_STOP closes them now.
+    opts: { forceAll?: boolean } = {},
+  ): Promise<{ exited: number; errors: number }> {
     const { minuteOfDay } = istParts(now);
     const profiles = await this.prisma.executionProfile.findMany({
       where: { enabled: true, environment: 'PAPER' },
@@ -214,7 +221,7 @@ export class ExecutionLifecycleService {
     let errors = 0;
 
     for (const profile of profiles) {
-      if (minuteOfDay < profile.squareOffMinute) continue;
+      if (!opts.forceAll && minuteOfDay < profile.squareOffMinute) continue;
 
       const holding = await this.prisma.executionIntent.findMany({
         where: { profileId: profile.id, status: ExecutionIntentStatus.FILLED },

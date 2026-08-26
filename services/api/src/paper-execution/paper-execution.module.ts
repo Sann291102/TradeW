@@ -8,6 +8,7 @@ import { ExecutionSchedulerService } from './execution-scheduler.service';
 import { ExecutionTraceService } from './execution-trace.service';
 import { PaperExecutionService } from './paper-execution.service';
 import { SentinelExecutionClient } from './sentinel-execution.client';
+import { SystemExecutionControlService } from './system-execution-control.service';
 
 /**
  * The Sentinel paper-execution capability.
@@ -42,6 +43,7 @@ import { SentinelExecutionClient } from './sentinel-execution.client';
     ExecutionTraceService,
     ExecutionQueryService,
     ExecutionSchedulerService,
+    SystemExecutionControlService,
   ],
   exports: [
     PaperExecutionService,
@@ -56,6 +58,10 @@ import { SentinelExecutionClient } from './sentinel-execution.client';
     // A read of this process's own state — the one question the database
     // cannot answer, and the reason `execution/status` exists.
     ExecutionSchedulerService,
+    // Exported so the console can read and flip the global kill switch, and so
+    // the scheduler/health surface can report the current mode. It is the only
+    // way to set `SystemExecutionControl.mode`, and it audits every change.
+    SystemExecutionControlService,
     // Exported for the console's create/rebind route. Omitting this while
     // `AdminController` injected it took the ENTIRE API down at boot on
     // 2026-08-18 with "Nest can't resolve dependencies of the AdminController

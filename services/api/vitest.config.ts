@@ -81,6 +81,10 @@ export default defineConfig({
       //    labelling a real account SYSTEM_PAPER to skip the consent check, and
       //    marking it USER_PAPER without ever asking.
       'src/paper-execution/execution-account.spec.ts',
+      //  · system-control — the global kill switch's pure gate (ON/OFF/
+      //    EMERGENCY_STOP → allow-entries / force-square-off) and the service's
+      //    fail-closed read and audited write.
+      'src/paper-execution/system-execution-control.spec.ts',
       // Who is allowed to use a paid capability, and until when.
       // Active pricing served to every surface. Asserts across the API boundary
       // that no route can produce a withdrawn annual Sentinel term.

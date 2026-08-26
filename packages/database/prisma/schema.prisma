@@ -2035,6 +2035,30 @@ enum ExecutionEnvironment {
   PAPER
 }
 
+// The system-wide operational mode of the paper-execution loop — a runtime
+// kill switch that does NOT require a redeploy, unlike `PAPER_EXECUTION_ENABLED`.
+//
+// The env flag decides whether the scheduler's TIMERS EXIST at all; this decides
+// whether an existing, ticking loop is allowed to OPEN NEW POSITIONS. The two are
+// deliberately independent: an operator watching the console at 14:55 who wants
+// everything flat NOW cannot wait for a redeploy, and must not have to disable
+// every profile one at a time and hope none is missed.
+//
+// ON             — normal operation; new entries permitted (still subject to
+//                  every per-profile and per-decision gate).
+// OFF            — paused. No new entries. Reconcile and scheduled square-off
+//                  continue, so anything already open still closes cleanly.
+// EMERGENCY_STOP — stop now. No new entries AND every open agent position is
+//                  squared off on the next reconcile tick regardless of its
+//                  profile's `squareOffMinute`. Lifecycle cleanup is exactly what
+//                  an emergency stop must NOT block — a halt that stranded open
+//                  positions would be more dangerous than the thing it halts.
+enum SystemExecutionMode {
+  ON
+  OFF
+  EMERGENCY_STOP
+}
+
 // WHOSE paper account a profile trades. Orthogonal to `ExecutionEnvironment`,
 // which answers "paper or live" (and only ever answers PAPER).
 //
@@ -2339,6 +2363,34 @@ model ExecutionOutcome {
   updatedAt DateTime  @updatedAt
 
   @@index([result])
+}
+
+// The single, global operational control for the whole paper-execution loop.
+//
+// THIS IS A SINGLETON. `key` is fixed to "GLOBAL" and is @unique, so there is
+// exactly one row and reading it is a keyed lookup, not a "find the newest"
+// scan that could race. The service upserts on that key; nothing creates a
+// second row. A missing row is read as the safe default (ON) — the absence of
+// an explicit stop is not itself a stop, but the row exists the moment anyone
+// sets a mode, and its every change is audited via AuditEvent.
+//
+// Why a table and not an env var: an env var is set at deploy time and changing
+// it means a redeploy. This is the switch an operator flips from the console
+// mid-session, and the loop re-reads it every pass — so the effect is immediate
+// and needs no process restart. It is a SECOND control on top of
+// `PAPER_EXECUTION_ENABLED`, never a replacement: the env flag still decides
+// whether the scheduler runs at all.
+model SystemExecutionControl {
+  key       String              @id @default("GLOBAL")
+  mode      SystemExecutionMode @default(ON)
+  // Free-text note an operator leaves when flipping the switch ("flattening for
+  // the RBI policy statement"), surfaced on the console beside the mode.
+  reason    String?
+  // Who last changed it — an OperatorAccount identifier, echoed from the audited
+  // admin route, so the console can show "EMERGENCY_STOP set by ops@… at 14:55".
+  updatedBy String?
+  updatedAt DateTime            @updatedAt
+  createdAt DateTime            @default(now())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

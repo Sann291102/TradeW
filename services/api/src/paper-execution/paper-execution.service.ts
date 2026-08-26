@@ -16,6 +16,7 @@ import {
   evaluatePolicy,
 } from './execution-policy';
 import { SentinelExecutionClient, type ExecutionEvaluationDto } from './sentinel-execution.client';
+import { SystemExecutionControlService, type SystemControlGate } from './system-execution-control.service';
 
 /**
  * The Sentinel paper-execution loop.
@@ -61,6 +62,7 @@ export type RunOutcome =
   | 'rejected'
   | 'failed'
   | 'skipped-disabled'
+  | 'skipped-halted'
   | 'skipped-market-closed'
   | 'skipped-no-signal';
 
@@ -89,6 +91,7 @@ export class PaperExecutionService {
     private readonly orders: OrderService,
     private readonly marketPrice: MarketPriceService,
     private readonly accounts: ExecutionAccountService,
+    private readonly systemControl: SystemExecutionControlService,
   ) {}
 
   /**
@@ -98,7 +101,15 @@ export class PaperExecutionService {
    * be asserted deterministically — a loop whose correctness depends on the
    * clock must not be testable only during market hours.
    */
-  async runProfile(profileId: string, now: Date = new Date()): Promise<ExecutionRunResult> {
+  async runProfile(
+    profileId: string,
+    now: Date = new Date(),
+    // The batch caller reads the global kill switch ONCE per tick and threads it
+    // down, so N profiles do not each re-read the same singleton. A direct
+    // caller (the console's "run once" route) passes nothing and this reads it
+    // itself — a manual fire must honour the halt exactly as a scheduled one does.
+    opts: { control?: SystemControlGate } = {},
+  ): Promise<ExecutionRunResult> {
     const profile = await this.prisma.executionProfile.findUnique({
       where: { id: profileId },
       include: { account: { select: { id: true, email: true } } },
@@ -118,6 +129,29 @@ export class PaperExecutionService {
         outcome: 'rejected',
         verdict: null,
         reason: `Refused: profile environment is "${profile.environment}", not PAPER.`,
+      };
+    }
+
+    // ---- 1a. THE GLOBAL KILL SWITCH ---------------------------------------
+    //
+    // Checked before the account read and before Sentinel, because "the whole
+    // system is halted" is the most fundamental answer there is — more so than
+    // "the market is shut" or "you may not trade this account". A halted loop
+    // spends nothing: no account read, no Sentinel evaluation, no market data.
+    //
+    // Read once by the batch caller and threaded in; a direct call reads it here.
+    // Either way it is read FRESH, never cached — a kill switch with a TTL is a
+    // kill switch with a delay.
+    const control = opts.control ?? (await this.systemControl.gate());
+    if (!control.allowNewEntries) {
+      return {
+        ...base,
+        outcome: 'skipped-halted',
+        verdict: null,
+        reason:
+          control.mode === 'EMERGENCY_STOP'
+            ? 'System paper execution is under EMERGENCY_STOP — no new entries; open positions are being squared off.'
+            : 'System paper execution is OFF — no new entries are being opened.',
       };
     }
 
@@ -380,6 +414,11 @@ export class PaperExecutionService {
 
   /** Every enabled profile, one pass each. One profile's failure never stops the rest. */
   async runAllEnabled(now: Date = new Date()): Promise<ExecutionRunResult[]> {
+    // Read the kill switch ONCE for the whole batch. When it forbids new entries
+    // the pass is still walked so every profile reports `skipped-halted` (the
+    // console must see WHY nothing traded), but not one account read or Sentinel
+    // evaluation is spent — `runProfile` short-circuits on the threaded gate.
+    const control = await this.systemControl.gate();
     const profiles = await this.prisma.executionProfile.findMany({
       where: { enabled: true, environment: 'PAPER' },
       select: { id: true, name: true },
@@ -387,7 +426,7 @@ export class PaperExecutionService {
     const results: ExecutionRunResult[] = [];
     for (const profile of profiles) {
       try {
-        results.push(await this.runProfile(profile.id, now));
+        results.push(await this.runProfile(profile.id, now, { control }));
       } catch (err) {
         this.logger.error(`profile ${profile.name} raised during its pass`, err as Error);
         results.push({

@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { LeaderElectionService } from '../common/leader-election';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
 import { PaperExecutionService } from './paper-execution.service';
+import { SystemExecutionControlService } from './system-execution-control.service';
 
 /**
  * The clock behind the paper-execution loop.
@@ -73,6 +74,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     private readonly execution: PaperExecutionService,
     private readonly lifecycle: ExecutionLifecycleService,
     private readonly leader: LeaderElectionService,
+    private readonly systemControl: SystemExecutionControlService,
   ) {}
 
   private get enabled(): boolean {
@@ -130,10 +132,16 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     this.reconciling = true;
     this.lastReconcileAt = new Date();
     try {
+      // The kill switch also drives lifecycle cleanup: under EMERGENCY_STOP the
+      // gate reports `forceSquareOff`, and square-off flattens every open agent
+      // position now rather than waiting for each profile's own square-off
+      // minute. Read here, in the reconcile tick, because that is the tick that
+      // owns exits — the evaluate tick only ever OPENS positions.
+      const control = await this.systemControl.gate();
       // Square-off runs FIRST. Both passes read the same positions, and running
       // reconcile first would see a position still open, skip it, and leave the
       // outcome unrecorded for a whole extra tick after the exit filled.
-      await this.lifecycle.squareOff();
+      await this.lifecycle.squareOff(new Date(), { forceAll: control.forceSquareOff });
       const result = await this.lifecycle.reconcile();
       if (result.filled || result.failed || result.closed) {
         this.logger.log(`reconcile: ${result.filled} filled, ${result.closed} closed, ${result.failed} failed.`);
