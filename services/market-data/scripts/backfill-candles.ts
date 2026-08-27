@@ -3,6 +3,9 @@ import { resolve } from 'node:path';
 loadEnv({ path: resolve(__dirname, '../../../.env') }); // root .env — see .env.example
 import { PrismaClient } from '@prisma/client';
 import type { CandleInterval } from '@tradew/types';
+// Daily bars are calendar buckets, not instants — see the helper for the
+// Sunday-sessions defect this prevents.
+import { dhanBucketStart } from '@tradew/market-data';
 
 /**
  * Historical candle backfill — Dhan REST → Postgres `Candle` (Migration 2).
@@ -180,7 +183,7 @@ async function main() {
             skipped++;
             continue;
           }
-          const bucketStart = new Date(c.timestamp[i] * 1000);
+          const bucketStart = dhanBucketStart(c.timestamp[i], timeframe === '1d');
           await prisma.candle.upsert({
             where: {
               instrumentId_timeframe_bucketStart: { instrumentId: inst.id, timeframe, bucketStart },

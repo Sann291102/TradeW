@@ -9,6 +9,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { EntitlementsModule } from './entitlements/entitlements.module';
 import { InstrumentsModule } from './instruments/instruments.module';
+import { CompanyModule } from './company/company.module';
 import { MarketDataModule } from './market-data/market-data.module';
 import { SimModule } from './sim/sim.module';
 import { DisciplineModule } from './discipline/discipline.module';
@@ -29,6 +30,8 @@ import { KnowledgeModule } from './knowledge/knowledge.module';
 import { NotificationModule } from './notification/notification.module';
 import { TelemetryModule } from './telemetry/telemetry.module';
 import { AdminModule } from './admin/admin.module';
+import { BacktestModule } from './backtest/backtest.module';
+import { LabModule } from './lab/lab.module';
 import { PaperExecutionModule } from './paper-execution/paper-execution.module';
 import { CognitionModule } from './cognition/cognition.module';
 import { ControlModule } from './control/control.module';
@@ -73,6 +76,7 @@ import { HealthController } from './health.controller';
     AuthModule,
     EntitlementsModule,
     InstrumentsModule,
+    CompanyModule,
     MarketDataModule,
     CryptoModule,
     NewsModule,
@@ -104,6 +108,12 @@ import { HealthController } from './health.controller';
     // console reads it. Removing this line disables agent execution entirely
     // and changes no trader-facing behaviour.
     PaperExecutionModule,
+    // Historical simulation. Separate from PaperExecutionModule on purpose:
+    // a backtest replays stored bars and can never place an order.
+    BacktestModule,
+    // Agent Trading Laboratory. Phase 0 observes and records; it imports no
+    // OMS service, so it cannot place an order.
+    LabModule,
     AdminModule,
     // The Admin Control Plane boundary. Signed, replay-protected, narrow.
     // Remove this line to disable remote control of this deployment entirely.

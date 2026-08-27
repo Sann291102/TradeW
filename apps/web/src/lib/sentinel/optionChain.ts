@@ -1,3 +1,4 @@
+import { resolveActiveExpiry } from '@tradew/types';
 import type { DhanOptionChain, DhanOptionStrike } from '@/lib/dhanLiveFeed';
 
 /**
@@ -16,20 +17,43 @@ export interface StrikeRow {
   ltp: number | null;
 }
 
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
 /**
  * The nearest upcoming expiry from a list the bridge returns oldest-first.
- * Filters to well-formed ISO dates and, when today is known, drops past
- * dates so an already-expired contract is never selected. Returns null when
- * nothing valid remains.
+ * Filters to well-formed ISO dates and drops past dates, so an already-expired
+ * contract is never selected. Returns null when nothing valid remains.
+ *
+ * ── A THIN WRAPPER, DELIBERATELY ───────────────────────────────────────────
+ *
+ * This is now `resolveActiveExpiry` with the fields this call shape does not
+ * carry. It used to hold its OWN filter-and-sort, which made it a second
+ * opinion about "nearest" living one import away from the canonical one —
+ * exactly the shape of duplication the 2026-08-19 rollover bug was made of.
+ *
+ * ⚠️ **Behaviour change, 2026-08-19.** The old body ended:
+ *
+ *     return (future[0] ?? valid[valid.length - 1]) ?? null;
+ *
+ * — when every listed expiry was in the past it returned the MOST RECENT PAST
+ * ONE. A caller asking "what should I load?" was handed an expired contract and
+ * had no way to tell it apart from a live answer; the option-chain poll then
+ * requested it, got nothing back, and reported the empty result as though the
+ * market had no chain. Nothing valid now returns `null`, which callers already
+ * handle as the honest 'unavailable' state. The test that pinned the old
+ * fallback was updated with this change rather than worked around.
+ *
+ * `todayIso` stays optional for the existing call shape; omitted, the current
+ * IST trading date is used. It is no longer possible to ask this for "the
+ * nearest ignoring dates entirely" — that question only ever had wrong answers.
  */
 export function pickNearestExpiry(expiries: string[], todayIso?: string): string | null {
-  const valid = expiries.filter((e) => ISO_DATE_RE.test(e)).sort();
-  if (valid.length === 0) return null;
-  if (!todayIso) return valid[0];
-  const future = valid.filter((e) => e >= todayIso);
-  return (future[0] ?? valid[valid.length - 1]) ?? null;
+  return resolveActiveExpiry({
+    symbol: '',
+    availableExpiries: expiries,
+    // `liveExpiries` compares against the trading date derived from this
+    // instant, so a caller that named a day is honoured by handing back that
+    // day's noon IST — well clear of either midnight boundary.
+    currentTime: todayIso ? Date.parse(`${todayIso}T12:00:00+05:30`) : Date.now(),
+  }).value;
 }
 
 /**

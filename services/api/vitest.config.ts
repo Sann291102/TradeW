@@ -22,6 +22,22 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: [
+      // Backtesting. The money suite pins the identity that makes a result
+      // trustworthy — gross - fees - slippage = net, on every trade — plus the
+      // pessimistic fill rules (stop before target within a bar, a gap fills at
+      // the open) and the risk gates. The metrics suite pins the other half:
+      // which numbers are suppressed for insufficient sample rather than
+      // printed as if they meant something.
+      // Agent Trading Laboratory, Phase 0. Pins the three properties whose
+      // absence is silent: an idempotency key that is not idempotent, a health
+      // gate that cannot tell "switched off" from "waiting", and an
+      // availability record that calls a closed market a degraded feed. Also
+      // asserts the no-fake-dashboard rule structurally - an event kind whose
+      // machinery does not exist yet cannot be emitted.
+      'src/lab/lab-phase0.spec.ts',
+      'src/backtest/execution-simulator.spec.ts',
+      'src/backtest/backtest-metrics.spec.ts',
+      'src/backtest/backtest-config.spec.ts',
       'src/discipline/discipline-limits.spec.ts',
       'src/discipline/market-calendar.spec.ts',
       // Broker OAuth: which callback may write a credential, and whose.

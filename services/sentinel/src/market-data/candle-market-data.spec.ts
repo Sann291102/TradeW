@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tradingDateIso } from '@tradew/types';
 
 /**
  * Regression suite for the Sentinel half of the 2026-08-17 outage.
@@ -158,6 +159,23 @@ describe('getCandles — the fault must reach the message, not be replaced by a 
   });
 });
 
+/**
+ * Expiry fixtures, as offsets from the CURRENT trading date.
+ *
+ * These were literal dates ('2026-08-18', '2026-08-25', '2026-09-29') chosen
+ * while all three were in the future. `getOptionExpiries` now drops expired
+ * contracts — the 2026-08-19 rollover fix — so on 2026-08-19 the first of them
+ * stopped being returned and three tests failed, having asserted nothing about
+ * the code since the day it passed them.
+ *
+ * A date fixture in a suite that filters by date has to be relative or it is a
+ * time bomb. These stay meaningful on every future run.
+ */
+function isoInDays(days: number): string {
+  const base = Date.parse(`${tradingDateIso()}T12:00:00+05:30`);
+  return tradingDateIso(base + days * 86_400_000);
+}
+
 describe('getOptionExpiries — [] means "no options market", nothing else', () => {
   it('THROWS on a named auth fault rather than claiming no options market', async () => {
     // THE regression. Pre-fix this returned `cached?.expiries ?? []`, i.e. `[]`,
@@ -198,13 +216,32 @@ describe('getOptionExpiries — [] means "no options market", nothing else', () 
   });
 
   it('returns the sorted list on a clean read', async () => {
-    stubFeed({ expiries: ['2026-09-29', '2026-08-18', '2026-08-25'] });
+    stubFeed({ expiries: [isoInDays(41), isoInDays(6), isoInDays(13)] });
     const provider = new CandleMarketDataProvider(emptyPrisma());
     await expect(provider.getOptionExpiries('NIFTY')).resolves.toEqual([
-      '2026-08-18',
-      '2026-08-25',
-      '2026-09-29',
+      isoInDays(6),
+      isoInDays(13),
+      isoInDays(41),
     ]);
+  });
+
+  /**
+   * The rollover half of the same method, added 2026-08-19. Callers take
+   * `expiries[0]` for the CE/PE legs of every observation, so an expired entry
+   * surviving this list is a dead contract read as a quiet market.
+   */
+  it('drops expiries that have already passed', async () => {
+    stubFeed({ expiries: [isoInDays(-7), isoInDays(-1), isoInDays(6)] });
+    const provider = new CandleMarketDataProvider(emptyPrisma());
+    await expect(provider.getOptionExpiries('NIFTY')).resolves.toEqual([isoInDays(6)]);
+  });
+
+  it('keeps an expiry on its own expiry day', async () => {
+    // Contracts trade until 15:30 IST ON the expiry date; dropping the series at
+    // midnight would roll the engine off a chain that is still live.
+    stubFeed({ expiries: [isoInDays(0), isoInDays(6)] });
+    const provider = new CandleMarketDataProvider(emptyPrisma());
+    await expect(provider.getOptionExpiries('NIFTY')).resolves.toEqual([isoInDays(0), isoInDays(6)]);
   });
 
   it('does not CACHE a fault as "no options market"', async () => {
@@ -218,18 +255,33 @@ describe('getOptionExpiries — [] means "no options market", nothing else', () 
 
     // A later good read must be believed immediately, not shadowed by a cached
     // empty list.
-    stubFeed({ expiries: ['2026-08-18'] });
-    await expect(provider.getOptionExpiries('NIFTY')).resolves.toEqual(['2026-08-18']);
+    stubFeed({ expiries: [isoInDays(6)] });
+    await expect(provider.getOptionExpiries('NIFTY')).resolves.toEqual([isoInDays(6)]);
   });
 
   it('serves a still-valid cached list rather than throwing, when it has one', async () => {
     // Stale-but-real beats failing: a list read 30 seconds ago is a true answer.
-    stubFeed({ expiries: ['2026-08-18', '2026-08-25'] });
+    stubFeed({ expiries: [isoInDays(6), isoInDays(13)] });
     const provider = new CandleMarketDataProvider(emptyPrisma());
     await provider.getOptionExpiries('NIFTY');
 
     stubFeed({ expiries: [], fault: 'rate-limit', error: 'throttled' });
-    await expect(provider.getOptionExpiries('NIFTY')).resolves.toEqual(['2026-08-18', '2026-08-25']);
+    await expect(provider.getOptionExpiries('NIFTY')).resolves.toEqual([isoInDays(6), isoInDays(13)]);
+  });
+
+  /**
+   * "Stale-but-real" has a limit, and the date is it. The cache holds an entry
+   * for 15 minutes and is served for far longer while the bridge is down, so
+   * without a filter on the way OUT a list cached before a rollover keeps
+   * asserting a contract that has since stopped trading.
+   */
+  it('does not serve an expiry from cache once it has passed', async () => {
+    stubFeed({ expiries: [isoInDays(-1), isoInDays(6)] });
+    const provider = new CandleMarketDataProvider(emptyPrisma());
+    await provider.getOptionExpiries('NIFTY');
+
+    stubFeed({ expiries: [], fault: 'rate-limit', error: 'throttled' });
+    await expect(provider.getOptionExpiries('NIFTY')).resolves.toEqual([isoInDays(6)]);
   });
 });
 

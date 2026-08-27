@@ -53,6 +53,8 @@ import { TrapIntelligenceService } from './intelligence/trap-intelligence.servic
 import { CandleMarketDataProvider } from './market-data/candle-market-data.provider';
 import { MarketCloseAnalysisService } from './market-close/market-close-analysis.service';
 import { ExecutionEvaluationService } from './execution/execution-evaluation.service';
+import { BacktestScanService } from './backtest/backtest-scan.service';
+import { StrategyReplayService } from './backtest/strategy-replay.service';
 import { SentinelOrchestratorService } from './orchestrator/sentinel-orchestrator.service';
 import { PrismaService } from './prisma.service';
 import { MarketStateMachineService } from './state-machine/state-machine.service';
@@ -204,6 +206,10 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
     // evaluation the paper-execution loop needs and the observe contract must
     // not carry — see execution/strike-candidates.ts.
     ExecutionEvaluationService,
+    // Historical replay. Reads bars and runs the SAME StrategyEngineService
+    // the live path uses; it writes nothing and knows nothing about orders.
+    StrategyReplayService,
+    BacktestScanService,
     ExplainService,
 
     // ---- Persistent Knowledge Brain (Sentinel Brain Phase 1) ----

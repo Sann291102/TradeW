@@ -89,6 +89,17 @@ export function WatchCreator({
 
   const hasOptions = expiries.status === 'ready';
 
+  /**
+   * The expiry to NAME when talking about the chain.
+   *
+   * `chain.expiry` is what the bridge served; `expiry` is what the selection
+   * asked for. They agree in the steady state and are allowed to differ for the
+   * frame between a rollover being detected and the new chain arriving — which
+   * is exactly the frame the 2026-08-19 screenshot caught. Falling back to the
+   * selection keeps the sentence complete before the first response lands.
+   */
+  const chainExpiry = chain.expiry ?? expiry;
+
   // Clearing the market/expiry/strike on a market change, defaulting the
   // nearest expiry, forcing the underlying on a CONFIRMED 'none' and defaulting
   // the ATM strike all moved into the provider — they are facts about the
@@ -127,7 +138,13 @@ export function WatchCreator({
     { ...selection, underlyingOnly: watchingUnderlying },
     ladders,
     Date.now(),
-    new Date().toISOString().slice(0, 10),
+    // The trading date the expiry list was filtered against, not a second
+    // reading of the clock. Two things on one screen deciding "has this
+    // expired?" from two different dates is the general shape of the bug this
+    // whole change is about; `new Date().toISOString().slice(0, 10)` — what
+    // this was — additionally answered in UTC, so it disagreed with the IST
+    // list for the five and a half hours after midnight every day.
+    expiries.tradingDate,
   );
   const problemFor = (side: 'CE' | 'PE') => problems.filter((p) => p.side === side);
   const pairProblems = problems.filter((p) => p.side === null);
@@ -204,7 +221,10 @@ export function WatchCreator({
           <div className="grid grid-cols-2 gap-2.5">
             <Field label="Expiry">
               <Select
-                value={expiry ?? ''}
+                // `''` — never a value with no matching option, which is the
+                // state the browser resolves by painting the first one. See the
+                // block comment on the options below.
+                value={expiry !== null && expiries.expiries.includes(expiry) ? expiry : ''}
                 // No second strike reset here: `selectExpiry` already drops
                 // BOTH legs and both their tokens, because the 24200 of one
                 // series is a different contract from the 24200 of the next.
@@ -213,7 +233,27 @@ export function WatchCreator({
                 disabled={!hasOptions || underlyingOnly}
                 ariaLabel="Expiry"
               >
-                {expiry === null && <option value="">Select expiry</option>}
+                {/*
+                  ── THE CONTROL THAT PAINTED "25 Aug" ──────────────────────
+
+                  A `<select>` whose `value` matches no `<option>` does not
+                  render blank — it renders its FIRST option. So while the
+                  canonical expiry was the expired `2026-08-18` and the list
+                  held only live series, this dropdown displayed "25 Aug" and
+                  the application held 18 Aug. The screen was not showing two
+                  states out of sync; it was showing one state and one lie, and
+                  the lie was the reassuring half.
+
+                  The reconciliation in `WatchContext` means the value is a
+                  listed expiry within a tick of the list arriving. This is the
+                  belt to that braces: whenever the value is NOT in the list,
+                  say so explicitly rather than let the browser pick a label.
+                  Any future state bug of this shape now surfaces as a visible
+                  placeholder instead of a confident wrong date.
+                */}
+                {(expiry === null || !expiries.expiries.includes(expiry)) && (
+                  <option value="">{expiry === null ? 'Select expiry' : 'Rolling to the active expiry…'}</option>
+                )}
                 {expiries.expiries.map((e) => (
                   <option key={e} value={e}>
                     {formatExpiry(e)}
@@ -276,11 +316,21 @@ export function WatchCreator({
               </p>
             ) : chain.status === 'loading' ? (
               <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
-                Loading the {formatExpiry(expiry)} chain…
+                Loading the {formatExpiry(chainExpiry)} chain…
               </p>
             ) : chain.status === 'unavailable' ? (
+              /*
+                `chainExpiry`, NOT `expiry`. This line is the one captured in the
+                2026-08-19 report — "No live chain for NIFTY 18 Aug right now."
+                printed under a dropdown reading "25 Aug". It named the
+                selection's expiry, so it could describe a series the failed
+                request had nothing to do with. It now names the expiry the
+                chain state is actually about, which is the expiry the bridge
+                served and validated, so the sentence is either true or the
+                request genuinely failed for that series.
+              */
               <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
-                No live chain for {symbol} {formatExpiry(expiry)} right now.
+                No live chain for {symbol} {formatExpiry(chainExpiry)} right now.
               </p>
             ) : (
               <div className="grid gap-2.5 sm:grid-cols-2">

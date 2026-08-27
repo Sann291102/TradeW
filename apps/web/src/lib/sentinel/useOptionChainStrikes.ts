@@ -8,6 +8,12 @@ export type OptionChainStatus = 'loading' | 'live' | 'unavailable';
 
 export interface OptionChainStrikes {
   status: OptionChainStatus;
+  /**
+   * The expiry these ladders are FOR — the one the bridge served, which is the
+   * one it validated. Anything describing this chain on screen must name this
+   * value and not the selection's, or it will eventually name a series the data
+   * did not come from.
+   */
   expiry: string | null;
   spot: number | null;
   ce: StrikeRow[];
@@ -93,8 +99,12 @@ export function useOptionChainStrikes(
         let expiry = pinnedExpiry ?? null;
         if (expiry === null) {
           const expiries = await fetchDhanExpiryList(symbol);
-          const todayIso = new Date().toISOString().slice(0, 10);
-          expiry = pickNearestExpiry(expiries, todayIso);
+          // The canonical resolver, via `pickNearestExpiry`. It judges "expired"
+          // against the IST trading date; this used to pass
+          // `new Date().toISOString().slice(0, 10)`, which is the UTC date and
+          // is therefore YESTERDAY for every IST caller between midnight and
+          // 05:30 — i.e. through the whole pre-open session, every day.
+          expiry = pickNearestExpiry(expiries);
         }
         if (!expiry) {
           if (!cancelled) {
@@ -110,18 +120,29 @@ export function useOptionChainStrikes(
           setState({ ...EMPTY, status: 'unavailable', expiry });
           return;
         }
+        /**
+         * From here on, the SERVED expiry — not the requested one.
+         *
+         * The bridge validates and can roll the request forward, so these are
+         * not always the same string, and every consumer of `state.expiry`
+         * (the "loading the … chain" line, the "no live chain for …" line, the
+         * chart titles) is describing data that came back. Reporting the
+         * request instead is how a panel came to print an expiry that no part
+         * of the response had anything to do with.
+         */
+        const servedExpiry = chain.resolvedExpiry ?? expiry;
         const ce = ceRows(chain);
         const pe = peRows(chain);
         if (ce.length === 0 && pe.length === 0) {
           atmStrikeRef.current = null;
-          setState({ ...EMPTY, status: 'unavailable', expiry, spot: chain.spot });
+          setState({ ...EMPTY, status: 'unavailable', expiry: servedExpiry, spot: chain.spot });
           return;
         }
         const atmIndex = nearestStrikeIndex(ce, chain.spot, atmStrikeRef.current);
         atmStrikeRef.current = ce[atmIndex]?.strike ?? null;
         setState({
           status: 'live',
-          expiry,
+          expiry: servedExpiry,
           spot: chain.spot,
           ce,
           pe,

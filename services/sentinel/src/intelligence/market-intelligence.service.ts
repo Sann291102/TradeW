@@ -1,5 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Candle, CandleInterval, MarketBreadth, MarketDataProvider, OptionChainEntry } from '@tradew/types';
+import {
+  Candle,
+  CandleInterval,
+  MarketBreadth,
+  MarketDataProvider,
+  OptionChainEntry,
+  resolveActiveExpiry,
+} from '@tradew/types';
 import { MarketProfile, MarketProfileType, Signal, TrendAnalysis } from '../domain';
 import { atmStrikeFor } from '../strategy/option-context';
 import {
@@ -264,7 +271,18 @@ export class MarketIntelligenceService {
         unreadableReason: (err as Error).message,
       });
     }
-    const expiry = expiries[0] ?? null;
+    /**
+     * The active series, through the canonical resolver rather than a bare
+     * `expiries[0]`.
+     *
+     * `getOptionExpiries` already drops expired contracts, so this is belt to
+     * that braces — but the two legs read below are the CE/PE premium series
+     * this engine reports to the user, and reading them off a dead contract
+     * produces an empty history that renders as a quiet market rather than a
+     * rolled-over series. The 2026-08-19 rollover made exactly that mistake one
+     * layer up. There is one function that answers this question; this is it.
+     */
+    const expiry = resolveActiveExpiry({ symbol: snapshot.symbol, availableExpiries: expiries }).value;
     const strike = atmStrikeFor(snapshot.symbol, snapshot.lastPrice);
 
     // No options market (a commodity, most equities) or no usable spot. Not a

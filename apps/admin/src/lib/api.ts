@@ -105,6 +105,52 @@ export interface ApiCallRow { id: string; requestId: string; method: string; pat
 export interface AiCallRow { id: string; requestId: string | null; system: string; agent: string; provider: string; model: string; tier: string | null; promptTokens: number; completionTokens: number; costUsd: number; latencyMs: number; status: string; error: string | null; createdAt: string; }
 export interface AgentSummaryRow { system: string; agent: string; calls: number; costUsd: number; promptTokens: number; completionTokens: number; avgLatencyMs: number; maxLatencyMs: number; failures: number; }
 export interface RunRow { runId: string; system: string; trigger: string; symbol: string | null; status: string; surfaced: boolean; confidence: number | null; agentsRan: string[]; durationMs: number | null; startedAt: string; error: string | null; }
+// ---- Agent Trading Laboratory (Phase 0) ------------------------------------
+// Every shape here is a READ. There is no command type because Phase 0 has no
+// command surface — the Lab observes and records; Phase 1 adds typed commands.
+export type LabState = 'RUNNING' | 'WAITING' | 'STOPPED';
+export type LabEventKind =
+  | 'LAB_STARTED' | 'LAB_STOPPED' | 'HEALTH_DEGRADED' | 'HEALTH_RECOVERED'
+  | 'SESSION_OPENED' | 'SESSION_CLOSED' | 'OBSERVING' | 'OBSERVATION_SKIPPED'
+  | 'SETUP_CANDIDATE' | 'SETUP_REJECTED' | 'STRATEGY_SELECTED' | 'TRADE_PROPOSAL'
+  | 'RISK_ASSESSMENT' | 'EXECUTION_RESULT' | 'SETUP_WEAKENING' | 'SETUP_INVALIDATED'
+  | 'TRADE_OUTCOME' | 'POST_TRADE_ANALYSIS' | 'LEARNING_CANDIDATE'
+  | 'KILL_SWITCH' | 'COMMAND_ACCEPTED' | 'COMMAND_REJECTED';
+
+export interface LabDependency { name: string; status: 'ok' | 'degraded' | 'unavailable'; detail: string; latencyMs?: number }
+export interface LabHealth {
+  state: LabState;
+  canObserve: boolean;
+  /** False for the whole of Phase 0 — there is no execution path yet. */
+  canExecute: boolean;
+  dependencies: LabDependency[];
+  session: { open: boolean; reason: string };
+  blockedBy: string[];
+  checkedAt: string;
+}
+export interface LabProfileRow {
+  id: string; name: string; symbol: string; agent: string;
+  strategyId: string | null; strategyName: string | null;
+  minConfidence: number; labTimeframe: string | null;
+  /** The ORDER-PLACING switch, distinct from lab observation. */
+  enabled: boolean; environment: string; accountScope: string;
+}
+export interface LabEventRow {
+  id: string; kind: LabEventKind; severity: 'INFO' | 'WARN' | 'ERROR';
+  at: string; recordedAt: string;
+  symbol: string | null; timeframe: string | null;
+  actor: string; summary: string;
+  detail: Record<string, unknown> | null;
+  dataAvailability: {
+    sources?: { name: string; status: string; detail: string }[];
+    barAgeSeconds?: number | null; absent?: string[];
+    sufficient?: boolean; insufficientReason?: string | null;
+  } | null;
+  profileId: string | null;
+  profile: { id: string; name: string; symbol: string } | null;
+}
+export interface LabEventSummaryRow { kind: LabEventKind; count: number; lastAt: string | null }
+
 export interface OrderRow { id: string; status: string; side: string; type: string; quantity: number; filledQuantity: number; price: string | null; avgFillPrice: string | null; rejectReason: string | null; placedAt: string; user: { id: string; email: string } | null; instrument: { symbol: string; displayName: string; type: string } | null; executionIntentId: string | null; executionIntent: OrderExecutionIntent | null; exitOfIntentId: string | null; exitOfIntent: OrderExitOfIntent | null; }
 
 // ---- Sentinel paper execution ---------------------------------------------
@@ -197,6 +243,15 @@ export const admin = {
   users: (q: Record<string, string | number | undefined> = {}) => adminApi<UserRow[]>(`/users?${qs(q)}`),
   audit: (q: Record<string, string | number | undefined> = {}) => adminApi<AuditRow[]>(`/audit?${qs(q)}`),
   setAdmin: (email: string, isAdmin: boolean) => adminApi('/users/set-admin', { method: 'POST', body: JSON.stringify({ email, isAdmin }) }),
+  lab: {
+    health: () => adminApi<LabHealth>('/lab/health'),
+    profiles: () => adminApi<LabProfileRow[]>('/lab/profiles'),
+    events: (q: Record<string, string | number | undefined> = {}) =>
+      adminApi<{ total: number; limit: number; rows: LabEventRow[] }>(`/lab/events?${qs(q)}`),
+    summary: (hours = 24) => adminApi<LabEventSummaryRow[]>(`/lab/events/summary?hours=${hours}`),
+    // Runs the SAME pass the timer runs, subject to the same health gate.
+    tick: () => adminApi<LabHealth>('/lab/tick'),
+  },
   execution: {
     profiles: () => adminApi<ExecutionProfileRow[]>('/execution/profiles'),
     intents: (q: Record<string, string | number | undefined> = {}) => adminApi<ExecutionIntentRow[]>(`/execution/intents?${qs(q)}`),

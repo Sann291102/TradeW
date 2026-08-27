@@ -56,3 +56,4 @@ export * from './registry';
 // providers/fundamentals/fundamentals.contract.ts for the no-fabrication rule
 // the whole subsystem is shaped around.
 export * from './providers/fundamentals';
+export { dhanBucketStart } from './providers/dhan/dhan-bar-bucket';
