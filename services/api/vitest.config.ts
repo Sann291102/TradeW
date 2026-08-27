@@ -164,6 +164,21 @@ export default defineConfig({
       // The sentinel-py ingress allowlist: the alert tier the notification bell
       // styles from must cross into the row, and nothing unreviewed may.
       'src/sentinel/sentinel-py-notify.spec.ts',
+      // The advice boundary. TRADEW-OS.md §1 requires "observation, never
+      // advice" to hold architecturally, so these suites are the evidence that
+      // it does — both that advice is blocked and that ordinary market
+      // commentary is not.
+      'src/ai/compliance/compliance.rules.spec.ts',
+      'src/ai/compliance/compliance.gate.spec.ts',
+      // Persona names are user-controlled text that reaches a model prompt.
+      'src/ai/persona/persona-name.filter.spec.ts',
+      // The 02:30 IST trading-day boundary, incl. DST-free IST offset math.
+      'src/ai/conversation/trading-day.spec.ts',
+      // Intent classification upstream of the agents.
+      'src/ai/orchestrator/intent.spec.ts',
+      // End-to-end: the assistant pipeline as exercised through its service
+      // surface, including direct-API attempts that bypass the UI.
+      'src/ai/assistant.e2e.spec.ts',
     ],
     environment: 'node',
     // The suite is deterministic and clock-injected; a slow test means a real

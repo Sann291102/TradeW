@@ -36,6 +36,7 @@ import { PaperExecutionModule } from './paper-execution/paper-execution.module';
 import { CognitionModule } from './cognition/cognition.module';
 import { ControlModule } from './control/control.module';
 import { GraphModule } from './graph/graph.module';
+import { AiModule } from './ai/ai.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -97,6 +98,9 @@ import { HealthController } from './health.controller';
     LearningModule,
     KnowledgeModule,
     NotificationModule,
+    // TradeW AI. After MarketDataModule (it reads quotes through that service)
+    // and after AuthModule (its routes are bearer-guarded).
+    AiModule,
     // The four-layer perceptor network. Registers its sensors at init but runs
     // no passes unless COGNITION_ENABLED=true — so importing it costs a roster
     // and nothing else. Placed before AdminModule because the console reads it.
