@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SELECTION,
+  applyMarketHasOptions,
   instrumentLabel,
   reconcileWatchSelection,
   resolveWatchContext,
@@ -137,6 +138,11 @@ describe('selectMarket', () => {
     expect(next.underlyingOnly).toBe(false);
   });
 
+  it('clears the underlying CHOICE with the flag, so the new market is asked afresh', () => {
+    const next = selectMarket(selection({ underlyingOnly: true, underlyingByChoice: true }), 'BANKNIFTY');
+    expect(next.underlyingByChoice).toBe(false);
+  });
+
   it('returns the same object when the market has not changed', () => {
     // Identity matters: the provider hands this straight to setState, and a new
     // object every render would restart every chart's data hook.
@@ -188,6 +194,33 @@ describe('selectSide and setUnderlyingOnly', () => {
     const prev = selection();
     expect(selectSide(prev, 'CE')).toBe(prev);
     expect(setUnderlyingOnly(prev, false)).toBe(prev);
+  });
+});
+
+describe('applyMarketHasOptions', () => {
+  it('forces the underlying when the market confirms it has no option chain', () => {
+    const next = applyMarketHasOptions(selection(), false);
+    expect(next.underlyingOnly).toBe(true);
+    expect(next.underlyingByChoice).toBe(false);
+  });
+
+  it('RELEASES a forced flag once a chain turns out to exist', () => {
+    // The 2026-08-29 bug: one 'none' latched the flag, localStorage kept it,
+    // and the CE/PE strike pickers stayed hidden on a market with options.
+    const forced = applyMarketHasOptions(selection(), false);
+    expect(applyMarketHasOptions(forced, true).underlyingOnly).toBe(false);
+  });
+
+  it('never overrides a flag the operator set deliberately', () => {
+    const chosen = setUnderlyingOnly(selection(), true);
+    expect(applyMarketHasOptions(chosen, true)).toBe(chosen);
+  });
+
+  it('re-forces the underlying when the operator unticks it on an optionless market', () => {
+    // Not a regression: there is no option to watch, so the flag is the truth
+    // rather than a preference. Only a market WITH a chain can honour the untick.
+    const cleared = setUnderlyingOnly(applyMarketHasOptions(selection(), false), false);
+    expect(applyMarketHasOptions(cleared, false).underlyingOnly).toBe(true);
   });
 });
 

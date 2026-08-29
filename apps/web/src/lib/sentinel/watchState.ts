@@ -104,6 +104,17 @@ export interface WatchSelection {
   /** True = watch the underlying itself; no option legs are part of the watch. */
   underlyingOnly: boolean;
   /**
+   * Did the OPERATOR ask for the underlying, or did the market force it?
+   *
+   * `underlyingOnly` alone cannot answer that, and the difference decides
+   * whether the flag may be released. A market with no option chain forces it;
+   * when a chain later turns out to exist for the same market — the first poll
+   * having answered 'none' — the forced flag must clear, or the strike pickers
+   * stay hidden behind a tick nobody made. Only this field is persisted; the
+   * forced value is re-derived from the live expiry list on every mount.
+   */
+  underlyingByChoice: boolean;
+  /**
    * The sentinel-py watch currently under observation in the Strategy Feed.
    *
    * Held HERE rather than inside the feed because selecting a watch repoints
@@ -167,6 +178,7 @@ export const DEFAULT_SELECTION: WatchSelection = {
   callInstrument: null,
   putInstrument: null,
   underlyingOnly: false,
+  underlyingByChoice: false,
   selectedWatchId: null,
 };
 
@@ -272,6 +284,7 @@ export function selectMarket(prev: WatchSelection, symbol: string): WatchSelecti
     callInstrument: null,
     putInstrument: null,
     underlyingOnly: false,
+    underlyingByChoice: false,
     selectedWatchId: null,
   };
 }
@@ -324,7 +337,35 @@ export function selectSide(prev: WatchSelection, focusedSide: OptionType): Watch
   return focusedSide === prev.focusedSide ? prev : { ...prev, focusedSide };
 }
 
+/**
+ * The operator ticking (or clearing) "watch the underlying itself".
+ *
+ * Records the provenance alongside the flag: an explicit tick is a choice that
+ * survives the expiry list resolving. Unticking records NO choice, because a
+ * market with no option chain has nothing to untick to — there the market's
+ * answer is the truth and `applyMarketHasOptions` re-forces it.
+ */
 export function setUnderlyingOnly(prev: WatchSelection, underlyingOnly: boolean): WatchSelection {
+  return underlyingOnly === prev.underlyingOnly && underlyingOnly === prev.underlyingByChoice
+    ? prev
+    : { ...prev, underlyingOnly, underlyingByChoice: underlyingOnly };
+}
+
+/**
+ * The market's own answer about whether it HAS an option chain.
+ *
+ * Separate from `setUnderlyingOnly` because it is reversible and that one is
+ * not: a confirmed 'none' forces the underlying, and a chain appearing for the
+ * same market releases it again. A deliberate tick outranks both — this is why
+ * the provenance is stored. Before 2026-08-29 the forcing had no counterpart:
+ * a single 'none' (a cold first poll, a momentarily empty chain) latched the
+ * flag, persisted it to localStorage, and left the CE/PE strike pickers
+ * replaced by "Watching NIFTY itself" for good, with a populated expiry
+ * dropdown beside them saying otherwise.
+ */
+export function applyMarketHasOptions(prev: WatchSelection, hasOptions: boolean): WatchSelection {
+  if (prev.underlyingByChoice) return prev;
+  const underlyingOnly = !hasOptions;
   return underlyingOnly === prev.underlyingOnly ? prev : { ...prev, underlyingOnly };
 }
 
@@ -394,7 +435,10 @@ export function selectionFromWatch(prev: WatchSelection, watch: WatchSession): W
       putStrike: null,
       callInstrument: null,
       putInstrument: null,
+      // Adopting an underlying watch IS a choice about this market, so it
+      // outranks the expiry list the same way a manual tick does.
       underlyingOnly: true,
+      underlyingByChoice: true,
       selectedWatchId: watch.id,
     };
   }
@@ -444,6 +488,7 @@ export function selectionFromWatch(prev: WatchSelection, watch: WatchSession): W
     expiry,
     focusedSide: (legs.focusedSide ?? prev.focusedSide) as OptionType,
     underlyingOnly: false,
+    underlyingByChoice: false,
     callStrike: legs.ce ? legs.ce.strike : keptStrike(prev.callStrike),
     putStrike: legs.pe ? legs.pe.strike : keptStrike(prev.putStrike),
     callInstrument: legs.ce ? toInstrument(legs.ce) : keptInstrument(prev.callInstrument),
