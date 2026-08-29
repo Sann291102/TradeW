@@ -505,9 +505,36 @@ function isMarketOpen(now = new Date()): boolean {
   return minutes >= 9 * 60 + 15 && minutes <= 15 * 60 + 30;
 }
 
-function toLiveQuote(tick: MarketTick, meta: InstrumentMeta): LiveQuote {
-  const prevClose = tick.previousClose ?? tick.open ?? tick.ltp ?? 0;
-  const ltp = tick.ltp ?? prevClose;
+/**
+ * Fold a tick into the quote we already hold for this instrument.
+ *
+ * ── WHY THIS MERGES RATHER THAN REPLACES ───────────────────────────────────
+ *
+ * A tick is a PACKET, not a complete quote. Dhan's feed codes carry different
+ * subsets: TICKER is price-only, OI is open-interest-only, PREV_CLOSE is
+ * previous-close-only, and only QUOTE/FULL carry the day's OHLC. This function
+ * used to build a fresh `LiveQuote` from whichever packet arrived last and
+ * `byKey.set` it over the top, so an OI or PREV_CLOSE packet — which knows
+ * nothing about the last traded price — replaced a good quote with one whose
+ * `ltp` fell all the way through the `??` chain to 0.
+ *
+ * Compounding it, `?? 0` cannot defend against a zero-filled packet at all: 0
+ * is not nullish, so a post-close QUOTE whose price slots are zeroed sailed
+ * through and overwrote the real number. `nonZero` in the binary parser now
+ * turns those into `undefined` (they mean "absent"), and merging here is what
+ * makes "absent" mean "keep what we had" instead of "reset to zero".
+ *
+ * Together that is the guarantee the dashboard needs: once the session closes,
+ * the last genuine price STAYS on screen. It was visibly broken in the
+ * 2026-08-29 screenshots — NIFTY 50, BANK NIFTY, FIN NIFTY, SENSEX and INDIA
+ * VIX all reading `0.00` while the ticker strip beside them still had real
+ * values for the indices that happened to receive no post-close packet.
+ */
+function toLiveQuote(tick: MarketTick, meta: InstrumentMeta, prev: LiveQuote | undefined): LiveQuote {
+  // `??` per field, against the PREVIOUS quote — never a bare 0 default. Each
+  // one reads "this packet did not carry it, so it has not changed".
+  const prevClose = tick.previousClose ?? prevOr(prev, (q) => q.ltp - q.change) ?? tick.open ?? tick.ltp ?? 0;
+  const ltp = tick.ltp ?? prev?.ltp ?? prevClose;
   const change = ltp - prevClose;
   return {
     instrumentId: meta.securityId,
@@ -516,17 +543,32 @@ function toLiveQuote(tick: MarketTick, meta: InstrumentMeta): LiveQuote {
     ltp,
     change,
     changePct: prevClose ? (change / prevClose) * 100 : 0,
-    open: tick.open ?? null,
-    high: tick.high ?? null,
-    low: tick.low ?? null,
-    close: tick.close ?? null,
-    bid: tick.bid ?? 0,
-    ask: tick.ask ?? 0,
-    volume: tick.volume ?? 0,
+    open: tick.open ?? prev?.open ?? null,
+    high: tick.high ?? prev?.high ?? null,
+    low: tick.low ?? prev?.low ?? null,
+    close: tick.close ?? prev?.close ?? null,
+    bid: tick.bid ?? prev?.bid ?? 0,
+    ask: tick.ask ?? prev?.ask ?? 0,
+    // Volume genuinely resets to 0 at the start of a session, so it is carried
+    // forward only when the packet omits it — never when it reports a real 0.
+    volume: tick.volume ?? prev?.volume ?? 0,
     marketStatus: isMarketOpen() ? 'open' : 'closed',
+    // The timestamp of the last packet that told us something, so a stale price
+    // is visibly stale rather than looking freshly confirmed.
     updatedAt: tick.at.toISOString(),
     source: 'dhan',
   };
+}
+
+/**
+ * Recover the previous close we derived last time, so it survives a packet
+ * that does not carry one. `ltp - change` is exactly the `prevClose` the last
+ * call used; `undefined` when there is no prior quote to recover it from.
+ */
+function prevOr(prev: LiveQuote | undefined, read: (q: LiveQuote) => number): number | undefined {
+  if (!prev) return undefined;
+  const value = read(prev);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function snapshot() {
@@ -615,7 +657,8 @@ async function startFeed(
     }
     const meta = metaByRef.get(`${tick.ref.exchangeSegment}:${tick.ref.securityId}`);
     if (!meta) return;
-    byKey.set(`${kindOf(meta)}:${meta.symbol}`, toLiveQuote(tick, meta));
+    const key = `${kindOf(meta)}:${meta.symbol}`;
+    byKey.set(key, toLiveQuote(tick, meta, byKey.get(key)));
     scheduleBroadcast();
   });
 

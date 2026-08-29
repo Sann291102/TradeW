@@ -107,7 +107,7 @@ export function parsePacket(buf: Buffer, offset = 0, now: Date = new Date()): Pa
       if (buf.length - offset < 16) return null;
       const ltp = buf.readFloatLE(offset + 8);
       const ltt = buf.readInt32LE(offset + 12);
-      return { kind: 'tick', tick: { ref, at: tradeTime(ltt, now), source: 'dhan', ltp: roundPrice(ltp) } };
+      return { kind: 'tick', tick: { ref, at: tradeTime(ltt, now), source: 'dhan', ltp: nonZero(roundPrice(ltp)) } };
     }
 
     case FEED_CODE.PREV_CLOSE: {
@@ -118,7 +118,7 @@ export function parsePacket(buf: Buffer, offset = 0, now: Date = new Date()): Pa
           ref,
           at: now,
           source: 'dhan',
-          previousClose: roundPrice(buf.readFloatLE(offset + 8)),
+          previousClose: nonZero(roundPrice(buf.readFloatLE(offset + 8))),
           openInterest: buf.readInt32LE(offset + 12),
         },
       };
@@ -138,16 +138,16 @@ export function parsePacket(buf: Buffer, offset = 0, now: Date = new Date()): Pa
           ref,
           at: tradeTime(ltt, now),
           source: 'dhan',
-          ltp: roundPrice(buf.readFloatLE(offset + 8)),
+          ltp: nonZero(roundPrice(buf.readFloatLE(offset + 8))),
           lastTradedQuantity: buf.readInt16LE(offset + 12),
-          averageTradePrice: roundPrice(buf.readFloatLE(offset + 18)),
+          averageTradePrice: nonZero(roundPrice(buf.readFloatLE(offset + 18))),
           volume: buf.readInt32LE(offset + 22),
           totalSellQuantity: buf.readInt32LE(offset + 26),
           totalBuyQuantity: buf.readInt32LE(offset + 30),
-          open: roundPrice(buf.readFloatLE(offset + 34)),
+          open: nonZero(roundPrice(buf.readFloatLE(offset + 34))),
           close: nonZero(roundPrice(buf.readFloatLE(offset + 38))),
-          high: roundPrice(buf.readFloatLE(offset + 42)),
-          low: roundPrice(buf.readFloatLE(offset + 46)),
+          high: nonZero(roundPrice(buf.readFloatLE(offset + 42))),
+          low: nonZero(roundPrice(buf.readFloatLE(offset + 46))),
         },
       };
     }
@@ -162,19 +162,19 @@ export function parsePacket(buf: Buffer, offset = 0, now: Date = new Date()): Pa
           ref,
           at: tradeTime(ltt, now),
           source: 'dhan',
-          ltp: roundPrice(buf.readFloatLE(offset + 8)),
+          ltp: nonZero(roundPrice(buf.readFloatLE(offset + 8))),
           lastTradedQuantity: buf.readInt16LE(offset + 12),
-          averageTradePrice: roundPrice(buf.readFloatLE(offset + 18)),
+          averageTradePrice: nonZero(roundPrice(buf.readFloatLE(offset + 18))),
           volume: buf.readInt32LE(offset + 22),
           totalSellQuantity: buf.readInt32LE(offset + 26),
           totalBuyQuantity: buf.readInt32LE(offset + 30),
           openInterest: buf.readInt32LE(offset + 34),
           dayHighOpenInterest: buf.readInt32LE(offset + 38),
           dayLowOpenInterest: buf.readInt32LE(offset + 42),
-          open: roundPrice(buf.readFloatLE(offset + 46)),
+          open: nonZero(roundPrice(buf.readFloatLE(offset + 46))),
           close: nonZero(roundPrice(buf.readFloatLE(offset + 50))),
-          high: roundPrice(buf.readFloatLE(offset + 54)),
-          low: roundPrice(buf.readFloatLE(offset + 58)),
+          high: nonZero(roundPrice(buf.readFloatLE(offset + 54))),
+          low: nonZero(roundPrice(buf.readFloatLE(offset + 58))),
           bid: depth[0]?.bidPrice,
           ask: depth[0]?.askPrice,
           depth,
@@ -260,7 +260,20 @@ function roundPrice(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Dhan sends 0 for day-close before market close; that is "absent", not zero. */
+/**
+ * A zero PRICE from Dhan means "absent", never "this instrument is worth 0".
+ *
+ * Originally applied to day-close alone (Dhan sends 0 there until the session
+ * closes). It belongs on every price field for the same reason: once the
+ * session ends the feed keeps pushing QUOTE/FULL packets whose price slots are
+ * zero-filled, and an unguarded 0 is indistinguishable downstream from a real
+ * quote. That is what blanked the home dashboard's index cards to `0.00`
+ * after 15:30 while the ticker strip — fed by instruments that happened not to
+ * receive a post-close packet — still showed the genuine last-session values.
+ *
+ * Deliberately NOT applied to volume, open interest or quantities: zero is a
+ * true and meaningful reading for all of them.
+ */
 function nonZero(n: number): number | undefined {
   return n === 0 ? undefined : n;
 }
