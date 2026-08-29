@@ -39,25 +39,46 @@ import { ChevronDownIcon } from '@/components/shell/icons';
  * concurrent 4s polls of a bridge that serialises option calls behind a 3.1s
  * floor is what this replaced.
  *
- * ── THE PAIR, NOT A SIDE ───────────────────────────────────────────────────
+ * ── THREE INSTRUMENTS, ONE ROW ─────────────────────────────────────────────
  *
  * Until 2026-08-18 this form had ONE strike dropdown and the CE/PE toggle
  * decided which leg it edited — so the toggle silently decided which single leg
- * reached the engine. Sentinel cannot compare the two candidate expressions of
- * an underlying move from one of them.
+ * reached the engine. Both legs have been configured and sent since then.
  *
- * Both legs are now configured side by side and both are sent. The toggle is
- * FOCUS: it says which leg the strategy's rules are evaluated against and which
- * card the workspace emphasises. It creates and destroys nothing, and moving it
- * cannot lose a strike.
+ * What changed on 2026-08-29 is the SHAPE, and the shape was making a claim
+ * about the architecture that was not true. The two legs lived in large cards
+ * under a heading called "Option pair under observation", below the market
+ * dropdown, which read as "pick your contracts; the index is a setting". The
+ * index is not a setting. It is the market instrument — the series the engine
+ * takes its directional context from (`app/watch/direction.py`) — and the two
+ * contracts are the tradable expressions of its move.
  *
- * ⚠️ Note what this form deliberately does NOT do: it does not rank the two
- * legs, order them by attractiveness, or pre-select one from the market's
- * direction. Which side is presenting the stronger setup is the engine's
- * reading of live structure, momentum, volatility, premium behaviour and
- * liquidity — a "bullish → CE" shortcut here would pre-empt exactly that
- * evaluation, and per Rule 2 a ranked ladder of strikes is a recommendation
- * however it is worded.
+ * So the three are now one row of three identical dropdowns:
+ *
+ *     WATCH  [ NIFTY Nifty 50 ▾ ]  [ 24200 CE ▾ ]  [ 24200 PE ▾ ]
+ *
+ * and "Start watching" starts watching all three. Nothing was removed to get
+ * there: the ladders are still separate, the tokens are still resolved and
+ * checked per leg, the per-leg problems are still named per leg, and the
+ * underlying-only escape hatch is still here.
+ *
+ * ── WHAT THE TOGGLE MEANS, AND WHAT IT CANNOT DO ───────────────────────────
+ *
+ * FOCUS: which leg the strategy's rules are evaluated against, and which one
+ * the workspace emphasises. It creates and destroys nothing, it cannot lose a
+ * strike, and it cannot take a contract out of the watch — the request carries
+ * both legs whichever way it is set, and `router.py::_validate_pair` refuses a
+ * half-configured pair outright.
+ *
+ * It is also NOT an input to market direction. The index decides that, and it
+ * decides it identically whichever side the operator has in focus.
+ *
+ * ⚠️ Note what this form still deliberately does NOT do: it does not rank the
+ * two legs, order them by attractiveness, or score strikes against each other.
+ * Which leg is ALIGNED with the index's move is arithmetic on the index and is
+ * stated by the engine in the past tense; which strike is the better trade is a
+ * recommendation however it is worded, and per Rule 2 nothing here produces
+ * one.
  */
 export function WatchCreator({
   strategy,
@@ -164,13 +185,78 @@ export function WatchCreator({
     }
   };
 
+  /**
+   * The two strike dropdowns are live only when there is a real ladder behind
+   * them. `chain.ce`/`chain.pe` are passed straight through — never merged,
+   * never a single array with a side flag — so a control handed the call
+   * ladder has nothing to select a put from.
+   */
+  const chainLive = chain.status === 'live';
+  const legsDisabled = watchingUnderlying || !hasOptions || expiry === null || !chainLive;
+
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">Watch</span>
+      {/*
+        ── THE WATCH ROW: market, call, put ──────────────────────────────────
+
+        Three dropdowns of the same kind, in one line, because they are three
+        instruments of one watch rather than a market plus its settings. The
+        index is first because it is the market — the series direction is read
+        from — and the two contracts follow it.
+      */}
+      <div className="flex flex-wrap items-start gap-2">
+        <span className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-faint">Watch</span>
         <MarketSelector value={symbol} onChange={setMarket} />
-        {expiries.status === 'loading' && <span className="text-[11px] text-faint">checking expiries…</span>}
+        {!watchingUnderlying && expiries.status !== 'unreadable' && (
+          <>
+            <div className="min-w-[168px] flex-1">
+              <StrikeCombobox
+                side="CE"
+                rows={chainLive ? chain.ce : []}
+                atmIndex={chain.atmIndex}
+                value={selection.callStrike}
+                onChange={setCallStrike}
+                disabled={legsDisabled}
+                instrumentStatus={legs.ce.status}
+                instrument={selection.callInstrument}
+                focused={focusedSide === 'CE'}
+              />
+            </div>
+            <div className="min-w-[168px] flex-1">
+              <StrikeCombobox
+                side="PE"
+                rows={chainLive ? chain.pe : []}
+                atmIndex={chain.atmIndex}
+                value={selection.putStrike}
+                onChange={setPutStrike}
+                disabled={legsDisabled}
+                instrumentStatus={legs.pe.status}
+                instrument={selection.putInstrument}
+                focused={focusedSide === 'PE'}
+              />
+            </div>
+          </>
+        )}
       </div>
+
+      {/*
+        What "Start watching" will actually do, said outright. The old layout
+        left it to be inferred from two cards under a heading, and the thing
+        most worth inferring — that the index is the directional instrument and
+        the contracts are read against it — was not on the screen at all.
+      */}
+      {!watchingUnderlying && expiries.status !== 'unreadable' && (
+        <p className="text-[11px] leading-relaxed text-muted">
+          All three are watched together. <span className="font-semibold text-text">{symbol}</span> is the market
+          instrument — the series the engine reads direction from — and the CE and PE contracts are the tradable legs
+          read against it.
+          {chain.status === 'live' && chain.spot != null && (
+            <span className="text-faint"> Spot {chain.spot.toLocaleString('en-IN')}.</span>
+          )}
+        </p>
+      )}
+
+      {expiries.status === 'loading' && <p className="text-[11px] text-faint">checking expiries…</p>}
 
       {expiries.status === 'unreadable' ? (
         // NOT "this symbol has no option chain". The list could not be read, and
@@ -202,7 +288,7 @@ export function WatchCreator({
       ) : (
         <>
           <div className="grid grid-cols-2 gap-2.5">
-            <Field label="Expiry">
+            <Field label="Expiry" hint="applies to both contracts">
               <Select
                 value={expiry ?? ''}
                 // No second strike reset here: `selectExpiry` already drops
@@ -222,7 +308,7 @@ export function WatchCreator({
               </Select>
             </Field>
 
-            <Field label="Side in focus" hint="both legs are watched">
+            <Field label="Side in focus" hint="both legs stay watched">
               <div
                 className="flex rounded-lg border border-border bg-bg p-0.5"
                 role="group"
@@ -252,82 +338,41 @@ export function WatchCreator({
           </div>
 
           {/*
-            ── Option pair under observation ─────────────────────────────────
-
-            Two independent selectors, each bound to its own side's real ladder.
-            The section is named for what it is so the screen cannot be read as
-            "pick a side, then a strike": both contracts are configured, both
-            are sent, and the focus toggle above only says which one the rules
-            are evaluated against.
+            Why the strike dropdowns are inert, when they are. Each state is its
+            own sentence: "the chain is loading" and "there is no chain" have
+            different fixes, and one combined "unavailable" would hide which.
           */}
-          <fieldset className="min-w-0" disabled={underlyingOnly}>
-            <legend className="mb-1.5 flex w-full items-baseline justify-between gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">
-                Option pair under observation
-              </span>
-              {chain.status === 'live' && chain.spot != null && (
-                <span className="truncate text-[10.5px] text-faint">Spot {chain.spot.toLocaleString('en-IN')}</span>
-              )}
-            </legend>
+          {!watchingUnderlying && expiry === null ? (
+            <p className="text-[11.5px] text-muted">Choose an expiry to load the {symbol} strike ladders.</p>
+          ) : !watchingUnderlying && chain.status === 'loading' ? (
+            <p className="text-[11.5px] text-muted">Loading the {formatExpiry(expiry)} chain…</p>
+          ) : !watchingUnderlying && chain.status === 'unavailable' ? (
+            <p className="text-[11.5px] text-muted">
+              No live chain for {symbol} {formatExpiry(expiry)} right now.
+            </p>
+          ) : null}
 
-            {underlyingOnly ? (
-              <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
-                Watching {symbol} itself — no option legs are part of this watch.
-              </p>
-            ) : chain.status === 'loading' ? (
-              <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
-                Loading the {formatExpiry(expiry)} chain…
-              </p>
-            ) : chain.status === 'unavailable' ? (
-              <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
-                No live chain for {symbol} {formatExpiry(expiry)} right now.
-              </p>
-            ) : (
-              <div className="grid gap-2.5 sm:grid-cols-2">
-                {/*
-                  `chain.ce` and `chain.pe` — never one array with a side flag.
-                  The separation is the guarantee: a control handed only the
-                  call ladder has nothing to select a put from.
-                */}
-                <StrikeCombobox
-                  side="CE"
-                  rows={chain.ce}
-                  atmIndex={chain.atmIndex}
-                  value={selection.callStrike}
-                  onChange={setCallStrike}
-                  instrumentStatus={legs.ce.status}
-                  instrument={selection.callInstrument}
-                  focused={focusedSide === 'CE'}
-                />
-                <StrikeCombobox
-                  side="PE"
-                  rows={chain.pe}
-                  atmIndex={chain.atmIndex}
-                  value={selection.putStrike}
-                  onChange={setPutStrike}
-                  instrumentStatus={legs.pe.status}
-                  instrument={selection.putInstrument}
-                  focused={focusedSide === 'PE'}
-                />
-              </div>
-            )}
+          {watchingUnderlying && (
+            <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
+              Watching {symbol} itself — no option legs are part of this watch.
+            </p>
+          )}
 
-            {/*
-              Why each leg is blocking, named per leg. A single "invalid
-              selection" would leave the operator to work out which of the two
-              is at fault and in what way.
-            */}
-            {!underlyingOnly && problems.length > 0 && (
-              <ul className="mt-2 space-y-1">
-                {[...pairProblems, ...problemFor('CE'), ...problemFor('PE')].map((p) => (
-                  <li key={`${p.code}:${p.side ?? 'pair'}`} className="text-[11px] leading-snug text-warning">
-                    {p.side ? `${p.side}: ` : ''}
-                    {p.message}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </fieldset>
+          {/*
+            Why each leg is blocking, named per leg. A single "invalid
+            selection" would leave the operator to work out which of the two
+            is at fault and in what way.
+          */}
+          {!watchingUnderlying && problems.length > 0 && (
+            <ul className="space-y-1">
+              {[...pairProblems, ...problemFor('CE'), ...problemFor('PE')].map((p) => (
+                <li key={`${p.code}:${p.side ?? 'pair'}`} className="text-[11px] leading-snug text-warning">
+                  {p.side ? `${p.side}: ` : ''}
+                  {p.message}
+                </li>
+              ))}
+            </ul>
+          )}
 
           {hasOptions && (
             <label className="flex items-center gap-2 text-[11.5px] text-muted">
