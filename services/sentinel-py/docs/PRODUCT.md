@@ -80,6 +80,39 @@ Adopt one of 10 built-in definitions        ──┘
 All of it lives in the **"Your strategies"** section of `/sentinel`. There is
 deliberately no second strategy page.
 
+### What a watch actually watches
+
+An option watch names **three instruments**, and all three are read on every
+sweep:
+
+| Instrument | Role | Read by |
+|---|---|---|
+| The index (e.g. NIFTY) | **Market instrument** — the only series direction is taken from | `_read_index` |
+| The CE contract | Tradable leg | `_read_pair`, and `_candles_for` when it is in focus |
+| The PE contract | Tradable leg | `_read_pair`, and `_candles_for` when it is in focus |
+
+A rising index means the **CE** is the leg aligned with the move; a falling
+index means the **PE** is; a move inside the flat band aligns with neither, and
+that is recorded as neither rather than defaulted to a side. The mapping lives
+in `app/watch/direction.py` and is written onto every observation as
+`metadata.marketContext`, with `basis: "index"` stated outright so a later
+reader can never mistake it for a reading of a premium series.
+
+Why the index and not the contracts: a call premium can fall on a rising index
+(IV collapsing faster than delta pays, or theta into the afternoon), and both
+legs can rise together when volatility is being bid ahead of an event. A
+premium series answers "what did this contract do"; only the underlying answers
+"which way is the market going".
+
+**Side in focus** selects which leg the user's rule set is evaluated against.
+It is not a subscription: both contracts stay watched whichever way it is set,
+`router.py::_validate_pair` refuses a half-configured pair, and the index is
+read — and read identically — either way.
+
+⚠️ `alignedSide` is a description of the tape, not a ranking. Nothing compares
+one strike with another, and it never reaches a notification: `compliance.py`
+rejects a `side`/`bias` key in a notification payload outright (§4, §5).
+
 ### What Sentinel tells the user
 
 Two pre-entry tiers, and a set of in-trade observations. Nothing is phrased as

@@ -137,6 +137,11 @@ export default defineConfig({
       // Asserted with deliberately ASYMMETRIC ladders, because two identical
       // ladders let every cross-side bug pass.
       'src/components/sentinel/strategy/StrikeCombobox.test.tsx',
+      // "Start watching" watches the INDEX, a CALL and a PUT. Renders the real
+      // form and asserts both halves of the claim: the three dropdowns on
+      // screen, and the request that leaves with all three instruments in it —
+      // the half a screenshot cannot check, and the half that was wrong.
+      'src/components/sentinel/strategy/threeInstrumentWatch.test.tsx',
       // The Strategy Feed's four states. It used to render NOTHING while its
       // watch list was in flight — a hole in the dashboard band, reported as
       // 'the strategy feed is missing' — and to present a FAILED watch query as

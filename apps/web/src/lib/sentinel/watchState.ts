@@ -488,11 +488,19 @@ export function reconcileWatchSelection(selection: WatchSelection, watches: Watc
 // it cannot do it from two strike numbers either: it needs two addressable
 // contracts. See `OptionInstrument` for why a number is not an address.
 //
-// ⚠️ Nothing here decides WHICH side is better. The pair is configured and both
-// legs are handed to the engine; ranking them is the engine's evaluation of
-// live structure, momentum, volatility, premium behaviour and liquidity, and
-// hard-coding "bullish → CE" here would pre-empt exactly the judgement the
-// agents exist to make. See ARCHITECTURE.md §4 and Rule 2.
+// ⚠️ Nothing here decides direction, and nothing here decides which side is
+// better. Those are two different statements and only the first has an answer.
+//
+// DIRECTION is read from the INDEX, by the engine, on the bars it evaluates —
+// `services/sentinel-py/app/watch/direction.py`. A rising index means the call
+// is the aligned leg and a falling one means the put is; that is arithmetic on
+// the underlying, stated in the past tense, and it is deliberately NOT done
+// here, because a browser form computing it would be a second answer to a
+// question the engine already answers from the series it actually read.
+//
+// WHICH SIDE IS BETTER has no answer anywhere in this codebase. Ranking the two
+// legs, or the ladder of strikes behind them, is a recommendation however it is
+// worded. See ARCHITECTURE.md §4 and Rule 2.
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
