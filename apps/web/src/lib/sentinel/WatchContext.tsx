@@ -20,6 +20,7 @@ import {
   attachInstrument,
   reconcileExpiry,
   reconcileWatchSelection,
+  applyMarketHasOptions,
   resolveWatchContext,
   selectExpiry,
   selectMarket,
@@ -173,7 +174,18 @@ function readStored(): WatchSelection {
        */
       callInstrument: null,
       putInstrument: null,
-      underlyingOnly: parsed.underlyingOnly === true,
+      /**
+       * Only the CHOICE is restored; the forced value is re-derived.
+       *
+       * A restored `underlyingOnly` that the market had forced (a symbol whose
+       * chain read as absent on one poll) would outlive the condition that set
+       * it and hide the strike pickers on a market that has options — with the
+       * expiry dropdown beside them populated, which is what made it look like
+       * the pair UI had never shipped. `applyMarketHasOptions` re-forces it
+       * within a poll if the absence is real.
+       */
+      underlyingOnly: parsed.underlyingByChoice === true,
+      underlyingByChoice: parsed.underlyingByChoice === true,
       selectedWatchId: null,
     };
   } catch {
@@ -272,9 +284,14 @@ export function SentinelWatchProvider({
    */
   useEffect(() => {
     if (expiries.status === 'ready') {
-      setSelection((prev) => reconcileExpiry(prev, expiries.expiries, expiries.nearest));
+      // Reconcile the expiry against the live list, THEN tell the selection the
+      // market has options: a forced `underlyingOnly` (a cold first poll that
+      // answered 'none') is released here, while a deliberate tick is not.
+      setSelection((prev) =>
+        applyMarketHasOptions(reconcileExpiry(prev, expiries.expiries, expiries.nearest), true),
+      );
     } else if (expiries.status === 'none') {
-      setSelection((prev) => (prev.underlyingOnly ? prev : { ...prev, underlyingOnly: true }));
+      setSelection((prev) => applyMarketHasOptions(prev, false));
       return;
     }
     // `expiries.expiries` is a fresh array on every render of a cached query;
