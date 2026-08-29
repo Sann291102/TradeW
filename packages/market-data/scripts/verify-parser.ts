@@ -153,6 +153,45 @@ console.log('\nPrev-close and OI packets');
   check('openInterest', tickOf(parsePacket(oi)).openInterest, 1_750_000);
 }
 
+// --- A zero PRICE is "absent", never a real quote ----------------------------
+// Regression guard for the 2026-08-29 dashboard bug: after the session closed,
+// NIFTY 50 / BANK NIFTY / FIN NIFTY / SENSEX / INDIA VIX all read `0.00` on the
+// home cards while the ticker strip still showed genuine last-session values.
+//
+// Dhan keeps pushing QUOTE/FULL packets past 15:30 with the price slots
+// zero-filled. `nonZero` was applied to day-close alone, so those zeros were
+// parsed as real prices and overwrote the last good ones downstream. Every
+// price field is now guarded; volume, OI and quantities are deliberately NOT,
+// because zero is a true reading for them.
+console.log('\nZero-filled post-close packet');
+{
+  const buf = Buffer.alloc(50);
+  header(buf, FEED_CODE.QUOTE, 50, 1, 13);
+  // Every price slot zero, but real volume and a real traded quantity.
+  buf.writeInt16LE(7, 12);
+  buf.writeInt32LE(4_200_000, 22);
+
+  const tick = tickOf(parsePacket(buf));
+  check('zero ltp is absent', tick.ltp, undefined);
+  check('zero open is absent', tick.open, undefined);
+  check('zero high is absent', tick.high, undefined);
+  check('zero low is absent', tick.low, undefined);
+  check('zero averageTradePrice is absent', tick.averageTradePrice, undefined);
+  check('real volume survives', tick.volume, 4_200_000);
+  check('real lastTradedQuantity survives', tick.lastTradedQuantity, 7);
+
+  const ticker = Buffer.alloc(16);
+  header(ticker, FEED_CODE.TICKER, 16, 1, 13);
+  check('zero TICKER ltp is absent', tickOf(parsePacket(ticker)).ltp, undefined);
+
+  const prev = Buffer.alloc(16);
+  header(prev, FEED_CODE.PREV_CLOSE, 16, 1, 13);
+  prev.writeInt32LE(1750, 12);
+  const prevTick = tickOf(parsePacket(prev));
+  check('zero previousClose is absent', prevTick.previousClose, undefined);
+  check('real openInterest survives a zero price', prevTick.openInterest, 1750);
+}
+
 // --- Last trade time is an IST-based epoch -----------------------------------
 // Regression guard. Dhan's docs call the WS field only "EPOCH"; it is in fact
 // seconds counted as though IST wall clock were UTC, so decoding it directly
