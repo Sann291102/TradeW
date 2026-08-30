@@ -49,6 +49,21 @@ import { buildOptionContext } from '../strategy/option-context';
 import { StrategyLifecycleService } from '../strategy/strategy-lifecycle.service';
 import { MarketStateMachineService, StateEvaluation } from '../state-machine/state-machine.service';
 import { MarketTimelineEngine, RecordInput } from '../timeline/timeline.engine';
+
+/**
+ * One observation, with the internals the execution path needs.
+ *
+ * `response` is exactly what `observe()` has always returned and what the API
+ * proxies to the workspace. The other two are the artefacts it was computed
+ * FROM, exposed so the execution evaluation can read index direction and
+ * strategy evidence off the same market read rather than taking a second one.
+ * See `observeInternal`.
+ */
+export interface InternalObservation {
+  response: ObserveResponse;
+  snapshot: MarketSnapshot;
+  detections: StrategyDetection[];
+}
 import { enforceVocabulary, statusHeadline } from '../vocabulary/vocabulary';
 import { StrategyAdvisorService } from '../reasoning/strategy-advisor.service';
 import { RegimeIntelligenceService } from '../reasoning/regime-intelligence.service';
@@ -163,11 +178,41 @@ export class SentinelOrchestratorService {
    * confidence gate is tuned right.
    */
   async observe(request: ObserveRequest): Promise<ObserveResponse> {
-    let response!: ObserveResponse;
+    return (await this.observeInternal(request)).response;
+  }
+
+  /**
+   * The same observation, plus the two internal artefacts it was built from.
+   *
+   * ## Why this exists rather than fields on `ObserveResponse`
+   *
+   * `ExecutionEvaluationService` needs the `MarketSnapshot` (to read index
+   * direction and the strategy's declared evidence) and the full
+   * `StrategyDetection[]` (to find a VALIDATED agent-tradable setup —
+   * `strategyMatches` on the wire is the trimmed `StrategyMatch` shape and has
+   * dropped `validated`). Neither may be obtained by observing again: a second
+   * read is a second point in time, so the evidence would describe a market
+   * fractionally different from the one the decision was published for.
+   *
+   * They are also not fields on `ObserveResponse`, and that is deliberate:
+   * that object is proxied VERBATIM to `apps/web`, so anything added to it is
+   * added to a trader's payload. The snapshot carries every candle in the
+   * five-day window, and the detections carry unvalidated setups that the
+   * publication gate exists to keep off a trader's screen.
+   *
+   * So: one read, two consumers, and the heavier consumer uses a method the
+   * proxy does not call. Internal by convention AND by reachability — nothing
+   * outside this service and `ExecutionEvaluationService` invokes it, and
+   * `ExecutionEvaluationService` is itself reachable only from the
+   * service-token-guarded `POST /execution/evaluate`.
+   */
+  async observeInternal(request: ObserveRequest): Promise<InternalObservation> {
+    let observation!: InternalObservation;
     await runAgentRun(
       { system: 'sentinel', trigger: 'observe', symbol: request.symbol ?? 'NIFTY', userId: request.userId },
       async (runId) => {
-        response = await this.runObservation(request);
+        observation = await this.runObservation(request);
+        const response = observation.response;
         // The run's own id, echoed to the caller. `runAgentRun` has always
         // passed it to this callback and always written it to AgentRun; it was
         // simply never returned, so a caller holding a response could not name
@@ -181,10 +226,10 @@ export class SentinelOrchestratorService {
         };
       },
     );
-    return response;
+    return observation;
   }
 
-  private async runObservation(request: ObserveRequest): Promise<ObserveResponse> {
+  private async runObservation(request: ObserveRequest): Promise<InternalObservation> {
     const at = new Date();
     const symbol = request.symbol ?? 'NIFTY';
     const trades = request.recentTrades ?? [];
@@ -576,7 +621,7 @@ export class SentinelOrchestratorService {
       );
     }
 
-    return {
+    const response: ObserveResponse = {
       synthesis,
       crossValidation,
       publication,
@@ -657,6 +702,11 @@ export class SentinelOrchestratorService {
           : null,
       }),
     };
+
+    // The wire response is unchanged from what this method has always
+    // returned; `snapshot` and `detections` ride alongside it for the
+    // execution path only. See `observeInternal`.
+    return { response, snapshot, detections };
   }
 
   /**

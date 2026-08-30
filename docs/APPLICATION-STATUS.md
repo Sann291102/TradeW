@@ -1,6 +1,6 @@
 # TradeW — Application Status & Roadmap
 
-**Last updated:** 2026-08-20 (admin console + Sentinel paper execution entries; the rest is the 2026-08-15 revision)
+**Last updated:** 2026-08-30 (autonomous paper agents: position management, exits, journal, calibration; admin console entries are 2026-08-20; the rest is the 2026-08-15 revision)
 **Branch at time of writing:** `main` (latest commit `6928301`)
 **Purpose:** One place a new developer or planner can read to know, right now — what's built, what's actually working, and what's left. This is a living status doc, not a spec. For architecture rules see [`ARCHITECTURE.md`](../ARCHITECTURE.md); for the full file-by-file audit see [`REPOSITORY_INVENTORY.md`](../REPOSITORY_INVENTORY.md).
 
@@ -41,7 +41,7 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 
 ### Admin operator console (`apps/admin`)
 - Standalone Next.js app on port 3001 with its own operator-account auth (`OperatorAccount`, composed `AdminAccessGuard`), a **deny-by-default** proxy allowlist to `services/api` (`src/lib/adminProxyRoutes.ts`), and a live knowledge SSE stream.
-- **Seven** surfaces read live data: Dashboard, `/ai`, `/cognition`, `/knowledge`, `/orders` (incl. Sentinel paper execution), `/system`, `/audit`. **Six** more (`/health`, `/agents`, `/reasoning`, `/rules`, `/learning-platform`, `/observability`) are scaffolded routes that render "Not built yet" with no sample data — the sidebar labels the two groups separately on purpose (`src/components/shell/nav-config.ts`).
+- **Seven** surfaces read live data: Dashboard, `/ai`, `/cognition`, `/knowledge`, `/orders` (incl. autonomous paper agents: live positions, agent state, journal, calibration), `/system`, `/audit`. **Six** more (`/health`, `/agents`, `/reasoning`, `/rules`, `/learning-platform`, `/observability`) are scaffolded routes that render "Not built yet" with no sample data — the sidebar labels the two groups separately on purpose (`src/components/shell/nav-config.ts`).
 - Writes are limited to seven audited POSTs (admin grant, three cognition controls, execution profile arm/run/upsert, agent-trading consent). No route on this console can place an order.
 - `/orders` reports whether the execution loop is actually **ticking** (`/admin/execution/status` — env flag, both leader leases, last tick), and groups the window's refused decisions by the gate that stopped them (`/admin/execution/rejections`).
 - ⚠️ **Gap:** no operator RBAC (`OperatorAccount` has no role column), no MFA, no IP allow-list — mitigated today by loopback-binding + SSH tunnel, which is a deployment property, not an application one. See `docs/ADMIN_PORTAL_BLUEPRINT.md` §4 for the ordered backlog.
@@ -65,15 +65,24 @@ TradeW is an Indian-markets (NSE/BSE/MCX) AI trading platform: real Dhan market 
 - Option contracts trade at their real per-strike premium.
 - ⚠️ **Gap:** margin is explicitly simplified (not real SPAN), no partial fills, no bracket/OCO orders (schema field exists, nothing writes it).
 
-### Sentinel paper execution (`services/api/src/paper-execution/`)
-- Landed 2026-08-18 (`fd0c66d`). Turns a Sentinel observation that already cleared Sentinel's own gates into a PAPER order through the **existing** `OrderService` — no second OMS, no shadow ledger, no direct position writes. Exits go through `exitPosition` like any other order.
-- `ExecutionProfile` → `ExecutionIntent` → `Order`/`Trade` → `ExecutionOutcome`, with an idempotency key claimed by INSERT *before* any order exists, nine risk gates (`execution-policy.ts`), and a per-order trace on `/orders`.
-- Verified end to end against the running stack on 2026-08-18: real agent orders visible at every hop (admin stats, admin list, the bound user's `/sim/orders`, the console proxy leg) within 196 ms of creation.
-- Bound to **real TradeW user accounts** (`USER_PAPER` scope) behind revocable per-user consent (`User.agentPaperTradingEnabledAt`), re-read every pass.
-- Long options only (side is the constant `BUY`); `ExecutionEnvironment` has exactly one member, `PAPER`, and the loop refuses anything else twice.
+### Autonomous paper agents (`services/api/src/paper-execution/`, `services/sentinel/src/execution/`)
+- Landed 2026-08-18 (`fd0c66d`) as a one-shot entry loop; completed 2026-08-30 into a full **entry → position management → exit → journal → calibration** cycle. Full reference: [`docs/product-architecture/AUTONOMOUS-PAPER-AGENTS.md`](product-architecture/AUTONOMOUS-PAPER-AGENTS.md).
+- **PAPER ONLY, structurally.** `ExecutionEnvironment` has exactly one member (`PAPER`), every order goes through the same `OrderService` a human uses, and there is no broker order path anywhere in the application. The agents *read* live Dhan market data; they cannot *write* to a broker.
+- **Two independently armable agents**, seeded disarmed by `npm run agents:seed -w @tradew/database`: `sentinel-alpha-nifty` (structure-shift + trend-momentum) and `sentinel-beta-sensex` (opening-range expansion + exhaustion reversal). Separate profiles, separate accounts, separate wallets, separate calibration buckets, separate day counters — they share no mutable state and can run simultaneously.
+- **Four agent-tradable strategies** (`agent-smc-structure-shift`, `agent-trend-momentum`, `agent-opening-range-expansion`, `agent-exhaustion-reversal`), each versioned and each declaring the `knowledge-base/*.yaml` concepts it derives from, the evidence keys it requires, the regimes it is allowed in, and its own invalidation rules. A YAML strategy file cannot grant itself `agentTradable`; only the code-defined roster can place orders.
+- **Three-instrument model.** The INDEX decides direction (`services/sentinel/src/execution/index-direction.ts`, five weighted reads, never consults the option chain); the option chain only chooses the *contract* once direction is settled. Premium movement can never imply market direction.
+- **Four entry gates in order** — data quality → agent strategy → index direction → evidence (`execution-evaluation.service.ts`) — then eight risk gates on the API side (`execution-policy.ts`), including a new quote-freshness gate and a risk-plan gate. Every verdict, refused or not, persists its evidence, confirmations, direction reads and data-quality report.
+- **Every entry has a persisted, monitored stop and target.** Sizing is `execution-risk.ts`: 20 % of equity is the allocation ceiling, 3 % of equity is the loss at the stop, reward is 3R (9 % of equity). The three bases are documented explicitly; `riskAtStop ≤ riskBudget` is a structural invariant (the stop distance is *floored*, never rounded).
+- **Trailing every 3 premium points** on the traded contract — not index points — recorded as an `ExecutionTrailAdjustment` row per step, under an optimistic-concurrency `version` guard.
+- **One authoritative exit decision** (`position-decision.ts`), with a fixed precedence: `EMERGENCY > STOP > TARGET > TRAIL > INVALIDATED > SQUARE_OFF`. No service may exit a position outside it.
+- **Disarming stops new entries only.** `PositionManagerService.manageAll()` selects on `state = OPEN` and never reads `profile.enabled`; `ExecutionLifecycleService.squareOff` no longer filters on `enabled` (it did before 2026-08-30, which could strand an open position on a disarmed profile). The decision input type has no `enabled` field at all, so the bug is unrepresentable.
+- **Three loops, three cadences** (`execution-scheduler.service.ts`), each derived from what the Dhan bridge can actually serve: manage **2 s** (`/quotes` is an in-memory tick map, `/optionchain` has a 2 s TTL), evaluate **30 s** (`/candles` is cached 60 s), reconcile **15 s**. Separate `JobLease` leases so a slow evaluation cannot stall position management.
+- **Explicit paper fill model** (`execution-fill.ts`) — bid/ask, side, spread, whether the spread was synthetic — stored on the intent, so a fill can be re-derived rather than trusted.
+- **A per-trade journal** (`ExecutionJournal`, ~50 columns) written on every close, answering what was seen, why it entered, what it risked, how it was managed, why it exited, and what it fed back.
+- **Bounded calibration** (`execution-calibration.ts`, `StrategyCalibration`): per (agent, symbol, strategy, version, regime), derived from average R rather than win rate, needs 8 trades before it moves anything, and only ever moves the *confidence floor* — clamped so it can never go below the platform's 70. It cannot touch stops, targets, trailing, risk, arming, freshness or source code.
+- Bound to **real TradeW user accounts** (`USER_PAPER`) behind revocable per-user consent, or to non-loginable machine accounts (`SYSTEM_PAPER`). Long options only; side is the constant `BUY`.
 - Two switches, both required: `PAPER_EXECUTION_ENABLED=true` on the API process **and** the profile's own `enabled` column. Off by default.
-- Square-off orders link back to the decision they close (`Order.exitOfIntentId`, 2026-08-20), so the `source=sentinel` filter and the per-order trace cover an agent's exits as well as its entries.
-- Every refusal is stored twice: as a sentence for a human (`rejectReason`) and as the failing gate's id (`rejectCheckId`) so refusals can be counted.
+- Console: `/orders` shows live positions, per-agent "what it is thinking right now", the trade journal, and the calibration table (`GET /admin/execution/{positions,agents,journal,calibration}`).
 - ⚠️ **Expected behaviour, not a gap:** intents can accumulate with zero orders when a daily-loss gate trips (see `knowledge/Gotchas/2026-08-18 - Paper orders invisible in Admin_Web is usually no order, not a read bug.md`). The console's rejection breakdown now answers that in one glance.
 
 ### Sentinel (AI safety layer)

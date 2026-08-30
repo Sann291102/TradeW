@@ -65,7 +65,7 @@ second belongs on an operations console.
 | `GraphNode`, `GraphEdge` | the market entity graph |
 | `Instrument`, `NewsEvent` | instruments, their underlyings, news sources |
 | `ResearchCompany`, `UserStrategy` | research subjects and strategies |
-| `ExecutionProfile`, `ExecutionIntent`, `ExecutionOutcome` | experiments, decisions, and the outcomes that scored them |
+| `ExecutionProfile`, `ExecutionIntent`, `ExecutionOutcome`, `ExecutionPosition`, `ExecutionJournal`, `StrategyCalibration` | agents, decisions, the positions they managed, the outcomes that scored them, and the calibration those outcomes fed |
 | `SentinelObservation` | agent observations, bridged to instruments |
 | `AuditEvent`, `OperatorAccount` | security findings, deployments, the operator population |
 | `JobLease` | leader-elected background loops and whether they are held |

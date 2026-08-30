@@ -23,6 +23,8 @@
  * book and order mechanics in the strategy layer.
  */
 
+import { PLATFORM_CONFIDENCE_FLOOR, applyCalibration } from './execution-calibration';
+
 export interface PolicyCheck {
   id: string;
   label: string;
@@ -45,6 +47,13 @@ export interface PolicyDecision {
    * "why did nothing trade today?" breakdown groups by.
    */
   failedCheckId: string | null;
+  /**
+   * The confidence floor this decision was actually held to, after the
+   * profile's own number and the bucket's learned adjustment, clamped at the
+   * platform's 70. Recorded on the intent so a past refusal can be read
+   * without recomputing what the calibration was at the time.
+   */
+  effectiveConfidenceFloor: number;
 }
 
 /**
@@ -71,6 +80,19 @@ export const REJECT_CHECK_LABELS: Record<string, string> = {
   affordable: 'Sufficient paper capital',
   'submission-raised': 'Submission raised',
   'oms-rejected': 'Rejected by the OMS',
+  // ---- Autonomous agents (2026-08-30) ----
+  'quote-freshness': 'Live quote is current',
+  'index-direction': 'Index direction agrees',
+  'risk-plan': 'Risk plan is sizeable',
+  'allocation-ceiling': 'Capital allocation',
+  'risk-budget': 'Risk budget',
+  // Every refusal Sentinel itself produced, so the console's "why did nothing
+  // trade today?" breakdown can group them beside this layer's own. Without
+  // these the largest bar on that chart is an unlabelled id.
+  'sentinel-stale-data': 'Sentinel: data too stale',
+  'sentinel-no-agent-strategy': 'Sentinel: no agent strategy validated',
+  'sentinel-index-direction-conflict': 'Sentinel: index disagreed with the side',
+  'sentinel-evidence-conflict': 'Sentinel: strategy evidence did not support',
 };
 
 /** The two non-policy stops, named so a caller cannot misspell one. */
@@ -106,6 +128,42 @@ export interface PolicyInput {
   availableCash: number;
   /** Premium × quantity for a long option — the full cost and the full risk. */
   estimatedCost: number;
+
+  // ---- Autonomous agents (2026-08-30) ------------------------------------
+  /**
+   * Whether the live feed is actually ticking, from `assessFreshness`.
+   *
+   * SEPARATE from `marketOpen`. The venue being open and the feed delivering
+   * are different facts, and the 2026-08-17 incident is what it looks like
+   * when only the first is checked: the bridge answered every request while
+   * serving a tick map that had stopped advancing hours earlier.
+   */
+  quoteFresh: boolean;
+  quoteFreshnessDetail: string;
+
+  /**
+   * The index's own direction, and the option side being taken.
+   *
+   * Sentinel has already refused a mismatch; this is the SECOND, independent
+   * check of the same thing on this side of the network hop, for the same
+   * reason `environment-paper` is checked twice. A response that arrived
+   * saying `executable` with a conflicting direction did not come from the
+   * Sentinel this deployment thinks it is talking to.
+   */
+  indexDirection: string;
+  optionSide: 'CE' | 'PE';
+
+  /**
+   * The floor adjustment this (agent, symbol, strategy, version, regime)
+   * bucket has earned from its own completed trades, in whole confidence
+   * points. Positive raises the bar. See `execution-calibration.ts`.
+   */
+  calibrationAdjustment: number;
+
+  /** Did `planRisk` produce a sizeable position, and if not, why not. */
+  riskPlanOk: boolean;
+  riskPlanReason: string | null;
+  riskPlanCheckId: string | null;
 }
 
 /** IST minute-of-day the Indian equity session opens (09:15). */
@@ -157,11 +215,42 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
       : `${formatIstMinute(input.minuteOfDay)} is at or past the ${formatIstMinute(input.squareOffMinute)} square-off; entries are closed for the day.`,
   );
 
-  const confidenceOk = input.confidence >= input.minConfidence;
+  // ---- THE FEED IS TICKING, not merely reachable -------------------------
+  push('quote-freshness', input.quoteFresh, input.quoteFreshnessDetail);
+
+  // ---- The index and the option side agree -------------------------------
+  //
+  // Sentinel refused this already. Checked again HERE because the two checks
+  // are on opposite sides of a network hop, and this side must not take a
+  // remote service's word for the one property that decides which direction
+  // real money would be committed in. Exactly the reasoning behind checking
+  // `environment-paper` twice.
+  const permittedSide = input.indexDirection === 'bullish' ? 'CE' : input.indexDirection === 'bearish' ? 'PE' : null;
+  const directionOk = permittedSide === input.optionSide;
+  push(
+    'index-direction',
+    directionOk,
+    directionOk
+      ? `The index reads ${input.indexDirection}, which is the ${input.optionSide} side.`
+      : `Refused: the index reads ${input.indexDirection}, which permits ${permittedSide ?? 'no side'}, but the decision is ${input.optionSide}.`,
+  );
+
+  // ---- The CALIBRATED confidence floor -----------------------------------
+  //
+  // `applyCalibration` clamps at the platform's own 70 whatever the profile
+  // asked for and whatever the bucket learned, so a stored calibration can
+  // make this bucket HARDER to trade and can never make it easier than the
+  // platform bar. See `execution-calibration.ts`.
+  const effectiveFloor = applyCalibration(input.minConfidence, input.calibrationAdjustment);
+  const confidenceOk = input.confidence >= effectiveFloor;
   push(
     'confidence-floor',
     confidenceOk,
-    `${input.confidence}% against this profile's ${input.minConfidence}% floor.`,
+    input.calibrationAdjustment === 0
+      ? `${input.confidence}% against this profile's ${input.minConfidence}% floor.`
+      : `${input.confidence}% against an effective ${effectiveFloor}% floor — this profile's ${input.minConfidence}% ` +
+        `${input.calibrationAdjustment > 0 ? 'raised' : 'lowered'} by ${Math.abs(input.calibrationAdjustment)} point(s) of learned calibration ` +
+        `(never below the platform's ${PLATFORM_CONFIDENCE_FLOOR}%).`,
   );
 
   const positionsOk = input.openPositions < input.maxOpenPositions;
@@ -189,6 +278,20 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
       : `Realized ${formatInr(input.realizedPnlToday)} today, at or past the ${formatInr(-Math.abs(input.maxLossPerDay))} floor. Trading is stopped for the day.`,
   );
 
+  // ---- A sizeable position could actually be planned ---------------------
+  //
+  // `planRisk` refuses when one lot does not fit inside the allocation ceiling
+  // or the risk budget. That is a POLICY refusal with an explanation, not an
+  // error — and it is checked here so it lands in the rejection breakdown
+  // beside every other reason nothing traded.
+  push(
+    input.riskPlanCheckId ?? 'risk-plan',
+    input.riskPlanOk,
+    input.riskPlanOk
+      ? 'A position was sized inside the capital allocation and risk budget.'
+      : (input.riskPlanReason ?? 'No position could be sized inside the configured limits.'),
+  );
+
   // A soft pre-check only. `OrderService` computes the authoritative simulated
   // margin and rejects on it; this exists so an obviously unaffordable intent
   // is refused as a POLICY decision with an explanation, rather than becoming a
@@ -206,6 +309,7 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
     checks,
     reason: failed ? failed.detail : null,
     failedCheckId: failed ? failed.id : null,
+    effectiveConfidenceFloor: effectiveFloor,
   };
 }
 

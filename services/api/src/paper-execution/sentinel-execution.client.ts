@@ -32,8 +32,79 @@ export interface StrikeCandidateDto {
   checks: { id: string; label: string; passed: boolean; detail: string }[];
 }
 
+/** Mirrors `DataQualityRead` in services/sentinel. */
+export interface DataQualityDto {
+  ok: boolean;
+  checks: { id: string; label: string; passed: boolean; detail: string }[];
+  candles: number;
+  newestBarAt: string | null;
+  barAgeMinutes: number | null;
+  spot: number | null;
+  optionChainStrikes: number;
+  failedCheckId: string | null;
+  reason: string | null;
+}
+
+/** Mirrors `IndexDirectionRead`. The index's own read, not the option side. */
+export interface IndexDirectionDto {
+  direction: 'bullish' | 'bearish' | 'neutral' | 'unclear';
+  strength: number;
+  votes: { id: string; label: string; direction: string; weight: number; detail: string; concept: string }[];
+  conflicts: { id: string; label: string; detail: string }[];
+  summary: string;
+}
+
+/** Mirrors `EvidenceRead` — what the strategy declared material, and only that. */
+export interface EvidenceDto {
+  items: {
+    id: string;
+    label: string;
+    concept: string;
+    value: number | null;
+    detail: string;
+    stance: 'supports' | 'opposes' | 'neutral';
+    weight: number;
+  }[];
+  opposing: { id: string; label: string; detail: string }[];
+  unavailable: { id: string; reason: string }[];
+  supportRatio: number;
+  summary: string;
+}
+
+/** Mirrors `AgentStrategyRead`. */
+export interface AgentStrategyDto {
+  strategyId: string;
+  strategyName: string;
+  version: string;
+  purpose: string;
+  regime: string;
+  regimeDeclared: boolean;
+  bias: 'bullish' | 'bearish' | 'neutral';
+  confidence: number;
+  rulesMatched: string[];
+  rulesUnmet: string[];
+  exitRules: string[];
+  knowledgeConcepts: string[];
+}
+
+/** Mirrors `ExitRuleEvaluation` — the fast loop's only source of thesis state. */
+export interface ExitRuleEvaluationDto {
+  strategyId: string;
+  rules: { id: string; fired: boolean; note: string }[];
+  fired: { id: string; note: string }[];
+}
+
 export interface ExecutionEvaluationDto {
-  verdict: 'executable' | 'no-side-in-focus' | 'below-threshold' | 'no-option-chain' | 'no-tradable-strike';
+  verdict:
+    | 'executable'
+    | 'no-side-in-focus'
+    | 'below-threshold'
+    | 'no-option-chain'
+    | 'no-tradable-strike'
+    | 'stale-data'
+    | 'no-agent-strategy'
+    | 'index-direction-conflict'
+    | 'evidence-conflict';
   executable: boolean;
   reason: string;
   runId: string | null;
@@ -61,6 +132,20 @@ export interface ExecutionEvaluationDto {
   };
   expiry: string | null;
   marketSnapshot: Record<string, unknown>;
+
+  // ---- The four agent gates (2026-08-30). Present on EVERY verdict. -------
+  dataQuality: DataQualityDto;
+  indexDirection: IndexDirectionDto;
+  agentStrategy: AgentStrategyDto | null;
+  evidence: EvidenceDto | null;
+  confirmations: { id: string; label: string; passed: boolean; detail: string }[];
+  /**
+   * Exit-rule state for the strategies whose positions are already open on
+   * this symbol. Computed on the SAME snapshot as the entry search, which is
+   * what lets the two-second position manager evaluate a thesis without a
+   * market read of its own.
+   */
+  exitRuleEvaluations: ExitRuleEvaluationDto[];
 }
 
 @Injectable()
@@ -81,6 +166,13 @@ export class SentinelExecutionClient {
     userId: string;
     strategyId?: string | null;
     minConfidence?: number;
+    /** The agent's strategy roster. Empty means "any of the four". */
+    strategyIds?: string[];
+    /** Per-profile data-quality floors. */
+    minCandles?: number;
+    maxBarAgeMinutes?: number;
+    /** Strategy ids of positions currently held on this symbol. */
+    openStrategyIds?: string[];
   }): Promise<ExecutionEvaluationDto> {
     const token = process.env.SENTINEL_SERVICE_TOKEN ?? '';
     if (!token) {

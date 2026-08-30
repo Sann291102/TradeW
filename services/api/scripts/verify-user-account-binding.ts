@@ -226,6 +226,25 @@ async function main() {
     confidence: 82, publication: live?.publication ?? null, strategyId: null, strategyName: 'user-binding-verification',
     strikes: strikes as unknown as ExecutionEvaluationDto['strikes'],
     expiry: `${expiry}T00:00:00.000Z`, marketSnapshot: (live?.marketSnapshot ?? {}) as Record<string, unknown>,
+    // The four agent gates. Live where the live gate published, recorded
+    // otherwise — and the console line above says which of the two happened,
+    // so a passing report can never be mistaken for the market having signalled.
+    dataQuality: live?.dataQuality ?? {
+      ok: true, checks: [], candles: 0, newestBarAt: null, barAgeMinutes: null,
+      spot, optionChainStrikes: strikes.candidates.length, failedCheckId: null, reason: null,
+    },
+    indexDirection: live?.indexDirection ?? {
+      direction: 'bullish', strength: 1, votes: [], conflicts: [],
+      summary: 'Recorded index direction for account-binding verification.',
+    },
+    agentStrategy: live?.agentStrategy ?? {
+      strategyId: 'agent-trend-momentum', strategyName: 'Trend Momentum Continuation', version: '1.0.0',
+      purpose: 'Account-binding verification.', regime: 'trending', regimeDeclared: true,
+      bias: 'bullish', confidence: 84, rulesMatched: [], rulesUnmet: [], exitRules: [], knowledgeConcepts: [],
+    },
+    evidence: live?.evidence ?? null,
+    confirmations: live?.confirmations ?? [],
+    exitRuleEvaluations: live?.exitRuleEvaluations ?? [],
   };
   (execution as unknown as { sentinel: SentinelExecutionClient }).sentinel = { evaluate: async () => decision } as unknown as SentinelExecutionClient;
 

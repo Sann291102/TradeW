@@ -29,6 +29,21 @@ interface BridgeQuote {
   bid: number;
   ask: number;
   marketStatus: 'open' | 'closed';
+  /**
+   * When the bridge last received a tick for this instrument, ISO.
+   *
+   * The bridge has always sent this; nothing here read it until the autonomous
+   * agents needed to know whether the feed was ALIVE as opposed to merely
+   * REACHABLE. Those are different questions and the 2026-08-17 incident is
+   * what happens when only the second one is asked: the bridge answered every
+   * request in ~30 ms while serving a tick map that had stopped advancing
+   * because its Dhan credential had expired. See `execution-freshness.ts`.
+   *
+   * Optional on this interface because it is read defensively — an older
+   * bridge, or a quote assembled before this field existed, must degrade to
+   * "unknown age" rather than to `new Date(undefined)`.
+   */
+  updatedAt?: string;
 }
 interface BridgeSnapshot {
   marketOpen: boolean;
@@ -159,6 +174,49 @@ export class MarketPriceService {
     const snapshot = (await res.json()) as BridgeSnapshot;
     this.snapshotCache = { at: Date.now(), snapshot };
     return snapshot;
+  }
+
+  /**
+   * How alive is the feed, right now?
+   *
+   * Returns the NEWEST tick timestamp across the bridge's index quotes, plus
+   * the session flag. The newest rather than the oldest, deliberately: indices
+   * that are not trading (a commodity index after its own close, a symbol the
+   * subscription budget has not reached) legitimately have old stamps, and
+   * taking the minimum would report the feed as dead whenever any one
+   * instrument was quiet. The question this answers is "is the socket
+   * delivering", and one fresh tick answers it.
+   *
+   * Indices only, not the whole universe: they tick continuously through the
+   * session and are the instruments the agents actually trade the options of.
+   *
+   * Returns `quotedAt: null` — never a fabricated `new Date()` — when the
+   * bridge is unreachable or no quote carries a stamp. `assessFreshness`
+   * treats unknown age as a FAILURE, so a monitoring gap refuses the trade
+   * rather than silently passing it.
+   */
+  async feedFreshness(): Promise<{ quotedAt: Date | null; marketOpen: boolean; instruments: number }> {
+    let snapshot: BridgeSnapshot;
+    try {
+      snapshot = await this.getSnapshot();
+    } catch (err) {
+      this.logger.warn(`feedFreshness: live-feed bridge unreachable — ${(err as Error).message}`);
+      return { quotedAt: null, marketOpen: false, instruments: 0 };
+    }
+
+    let newest: number | null = null;
+    for (const quote of snapshot.indices ?? []) {
+      if (!quote.updatedAt) continue;
+      const at = Date.parse(quote.updatedAt);
+      if (Number.isNaN(at)) continue;
+      if (newest == null || at > newest) newest = at;
+    }
+
+    return {
+      quotedAt: newest == null ? null : new Date(newest),
+      marketOpen: snapshot.marketOpen,
+      instruments: snapshot.indices?.length ?? 0,
+    };
   }
 
   /** Resolves the Postgres Instrument row for `symbol`, upserting from the

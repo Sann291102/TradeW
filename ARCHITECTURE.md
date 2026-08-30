@@ -104,7 +104,15 @@ Sentinel's *workspace* differs from the others because its job differs — diffe
 > **`docs/product-architecture/AGENT-LAYERS.md` is the accurate map** and takes
 > precedence over this section wherever the two disagree.
 
-**Scope, per the PRD's own boundary** ("no discretionary advice"): every agent, in either system, analyzes, explains, or reflects. None of them recommend trades in a way that bypasses user judgment, and none execute orders.
+**Scope, per the PRD's own boundary** ("no discretionary advice"): every agent, in either system, analyzes, explains, or reflects. None of them recommend trades in a way that bypasses user judgment, and none place an order on a human's behalf as advice.
+
+**The one deliberate exception — and its boundary.** Since 2026-08-18, and completed 2026-08-30, `services/api/src/paper-execution/` runs **autonomous paper agents** that do place orders: they consume live market data, form a thesis, size a position, and manage it to a stop, a target or a trail without a human in the loop. Three properties keep that inside the boundary above rather than outside it, and all three are structural, not conventional:
+
+- **Paper only, unrepresentably so.** `ExecutionEnvironment` has exactly one member, `PAPER`. There is no broker order path in this application, no enum value to route to one, and adding one is a schema-and-review change, not a config change. The agents *read* a live broker feed; they cannot *write* to a broker.
+- **They never speak to a human.** An autonomous agent's output is an `ExecutionIntent` and an `Order` in its own account, not a suggestion on anybody's screen. It cannot become the "suggested next step" a user acts on, so the no-discretionary-advice boundary is untouched — nothing here recommends a trade to a person.
+- **Two switches, both operator-held.** `PAPER_EXECUTION_ENABLED=true` on the API process *and* the profile's own `enabled` column, armed from the audited admin console. Off by default. A `USER_PAPER` profile additionally requires that person's revocable consent, re-read every pass.
+
+Full reference: [`docs/product-architecture/AUTONOMOUS-PAPER-AGENTS.md`](docs/product-architecture/AUTONOMOUS-PAPER-AGENTS.md). Note that these agents are **not** the declarative `agents/` roster described below — they are deterministic TypeScript (index-direction reads, strategy rules, evidence readers, a risk model and one exit-decision function), with no LLM anywhere in the decision path.
 
 TradeW AI (Research) and Sentinel (Safety Nets) are **deliberately separate systems**, not two feature sets of one orchestrator — different question (understanding vs. behavioral risk), different data (market/company data vs. the user's own trading behavior), different tone (explanatory vs. diagnostic/reflective), different compliance posture (Sentinel's Compliance & Audit agent logs and SEBI-labels every observation it produces). Full detail lives in `docs/product-architecture/`:
 

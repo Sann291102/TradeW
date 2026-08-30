@@ -15,6 +15,8 @@
     "admin:grant": "ts-node scripts/grant-admin.ts",
     "operator:create": "ts-node scripts/create-operator.ts",
     "execution:profile": "ts-node scripts/create-execution-profile.ts",
+    "//agents:seed": "Create the NIFTY and SENSEX autonomous paper agents, DISARMED. Arming stays a separate console act on top of PAPER_EXECUTION_ENABLED.",
+    "agents:seed": "ts-node scripts/seed-autonomous-agents.ts",
     "//credential:migrate": "Backfill: encrypt any BrokerCredential.accessToken still stored in plaintext. Dry-run by default — see scripts/encrypt-broker-credentials.ts.",
     "credential:migrate": "ts-node -T scripts/encrypt-broker-credentials.ts"
   },

@@ -1,12 +1,15 @@
 import { Module } from '@nestjs/common';
 import { SimModule } from '../sim/sim.module';
 import { ExecutionAccountService } from './execution-account.service';
+import { ExecutionCalibrationService } from './execution-calibration.service';
+import { ExecutionJournalService } from './execution-journal.service';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
 import { ExecutionProfileService } from './execution-profile.service';
 import { ExecutionQueryService } from './execution-query.service';
 import { ExecutionSchedulerService } from './execution-scheduler.service';
 import { ExecutionTraceService } from './execution-trace.service';
 import { PaperExecutionService } from './paper-execution.service';
+import { PositionManagerService } from './position-manager.service';
 import { SentinelExecutionClient } from './sentinel-execution.client';
 
 /**
@@ -42,6 +45,14 @@ import { SentinelExecutionClient } from './sentinel-execution.client';
     ExecutionTraceService,
     ExecutionQueryService,
     ExecutionSchedulerService,
+    // The fast loop's actor, the bounded-learning store, and the journal
+    // writer. All three are providers of THIS module rather than of
+    // `SimModule`, which keeps the dependency arrow pointing
+    // `PaperExecutionModule → SimModule` and never back — the structural claim
+    // that Sentinel is not a gate in the order flow.
+    PositionManagerService,
+    ExecutionCalibrationService,
+    ExecutionJournalService,
   ],
   exports: [
     PaperExecutionService,
