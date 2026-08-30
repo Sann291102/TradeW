@@ -213,6 +213,69 @@ export function MarketOverview() {
         </div>
       ) : status === 'loading' ? (
         <Skeleton className="w-full flex-1" style={{ minHeight: FALLBACK_CHART_HEIGHT }} />
+      ) : status === 'cached' ? (
+        <>
+          {/* Display cached data with a badge indicating previous day's data */}
+          <div className="mb-2 inline-flex items-center gap-2 rounded-md bg-amber-bg px-2 py-1 text-xs font-semibold text-amber">
+            <svg viewBox="0 0 24 24" width={14} height={14} fill="currentColor" aria-hidden="true">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" />
+            </svg>
+            <span>Showing previous day&apos;s data</span>
+          </div>
+          <div ref={chartWrapperRef} className="relative min-h-[200px] flex-1">
+            <TradeChart
+              candles={candles ?? []}
+              height={chartHeight}
+              seriesType={chartType === 'line' ? 'area' : 'candlestick'}
+              intervalMinutes={intervalMinutes}
+              fitKey={`${symbol}|${range}|${chartType}`}
+              aria-label={`${symbol} ${chartType === 'line' ? 'line' : 'candlestick'} chart (previous day)`}
+            />
+            <ChartExpandButton expanded={maximized} onToggle={() => setMaximized((m) => !m)} />
+          </div>
+
+          <div className="mt-2 flex items-center justify-between text-xs">
+            <span className="text-muted">
+              Low <b className="font-mono tabular-nums text-down">{low != null ? fmt(low) : '—'}</b>
+            </span>
+
+            {/* Line/Candles chart-type toggle — both render via TradeChart. */}
+            <div role="tablist" aria-label="Chart type" className="flex gap-1">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={chartType === 'line'}
+                aria-label="Line chart"
+                title="Line chart"
+                onClick={() => setChartType('line')}
+                className={cn(
+                  'flex h-6 w-6 items-center justify-center rounded-md transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+                  chartType === 'line' ? 'bg-teal-bg text-teal' : 'text-faint hover:bg-hover hover:text-muted',
+                )}
+              >
+                <LineChartIcon />
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={chartType === 'candles'}
+                aria-label="Candlestick chart"
+                title="Candlestick chart"
+                onClick={() => setChartType('candles')}
+                className={cn(
+                  'flex h-6 w-6 items-center justify-center rounded-md transition-colors duration-micro focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+                  chartType === 'candles' ? 'bg-teal-bg text-teal' : 'text-faint hover:bg-hover hover:text-muted',
+                )}
+              >
+                <CandlestickIcon />
+              </button>
+            </div>
+
+            <span className="text-muted">
+              High <b className="font-mono tabular-nums text-up">{high != null ? fmt(high) : '—'}</b>
+            </span>
+          </div>
+        </>
       ) : status === 'unavailable' ? (
         <div className="flex flex-1 flex-col justify-center">
           <EmptyState
