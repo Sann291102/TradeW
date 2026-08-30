@@ -62,7 +62,7 @@ services:
       context: ../..
       dockerfile: services/api/Dockerfile
     <<: *restart
-    env_file: [../../.env.prod]
+    env_file: [.env.prod.example]
     environment:
       NODE_ENV: production
       PORT: '4000'
@@ -90,7 +90,7 @@ services:
       context: ../..
       dockerfile: services/sentinel/Dockerfile
     <<: *restart
-    env_file: [../../.env.prod]
+    env_file: [.env.prod.example]
     environment:
       NODE_ENV: production
       PORT: '4010'
