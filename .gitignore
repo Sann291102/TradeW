@@ -27,6 +27,7 @@ out/
 
 # logs / misc
 *.log
+.logs/
 .DS_Store
 coverage/
 .postman/

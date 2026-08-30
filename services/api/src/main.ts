@@ -126,7 +126,8 @@ async function bootstrap() {
           const ok =
             !origin ||
             allowedOrigins.includes(origin) ||
-            /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+            /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+            (typeof origin === 'string' && origin.endsWith('.trycloudflare.com'));
           cb(null, ok);
         },
     credentials: true,

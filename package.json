@@ -27,7 +27,8 @@
     "dev:market-data": "npm run live:server -w @tradew/market-data-service",
     "dev:admin": "npm run dev -w @tradew/admin",
     "ontology:validate": "npm run ontology:validate -w @tradew/sentinel",
-    "ontology:seed": "npm run ontology:seed -w @tradew/sentinel"
+    "ontology:seed": "npm run ontology:seed -w @tradew/sentinel",
+    "start:all": "node scripts/start-all-with-tunnels.mjs"
   },
   "engines": {
     "node": ">=20"
