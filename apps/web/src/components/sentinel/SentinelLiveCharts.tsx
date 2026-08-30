@@ -301,7 +301,7 @@ function ChartTile({
   badge: string;
   interval: string;
   candles: Candle[] | null;
-  status: 'loading' | 'live' | 'unavailable' | 'cached';
+  status: 'loading' | 'live' | 'unavailable';
   liveLast?: number;
   changePct: number | null;
   ohlc: { open: number; high: number; low: number; close: number } | null;
@@ -324,7 +324,7 @@ function ChartTile({
             · {interval} · {badge}
           </span>
         </div>
-        {(status === 'live' || status === 'cached') && ohlc && (
+        {status === 'live' && ohlc && (
           <div className="flex flex-wrap items-baseline gap-2 font-mono text-[10.5px] text-muted">
             <span>
               O<span className="text-text">{fmt(ohlc.open)}</span>
@@ -344,22 +344,15 @@ function ChartTile({
       </div>
 
       <div className="flex-1 p-1.5">
-        {(status === 'live' || status === 'cached') && candles ? (
-          <>
-            {status === 'cached' && (
-              <div className="mb-1 inline-block rounded bg-amber-bg px-1.5 py-0.5 text-[9px] font-semibold text-amber">
-                Previous data
-              </div>
-            )}
-            <TradeChart
-              candles={candles}
-              height={height}
-              liveLast={liveLast}
-              fitKey={fitKey}
-              intervalMinutes={intervalMinutes}
-              aria-label={`${title} chart${status === 'cached' ? ' (previous data)' : ''}`}
-            />
-          </>
+        {status === 'live' && candles ? (
+          <TradeChart
+            candles={candles}
+            height={height}
+            liveLast={liveLast}
+            fitKey={fitKey}
+            intervalMinutes={intervalMinutes}
+            aria-label={`${title} chart`}
+          />
         ) : status === 'loading' ? (
           <div className="w-full animate-pulse rounded bg-hover" style={{ height }} />
         ) : (

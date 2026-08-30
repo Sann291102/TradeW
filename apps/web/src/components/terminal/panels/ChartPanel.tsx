@@ -252,7 +252,7 @@ export default function ChartPanel({
   const { interval, days } = TF_CONFIG[tf];
   const { candles, status: candlesStatus, reason: candlesReason } = useCandles(q.symbol, interval, days);
   const { candles: dailyCandles } = useCandles(q.symbol, '1d', 300);
-  const hasChartCandles = candlesStatus === 'live' || candlesStatus === 'cached';
+  const realCandles = candlesStatus === 'live';
 
   // The contract's REAL premium, straight from Dhan's option chain — the exact
   // number the Option Chain table shows for this strike. This panel used to
@@ -525,10 +525,8 @@ export default function ChartPanel({
                 : realOptionLtp
                   ? `${q.symbol} ${contract.strike} ${contract.optionType} · ${fmt(realOptionLtp)} — live premium is real (matches the Option Chain tab); Dhan has no traded candle history for this contract, so no chart is drawn.`
                   : `${q.symbol} ${contract.strike} ${contract.optionType} — no live chain for this contract${optionQuoteStatus === 'loading' ? ' yet' : ''}. No premium and no chart: nothing here is estimated.`
-              : hasChartCandles
-                ? candlesStatus === 'cached'
-                  ? `${q.symbol} · ${tf} — showing the latest cached real OHLC history (live bridge currently unreachable).`
-                  : `${q.symbol} · ${tf} — real OHLC history from Dhan (charting by TradingView).`
+              : realCandles
+                ? `${q.symbol} · ${tf} — real OHLC history from Dhan (charting by TradingView).`
                 : candlesStatus === 'loading'
                   ? `${q.symbol} · ${tf} — loading real history from Dhan…`
                   : `${q.symbol} · ${tf} — no real data. Nothing is simulated.`}
