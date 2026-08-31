@@ -120,7 +120,27 @@ export class PaperExecutionService {
    * be asserted deterministically — a loop whose correctness depends on the
    * clock must not be testable only during market hours.
    */
-  async runProfile(profileId: string, now: Date = new Date()): Promise<ExecutionRunResult> {
+  /**
+   * One decision-to-order pass for a profile.
+   *
+   * `preset` supplies an evaluation the caller has ALREADY made, which is how
+   * autonomous user-strategy agents enter: their trigger is the user's own
+   * conditions, so asking Sentinel for its separate opinion would make the
+   * user's strategy a filter on Sentinel's rather than the authority. When
+   * `preset` is absent — every built-in agent — Sentinel is consulted exactly
+   * as before and nothing about that path changes.
+   *
+   * Everything AFTER the decision is identical either way: instrument
+   * resolution, the idempotency claim, sizing, the full policy gate chain, the
+   * order, the fill model and the position record. That is the point of
+   * threading a preset through rather than giving user strategies their own
+   * entry path — there is one order path, and one set of risk controls on it.
+   */
+  async runProfile(
+    profileId: string,
+    now: Date = new Date(),
+    preset?: ExecutionEvaluationDto,
+  ): Promise<ExecutionRunResult> {
     const profile = await this.prisma.executionProfile.findUnique({
       where: { id: profileId },
       include: { account: { select: { id: true, email: true } } },
@@ -202,7 +222,7 @@ export class PaperExecutionService {
     // manager evaluate a thesis without a market read: the exit rules are
     // computed on the SAME snapshot as the entry search.
     const openBySymbol = await this.positions.openStrategyIdsBySymbol();
-    const evaluation = await this.sentinel.evaluate({
+    const evaluation = preset ?? (await this.sentinel.evaluate({
       symbol: profile.symbol,
       userId: profile.accountUserId,
       strategyId: profile.strategyId,
@@ -211,11 +231,16 @@ export class PaperExecutionService {
       minCandles: profile.minCandles,
       maxBarAgeMinutes: profile.maxBarAgeMinutes,
       openStrategyIds: openBySymbol.get(profile.symbol.toUpperCase()) ?? [],
-    });
+    }));
 
     // Hand the thesis read to the fast loop BEFORE any early return. A pass
     // that finds no entry still refreshed what the open positions need.
-    this.positions.recordThesis(profile.symbol, evaluation.exitRuleEvaluations ?? []);
+    //
+    // Not for a preset: a user-strategy evaluation carries no exit-rule read
+    // (`exitRuleEvaluations: []`), and the cache is keyed by SYMBOL. Recording
+    // it would replace a built-in agent's fresh thesis for the same underlying
+    // with an empty one, silently suppressing its thesis-invalidation exits.
+    if (!preset) this.positions.recordThesis(profile.symbol, evaluation.exitRuleEvaluations ?? []);
 
     if (!evaluation.executable || !evaluation.strikes.selected || !evaluation.expiry) {
       // Nothing is written to the intent table. Sentinel declining to publish

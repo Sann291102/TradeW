@@ -9,6 +9,7 @@ import { ExecutionQueryService } from './execution-query.service';
 import { ExecutionSchedulerService } from './execution-scheduler.service';
 import { ExecutionTraceService } from './execution-trace.service';
 import { PaperExecutionService } from './paper-execution.service';
+import { UserStrategyAgentService } from './user-strategy-agent.service';
 import { PositionManagerService } from './position-manager.service';
 import { SentinelExecutionClient } from './sentinel-execution.client';
 
@@ -41,6 +42,7 @@ import { SentinelExecutionClient } from './sentinel-execution.client';
     ExecutionAccountService,
     ExecutionProfileService,
     PaperExecutionService,
+    UserStrategyAgentService,
     ExecutionLifecycleService,
     ExecutionTraceService,
     ExecutionQueryService,
@@ -55,6 +57,7 @@ import { SentinelExecutionClient } from './sentinel-execution.client';
     ExecutionJournalService,
   ],
   exports: [
+    UserStrategyAgentService,
     PaperExecutionService,
     ExecutionLifecycleService,
     ExecutionTraceService,

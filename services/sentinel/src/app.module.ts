@@ -55,6 +55,7 @@ import { MarketCloseAnalysisService } from './market-close/market-close-analysis
 import { ExecutionEvaluationService } from './execution/execution-evaluation.service';
 import { BacktestScanService } from './backtest/backtest-scan.service';
 import { StrategyReplayService } from './backtest/strategy-replay.service';
+import { UserStrategyService } from './user-strategy/user-strategy.service';
 import { SentinelOrchestratorService } from './orchestrator/sentinel-orchestrator.service';
 import { PrismaService } from './prisma.service';
 import { MarketStateMachineService } from './state-machine/state-machine.service';
@@ -210,6 +211,7 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
     // the live path uses; it writes nothing and knows nothing about orders.
     StrategyReplayService,
     BacktestScanService,
+    UserStrategyService,
     ExplainService,
 
     // ---- Persistent Knowledge Brain (Sentinel Brain Phase 1) ----

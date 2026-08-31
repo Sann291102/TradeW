@@ -96,8 +96,22 @@ export interface AccountAuthorizationInput {
  */
 export const DEFAULT_ALLOWED_SYMBOLS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
 
-/** Agent identities permitted to execute. Same reasoning as the symbol list. */
-export const DEFAULT_ALLOWED_AGENTS = ['sentinel-alpha', 'sentinel-beta', 'sentinel-gamma'];
+/**
+ * Agent identities permitted to execute. Same reasoning as the symbol list.
+ *
+ * `user-strategy-agent` joined on 2026-08-31 with autonomous user-strategy
+ * agents. It is ONE identity for the whole family rather than one per person:
+ * the thing this list governs is which kind of decision-maker may reach the
+ * order path, and every user-strategy profile reaches it the same way, through
+ * the same certification gate. Per-user identities here would grow without
+ * bound and would not gate anything the profile's own binding does not.
+ */
+export const DEFAULT_ALLOWED_AGENTS = [
+  'sentinel-alpha',
+  'sentinel-beta',
+  'sentinel-gamma',
+  'user-strategy-agent',
+];
 
 export function authorizeAccount(input: AccountAuthorizationInput): AccountAuthorization {
   const checks: AccountCheck[] = [];
