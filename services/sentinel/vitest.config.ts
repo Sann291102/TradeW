@@ -105,6 +105,26 @@ export default defineConfig({
       // Decomposition: which agents a given intent routes to, and the skip
       // paths that keep an agent from being asked a question it has no data for.
       'src/sentinel-intelligence/understanding/task-decomposer.spec.ts',
+      // ---- Autonomous paper agents (2026-08-30) --------------------------
+      // The provenance chain, checked against the knowledge base ON DISK:
+      // every concept an agent strategy cites must exist, every evidence key
+      // must have a reader, every rule must resolve. A renamed concept breaks
+      // a strategy's provenance silently everywhere else — here it fails.
+      'src/execution/strategy-knowledge.spec.ts',
+      // Data quality: how old the bars actually were. The gate that separates
+      // "live read" from "stored history the provider fell back to".
+      'src/execution/data-quality.spec.ts',
+      // Index direction, derived from the index alone. Pins the property the
+      // whole two-read design rests on: it never consults an option premium,
+      // and a split vote is `unclear` rather than the bigger half.
+      'src/execution/index-direction.spec.ts',
+      // The important-information-only filter: a strategy reads what it
+      // declares and nothing else, and a stance is always relative to the
+      // direction asked about.
+      'src/execution/evidence.spec.ts',
+      // The agent-facing evaluation as a whole, including the refusal when the
+      // index direction and the published option side disagree.
+      'src/execution/execution-evaluation.spec.ts',
     ],
     environment: 'node',
     // Deterministic and clock-injected throughout: a slow test is a real hang,

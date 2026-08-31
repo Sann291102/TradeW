@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ExecutionIntentStatus } from '@prisma/client';
+import { ExecutionIntentStatus, ExecutionPositionState } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderService } from '../sim/order.service';
+import { ExecutionJournalService } from './execution-journal.service';
 import { istParts } from './execution-identity';
 
 /**
@@ -38,6 +39,7 @@ export class ExecutionLifecycleService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly orders: OrderService,
+    private readonly journal: ExecutionJournalService,
   ) {}
 
   /**
@@ -186,28 +188,71 @@ export class ExecutionLifecycleService {
           },
         });
         await tx.executionIntent.update({ where: { id: intent.id }, data: { status: ExecutionIntentStatus.CLOSED } });
+        // The managed position is closed in the SAME transaction as the intent
+        // and the outcome. A CLOSED intent with an OPEN position row would be
+        // re-evaluated by the two-second manager forever, against a position
+        // the account no longer holds.
+        await tx.executionPosition.updateMany({
+          where: { intentId: intent.id },
+          data: { state: ExecutionPositionState.CLOSED, unrealizedPnl: 0 },
+        });
       });
       closed++;
       this.logger.log(
         `${intent.profile.name}: intent ${intent.id} closed — realized ${realizedPnl.toFixed(2)} over ${holdingSeconds}s.`,
       );
+
+      // ---- The journal, and with it the learning fold --------------------
+      //
+      // AFTER the transaction, deliberately. Writing the journal inside it
+      // would put a calibration read-modify-write inside the transaction that
+      // closes a position, so a lock contention on a calibration bucket could
+      // roll back the CLOSE of a trade. The journal is a derived record: it
+      // can be written a moment later, or rebuilt, and losing it costs a
+      // record rather than an accounting.
+      try {
+        await this.journal.write(intent.id);
+      } catch (err) {
+        this.logger.error(`journal write failed for intent ${intent.id} (non-fatal)`, err as Error);
+      }
     }
 
     return { filled, failed, closed };
   }
 
   /**
-   * Flatten every position an enabled profile is holding, once the IST clock
-   * reaches that profile's `squareOffMinute`.
+   * Flatten every position ANY profile is holding, once the IST clock reaches
+   * that profile's `squareOffMinute`.
    *
    * Only positions this loop actually opened are touched, and only on accounts
    * bound to a profile — established by walking this profile's own FILLED
    * intents, never by scanning the account for anything that happens to be open.
+   *
+   * ## `enabled` is deliberately NOT in this query any more
+   *
+   * It used to be (`where: { enabled: true, … }`), and that was a real defect
+   * rather than a stylistic one. `ExecutionProfile.enabled` gates ENTRIES —
+   * it is what "arm" and "disarm" mean in the console. Filtering square-off on
+   * it as well meant that disarming an agent that was holding a position
+   * STRANDED that position: no square-off, and (before the position manager
+   * existed) no stop and no target either, until a human noticed and flattened
+   * it by hand. The most dangerous thing an operator could do was the button
+   * labelled as the safe one.
+   *
+   * `PositionManagerService` follows the same rule for the same reason, and
+   * `position-decision.ts` cannot even express the old behaviour — it takes no
+   * `enabled` flag at all.
+   *
+   * This is now a BACKSTOP rather than the primary mechanism: the two-second
+   * manager squares off at `squareOffMinute` long before this 15-second pass
+   * would. It is kept because it walks a different path to the same positions
+   * (FILLED intents rather than OPEN position rows), so a position whose
+   * `ExecutionPosition` row is somehow missing is still flattened.
    */
   async squareOff(now: Date = new Date()): Promise<{ exited: number; errors: number }> {
     const { minuteOfDay } = istParts(now);
     const profiles = await this.prisma.executionProfile.findMany({
-      where: { enabled: true, environment: 'PAPER' },
+      where: { environment: 'PAPER' },
     });
 
     let exited = 0;

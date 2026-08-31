@@ -120,7 +120,19 @@ export class AppController {
   @UseGuards(ServiceTokenGuard)
   @Post('execution/evaluate')
   async evaluateForExecution(
-    @Body() body: { symbol: string; userId: string; strategyId?: string | null; minConfidence?: number },
+    @Body()
+    body: {
+      symbol: string;
+      userId: string;
+      strategyId?: string | null;
+      minConfidence?: number;
+      /** The agent's strategy roster and data-quality floors, from its profile. */
+      strategyIds?: string[];
+      minCandles?: number;
+      maxBarAgeMinutes?: number;
+      /** Strategy ids of positions the caller currently holds on this symbol. */
+      openStrategyIds?: string[];
+    },
   ) {
     try {
       return await this.executionEvaluation.evaluate({
@@ -128,6 +140,17 @@ export class AppController {
         userId: body.userId,
         strategyId: body.strategyId ?? null,
         minConfidence: body.minConfidence,
+        // Passed through rather than defaulted here: these are per-agent
+        // policy, and defaulting them in the controller would mean two agents
+        // with different floors silently shared one.
+        strategyIds: body.strategyIds,
+        minCandles: body.minCandles,
+        maxBarAgeMinutes: body.maxBarAgeMinutes,
+        // The exit rules of what is already open, evaluated on the SAME
+        // snapshot as the entry search. This is what lets the two-second
+        // position manager know a thesis has collapsed without making a
+        // market read of its own.
+        openStrategyIds: body.openStrategyIds,
       });
     } catch (err) {
       // Same 503-not-500 distinction `/observe` makes: "Sentinel is

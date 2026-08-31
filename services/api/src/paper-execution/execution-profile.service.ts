@@ -42,6 +42,19 @@ export interface UpsertProfileInput {
   maxOrdersPerDay?: number;
   maxLossPerDay?: number;
   squareOffMinute?: number;
+
+  // ---- Capital, risk and data-quality policy (2026-08-30) ---------------
+  // Each percentage names its own base in `execution-risk.ts`; nothing here
+  // combines them.
+  capitalAllocationPct?: number;
+  riskPerTradePct?: number;
+  rewardPerTradePct?: number;
+  trailStepPoints?: number;
+  maxQuoteAgeMs?: number;
+  maxBarAgeMinutes?: number;
+  minCandles?: number;
+  /** Agent-tradable strategy ids. Empty means "any of the four". */
+  strategyIds?: string[];
 }
 
 @Injectable()
@@ -62,6 +75,34 @@ export class ExecutionProfileService {
       // Sentinel, never looser — a lower number here would be silently
       // unreachable and would read as if it loosened the gate.
       throw new BadRequestException('minConfidence must be between 70 and 100; Sentinel never publishes a side below 70.');
+    }
+
+    // Reward below risk is a plan that loses money at a 50% hit rate and is
+    // almost always a typo (the pair transposed). Refused at WRITE time rather
+    // than discovered trade by trade — the same reasoning as the minConfidence
+    // bound above.
+    if (
+      input.riskPerTradePct != null &&
+      input.rewardPerTradePct != null &&
+      input.rewardPerTradePct < input.riskPerTradePct
+    ) {
+      throw new BadRequestException(
+        `rewardPerTradePct (${input.rewardPerTradePct}) is below riskPerTradePct (${input.riskPerTradePct}); ` +
+          'that is a sub-1R plan and is almost always the pair transposed.',
+      );
+    }
+    // The allocation must be able to carry the risk: a 3% risk budget inside a
+    // 1% allocation can never be spent, so the stop would always clamp to the
+    // premium fraction and the risk model would be decorative.
+    if (
+      input.capitalAllocationPct != null &&
+      input.riskPerTradePct != null &&
+      input.capitalAllocationPct < input.riskPerTradePct
+    ) {
+      throw new BadRequestException(
+        `capitalAllocationPct (${input.capitalAllocationPct}) is below riskPerTradePct (${input.riskPerTradePct}); ` +
+          'the position could never be large enough to risk its own budget.',
+      );
     }
 
     // The environment is set here, by the server, and is never taken from the
@@ -97,6 +138,14 @@ export class ExecutionProfileService {
       ...(input.maxOrdersPerDay != null ? { maxOrdersPerDay: input.maxOrdersPerDay } : {}),
       ...(input.maxLossPerDay != null ? { maxLossPerDay: input.maxLossPerDay } : {}),
       ...(input.squareOffMinute != null ? { squareOffMinute: input.squareOffMinute } : {}),
+      ...(input.capitalAllocationPct != null ? { capitalAllocationPct: input.capitalAllocationPct } : {}),
+      ...(input.riskPerTradePct != null ? { riskPerTradePct: input.riskPerTradePct } : {}),
+      ...(input.rewardPerTradePct != null ? { rewardPerTradePct: input.rewardPerTradePct } : {}),
+      ...(input.trailStepPoints != null ? { trailStepPoints: input.trailStepPoints } : {}),
+      ...(input.maxQuoteAgeMs != null ? { maxQuoteAgeMs: input.maxQuoteAgeMs } : {}),
+      ...(input.maxBarAgeMinutes != null ? { maxBarAgeMinutes: input.maxBarAgeMinutes } : {}),
+      ...(input.minCandles != null ? { minCandles: input.minCandles } : {}),
+      ...(input.strategyIds != null ? { strategyIds: input.strategyIds } : {}),
     };
 
     const existing = await this.prisma.executionProfile.findUnique({

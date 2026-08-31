@@ -1,15 +1,18 @@
 import { Body, Controller, Get, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiExcludeEndpoint, ApiProperty, ApiPropertyOptional, ApiSecurity, ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { AdminAccessGuard } from './admin-access.guard';
 import { AdminService } from './admin.service';
 import { CognitionService } from '../cognition/cognition.service';
 import { ExecutionAccountService } from '../paper-execution/execution-account.service';
+import { ExecutionCalibrationService } from '../paper-execution/execution-calibration.service';
+import { ExecutionJournalService } from '../paper-execution/execution-journal.service';
 import { ExecutionProfileService } from '../paper-execution/execution-profile.service';
 import { ExecutionQueryService } from '../paper-execution/execution-query.service';
 import { ExecutionSchedulerService } from '../paper-execution/execution-scheduler.service';
 import { ExecutionTraceService } from '../paper-execution/execution-trace.service';
 import { PaperExecutionService } from '../paper-execution/paper-execution.service';
+import { PositionManagerService } from '../paper-execution/position-manager.service';
 import { SECURITY } from '../swagger/swagger.setup';
 import { TelemetryService } from '../telemetry/telemetry.service';
 
@@ -152,6 +155,80 @@ class UpsertExecutionProfileDto {
   @Min(0)
   @Max(1439)
   squareOffMinute?: number;
+
+  // ---- Capital and risk (2026-08-30) --------------------------------------
+  //
+  // Three percentages of three DIFFERENT bases. Each description says which,
+  // because conflating them is the classic way a position-sizing bug hides:
+  // allocation is of the ACCOUNT, and risk and reward are of the ACCOUNT too
+  // (never of the trade's own cost — a 3%-of-premium stop is intraday noise).
+  // See `execution-risk.ts`.
+
+  @ApiPropertyOptional({
+    description: 'Max % of the paper account’s EQUITY this profile may deploy into one position. Default 20.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.1)
+  @Max(100)
+  capitalAllocationPct?: number;
+
+  @ApiPropertyOptional({
+    description: 'Max % of the paper account’s EQUITY this trade may lose before its stop fires. Default 3.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.01)
+  @Max(100)
+  riskPerTradePct?: number;
+
+  @ApiPropertyOptional({
+    description: 'Target gain as a % of the paper account’s EQUITY. 9 against a 3% risk is a 3R plan. Default 9.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.01)
+  @Max(500)
+  rewardPerTradePct?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Favourable movement, in PREMIUM POINTS of the traded option, that ratchets the trailing stop one step. ' +
+      'Not index points — the position is in the option. Default 3.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.05)
+  trailStepPoints?: number;
+
+  @ApiPropertyOptional({ description: 'Refuse to decide on a quote older than this, in ms. Default 15000.' })
+  @IsOptional()
+  @IsInt()
+  @Min(500)
+  maxQuoteAgeMs?: number;
+
+  @ApiPropertyOptional({ description: 'Refuse to decide on a newest bar older than this, in minutes. Default 30.' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxBarAgeMinutes?: number;
+
+  @ApiPropertyOptional({ description: 'Refuse to decide on fewer bars than this. Default 40.' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  minCandles?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Agent-tradable strategy ids this profile may act on. Empty means any of the four. A strategy not named here ' +
+      'can never produce this agent’s trade — which is what makes two agents on two markets genuinely different agents.',
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  strategyIds?: string[];
 }
 
 class RunPassDto {
@@ -205,6 +282,9 @@ export class AdminController {
     private readonly paperExecution: PaperExecutionService,
     private readonly executionAccounts: ExecutionAccountService,
     private readonly executionProfiles: ExecutionProfileService,
+    private readonly positions: PositionManagerService,
+    private readonly journal: ExecutionJournalService,
+    private readonly calibration: ExecutionCalibrationService,
   ) {}
 
   // -------------------------------------------------------------- overview
@@ -519,6 +599,72 @@ export class AdminController {
   @Get('execution/profiles/:id/authorization')
   executionProfileAuthorization(@Param('id') id: string) {
     return this.executionProfiles.authorization(id);
+  }
+
+  // ---- Watching the agents work -------------------------------------------
+  //
+  // The four reads below are the "is it cooking?" surface. All are read-only
+  // and side-effect free: nothing here starts, stops, exits or ratchets
+  // anything. An operator who wants a pass runs one explicitly.
+
+  /**
+   * Every open position, with its live stop, target, trailing level and P&L.
+   *
+   * Refreshed by the two-second management loop, so this is what the agent
+   * will act on next — not a second opinion computed a different way. It also
+   * reports `profileEnabled`, so an operator can SEE the state the disarm fix
+   * creates: a disarmed profile still managing a position it already holds.
+   */
+  @Get('execution/positions')
+  executionPositions() {
+    return this.positions.liveState();
+  }
+
+  /**
+   * What each agent decided on its last pass, including the passes that
+   * correctly did nothing.
+   *
+   * The intent table records DECISIONS, and most passes produce none —
+   * Sentinel staying silent is the designed resting state. So a console
+   * reading only that table cannot tell an agent that is watching and finding
+   * nothing from an agent that is not running. This closes that gap.
+   */
+  @Get('execution/agents')
+  async executionAgents() {
+    const profiles = await this.executionQuery.profiles();
+    return profiles.map((profile) => ({
+      ...profile,
+      lastDecision: this.paperExecution.agentState(profile.id),
+    }));
+  }
+
+  /** The completed-trade journal: why it entered, why it exited, what it learned. */
+  @Get('execution/journal')
+  executionJournal(
+    @Query('limit') limit?: string,
+    @Query('profileId') profileId?: string,
+    @Query('symbol') symbol?: string,
+    @Query('hours') hours?: string,
+  ) {
+    return this.journal.list({
+      limit: Number(limit) || 50,
+      profileId,
+      symbol,
+      hours: Number(hours) || undefined,
+    });
+  }
+
+  /**
+   * Every calibration bucket — what each has learned, and whether it has seen
+   * enough trades to be allowed to act on it.
+   *
+   * `confidenceAdjustment` here is added to a bucket's ENTRY FLOOR and is
+   * clamped at the platform's 70 by `execution-policy.ts`, so nothing this
+   * endpoint displays can describe a bar below the platform's own.
+   */
+  @Get('execution/calibration')
+  executionCalibration() {
+    return this.calibration.all();
   }
 
   // ----------------------------------------------------------------- users

@@ -44,9 +44,17 @@ meant to be re-read often, not written once.
 - **`ADMIN_PORTAL_BLUEPRINT.md`** — the admin portal (`apps/admin`) as built:
   which surfaces read live data and which are honest placeholders, how the
   operator auth and deny-by-default proxy work, what actually runs at runtime,
-  what the Sentinel paper-execution loop really does, and the ordered backlog.
+  what the autonomous paper-agent loops really do, and the ordered backlog.
   Rewritten 2026-08-20; the superseded 2026-08-09 vision draft (3D command
   centre, agent rooms) is in `../archive/root-docs/`.
+
+- **`product-architecture/AUTONOMOUS-PAPER-AGENTS.md`** — the two autonomous
+  paper agents (NIFTY, SENSEX) as built: the four strategies and the knowledge
+  each derives from, what "3% risk / 9% reward / 20% allocation" is a percentage
+  *of*, the single exit-decision precedence, why the observation cadence is 2 s
+  and not 1 s, what disarming does and does not stop, and the bounds the learning
+  layer cannot cross. Read it before touching `services/api/src/paper-execution/`
+  or `services/sentinel/src/execution/`.
 
 - **`APPLICATION-STATUS.md`** — living status doc: what's built, what's
   partial, current known issues and risks. If you need to know "does X

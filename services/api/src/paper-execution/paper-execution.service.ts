@@ -2,9 +2,12 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ExecutionIntentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { isTradingDay } from '../discipline/market-calendar';
-import { MarketPriceService } from '../sim/market-price.service';
+import { MarketPriceService, type LivePrice } from '../sim/market-price.service';
 import { OrderService } from '../sim/order.service';
 import { ExecutionAccountService } from './execution-account.service';
+import { ExecutionCalibrationService } from './execution-calibration.service';
+import { modelPaperFill, reconcileFill, type PaperFillModel } from './execution-fill';
+import { assessFreshness } from './execution-freshness';
 import { contractSymbol, deriveIdempotencyKey, istParts } from './execution-identity';
 import { countProfileOpenPositions } from './execution-open-positions';
 import {
@@ -15,6 +18,8 @@ import {
   type PolicyDecision,
   evaluatePolicy,
 } from './execution-policy';
+import { planRisk, type RiskPlan } from './execution-risk';
+import { PositionManagerService } from './position-manager.service';
 import { SentinelExecutionClient, type ExecutionEvaluationDto } from './sentinel-execution.client';
 
 /**
@@ -89,7 +94,24 @@ export class PaperExecutionService {
     private readonly orders: OrderService,
     private readonly marketPrice: MarketPriceService,
     private readonly accounts: ExecutionAccountService,
+    private readonly positions: PositionManagerService,
+    private readonly calibration: ExecutionCalibrationService,
   ) {}
+
+  /**
+   * The last pass's outcome per profile, in memory.
+   *
+   * The intent table records DECISIONS, and most passes correctly produce none
+   * — Sentinel staying silent is the designed resting state. So a console
+   * reading only that table cannot tell an agent that is watching and finding
+   * nothing from an agent that is not running, which is precisely the question
+   * "is it cooking?" asks. This holds the answer.
+   *
+   * Not persisted, for the same reason `ExecutionLoopStatus` is not: it is
+   * this process's own live state, and a row asserting "last evaluated 10:42"
+   * would keep asserting it after the process that wrote it had gone.
+   */
+  private readonly lastDecision = new Map<string, { at: Date; result: ExecutionRunResult }>();
 
   /**
    * Run one profile once.
@@ -106,19 +128,29 @@ export class PaperExecutionService {
     if (!profile) throw new NotFoundException(`No execution profile ${profileId}`);
 
     const base = { profileId: profile.id, profileName: profile.name, intentId: null, orderId: null, checks: [] };
+    const record = (result: ExecutionRunResult): ExecutionRunResult => {
+      // Every pass's outcome is kept in memory for the console, whether or not
+      // it produced a row. Most passes correctly produce nothing — Sentinel
+      // staying silent is the designed resting state — and a console that can
+      // only read the intent table therefore cannot distinguish "the agent is
+      // watching and finding nothing" from "the agent is dead". That gap is
+      // what this closes; see `agentState()`.
+      this.lastDecision.set(profile.id, { at: now, result });
+      return result;
+    };
 
     if (!profile.enabled) {
-      return { ...base, outcome: 'skipped-disabled', verdict: null, reason: 'Profile is disabled.' };
+      return record({ ...base, outcome: 'skipped-disabled', verdict: null, reason: 'Profile is disabled.' });
     }
     // Belt and braces against a row that did not come from this application —
     // see the same check in `evaluatePolicy`.
     if (profile.environment !== 'PAPER') {
-      return {
+      return record({
         ...base,
         outcome: 'rejected',
         verdict: null,
         reason: `Refused: profile environment is "${profile.environment}", not PAPER.`,
-      };
+      });
     }
 
     // ---- 1b. WHOSE account may this profile trade? -------------------------
@@ -139,47 +171,69 @@ export class PaperExecutionService {
       agent: profile.agent,
     });
     if (!accountAuth.authorized) {
-      return {
+      return record({
         ...base,
         outcome: 'rejected',
         verdict: null,
         reason: accountAuth.reason ?? 'Account authorization failed.',
         checks: accountAuth.checks,
-      };
+      });
     }
 
     const { minuteOfDay } = istParts(now);
     const sessionOpen =
       isTradingDay(now) && minuteOfDay >= SESSION_OPEN_MINUTE && minuteOfDay < SESSION_CLOSE_MINUTE;
     if (!sessionOpen) {
-      return {
+      return record({
         ...base,
         outcome: 'skipped-market-closed',
         verdict: null,
         reason: isTradingDay(now)
           ? 'Outside the 09:15–15:30 IST session.'
           : 'Not an NSE trading day.',
-      };
+      });
     }
 
     // ---- 2. Ask the one canonical Sentinel ---------------------------------
+    //
+    // The request now carries this agent's OWN configuration — its strategy
+    // roster, its data-quality floors, and the strategies behind whatever it
+    // currently holds. That last one is what lets the two-second position
+    // manager evaluate a thesis without a market read: the exit rules are
+    // computed on the SAME snapshot as the entry search.
+    const openBySymbol = await this.positions.openStrategyIdsBySymbol();
     const evaluation = await this.sentinel.evaluate({
       symbol: profile.symbol,
       userId: profile.accountUserId,
       strategyId: profile.strategyId,
       minConfidence: profile.minConfidence,
+      strategyIds: profile.strategyIds,
+      minCandles: profile.minCandles,
+      maxBarAgeMinutes: profile.maxBarAgeMinutes,
+      openStrategyIds: openBySymbol.get(profile.symbol.toUpperCase()) ?? [],
     });
 
+    // Hand the thesis read to the fast loop BEFORE any early return. A pass
+    // that finds no entry still refreshed what the open positions need.
+    this.positions.recordThesis(profile.symbol, evaluation.exitRuleEvaluations ?? []);
+
     if (!evaluation.executable || !evaluation.strikes.selected || !evaluation.expiry) {
-      // Nothing is written. Sentinel declining to publish is the designed
-      // resting state, and a row per quiet minute would make the intent table
-      // useless as a record of decisions.
-      return {
+      // Nothing is written to the intent table. Sentinel declining to publish
+      // is the designed resting state, and a row per quiet minute would make
+      // that table useless as a record of decisions. The verdict and every gate
+      // that produced it are kept in `lastDecision` for the console instead.
+      return record({
         ...base,
         outcome: 'skipped-no-signal',
         verdict: evaluation.verdict,
         reason: evaluation.reason,
-      };
+        checks: (evaluation.confirmations ?? []).map((c) => ({
+          id: c.id,
+          label: c.label,
+          passed: c.passed,
+          detail: c.detail,
+        })),
+      });
     }
 
     const selected = evaluation.strikes.selected;
@@ -210,17 +264,71 @@ export class PaperExecutionService {
     } catch (err) {
       const message = (err as Error).message;
       this.logger.warn(`${profile.name}: could not price ${symbol} — ${message}`);
-      return {
+      return record({
         ...base,
         outcome: 'failed',
         verdict: evaluation.verdict,
         reason: `Selected contract ${symbol} could not be resolved or priced: ${message}`,
-      };
+      });
     }
 
-    const quantity = profile.lots * instrument.lotSize;
-    // A long option costs its premium in full — the ask is what a BUY pays.
-    const estimatedCost = price.ask * quantity;
+    // ---- 3b. Is the FEED alive, not merely reachable? ----------------------
+    const feed = await this.marketPrice.feedFreshness();
+    const freshness = assessFreshness({
+      now,
+      quotedAt: feed.quotedAt,
+      marketOpen: feed.marketOpen,
+      maxQuoteAgeMs: profile.maxQuoteAgeMs,
+    });
+
+    // ---- 3c. The RISK PLAN, before any order exists ------------------------
+    //
+    // Position size, stop and target are computed here and written into the
+    // intent in the same INSERT that claims the idempotency key. A stop
+    // computed after the fill is a stop that does not exist during the window
+    // in which it is most needed.
+    const facts = await this.gatherFacts(profile.accountUserId, profile.id, now);
+    const fillModel = modelPaperFill({
+      side,
+      ltp: price.ltp,
+      bid: price.bid,
+      ask: price.ask,
+      // Provisional: the real quantity comes out of the plan below, and the
+      // model is recomputed with it once it is known.
+      quantity: instrument.lotSize,
+      quoteAgeMs: freshness.ageMs,
+      marketOpen: price.marketOpen,
+      orderType: profile.orderType,
+    });
+    const plan = planRisk({
+      // Cash plus margin already blocked — the whole paper capital, not just
+      // the unencumbered part. Sizing against free cash alone would shrink an
+      // agent's allocation every time the account holder opened a position of
+      // their own, which is a different account's business.
+      walletEquity: facts.walletEquity,
+      // The price the entry would actually PAY, from the fill model, not the
+      // LTP. Sizing on the LTP and filling on the ask overstates the position
+      // by the spread on every trade.
+      entryPrice: fillModel.fillPrice,
+      lotSize: instrument.lotSize,
+      maxLots: profile.lots,
+      capitalAllocationPct: Number(profile.capitalAllocationPct),
+      riskPerTradePct: Number(profile.riskPerTradePct),
+      rewardPerTradePct: Number(profile.rewardPerTradePct),
+    });
+
+    const quantity = plan.ok ? plan.quantity : profile.lots * instrument.lotSize;
+    const sizedFill = modelPaperFill({ ...fillModelInput(price, side, quantity, freshness.ageMs, profile.orderType) });
+    const estimatedCost = sizedFill.fillPrice * quantity;
+
+    // ---- 3d. What has this bucket learned? ---------------------------------
+    const calibration = await this.calibration.adjustmentFor({
+      agent: profile.agent,
+      symbol: profile.symbol,
+      strategyId: evaluation.agentStrategy?.strategyId ?? evaluation.strategyId ?? 'unknown',
+      strategyVersion: evaluation.agentStrategy?.version ?? '0.0.0',
+      regime: evaluation.agentStrategy?.regime ?? 'unknown',
+    });
 
     // ---- 4. Claim the decision's identity ----------------------------------
     const idempotencyKey = deriveIdempotencyKey({
@@ -233,7 +341,6 @@ export class PaperExecutionService {
       decidedAt: now,
     });
 
-    const facts = await this.gatherFacts(profile.accountUserId, profile.id, now);
     const policy = evaluatePolicy({
       enabled: profile.enabled,
       environment: profile.environment,
@@ -250,6 +357,15 @@ export class PaperExecutionService {
       marketOpen: price.marketOpen,
       availableCash: facts.availableCash,
       estimatedCost,
+      quoteFresh: freshness.checks.find((c) => c.id === 'quote-age')?.passed ?? false,
+      quoteFreshnessDetail:
+        freshness.checks.find((c) => c.id === 'quote-age')?.detail ?? 'Feed freshness could not be read.',
+      indexDirection: evaluation.indexDirection?.direction ?? 'unclear',
+      optionSide: selected.optionType,
+      calibrationAdjustment: calibration.adjustment,
+      riskPlanOk: plan.ok,
+      riskPlanReason: plan.reason,
+      riskPlanCheckId: plan.failedCheckId,
     });
 
     const created = await this.createIntent({
@@ -263,10 +379,13 @@ export class PaperExecutionService {
       idempotencyKey,
       now,
       policy,
+      plan,
+      fillModel: sizedFill,
+      calibration,
     });
 
     if (created.duplicate) {
-      return {
+      return record({
         ...base,
         outcome: 'duplicate',
         verdict: evaluation.verdict,
@@ -274,18 +393,18 @@ export class PaperExecutionService {
         orderId: created.intent.orderId ?? null,
         reason: 'This decision was already recorded; no second order was created.',
         checks: policy.checks,
-      };
+      });
     }
 
     if (!policy.allowed) {
-      return {
+      return record({
         ...base,
         outcome: 'rejected',
         verdict: evaluation.verdict,
         intentId: created.intent.id,
         reason: policy.reason ?? 'Rejected by execution policy.',
         checks: policy.checks,
-      };
+      });
     }
 
     // ---- 6. Submit through the EXISTING order service ----------------------
@@ -294,6 +413,10 @@ export class PaperExecutionService {
         symbol,
         side,
         type: profile.orderType,
+        // The RISK-PLANNED quantity, not `profile.lots × lotSize`. This is the
+        // line that makes the capital model real rather than decorative: the
+        // allocation ceiling and the risk budget decide the size, and the
+        // profile's `lots` is only ever an upper bound on their answer.
         quantity,
         productType: profile.productType,
       });
@@ -310,6 +433,13 @@ export class PaperExecutionService {
           data: {
             status: omsRejected ? ExecutionIntentStatus.FAILED : filled ? ExecutionIntentStatus.FILLED : ExecutionIntentStatus.SUBMITTED,
             submittedAt: new Date(),
+            // The model against what the OMS actually did. A MARKET order that
+            // filled somewhere other than the modelled price means the two have
+            // drifted, and a journal is the right place to notice.
+            fillModel: {
+              ...sizedFill,
+              reconciliation: reconcileFill(sizedFill, order.avgFillPrice ? Number(order.avgFillPrice) : null),
+            } as unknown as Prisma.InputJsonValue,
             ...(omsRejected
               ? {
                   rejectReason: `OMS rejected the order: ${order.rejectReason ?? 'no reason given'}`,
@@ -319,10 +449,11 @@ export class PaperExecutionService {
           },
         });
         if (filled && order.avgFillPrice) {
+          const entryPrice = Number(order.avgFillPrice);
           await tx.executionOutcome.create({
             data: {
               intentId: created.intent.id,
-              entryPrice: order.avgFillPrice,
+              entryPrice,
               quantity: order.filledQuantity,
               // Opened, not closed. `realizedPnl` stays 0 and `result` stays
               // OPEN until `reconcile` sees the position flatten — writing a
@@ -335,14 +466,66 @@ export class PaperExecutionService {
               entryAt: new Date(),
             },
           });
+
+          // ---- THE MANAGED POSITION -------------------------------------
+          //
+          // Created in the SAME transaction as the fill. A position row that
+          // could exist without its stop, or a fill that could exist without a
+          // position row, is a position nothing manages — and the window in
+          // which that is true is exactly the window right after entry.
+          //
+          // The levels are re-derived from the ACTUAL fill price, not the
+          // planned one: the plan was made against the modelled ask, and the
+          // OMS is the authority on what was paid. A stop measured from a
+          // price the account did not pay is the wrong distance from the money
+          // actually at risk.
+          const filledPlan = planRisk({
+            walletEquity: facts.walletEquity,
+            entryPrice,
+            lotSize: instrument.lotSize,
+            maxLots: profile.lots,
+            capitalAllocationPct: Number(profile.capitalAllocationPct),
+            riskPerTradePct: Number(profile.riskPerTradePct),
+            rewardPerTradePct: Number(profile.rewardPerTradePct),
+          });
+          // Fall back to the pre-fill plan's DISTANCES if the re-plan refuses
+          // (a fill far worse than the quote could put one lot outside the
+          // ceiling). A position must never exist without a stop, so the
+          // distances are reapplied around the real entry rather than dropped.
+          const stopDistance = filledPlan.ok ? filledPlan.stopDistance : plan.stopDistance;
+          const targetDistance = filledPlan.ok ? filledPlan.targetDistance : plan.targetDistance;
+
+          await tx.executionPosition.create({
+            data: {
+              intentId: created.intent.id,
+              profileId: profile.id,
+              userId: profile.accountUserId,
+              instrumentId: instrument.id,
+              contractSymbol: symbol,
+              productType: profile.productType,
+              symbol: profile.symbol,
+              optionType: selected.optionType,
+              state: 'OPEN',
+              quantity: order.filledQuantity,
+              entryPrice,
+              entryAt: new Date(),
+              stopPrice: Math.max(0.05, round2(entryPrice - stopDistance)),
+              targetPrice: round2(entryPrice + targetDistance),
+              highWaterPrice: entryPrice,
+              lastPrice: entryPrice,
+              lastPriceAt: new Date(),
+              unrealizedPnl: 0,
+            },
+          });
         }
       });
 
       this.logger.log(
-        `${profile.name}: ${order.status} ${side} ${quantity} ${symbol} @ ${order.avgFillPrice ?? 'resting'} (intent ${created.intent.id})`,
+        `${profile.name}: ${order.status} ${side} ${quantity} ${symbol} @ ${order.avgFillPrice ?? 'resting'} ` +
+          `(intent ${created.intent.id}; stop ${plan.stopPrice}, target ${plan.targetPrice}, risk ${plan.riskAtStop})`,
       );
 
-      return {
+      return record({
         ...base,
         outcome: omsRejected ? 'failed' : 'executed',
         verdict: evaluation.verdict,
@@ -350,9 +533,9 @@ export class PaperExecutionService {
         orderId: order.id,
         reason: omsRejected
           ? `OMS rejected the order: ${order.rejectReason ?? 'no reason given'}`
-          : `${order.status} — ${side} ${quantity} ${symbol}.`,
+          : `${order.status} — ${side} ${quantity} ${symbol}; stop ${plan.stopPrice}, target ${plan.targetPrice}.`,
         checks: policy.checks,
-      };
+      });
     } catch (err) {
       const message = (err as Error).message;
       this.logger.error(`${profile.name}: submission failed for ${symbol} — ${message}`);
@@ -367,16 +550,17 @@ export class PaperExecutionService {
           rejectCheckId: SUBMISSION_RAISED,
         },
       });
-      return {
+      return record({
         ...base,
         outcome: 'failed',
         verdict: evaluation.verdict,
         intentId: created.intent.id,
         reason: `Submission raised: ${message}`,
         checks: policy.checks,
-      };
+      });
     }
   }
+
 
   /** Every enabled profile, one pass each. One profile's failure never stops the rest. */
   async runAllEnabled(now: Date = new Date()): Promise<ExecutionRunResult[]> {
@@ -452,7 +636,11 @@ export class PaperExecutionService {
         where: { userId, executedAt: { gte: dayStart } },
         _sum: { realizedPnl: true },
       }),
-      this.prisma.paperWallet.findUnique({ where: { userId }, select: { cashBalance: true } }),
+      // `marginUsed` as well as cash: the risk model sizes against the
+      // account's whole EQUITY, and cash alone shrinks every time a position
+      // is open — which would make an agent's allocation depend on what the
+      // account holder happens to be holding.
+      this.prisma.paperWallet.findUnique({ where: { userId }, select: { cashBalance: true, marginUsed: true } }),
     ]);
     const positions = profileOpenPositions;
 
@@ -464,6 +652,27 @@ export class PaperExecutionService {
       // creates it with the full starting balance on the first order. Reporting
       // 0 here would fail the affordability check on the very first trade.
       availableCash: wallet ? Number(wallet.cashBalance) : 1_000_000,
+      // Cash plus blocked margin — the base every percentage in the risk model
+      // is taken of. Same fallback, same reason.
+      walletEquity: wallet ? Number(wallet.cashBalance) + Number(wallet.marginUsed) : 1_000_000,
+    };
+  }
+
+  /**
+   * Live state for every profile, for the console's "watch it cook" surface.
+   *
+   * Read-only. It reports what the LAST pass decided and every gate that
+   * produced that decision, including the passes that correctly did nothing.
+   */
+  agentState(profileId: string): { at: string; outcome: string; verdict: string | null; reason: string; checks: PolicyCheck[] } | null {
+    const held = this.lastDecision.get(profileId);
+    if (!held) return null;
+    return {
+      at: held.at.toISOString(),
+      outcome: held.result.outcome,
+      verdict: held.result.verdict,
+      reason: held.result.reason,
+      checks: held.result.checks,
     };
   }
 
@@ -488,8 +697,11 @@ export class PaperExecutionService {
     idempotencyKey: string;
     now: Date;
     policy: PolicyDecision;
+    plan: RiskPlan;
+    fillModel: PaperFillModel;
+    calibration: { key: string; version: number; adjustment: number; trades: number };
   }): Promise<{ intent: { id: string; orderId?: string | null }; duplicate: boolean }> {
-    const { profile, evaluation, selected, expiry, side, contract, quantity, idempotencyKey, now, policy } = args;
+    const { profile, evaluation, selected, expiry, side, contract, quantity, idempotencyKey, now, policy, plan, fillModel, calibration } = args;
 
     try {
       const intent = await this.prisma.executionIntent.create({
@@ -525,7 +737,36 @@ export class PaperExecutionService {
             policyChecks: policy.checks,
             atmStrike: evaluation.strikes.atmStrike,
             strikeStep: evaluation.strikes.strikeStep,
+            effectiveConfidenceFloor: policy.effectiveConfidenceFloor,
           } as unknown as Prisma.InputJsonValue,
+
+          // ---- What the agent knew --------------------------------------
+          strategyVersion: evaluation.agentStrategy?.version ?? null,
+          regime: evaluation.agentStrategy?.regime ?? null,
+          indexDirection: evaluation.indexDirection?.direction ?? null,
+          indexStrength: evaluation.indexDirection?.strength ?? null,
+          indexEvidence: (evaluation.indexDirection ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
+          dataQuality: (evaluation.dataQuality ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
+          evidence: (evaluation.evidence ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
+          confirmations: (evaluation.confirmations ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
+
+          // ---- The plan, written BEFORE any order exists -----------------
+          walletEquity: plan.walletEquity,
+          allocatedCapital: plan.allocatedCapital,
+          riskBudget: plan.riskAtStop,
+          rewardTarget: plan.rewardAtTarget,
+          plannedEntryPrice: plan.entryPrice,
+          stopPrice: plan.ok ? plan.stopPrice : null,
+          targetPrice: plan.ok ? plan.targetPrice : null,
+          riskPlan: plan as unknown as Prisma.InputJsonValue,
+          fillModel: fillModel as unknown as Prisma.InputJsonValue,
+
+          // ---- What it had learned, by version ---------------------------
+          // The version READ here, joined against the version a journal entry
+          // PRODUCED, is what makes "trade #1 taught trade #2" a checkable
+          // fact rather than a claim about a log line.
+          calibrationVersion: calibration.version,
+          calibrationAdjustment: calibration.adjustment,
           rejectReason: policy.allowed ? null : policy.reason,
           // The same refusal, grouped-able. See ExecutionIntent.rejectCheckId.
           rejectCheckId: policy.allowed ? null : policy.failedCheckId,
@@ -593,6 +834,26 @@ export class PaperExecutionService {
                 confidence: Math.round(evaluation.confidence),
                 sentinelRunId: evaluation.runId,
                 underlyingSpot: evaluation.spot ?? undefined,
+                // The PLAN is re-claimed too. A stale stop from the pass that
+                // was refused fifteen minutes ago would be a stop measured
+                // against a premium the market has left behind — and this is
+                // the row a position is created from.
+                walletEquity: plan.walletEquity,
+                allocatedCapital: plan.allocatedCapital,
+                riskBudget: plan.riskAtStop,
+                rewardTarget: plan.rewardAtTarget,
+                plannedEntryPrice: plan.entryPrice,
+                stopPrice: plan.ok ? plan.stopPrice : null,
+                targetPrice: plan.ok ? plan.targetPrice : null,
+                riskPlan: plan as unknown as Prisma.InputJsonValue,
+                fillModel: fillModel as unknown as Prisma.InputJsonValue,
+                calibrationVersion: calibration.version,
+                calibrationAdjustment: calibration.adjustment,
+                indexDirection: evaluation.indexDirection?.direction ?? null,
+                indexStrength: evaluation.indexDirection?.strength ?? null,
+                dataQuality: (evaluation.dataQuality ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
+                evidence: (evaluation.evidence ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
+                confirmations: (evaluation.confirmations ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
               },
             });
             if (claimed.count === 1) {
@@ -634,4 +895,35 @@ export class PaperExecutionService {
 function istMidnightFor(now: Date): Date {
   const { dayKey } = istParts(now);
   return new Date(`${dayKey}T00:00:00+05:30`);
+}
+
+/**
+ * The fill-model inputs for a known quantity.
+ *
+ * Extracted because the model is built twice per pass — once with one lot to
+ * get a price for the risk planner, and again with the quantity the planner
+ * produced. Two inline copies of this argument list is how the two calls end
+ * up disagreeing about which price field feeds which.
+ */
+function fillModelInput(
+  price: LivePrice,
+  side: 'BUY',
+  quantity: number,
+  quoteAgeMs: number | null,
+  orderType: string,
+) {
+  return {
+    side,
+    ltp: price.ltp,
+    bid: price.bid,
+    ask: price.ask,
+    quantity,
+    quoteAgeMs,
+    marketOpen: price.marketOpen,
+    orderType,
+  };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }

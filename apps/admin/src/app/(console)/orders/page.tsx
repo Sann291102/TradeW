@@ -3,12 +3,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   admin,
+  type CalibrationRow,
   type ExecutionAccountRow,
   type ExecutionLoopStatus,
   type ExecutionProfileRow,
   type ExecutionRejections,
   type ExecutionStats,
   type ExecutionTrace,
+  type JournalRow,
+  type LivePositionRow,
   type OrderRow,
   type TraceStage,
 } from '@/lib/api';
@@ -58,6 +61,12 @@ export default function AdminOrdersPage() {
   // liveness indicator is worse than none.
   const loopStatus = usePolling(() => admin.execution.status(), [], 10_000);
   const rejections = usePolling(() => admin.execution.rejections(hours), [hours], 20_000);
+  // The fast surfaces. Positions are polled hardest because they are the thing
+  // that moves — the management loop re-evaluates every two seconds, and a
+  // stop level three refreshes old is a number an operator would act on.
+  const positions = usePolling(() => admin.execution.positions(), [], 3_000);
+  const journal = usePolling(() => admin.execution.journal({ limit: 25, hours: 24 * 30 }), [], 30_000);
+  const calibration = usePolling(() => admin.execution.calibration(), [], 30_000);
 
   const byStatus = stats.data?.byStatus ?? [];
   const total = byStatus.reduce((sum, s) => sum + s.count, 0);
@@ -108,6 +117,8 @@ export default function AdminOrdersPage() {
 
       <ExecutionSummary stats={execStats.data} status={loopStatus.data} loading={execStats.loading} />
 
+      <LivePositions data={positions.data} loading={positions.loading} />
+
       <RejectionBreakdown data={rejections.data} loading={rejections.loading} hours={hours} />
 
       <ExecutionProfiles
@@ -121,6 +132,10 @@ export default function AdminOrdersPage() {
       />
 
       <ExecutionAccounts onChanged={() => { profiles.refresh(); orders.refresh(); }} />
+
+      <TradeJournal data={journal.data} loading={journal.loading} />
+
+      <CalibrationPanel data={calibration.data} loading={calibration.loading} />
 
       <Panel title="Order flow" subtitle="By status and side">
         <div className="grid gap-6 p-4 sm:grid-cols-2">
@@ -288,6 +303,287 @@ function ExecutionSummary({
           tone={pnlTone}
         />
       </div>
+    </Panel>
+  );
+}
+
+
+/**
+ * Every position under active management, as the two-second loop last saw it.
+ *
+ * This is the "watch it cook" surface. Three things on it cannot be derived
+ * from any other panel:
+ *
+ *  · `effectiveStop` — the level an exit will ACTUALLY trigger on, which is
+ *    the wider of the initial stop and the trail. Computed server-side, so
+ *    this cannot display a different number from the one the manager acts on.
+ *  · the DISARMED-but-managed state. Disarming stops entries and does not
+ *    abandon an open position, so a row here with a disarmed badge is correct
+ *    and important rather than a bug.
+ *  · `lastEvaluatedAt` — whether the loop is actually looking at this
+ *    position, as opposed to the position merely existing.
+ */
+function LivePositions({ data, loading }: { data: LivePositionRow[] | null; loading: boolean }) {
+  return (
+    <Panel
+      title="Live positions"
+      subtitle="Managed every 2s against the live premium — stop, target, trail and P&L"
+      right={
+        data && data.length > 0 ? (
+          <span className="text-[11px] text-faint">{data.length} open</span>
+        ) : undefined
+      }
+    >
+      {loading && !data ? (
+        <Empty>Loading…</Empty>
+      ) : !data || data.length === 0 ? (
+        <Empty>
+          No position is open. The agents evaluate on their own cadence; an open position appears here within
+          seconds of a fill.
+        </Empty>
+      ) : (
+        <Table
+            head={
+              <>
+              <Th>Agent</Th>
+              <Th>Contract</Th>
+              <Th>Strategy</Th>
+              <Th className="text-right">Qty</Th>
+              <Th className="text-right">Entry</Th>
+              <Th className="text-right">Last</Th>
+              <Th className="text-right">Stop</Th>
+              <Th className="text-right">Target</Th>
+              <Th className="text-right">Trail</Th>
+              <Th className="text-right">P&amp;L</Th>
+              <Th>State</Th>
+            </>
+            }
+          >
+            {data.map((p) => {
+              const trailing = p.trailPrice != null && p.effectiveStop > p.stopPrice;
+              const pnl = p.unrealizedPnl ?? 0;
+              return (
+                <tr key={p.positionId}>
+                  <Td>
+                    <div className="font-medium">{p.profileName}</div>
+                    <div className="text-[11px] text-faint">
+                      {p.agent}
+                      {!p.profileEnabled && (
+                        <>
+                          {' · '}
+                          {/* The state the disarm fix creates, made visible. An
+                              operator seeing this needs to know the position is
+                              still being managed, not stranded. */}
+                          <span className="text-amber">disarmed — still managed to exit</span>
+                        </>
+                      )}
+                    </div>
+                  </Td>
+                  <Td>
+                    <div className="font-mono text-[12px]">{p.contractSymbol}</div>
+                    <div className="text-[11px] text-faint">
+                      {p.symbol} {p.strike} {p.optionType} · index {p.indexDirection ?? 'unknown'}
+                    </div>
+                  </Td>
+                  <Td>
+                    <div className="text-[12px]">{p.strategyName ?? p.strategyId ?? '—'}</div>
+                    <div className="text-[11px] text-faint">
+                      v{p.strategyVersion ?? '?'} · {p.regime ?? 'regime unknown'} · {p.confidence}%
+                    </div>
+                  </Td>
+                  <Td className="text-right">{fmtNum(p.quantity)}</Td>
+                  <Td className="text-right">{p.entryPrice.toFixed(2)}</Td>
+                  <Td className="text-right">
+                    <div>{p.lastPrice != null ? p.lastPrice.toFixed(2) : '—'}</div>
+                    <div className="text-[11px] text-faint">{p.lastEvaluatedAt ? ago(p.lastEvaluatedAt) : 'not yet evaluated'}</div>
+                  </Td>
+                  <Td className="text-right">
+                    <span className={trailing ? 'text-up' : undefined}>{p.effectiveStop.toFixed(2)}</span>
+                    {trailing && <div className="text-[11px] text-faint">initial {p.stopPrice.toFixed(2)}</div>}
+                  </Td>
+                  <Td className="text-right">{p.targetPrice.toFixed(2)}</Td>
+                  <Td className="text-right">
+                    {p.trailPrice != null ? (
+                      <>
+                        <div>{p.trailPrice.toFixed(2)}</div>
+                        <div className="text-[11px] text-faint">{p.trailSteps} × {p.trailStepPoints}pt</div>
+                      </>
+                    ) : (
+                      <span className="text-faint">not yet</span>
+                    )}
+                  </Td>
+                  <Td className="text-right">
+                    <span className={pnl > 0 ? 'text-up' : pnl < 0 ? 'text-down' : undefined}>
+                      {pnl >= 0 ? '+' : ''}{fmtNum(Math.round(pnl))}
+                    </span>
+                  </Td>
+                  <Td>
+                    <Pill tone={p.state === 'OPEN' ? 'info' : 'warn'}>{p.state}</Pill>
+                    {p.exitReason && <div className="text-[11px] text-faint">{p.exitReason}</div>}
+                  </Td>
+                </tr>
+              );
+            })}
+          </Table>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * Completed automated trades, newest first.
+ *
+ * Every column here answers one of the questions the trade journal exists for:
+ * why it entered (strategy, index direction, confidence), what it risked
+ * (initial stop against the risk budget), what happened (exit reason, R), and
+ * what it taught (the calibration version this outcome produced).
+ */
+function TradeJournal({ data, loading }: { data: JournalRow[] | null; loading: boolean }) {
+  return (
+    <Panel title="Trade journal" subtitle="Completed automated paper trades — entry, exit, R and what each taught">
+      {loading && !data ? (
+        <Empty>Loading…</Empty>
+      ) : !data || data.length === 0 ? (
+        <Empty>No automated trade has completed yet. A journal entry is written when a position closes.</Empty>
+      ) : (
+        <Table
+            head={
+              <>
+              <Th>Closed</Th>
+              <Th>Agent / strategy</Th>
+              <Th>Contract</Th>
+              <Th className="text-right">Entry</Th>
+              <Th className="text-right">Exit</Th>
+              <Th>Why it exited</Th>
+              <Th className="text-right">P&amp;L</Th>
+              <Th className="text-right">R</Th>
+              <Th>Taught</Th>
+            </>
+            }
+          >
+            {data.map((j) => (
+              <tr key={j.id}>
+                <Td>
+                  <div>{j.exitAt ? fmtTime(j.exitAt) : '—'}</div>
+                  <div className="text-[11px] text-faint">
+                    {j.holdingSeconds != null ? `held ${Math.round(j.holdingSeconds / 60)}m` : ''}
+                  </div>
+                </Td>
+                <Td>
+                  <div className="text-[12px]">{j.strategyName ?? j.strategyId ?? '—'}</div>
+                  <div className="text-[11px] text-faint">
+                    {j.agent} · v{j.strategyVersion ?? '?'} · {j.regime ?? '?'} · {j.confidence}% · index {j.indexDirection ?? '?'}
+                  </div>
+                </Td>
+                <Td className="font-mono text-[12px]">{j.contractSymbol}</Td>
+                <Td className="text-right">{j.entryPrice.toFixed(2)}</Td>
+                <Td className="text-right">{j.exitPrice != null ? j.exitPrice.toFixed(2) : '—'}</Td>
+                <Td>
+                  <Pill tone={j.exitReason === 'TARGET' ? 'good' : j.exitReason === 'STOP' ? 'bad' : 'info'}>
+                    {j.exitReason}
+                  </Pill>
+                  {j.initialStop != null && (
+                    <div className="text-[11px] text-faint">
+                      stop {j.initialStop.toFixed(2)} · target {j.initialTarget?.toFixed(2) ?? '—'}
+                      {j.finalTrail != null ? ` · trailed to ${j.finalTrail.toFixed(2)}` : ''}
+                    </div>
+                  )}
+                </Td>
+                <Td className="text-right">
+                  <span className={j.realizedPnl > 0 ? 'text-up' : j.realizedPnl < 0 ? 'text-down' : undefined}>
+                    {j.realizedPnl >= 0 ? '+' : ''}{fmtNum(Math.round(j.realizedPnl))}
+                  </span>
+                </Td>
+                <Td className="text-right">{j.rMultiple != null ? `${j.rMultiple >= 0 ? '+' : ''}${j.rMultiple.toFixed(2)}R` : '—'}</Td>
+                <Td>
+                  {j.calibrationVersion != null ? (
+                    <span className="text-[11px] text-faint">v{j.calibrationVersion}</span>
+                  ) : (
+                    <span className="text-[11px] text-faint">no bucket</span>
+                  )}
+                </Td>
+              </tr>
+            ))}
+          </Table>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * What each (agent, symbol, strategy, version, regime) bucket has learned.
+ *
+ * The `active` column is the one that stops this being read as more than it
+ * is: below the sample floor a bucket has results but is NOT allowed to move
+ * anything, and "0 because it learned nothing" and "0 because it has not been
+ * allowed to yet" are different facts.
+ */
+function CalibrationPanel({ data, loading }: { data: CalibrationRow[] | null; loading: boolean }) {
+  return (
+    <Panel
+      title="Learning"
+      subtitle="What each strategy/regime bucket has learned — bounded to the entry floor, never below the platform's 70%"
+    >
+      {loading && !data ? (
+        <Empty>Loading…</Empty>
+      ) : !data || data.length === 0 ? (
+        <Empty>Nothing learned yet. A bucket appears when its first automated trade closes.</Empty>
+      ) : (
+        <Table
+            head={
+              <>
+              <Th>Bucket</Th>
+              <Th className="text-right">Trades</Th>
+              <Th className="text-right">W / L / S</Th>
+              <Th className="text-right">Avg R</Th>
+              <Th className="text-right">Gross P&amp;L</Th>
+              <Th className="text-right">Floor adj.</Th>
+              <Th>State</Th>
+            </>
+            }
+          >
+            {data.map((c) => (
+              <tr key={c.key}>
+                <Td>
+                  <div className="text-[12px]">{c.strategyId} <span className="text-faint">v{c.strategyVersion}</span></div>
+                  <div className="text-[11px] text-faint">{c.agent} · {c.symbol} · {c.regime}</div>
+                </Td>
+                <Td className="text-right">{fmtNum(c.trades)}</Td>
+                <Td className="text-right text-[12px]">{c.wins} / {c.losses} / {c.scratches}</Td>
+                <Td className="text-right">
+                  {c.avgRMultiple != null ? (
+                    <span className={c.avgRMultiple > 0 ? 'text-up' : c.avgRMultiple < 0 ? 'text-down' : undefined}>
+                      {c.avgRMultiple >= 0 ? '+' : ''}{c.avgRMultiple.toFixed(2)}R
+                    </span>
+                  ) : '—'}
+                </Td>
+                <Td className="text-right">
+                  <span className={c.grossPnl > 0 ? 'text-up' : c.grossPnl < 0 ? 'text-down' : undefined}>
+                    {c.grossPnl >= 0 ? '+' : ''}{fmtNum(Math.round(c.grossPnl))}
+                  </span>
+                </Td>
+                <Td className="text-right">
+                  {c.confidenceAdjustment === 0 ? (
+                    <span className="text-faint">0</span>
+                  ) : (
+                    <span className={c.confidenceAdjustment > 0 ? 'text-amber' : 'text-up'}>
+                      {c.confidenceAdjustment > 0 ? '+' : ''}{c.confidenceAdjustment} pt
+                    </span>
+                  )}
+                </Td>
+                <Td>
+                  {c.active ? (
+                    <Pill tone="info">applied</Pill>
+                  ) : (
+                    <span className="text-[11px] text-faint">
+                      {c.trades}/{c.sampleFloor} trades — not yet applied
+                    </span>
+                  )}
+                </Td>
+              </tr>
+            ))}
+          </Table>
+      )}
     </Panel>
   );
 }

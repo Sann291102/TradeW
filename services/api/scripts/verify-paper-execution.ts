@@ -221,6 +221,46 @@ async function main() {
         strikes: strikes as unknown as ExecutionEvaluationDto['strikes'],
         expiry: `${expiry}T00:00:00.000Z`,
         marketSnapshot: (live?.marketSnapshot ?? {}) as Record<string, unknown>,
+        // The four agent gates, as they would arrive from a live evaluation.
+        // Recorded rather than live, and stated as such: this script's whole
+        // discipline is that a substituted decision must be visibly a
+        // substitution, never something a reader could mistake for the market
+        // having actually signalled.
+        dataQuality: live?.dataQuality ?? {
+          ok: true,
+          checks: [],
+          candles: 0,
+          newestBarAt: null,
+          barAgeMinutes: null,
+          spot,
+          optionChainStrikes: strikes.candidates.length,
+          failedCheckId: null,
+          reason: null,
+        },
+        indexDirection: live?.indexDirection ?? {
+          direction: 'bullish',
+          strength: 1,
+          votes: [],
+          conflicts: [],
+          summary: 'Recorded index direction for runtime verification.',
+        },
+        agentStrategy: live?.agentStrategy ?? {
+          strategyId: 'agent-trend-momentum',
+          strategyName: 'Trend Momentum Continuation',
+          version: '1.0.0',
+          purpose: 'Runtime verification.',
+          regime: 'trending',
+          regimeDeclared: true,
+          bias: 'bullish',
+          confidence: 84,
+          rulesMatched: [],
+          rulesUnmet: [],
+          exitRules: [],
+          knowledgeConcepts: [],
+        },
+        evidence: live?.evidence ?? null,
+        confirmations: live?.confirmations ?? [],
+        exitRuleEvaluations: live?.exitRuleEvaluations ?? [],
       };
 
   // Substitute ONLY the Sentinel hop. Everything below is production code.

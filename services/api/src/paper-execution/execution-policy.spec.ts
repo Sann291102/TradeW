@@ -25,6 +25,15 @@ const OK: PolicyInput = {
   marketOpen: true,
   availableCash: 1_000_000,
   estimatedCost: 9_750,
+  // ---- Autonomous agents (2026-08-30) ----
+  quoteFresh: true,
+  quoteFreshnessDetail: 'Newest index tick 800 ms ago, inside the 15000 ms allowance.',
+  indexDirection: 'bullish',
+  optionSide: 'CE',
+  calibrationAdjustment: 0,
+  riskPlanOk: true,
+  riskPlanReason: null,
+  riskPlanCheckId: null,
 };
 
 const fail = (over: Partial<PolicyInput>) => evaluatePolicy({ ...OK, ...over });

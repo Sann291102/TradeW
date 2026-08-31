@@ -1008,7 +1008,9 @@ One strategy exists: `isEmaCrossLong()` — bullish bar + EMA passing through th
 
 A **paper OMS only** (`services/api/src/sim/`). Supported: MARKET (immediate), LIMIT / SL / SL_M (resting, filled by the 3 s poller), modify, cancel, exit-one, exit-all, DAY and IOC validity, MIS/CNC/NRML, per-instrument lot-size validation, simulated margin with an explicit "not real SPAN" disclaimer, 3 bps charges, slippage reporting, and a ₹10 L paper wallet. Positions handle add/partial-close/full-close/close-and-flip with correct realized P&L, and daily P&L is split from carry-forward via a session-open snapshot.
 
-**No real-money execution exists.** No live order placement, no broker order API, no OCO/bracket (`parentOrderId` is present but nothing populates it), no partial fills (`filledQuantity` is only ever 0 or full).
+**No real-money execution exists.** No live order placement, no broker order API, no OCO/bracket (`parentOrderId` is present but nothing populates it), no partial fills (`filledQuantity` is only ever 0 or full). `ExecutionEnvironment` has exactly one member, `PAPER`, so there is no enum value that could route an order to a broker.
+
+**Automated paper agents** (`services/api/src/paper-execution/`, completed 2026-08-30) place orders through the same OMS with no human in the loop: three leader-elected loops (manage 2 s, evaluate 30 s, reconcile 15 s) evaluate a decision via `services/sentinel`, size it, place it, then manage it to a stop, a target or a 3-point trail and journal the result into a bounded calibration bucket. They consume live Dhan market data and write only paper orders. Off by default (`PAPER_EXECUTION_ENABLED`) and armed per profile from the admin console. See `docs/product-architecture/AUTONOMOUS-PAPER-AGENTS.md`.
 
 ## 9.10 Option chain ✅
 
@@ -1016,10 +1018,13 @@ Real Dhan chain (strikes, OI, previous OI, volume, IV, bid/ask, delta/theta/gamm
 
 ## 9.11 Risk engine
 
-There is **no risk engine**. What exists instead:
+There is **no risk engine on the human order path**. What exists instead:
 - Pre-trade: lot-size multiple validation and a simulated margin check that can reject an order for insufficient margin.
 - Post-trade observation: Sentinel's six trap signals and five behavioural signals — advisory only, never a gate.
-- Absent: position limits, exposure caps, per-day loss limits, kill switches, concentration checks, drawdown circuit breakers, and any pre-trade risk gate on the order path.
+- `DisciplineService.evaluatePlacement` inside `placeOrder` (a daily-loss friction with a signed, single-use, human-only override token).
+- Absent for a human's own orders: position limits, exposure caps, kill switches, concentration checks, drawdown circuit breakers.
+
+**The agent path is different, and deliberately so.** `services/api/src/paper-execution/execution-policy.ts` is a real pre-trade gate chain on every autonomous order — environment, market hours, square-off cutoff, quote freshness, index-direction agreement, a confidence floor, an allocation ceiling, a risk budget, per-profile open-position and per-day order counts, an account-wide daily loss limit, and affordability. `execution-risk.ts` sizes every position so the loss at the stop cannot exceed 3% of equity, and `position-decision.ts` is the single authority on exiting one. None of this applies to a human's order ticket; an agent is held to a standard a person is not, because a person can change their mind and an agent cannot.
 
 ---
 

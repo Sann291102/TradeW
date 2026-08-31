@@ -137,7 +137,71 @@ export interface ExecutionIntentRow { id: string; decidedAt: string; status: str
  * process, so an armed profile reads identically whether the loop evaluates it
  * every minute or has never started. This is the process's own live state.
  */
-export interface ExecutionLoopStatus { enabled: boolean; intervalMs: number | null; reconcileMs: number | null; isEvaluateLeader: boolean; isReconcileLeader: boolean; evaluating: boolean; reconciling: boolean; startedAt: string | null; lastEvaluateAt: string | null; lastReconcileAt: string | null; }
+export interface ExecutionLoopStatus { enabled: boolean; intervalMs: number | null; reconcileMs: number | null; manageMs: number | null; isEvaluateLeader: boolean; isReconcileLeader: boolean; isManageLeader: boolean; evaluating: boolean; reconciling: boolean; managing: boolean; startedAt: string | null; lastEvaluateAt: string | null; lastReconcileAt: string | null; lastManageAt: string | null; lastManage: { evaluated: number; held: number; trailed: number; exited: number; errors: number } | null; }
+
+// ---- Watching the agents work (2026-08-30) --------------------------------
+
+/**
+ * One position under active management, as the two-second loop last saw it.
+ *
+ * `effectiveStop` is the level an exit will actually trigger on — the wider of
+ * the initial stop and the trail — computed server-side so the console cannot
+ * display a different number from the one the manager acts on.
+ *
+ * `profileEnabled` is here because a DISARMED profile still manages an open
+ * position. Disarming stops entries; it does not abandon what is already open,
+ * and an operator needs to be able to see that state rather than infer it.
+ */
+export interface LivePositionRow {
+  positionId: string; intentId: string; profileName: string; agent: string; profileEnabled: boolean;
+  symbol: string; contractSymbol: string; optionType: string; strike: number;
+  state: 'OPEN' | 'EXITING' | 'CLOSED';
+  strategyId: string | null; strategyName: string | null; strategyVersion: string | null;
+  regime: string | null; indexDirection: string | null; confidence: number;
+  quantity: number; entryPrice: number; entryAt: string;
+  lastPrice: number | null; lastPriceAt: string | null; lastEvaluatedAt: string | null;
+  stopPrice: number; targetPrice: number; trailPrice: number | null; trailSteps: number;
+  effectiveStop: number; highWaterPrice: number; unrealizedPnl: number | null;
+  exitReason: string | null; exitDetail: string | null;
+  squareOffMinute: number; trailStepPoints: number;
+  trailHistory: Array<{ from: number | null; to: number; at: string; reason: string }>;
+}
+
+/** What an agent decided on its last pass — including the passes that correctly did nothing. */
+export interface AgentDecision { at: string; outcome: string; verdict: string | null; reason: string; checks: Array<{ id: string; label: string; passed: boolean; detail: string }>; }
+export type AgentRow = ExecutionProfileRow & { lastDecision: AgentDecision | null };
+
+/** One completed automated paper trade, in full. */
+export interface JournalRow {
+  id: string; intentId: string; agent: string; symbol: string;
+  strategyId: string | null; strategyName: string | null; strategyVersion: string | null; regime: string | null;
+  contractSymbol: string; optionType: string; strike: number; quantity: number;
+  indexDirection: string | null; confidence: number;
+  entryAt: string; exitAt: string | null; entryPrice: number; exitPrice: number | null;
+  initialStop: number | null; initialTarget: number | null; finalTrail: number | null;
+  trailHistory: unknown; exitReason: string; exitDetail: string | null; holdingSeconds: number | null;
+  realizedPnl: number; charges: number; rMultiple: number | null; result: string;
+  riskBudget: number | null; allocatedCapital: number | null;
+  calibrationKey: string | null; calibrationVersion: number | null;
+  evidence: unknown; confirmations: unknown; dataQuality: unknown; fillModel: unknown; riskPlan: unknown;
+  rationale: string[];
+}
+
+/**
+ * What one (agent, symbol, strategy, version, regime) bucket has learned.
+ *
+ * `confidenceAdjustment` is added to that bucket's ENTRY FLOOR, never to a
+ * confidence score, and the server clamps the result at the platform's 70. So
+ * a positive number makes this bucket harder to trade and a negative one can
+ * only ever relax a profile that asked for MORE than 70 back toward it.
+ */
+export interface CalibrationRow {
+  key: string; agent: string; symbol: string; strategyId: string; strategyVersion: string; regime: string;
+  trades: number; wins: number; losses: number; scratches: number;
+  grossPnl: number; avgRMultiple: number | null; winRate: number | null;
+  confidenceAdjustment: number; version: number;
+  active: boolean; sampleFloor: number; lastUpdatedAt: string;
+}
 /** One reason today's decisions did not become orders, and how many times. */
 export interface RejectionBucket { checkId: string | null; label: string; count: number; lastAt: string | null; lastReason: string | null; lastProfileName: string | null; }
 export interface ExecutionRejections { hours: number; total: number; buckets: RejectionBucket[]; }
@@ -212,6 +276,12 @@ export const admin = {
     setAgentTrading: (userId: string, enabled: boolean) => adminApi<ExecutionAccountRow>(`/execution/accounts/${encodeURIComponent(userId)}/agent-trading`, { method: 'POST', body: JSON.stringify({ enabled }) }),
     upsertProfile: (body: Record<string, unknown>) => adminApi(`/execution/profiles`, { method: 'POST', body: JSON.stringify(body) }),
     authorization: (id: string) => adminApi<ExecutionAuthorization>(`/execution/profiles/${encodeURIComponent(id)}/authorization`),
+    // ---- Watching the agents work. All read-only; none of these can change
+    // what they are watching.
+    positions: () => adminApi<LivePositionRow[]>('/execution/positions'),
+    agents: () => adminApi<AgentRow[]>('/execution/agents'),
+    journal: (q: Record<string, string | number | undefined> = {}) => adminApi<JournalRow[]>(`/execution/journal?${qs(q)}`),
+    calibration: () => adminApi<CalibrationRow[]>('/execution/calibration'),
   },
   cognition: {
     overview: () => adminApi<CognitionOverview>('/cognition/overview'),

@@ -18,6 +18,7 @@ import { load as parseYaml } from 'js-yaml';
 import { join, resolve } from 'path';
 import { StrategyMatch } from '../domain';
 import { isWithinSession } from '../market-clock';
+import { analyseStructure } from './market-structure';
 import { MarketSnapshot, latestBarAt } from './market-intelligence.service';
 import { STRATEGY_RULES, isKnownRule } from './strategy-rules';
 
@@ -30,8 +31,21 @@ export type BiasSource =
   | 'sweep'
   | 'failed-breakout'
   | 'structure'
+  | 'swing-structure'
   | 'wyckoff'
   | 'trend';
+
+/**
+ * The regime vocabulary an agent strategy declares itself applicable in.
+ *
+ * These are `MarketProfile.structure`'s own four values, deliberately, rather
+ * than a fifth vocabulary invented here — and rather than `MarketProfile.type`,
+ * which has ten members. Ten buckets split the calibration sample ten ways and
+ * most would never reach a usable sample size; four is coarse enough to
+ * accumulate and fine enough to separate "works in a trend, fails in a range",
+ * which is the distinction Master Plan Module 12 exists to capture.
+ */
+export type StrategyRegime = 'trending' | 'ranging' | 'consolidating' | 'breaking-out';
 
 export interface StrategyDefinition {
   id: string;
@@ -48,6 +62,87 @@ export interface StrategyDefinition {
   enabled: boolean;
   /** where the definition came from, for the audit trail */
   source: 'built-in' | 'user-yaml';
+
+  // ───────────────────────────────────────────────────────────────────────
+  // AGENT METADATA (2026-08-30)
+  //
+  // Present only on the four strategies an autonomous paper agent may act on.
+  // Every field below is OPTIONAL so the eight pre-existing built-ins and any
+  // user YAML keep working untouched — and `agentTradable` defaulting to
+  // absent is what makes the separation safe: a strategy is not agent-tradable
+  // unless it says so, so no existing definition became one by this change.
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * May an autonomous execution profile take a position on this strategy?
+   *
+   * The eight observation strategies are deliberately NOT tradable by an
+   * agent. They were written to describe setups to a trader, so several are
+   * built on bullish-only predicates (`price_above_vwap`, `ema_fast_above_slow`)
+   * and none declares what would invalidate a POSITION as opposed to a setup.
+   * Making them agent-tradable would ship an agent that can only ever buy
+   * calls and has nothing to exit on.
+   */
+  agentTradable?: boolean;
+
+  /**
+   * Semantic version of the RULE SET.
+   *
+   * Load-bearing rather than decorative: `StrategyCalibration` is keyed on it,
+   * so changing what a strategy means starts a fresh sample instead of
+   * averaging the new rules' results with the old rules'. Bump the minor for a
+   * changed threshold, the major for a changed rule list.
+   */
+  version?: string;
+
+  /**
+   * `knowledge-base/` concept ids this strategy is an application of.
+   *
+   * Checked against the loaded ontology by `strategy-knowledge.spec.ts`, so a
+   * strategy cannot cite a concept the repository does not define. This is the
+   * `knowledge → strategy` half of the provenance chain; the
+   * `strategy → observation` half is `evidenceKeys`.
+   */
+  knowledgeConcepts?: string[];
+
+  /**
+   * The evidence this strategy decides on — see `execution/evidence.ts`.
+   *
+   * A closed declaration, not a hint: the evidence reader reads exactly these
+   * and nothing else, so a signal absent from this list cannot influence this
+   * strategy's trade and cannot appear in its intent record.
+   */
+  evidenceKeys?: string[];
+  /** Per-key weighting, 0..1. Absent keys count 1. */
+  evidenceWeights?: Record<string, number>;
+
+  /** Regimes this strategy claims to work in. Empty means "any". */
+  regimes?: StrategyRegime[];
+
+  /** Underlyings this strategy may be run on. Empty means "any permitted". */
+  instruments?: string[];
+
+  /**
+   * The share of decided evidence that must SUPPORT the direction before the
+   * strategy is considered confirmed for execution. A second, evidence-level
+   * gate on top of the rule set — the rules say the pattern is present, this
+   * says the surrounding context is not fighting it.
+   */
+  minEvidenceSupport?: number;
+
+  /**
+   * What ends the POSITION, as opposed to what cancels the setup.
+   *
+   * `invalidations` answers "is this setup still valid?" and is evaluated
+   * before entry. These are evaluated by the position manager for as long as
+   * the position is open, and firing one is an exit. Kept separate because
+   * they are genuinely different questions: a setup that has played out is not
+   * invalid, and a position whose thesis is gone is not un-entered.
+   */
+  exitRules?: string[];
+
+  /** One line, for the console and the journal. */
+  purpose?: string;
 }
 
 /** Full detection detail — the wire shape plus the rule notes for "Why?". */
@@ -133,6 +228,166 @@ const BUILT_IN_STRATEGIES: Omit<StrategyDefinition, 'source'>[] = [
     baseConfidenceWeight: 0.68,
     biasSource: 'wyckoff',
     enabled: true,
+  },
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // THE FOUR AGENT STRATEGIES (2026-08-30)
+  //
+  // Four rather than forty. Each one is a distinct thesis about WHY price
+  // should move — structure turning over, a trend continuing, a range
+  // expanding, a stretched move failing — and the four theses are mutually
+  // exclusive by construction: at most one of them is the honest read of any
+  // given market. Twenty variations on "the trend is up" would look like
+  // twenty independent confirmations to a confidence engine and be one.
+  //
+  // They are NOT renamed copies of the eight above. Three differences, all
+  // structural:
+  //
+  //  1. Every rule they use is DIRECTION-AGNOSTIC, so both CE and PE are
+  //     reachable. The observation strategies lean on bullish-only predicates
+  //     and an agent built on them could only ever buy calls.
+  //  2. They declare `exitRules` — what ends the POSITION, which no
+  //     observation strategy needed to have an opinion about.
+  //  3. They declare their evidence, so the intent records what mattered
+  //     rather than the whole snapshot.
+  //
+  // Every `knowledgeConcepts` entry is a real `knowledge-base/*/<id>.yaml`,
+  // asserted by `strategy-knowledge.spec.ts`.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  {
+    id: 'agent-smc-structure-shift',
+    name: 'Smart Money Structure Shift',
+    purpose:
+      'Take the side of a confirmed swing-structure break that displaced with participation and then returned into the order block it left behind.',
+    // The four rules are the four things that distinguish an institutional
+    // structure shift from a bar that happened to close through a level:
+    // the break is confirmed on SWINGS, the bar that made it DISPLACED,
+    // price returned to the origin of that move, and volume was there.
+    rules: ['structure_break_confirmed', 'displacement_bar', 'order_block_mitigated', 'volume_supports_move'],
+    // Structure turning over the other way, or the break simply failing back
+    // inside the range it came from.
+    invalidations: ['structure_reversed', 'structure_shift_invalidated'],
+    exitRules: ['structure_reversed', 'structure_shift_invalidated'],
+    baseConfidenceWeight: 0.86,
+    biasSource: 'swing-structure',
+    enabled: true,
+    agentTradable: true,
+    version: '1.0.0',
+    knowledgeConcepts: [
+      'swing-point',
+      'trend',
+      'institutional-order-flow',
+      'liquidity',
+      'volume-confirmation',
+      'block-trade',
+    ],
+    evidenceKeys: [
+      'market-structure',
+      'index-trend',
+      'ema-alignment',
+      'volume-confirmation',
+      'support-resistance',
+      'option-oi-walls',
+    ],
+    evidenceWeights: { 'market-structure': 1.5, 'volume-confirmation': 1.2, 'option-oi-walls': 0.6 },
+    regimes: ['trending', 'breaking-out'],
+    minEvidenceSupport: 0.6,
+  },
+
+  {
+    id: 'agent-trend-momentum',
+    name: 'Trend Momentum Continuation',
+    purpose:
+      'Join an established, still-accelerating trend on the side the EMA stack and VWAP agree on, after a quiet pullback rather than into an extension.',
+    rules: ['ema_stack_aligned', 'trend_momentum_confirmed', 'price_beyond_vwap', 'pullback_volume_lower'],
+    invalidations: ['momentum_faded', 'vwap_reclaimed_against'],
+    exitRules: ['momentum_faded', 'vwap_reclaimed_against', 'structure_reversed'],
+    baseConfidenceWeight: 0.84,
+    biasSource: 'ema',
+    enabled: true,
+    agentTradable: true,
+    version: '1.0.0',
+    knowledgeConcepts: ['trend', 'moving-average', 'vwap', 'volume-confirmation', 'market-breadth'],
+    evidenceKeys: [
+      'index-trend',
+      'ema-alignment',
+      'vwap-position',
+      'momentum-macd',
+      'momentum-rsi',
+      'volume-confirmation',
+      'market-breadth',
+    ],
+    evidenceWeights: { 'index-trend': 1.5, 'ema-alignment': 1.3, 'market-breadth': 0.6 },
+    regimes: ['trending'],
+    minEvidenceSupport: 0.65,
+  },
+
+  {
+    id: 'agent-opening-range-expansion',
+    name: 'Opening Range Expansion',
+    purpose:
+      'Take a decisive break of the opening range that is expanding the session range on real volume, rather than drifting through it.',
+    rules: ['orb_breakout', 'session_range_expanding', 'volume_supports_move', 'price_beyond_vwap'],
+    invalidations: ['orb_reentry'],
+    exitRules: ['orb_reentry', 'momentum_faded'],
+    // The opening-range thesis is about the first half of the session. After
+    // noon a "breakout" of a range set five hours ago is a different claim,
+    // and this strategy does not make it.
+    idealSession: '09:30-12:00',
+    baseConfidenceWeight: 0.82,
+    biasSource: 'orb',
+    enabled: true,
+    agentTradable: true,
+    version: '1.0.0',
+    knowledgeConcepts: ['range-expansion', 'breakout', 'volume-confirmation', 'vwap', 'trend-day'],
+    evidenceKeys: [
+      'opening-range',
+      'index-trend',
+      'volume-confirmation',
+      'vwap-position',
+      'volatility-regime',
+      'option-oi-walls',
+    ],
+    evidenceWeights: { 'opening-range': 1.5, 'volume-confirmation': 1.3 },
+    regimes: ['breaking-out', 'trending'],
+    minEvidenceSupport: 0.6,
+  },
+
+  {
+    id: 'agent-exhaustion-reversal',
+    name: 'Exhaustion Reversal',
+    purpose:
+      'Fade a stretched move that has run a 20-bar liquidity pool, been rejected on the bar that took it, and closed back through the level.',
+    rules: ['liquidity_pool_swept', 'momentum_stretched', 'rejection_bar', 'sweep_volume_spike'],
+    // A pool taken and NOT reclaimed is a genuine break, which is the exact
+    // opposite of the thesis; and a range that has actually given way is no
+    // longer a range to fade inside.
+    invalidations: ['sweep_not_reclaimed', 'range_broken'],
+    exitRules: ['sweep_not_reclaimed', 'range_broken', 'structure_reversed'],
+    baseConfidenceWeight: 0.8,
+    biasSource: 'sweep',
+    enabled: true,
+    agentTradable: true,
+    version: '1.0.0',
+    knowledgeConcepts: [
+      'liquidity-sweep',
+      'stop-loss-clustering',
+      'relative-strength-index',
+      'false-breakout',
+      'max-pain',
+    ],
+    evidenceKeys: [
+      'momentum-exhaustion',
+      'support-resistance',
+      'volume-confirmation',
+      'market-structure',
+      'option-max-pain',
+      'volatility-regime',
+    ],
+    evidenceWeights: { 'momentum-exhaustion': 1.5, 'support-resistance': 1.2, 'option-max-pain': 0.8 },
+    regimes: ['ranging', 'consolidating'],
+    minEvidenceSupport: 0.6,
   },
 ];
 
@@ -247,6 +502,25 @@ export class StrategyEngineService implements OnModuleInit {
   }
 
   /**
+   * The strategies an autonomous paper agent may take a position on.
+   *
+   * The filter is `agentTradable === true`, which no user YAML can set (see
+   * `normaliseDefinition`) and which none of the eight observation strategies
+   * declares. So the set an agent can act on is fixed in this file and cannot
+   * be widened by dropping a file into the strategy directory — which matters,
+   * because that directory is a deployment artefact and this is a permission.
+   */
+  agentStrategies(): StrategyDefinition[] {
+    return this.strategies.filter((s) => s.agentTradable === true).map((s) => ({ ...s }));
+  }
+
+  /** One agent strategy by id, or null when it is not agent-tradable. */
+  agentStrategy(id: string): StrategyDefinition | null {
+    const found = this.strategies.find((s) => s.id === id && s.agentTradable === true);
+    return found ? { ...found } : null;
+  }
+
+  /**
    * Read declarative strategies from the strategy directory. A file that
    * references an unknown rule is rejected outright and logged — silently
    * dropping the bad rule would leave the trader with a strategy that looks
@@ -320,6 +594,17 @@ function resolveBias(source: BiasSource, s: MarketSnapshot): 'bullish' | 'bearis
       if (last && s.resistance !== null && last.close < s.resistance) return 'bearish';
       if (last && s.support !== null && last.close > s.support) return 'bullish';
       return 'neutral';
+    case 'swing-structure': {
+      // The swing engine's own read, not the session's. A structure-shift
+      // strategy that took its side from `trendAnalysis` would name the
+      // direction of the move it is claiming has just ENDED.
+      if (s.candles.length < 10) return trend;
+      const st = analyseStructure(s.candles);
+      if (st.event && st.eventDirection) return st.eventDirection;
+      if (st.state === 'uptrend') return 'bullish';
+      if (st.state === 'downtrend') return 'bearish';
+      return 'neutral';
+    }
     case 'structure':
     case 'wyckoff':
     case 'trend':
@@ -356,6 +641,14 @@ function normaliseDefinition(raw: Record<string, unknown> | null): StrategyDefin
     biasSource,
     enabled: body.enabled !== false,
     source: 'user-yaml',
+    // `agentTradable` is DELIBERATELY not read from the file, and this is a
+    // permission boundary rather than an omission. The strategy directory is a
+    // deployment artefact — a mounted volume, a file an operator can drop in —
+    // so honouring the flag from there would mean a file on disk could grant
+    // itself the right to place orders on a real user's paper account. The
+    // four agent strategies are defined in this module, in code, under review.
+    // A user YAML remains exactly what it has always been: an observation
+    // strategy that surfaces in the workspace.
   };
 }
 
