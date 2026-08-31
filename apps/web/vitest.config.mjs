@@ -78,6 +78,13 @@ export default defineConfig({
       // The forming candle. Regression cover for a chart whose last-price line
       // sat at yesterday's close while the card beside it showed today's price.
       'src/lib/hooks/liveCandle.test.ts',
+      // The zero guard on the live feed. Squarely in this file's "a mistake
+      // here is an exposure, not a rendering bug" rule: a quote the bridge has
+      // no price for must be ABSENT, never a row carrying 0. It has reached the
+      // home screen twice as `0.00` under NIFTY 50 beside a MARKET CLOSED
+      // badge — a dead feed rendered as a market, which is the most expensive
+      // kind of wrong a trading screen can be.
+      'src/lib/dhanLiveFeed.test.ts',
       // The strategy-contract leak test. Renders two unrelated strategies
       // through the same components and fails if any of them names a template
       // id — the guard that keeps P7 from becoming ten dashboards.

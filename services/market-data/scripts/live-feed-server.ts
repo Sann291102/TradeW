@@ -529,12 +529,40 @@ function toLiveQuote(tick: MarketTick, meta: InstrumentMeta): LiveQuote {
   };
 }
 
+/**
+ * Is this quote carrying a real price?
+ *
+ * ── THE ZERO GUARD. READ BEFORE REMOVING. ─────────────────────────────────
+ *
+ * No index, stock, ETF or commodity future trades at 0. An LTP of 0 out of
+ * `toLiveQuote` means one thing only: the tick carried neither `ltp` nor
+ * `previousClose`, i.e. we do not know this instrument's price.
+ *
+ * The whole dashboard treats a NON-EMPTY snapshot as proof the feed is
+ * healthy, and falls back to its clearly-labelled preview when the snapshot
+ * is empty. That contract is what stops a dead Dhan credential from being
+ * rendered as a market. Ship a priceless row and it is broken exactly
+ * backwards: the client believes the bridge is fine and paints `0.00` as
+ * NIFTY's price.
+ *
+ * That is what happened on 2026-08-31 (commit ef33b43), which seeded every
+ * tracked instrument with `ltp: 0` at boot "so snapshot() is never empty on
+ * boot" — turning the one honest signal the client had into a lie. The seed
+ * is gone (see `main`), and this guard is here so no future one can reach a
+ * screen: an instrument we have no price for is ABSENT from the snapshot,
+ * never present at zero.
+ */
+function isPriced(q: LiveQuote): boolean {
+  return Number.isFinite(q.ltp) && q.ltp > 0;
+}
+
 function snapshot() {
   const indices: LiveQuote[] = [];
   const stocks: LiveQuote[] = [];
   const etfs: LiveQuote[] = [];
   const commodities: LiveQuote[] = [];
   for (const [key, q] of byKey) {
+    if (!isPriced(q)) continue;
     if (key.startsWith('index:')) indices.push(q);
     else if (key.startsWith('stock:')) stocks.push(q);
     else if (key.startsWith('etf:')) etfs.push(q);
@@ -1357,30 +1385,24 @@ async function main(): Promise<void> {
     };
   }
 
-  // Initialize baseline quotes for all tracked instruments so snapshot() is never empty on boot
-  for (const meta of ALL_INSTRUMENTS) {
-    const kind = kindOf(meta);
-    byKey.set(`${kind}:${meta.symbol}`, {
-      instrumentId: meta.securityId,
-      symbol: meta.symbol,
-      displayName: meta.displayName,
-      ltp: 0,
-      change: 0,
-      changePct: 0,
-      open: null,
-      high: null,
-      low: null,
-      close: null,
-      bid: 0,
-      ask: 0,
-      volume: 0,
-      marketStatus: isMarketOpen() ? 'open' : 'closed',
-      updatedAt: new Date().toISOString(),
-      source: 'dhan',
-    });
-  }
+  // ── NO BASELINE SEEDING. DELIBERATE. ──────────────────────────────────
+  //
+  // There was a loop here that wrote a `ltp: 0` placeholder for every tracked
+  // instrument at boot, "so snapshot() is never empty on boot". An empty
+  // snapshot is not a defect to paper over — it is the signal the dashboard
+  // reads to say "the feed has nothing real yet" and fall back to its
+  // labelled preview. Filling it with zeros told every widget the bridge was
+  // healthy, and the home screen rendered 0.00 as the price of NIFTY, BANKNIFTY,
+  // FINNIFTY, SENSEX and INDIA VIX. `isPriced` in `snapshot()` now backstops
+  // this, so a placeholder reintroduced here still cannot reach a screen —
+  // but the right place for an unknown price is to have no row at all.
+  //
+  // Until a real tick or the index pre-fetch below lands, `byKey` is empty and
+  // the bridge says so.
 
-  // Pre-fetch latest index close/LTP from Dhan historical API
+  // Pre-fetch latest index close/LTP from Dhan historical API, so a market that
+  // is CLOSED (no ticks until the next session) still shows its real last
+  // traded levels rather than nothing at all.
   const toDate = new Date();
   const fromDate = istMidnightDaysAgo(toDate, 1);
   for (const idx of INDEX_INSTRUMENTS) {
@@ -1410,10 +1432,22 @@ async function main(): Promise<void> {
             source: 'dhan',
           });
           scheduleBroadcast();
+        } else {
+          console.warn(
+            `[bootstrap] Dhan returned no candles for ${idx.symbol}; it stays absent from /quotes until a live tick arrives`,
+          );
         }
       })
-      .catch(() => {
-        // non-blocking fallback
+      .catch((err) => {
+        // Non-blocking: the bridge still starts and streams. But it is NOT
+        // silent — this is the failure that leaves the index cards with
+        // nothing to show on a closed market, and swallowing it is how the
+        // cause ends up being looked for in the browser. `/status` carries the
+        // credential state that usually explains it.
+        console.error(
+          `[bootstrap] index pre-fetch failed for ${idx.symbol}:`,
+          err instanceof Error ? err.message : err,
+        );
       });
   }
 
@@ -1475,6 +1509,22 @@ async function main(): Promise<void> {
           feedReason,
           now: new Date().toISOString(),
           universe: { stocks: stocks.length, etfs: etfs.length, commodities: commodities.length },
+          // How many of those instruments the bridge actually HOLDS A PRICE
+          // for right now. `universe` counts what was resolved out of the scrip
+          // master at boot — it is non-zero even when nothing has ever ticked,
+          // which reads as health it does not have. These are the rows /quotes
+          // will really serve (see `isPriced`), so `priced: {indices: 0, ...}`
+          // on a live-looking bridge names the fault in one line: subscribed,
+          // reachable, and holding nothing.
+          priced: (() => {
+            const s = snapshot();
+            return {
+              indices: s.indices.length,
+              stocks: s.stocks.length,
+              etfs: s.etfs.length,
+              commodities: s.commodities.length,
+            };
+          })(),
           // ── THE FIELD THAT WOULD HAVE ENDED THE 2026-08-17 INCIDENT IN A
           // MINUTE. The bridge was up, answering, reporting a healthy-looking
           // status, and streaming quotes from its in-memory tick map — while
