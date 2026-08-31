@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { LeaderElectionService } from '../common/leader-election';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
 import { PaperExecutionService } from './paper-execution.service';
+import { UserStrategyAgentService } from './user-strategy-agent.service';
 import { PositionManagerService } from './position-manager.service';
 
 /**
@@ -110,6 +111,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     private readonly lifecycle: ExecutionLifecycleService,
     private readonly positions: PositionManagerService,
     private readonly leader: LeaderElectionService,
+    private readonly userStrategies: UserStrategyAgentService,
   ) {}
 
   private get enabled(): boolean {
@@ -159,6 +161,18 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
       const acted = results.filter((r) => r.outcome === 'executed' || r.outcome === 'rejected' || r.outcome === 'failed');
       if (acted.length) {
         for (const r of acted) this.logger.log(`${r.profileName}: ${r.outcome} — ${r.reason}`);
+      }
+
+      // Autonomous USER-strategy agents share this tick rather than getting a
+      // fourth loop and a fourth lease. They evaluate on a bar boundary, so
+      // polling faster than the tick buys nothing: between bar closes every
+      // pass returns `already-evaluated`. Sharing the lease also means the two
+      // agent families can never both be leader on the same replica.
+      const userResults = await this.userStrategies.runAll();
+      for (const r of userResults) {
+        if (r.outcome === 'entered' || r.outcome === 'shadow-entry' || r.outcome === 'entry-blocked') {
+          this.logger.log(`${r.profileName}: ${r.outcome} — ${r.reason}`);
+        }
       }
     } catch (err) {
       this.logger.error('evaluate tick failed', err as Error);

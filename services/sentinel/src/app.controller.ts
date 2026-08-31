@@ -18,6 +18,8 @@ import { StrategyIntelligenceService } from './brain/strategy-intelligence.servi
 import { ComplianceService } from './compliance/compliance.service';
 import { ObserveRequest, TradeSummary } from './domain';
 import { ExecutionEvaluationService } from './execution/execution-evaluation.service';
+import { UserStrategyService } from './user-strategy/user-strategy.service';
+import type { UserStrategyRules } from './user-strategy/certification';
 import { ExplainService } from './explain/explain.service';
 import { ContinuousImprovementService } from './improvement/continuous-improvement.service';
 import { StrategyEngineService } from './intelligence/strategy-engine.service';
@@ -79,6 +81,7 @@ export class AppController {
     private readonly timeline: MarketTimelineEngine,
     private readonly marketClose: MarketCloseAnalysisService,
     private readonly improvement: ContinuousImprovementService,
+    private readonly userStrategy: UserStrategyService,
   ) {}
 
   @Get('health')
@@ -101,6 +104,58 @@ export class AppController {
       }
       throw err;
     }
+  }
+
+  /**
+   * Evaluate a USER-WRITTEN strategy against its own timeframe.
+   *
+   * Separate from `execution/evaluate` because it answers a different
+   * question. That route asks "does Sentinel's own analysis support a trade in
+   * this symbol"; this one asks "are the conditions this person wrote
+   * currently true". It reads only OHLCV at the strategy's declared interval —
+   * no snapshot, no option chain, no index direction — which is what lets the
+   * strategy's timeframe be authoritative without touching SNAPSHOT_INTERVAL.
+   *
+   * Also a READ, and under the same guard for the same reason: the response
+   * says a setup is present on a specific contract, which is a directive if it
+   * reaches a trader. It reaches `services/api` and the admin console only.
+   */
+  @UseGuards(ServiceTokenGuard)
+  @Post('user-strategy/evaluate')
+  async evaluateUserStrategy(
+    @Body()
+    body: {
+      symbol: string;
+      rules: UserStrategyRules;
+      lastEvaluatedBarTime?: string | null;
+      now?: string;
+      maxBarAgeMs?: number;
+    },
+  ) {
+    return this.userStrategy.evaluate(body);
+  }
+
+  /**
+   * Certification only — no market read.
+   *
+   * The arming surface needs to tell a user whether their strategy CAN be
+   * traded before anything is armed, and asking that question must not consume
+   * a rate-limited candle fetch.
+   */
+  @UseGuards(ServiceTokenGuard)
+  @Post('user-strategy/certify')
+  certifyUserStrategy(@Body() body: { rules: UserStrategyRules }) {
+    const cert = this.userStrategy.certify(body.rules);
+    return {
+      status: cert.status,
+      summary: cert.summary,
+      interval: cert.interval,
+      direction: cert.direction,
+      minBars: cert.minBars,
+      blockers: cert.blockers,
+      declaredConditions: cert.declaredConditions,
+      supportedConditions: cert.compiled.map((c) => c.condition),
+    };
   }
 
   /**
