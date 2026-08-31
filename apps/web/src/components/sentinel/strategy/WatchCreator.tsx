@@ -287,6 +287,18 @@ export function WatchCreator({
                 ariaLabel="Expiry"
               >
                 {expiry === null && <option value="">Select expiry</option>}
+                {/*
+                  A native <select> whose `value` matches no <option> renders
+                  the FIRST one — so an expiry missing from the list (the list
+                  is still loading, or the series rolled off between renders)
+                  made this control state a date the selection did not hold,
+                  while the chain read and the blocking message named the real
+                  one. `reconcileExpiry` replaces such an expiry within a beat;
+                  this makes the in-between frame honest rather than confident.
+                */}
+                {expiry !== null && !expiries.expiries.includes(expiry) && (
+                  <option value={expiry}>{formatExpiry(expiry)} — no longer listed</option>
+                )}
                 {expiries.expiries.map((e) => (
                   <option key={e} value={e}>
                     {formatExpiry(e)}
