@@ -342,7 +342,7 @@ export default function ChartPanel({
   // take back whatever the detector drew for it. Keyed identically to the
   // chart's own `fitKey` — the two must not drift, or drawings silently stop
   // rendering (see useChartDrawings).
-  const drawings = useChartDrawings(`${q.symbol}|${tf}`, candles, liveMatch?.ltp ?? q.ltp);
+  const drawings = useChartDrawings(`${q.symbol}|${tf}`, candles, liveMatch?.ltp ?? q.ltp, tf);
   const { candles: dailyCandles } = useCandles(q.symbol, '1d', 300);
   const realCandles = candlesStatus === 'live';
 

@@ -23,7 +23,7 @@ Four product pillars, all served as workspaces inside one web app:
 |---|---|---|
 | **Core Platform** | Market data, charts, option chain, paper-trading OMS, portfolio | `apps/web` + `services/api` |
 | **Sentinel (Safety Nets)** | Observation-only market/behaviour intelligence with a persistent knowledge brain and a concept ontology | `services/sentinel` + `/sentinel` route |
-| **TradeW AI (Research)** | Per-symbol research + ambient assistant | **Design only** — primitives exist in `packages/ai-core`, no runtime service |
+| **TradeW AI (Research)** | Per-symbol research + ambient assistant ("Tara") | **Partly built** — the ambient assistant is ~3k lines of tested code in `apps/web/src/lib/assistant/` (navigation, quotes, NSE flows, FVG detection, canonical market analysis, voice); `services/tradew-ai` runs as a plan-router on `POST /assistant/interpret`. The per-symbol *Research* agent roster is still design-only |
 | **Learning Hub** | Structured trading education | `/learning` route, UI shell only |
 
 ## 1.2 Primary technologies
@@ -848,7 +848,7 @@ Two, both idempotent:
 | `services/sentinel` | The only AI **runtime** that exists |
 | `agents/sentinel/definitions.json` | Declarative agent config (unloaded) |
 | `knowledge-base/` | The concept ontology Sentinel reasons over |
-| `apps/web/src/components/shell/FloatingAI.tsx` | The assistant UI slot — no logic |
+| `apps/web/src/components/shell/FloatingAI.tsx` | The assistant UI slot — logic lives in `lib/assistant/` |
 | `docs/ai/DISTILLATION.md` | How the NVIDIA distillation blueprint maps onto the provider layer |
 
 ## 8.2 Agents
@@ -857,7 +857,7 @@ Two, both idempotent:
 
 Important nuance: the **deterministic halves** of these agents are real NestJS services that always run; the **LLM halves** are optional polish. `DefaultAgentRuntime` exists in `ai-core` but is never instantiated, so `definitions.json` is currently documentation rather than executable config.
 
-**TradeW AI (8 planned, none built):** ai-researcher, company-analysis, news-analysis, option-chain-analysis, technical-analysis, strategy-builder, portfolio-insights, learning-assistant.
+**TradeW AI:** `assistant-planner` is live (`services/tradew-ai`, `POST /assistant/interpret`). Of the 8 originally planned specialists, **option-chain-analysis and technical-analysis were superseded rather than built** — those measurements are now served deterministically from the canonical `MarketSnapshot` (`TRADEW-AI.md` §3a), not by an LLM agent. Still unbuilt: ai-researcher, company-analysis, news-analysis, strategy-builder, portfolio-insights, learning-assistant.
 
 ## 8.3 Prompts
 
@@ -1227,7 +1227,7 @@ Legend: **Complete** = works end to end · **Partial** = works with real gaps ·
 | Portfolio page | **Stub** | Mock stat cards, four empty tabs |
 | Research page | **Stub** | Intentional "coming soon" |
 | Learning hub | **Stub** | Mock paths and categories; no lesson content |
-| Floating AI assistant | **Stub** | Visual dock only, no routing logic |
+| Floating AI assistant (Tara) | **Built** | Deterministic command grammar + planner + safety tiers, live quotes, NSE institutional data, FVG chart detection, canonical market analysis, voice in/out; LLM fallback via `services/tradew-ai` |
 | Watchlist | **Prototype** | Widget renders mock rows; **no persistence model exists** |
 | Dockable workspace (tabs, drag, pin, pop-out) | **Dead** | Built and working, but no route mounts `WorkspaceDock`/`WorkspaceTabs`/`DockSlot` |
 

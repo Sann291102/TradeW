@@ -83,6 +83,12 @@ export function explainAction(a: AssistantAction): string | null {
       return 'I find these by arithmetic on the bars, not by opinion, so the same chart always gives the same zones — and I draw every one I find rather than picking out the ones that look best.';
     case 'chartClearDrawings':
       return 'Drawings are grouped by what produced them, so clearing one group leaves anything you drew yourself exactly where it was.';
+    case 'analyzeMarket':
+      // Platform mechanics, per the docblock: where the numbers come from and
+      // why they can be trusted. Deliberately says nothing about what any of
+      // them MEANS — that would be the market commentary this mode must not
+      // become a side door to.
+      return 'Every number in that read comes from the same engine our autonomous paper agents decide on, measured off real bars — so the assistant and the agents can never describe two different markets. Anything that could not be measured is listed as unavailable rather than filled in with an estimate.';
   }
 }
 

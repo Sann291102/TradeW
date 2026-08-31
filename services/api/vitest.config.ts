@@ -22,6 +22,10 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: [
+      // Canonical market analysis: which symbols have an NSE analysis path,
+      // that a crypto request makes NO outbound call to the NSE engine at all,
+      // and that Sentinel's premium verdict cannot cross this route.
+      'src/market-analysis/market-analysis.spec.ts',
       'src/discipline/discipline-limits.spec.ts',
       'src/discipline/market-calendar.spec.ts',
       // Broker OAuth: which callback may write a credential, and whose.

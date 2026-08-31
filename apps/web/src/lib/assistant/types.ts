@@ -73,7 +73,32 @@ export type AssistantAction =
    */
   | { type: 'chartDetect'; detector: DetectorId }
   /** Erase one producer's drawings. Tag-scoped — there is no "clear the chart". */
-  | { type: 'chartClearDrawings'; tag: DrawingTag };
+  | { type: 'chartClearDrawings'; tag: DrawingTag }
+  /**
+   * Read the canonical market MEASUREMENTS for a symbol on a timeframe.
+   *
+   * ── WHY BOTH FIELDS ARE NULLABLE ─────────────────────────────────────────
+   *
+   * "Analyse the current chart" names neither. The resolver is pure — it has no
+   * store and no chart — so it emits nulls and the executor fills them from the
+   * live workspace (`selectedSymbol`, `chartTimeframe`). Having the grammar
+   * guess a symbol would be inventing one; having it read the store would make
+   * the command grammar untestable without mounting React.
+   *
+   * ── WHY THIS IS AN ACTION AND NOT PROSE ──────────────────────────────────
+   *
+   * The whole point is that the numbers do not come from a language model.
+   * This action carries only WHAT to measure; `services/api` → `services/sentinel`
+   * produce the measurements from the same `MarketSnapshot` the autonomous
+   * paper agents decide on, and `analysis.ts` renders that payload verbatim.
+   * There is no branch anywhere in this file's execution path where a model
+   * supplies a price, a level or an indicator value.
+   *
+   * It is read-only by construction and reaches no premium reasoning: the route
+   * it calls returns measurements only, and both sides of the hop filter
+   * Sentinel's verdict fields.
+   */
+  | { type: 'analyzeMarket'; symbol: string | null; timeframe: string | null };
 
 // ---------------------------------------------------------------------------
 // Intents

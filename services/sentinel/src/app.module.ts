@@ -46,6 +46,7 @@ import { EmotionIntelligenceService } from './intelligence/emotion-intelligence.
 import { MarketBehaviourService } from './intelligence/market-behaviour.service';
 import { StrategyLifecycleService } from './strategy/strategy-lifecycle.service';
 import { MARKET_DATA, MarketIntelligenceService } from './intelligence/market-intelligence.service';
+import { MarketObservationService } from './intelligence/market-observation.service';
 import { NewsIntelligenceService } from './intelligence/news-intelligence.service';
 import { RiskIntelligenceService } from './intelligence/risk-intelligence.service';
 import { StrategyEngineService } from './intelligence/strategy-engine.service';
@@ -185,6 +186,7 @@ const SENTINEL_BRAIN_SYSTEM_PROMPT =
     // served by the Brain providers below, and Module 10 (Vocabulary) is a
     // pure module applied by the orchestrator and explain service.
     MarketIntelligenceService,
+    MarketObservationService,
     MarketBehaviourService,
     StrategyLifecycleService,
     EmotionIntelligenceService,

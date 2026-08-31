@@ -21,6 +21,33 @@ decision.
 
 ---
 
+## 0. One market read, three consumers
+
+The agents do not have a market engine of their own, and neither does the
+assistant. Everything below is computed from **one** `MarketSnapshot`, composed
+by `MarketIntelligenceService.snapshot(symbol, interval)`:
+
+```
+MarketIntelligenceService.snapshot()        ← the canonical MarketSnapshot
+  ├─ SentinelOrchestrator        → /observe             premium verdict, the workspace
+  ├─ ExecutionEvaluationService  → /execution/evaluate  THESE agents
+  └─ MarketObservationService    → /market-observation  Tara, measurements only
+```
+
+Added 2026-08-31: the third branch. Tara answers "analyse NIFTY on 15m" from a
+projection of the same snapshot — the same EMA, the same VWAP, the same swing
+structure, the same option-chain aggregates — so **the assistant and the agents
+can never describe two different markets**. There is no second indicator
+implementation on the assistant path and there must not be one.
+
+What the third branch deliberately cannot see: `sideInFocus`, the publication
+gate, `strategyAdvice`, `confidence`, the strike evaluation, `EvidenceRead`.
+Those are how an agent DECIDES, and they are gated. Tara gets what was
+measured; the agents get what was measured plus everything needed to act on it.
+The split is the difference between an analyst surface and an execution
+surface, and it is enforced by type shape rather than by convention
+(`services/sentinel/src/intelligence/market-observation.ts`).
+
 ## 1. The pipeline
 
 ```

@@ -101,6 +101,13 @@ Sentinel's *workspace* differs from the others because its job differs — diffe
 > prompt template is registered anywhere, so `allowedTools` and `systemPromptId`
 > are inert everywhere they appear. The one live piece of this design is
 > `assistant-planner` in `services/tradew-ai`, on `POST /assistant/interpret`.
+>
+> **Market analysis is not an agent (2026-08-31).** Tara's market read is a
+> deterministic route, not an LLM specialist: `POST /market-analysis`
+> (`services/api`) → `POST /market-observation` (`services/sentinel`) → a
+> projection of the canonical `MarketSnapshot`. The model may choose which
+> symbol and timeframe to measure; it never produces a number. See
+> `docs/product-architecture/TRADEW-AI.md` §3a.
 > **`docs/product-architecture/AGENT-LAYERS.md` is the accurate map** and takes
 > precedence over this section wherever the two disagree.
 

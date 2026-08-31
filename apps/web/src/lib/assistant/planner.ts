@@ -136,6 +136,8 @@ export function describeAction(a: AssistantAction): string {
       return DETECTORS[a.detector].label;
     case 'chartClearDrawings':
       return `Clear the ${a.tag} drawings`;
+    case 'analyzeMarket':
+      return `Measure ${a.symbol ?? 'the active chart'}${a.timeframe ? ` on ${a.timeframe}` : ''}`;
   }
 }
 
@@ -158,12 +160,49 @@ export function planUtterance(text: string, today = new Date()): MultiStepPlan {
   const fragments = splitUtterance(text);
   if (fragments.length < 2) return fromSingle(whole);
 
-  // Resolve each fragment independently. A fragment that refuses poisons the
-  // whole plan, for the reason in the docblock above.
+  /**
+   * Resolve each fragment independently.
+   *
+   * ── TWO KINDS OF REFUSAL, AND ONLY ONE OF THEM POISONS ───────────────────
+   *
+   * A HARD BOUNDARY on a fragment poisons the whole plan, for the reason in the
+   * docblock above: "open the chart then buy 50 lots" must not execute its
+   * innocent half.
+   *
+   * An `out-of-domain` refusal is a different animal, and treating the two as
+   * one was a bug with a visible symptom. Observed 2026-08-31:
+   *
+   *   > "Find FVG in BTC crypto and draw"
+   *
+   * `AND_THEN_VERB` lists `draw`, so this split into `["Find FVG in BTC
+   * crypto", "draw"]`. The first fragment resolved perfectly. The second —
+   * the bare word "draw", carrying no market vocabulary of its own — was
+   * refused as off-topic by `guardDomain`, and that refusal discarded a plan
+   * that had already resolved correctly on the whole utterance. The user got
+   * "that needs the analysis agents", for a detector that was sitting right
+   * there.
+   *
+   * The insight is that we only reach this loop because `resolveUtterance` on
+   * the WHOLE utterance already produced actions. So an out-of-domain fragment
+   * is not evidence that the request is off-topic — it is evidence that the
+   * SPLIT was wrong, most often because a connective verb was part of the first
+   * clause ("…and draw", "…and show it") rather than the start of a second
+   * command. The correct response is to fall back to the whole-utterance
+   * resolution, which is the already-tested path and is what the guard below
+   * does for every other unproductive split.
+   *
+   * Refusal detection is untouched: `guardHardBoundaries` still runs on the
+   * whole utterance FIRST (above), and still runs on every fragment here. Only
+   * the comprehension guess — "I don't think this fragment is about markets" —
+   * stops being able to veto a plan the same guard already accepted.
+   */
   const resolved: AssistantPlan[] = [];
   for (const f of fragments) {
     const p = resolveUtterance(f, today);
-    if (p.intent === 'refusal') return fromSingle(p);
+    if (p.intent === 'refusal') {
+      if (p.refusalReason === 'out-of-domain') return fromSingle(whole);
+      return fromSingle(p);
+    }
     if (p.actions.length) resolved.push(p);
   }
 
