@@ -77,6 +77,9 @@ import { SentinelExecutionClient } from './sentinel-execution.client';
     // knowledge/Gotchas/2026-08-12 - Nest DTOs must be declared above the
     // controller records for the same class of failure.
     ExecutionProfileService,
+    PositionManagerService,
+    ExecutionJournalService,
+    ExecutionCalibrationService,
   ],
 })
 export class PaperExecutionModule {}
