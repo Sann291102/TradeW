@@ -41,7 +41,7 @@ export interface ConditionReport {
 export interface UserStrategyEvaluation {
   verdict: UserStrategyVerdict;
   /** Machine-readable cause when refused. */
-  refusal: BarGateReason | 'not-certified' | 'indeterminate-condition' | null;
+  refusal: BarGateReason | 'not-certified' | 'indeterminate-condition' | 'no-tradable-strike' | null;
   /** One sentence a person can act on. */
   reason: string;
   /** The bar this evaluation is about — the entry's idempotency anchor. */

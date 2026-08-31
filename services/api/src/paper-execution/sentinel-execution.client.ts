@@ -148,6 +148,56 @@ export interface ExecutionEvaluationDto {
   exitRuleEvaluations: ExitRuleEvaluationDto[];
 }
 
+/** One condition's verdict, as `services/sentinel` reports it. */
+export interface UserConditionDto {
+  ruleId: string;
+  label: string;
+  condition: string;
+  mandatory: boolean;
+  met: boolean;
+  indeterminate: boolean;
+  detail: string;
+}
+
+export interface UserStrategyCertificationDto {
+  status: 'TRADABLE' | 'WATCH_ONLY';
+  summary: string;
+  interval: string | null;
+  direction: 'long' | 'short' | null;
+  minBars: number;
+  blockers: { code: string; condition?: string; detail: string }[];
+  declaredConditions: string[];
+  supportedConditions?: string[];
+}
+
+export interface UserStrategyEvaluationDto {
+  certification: Omit<UserStrategyCertificationDto, 'supportedConditions'>;
+  /**
+   * The contract to trade. Present ONLY on an entry verdict — Sentinel does
+   * not spend an option-chain call on a pass that did not fire.
+   */
+  contract: {
+    strike: number;
+    optionType: 'CE' | 'PE';
+    expiry: string;
+    premium: number | null;
+    role: string;
+  } | null;
+  /** The full three-candidate evaluation behind `contract`, for the audit trail. */
+  strikes: ExecutionEvaluationDto['strikes'] | null;
+  evaluation: {
+    verdict: 'entry' | 'waiting' | 'refused';
+    refusal: string | null;
+    reason: string;
+    barTime: string | null;
+    interval: string | null;
+    direction: 'long' | 'short' | null;
+    conditions: UserConditionDto[];
+    waitingOn: string[];
+  } | null;
+  barsRead: number;
+}
+
 @Injectable()
 export class SentinelExecutionClient {
   private get baseUrl(): string {
@@ -208,5 +258,57 @@ export class SentinelExecutionClient {
       throw new BadGatewayException(`Sentinel evaluate failed (${res.status}): ${await res.text().catch(() => '')}`);
     }
     return (await res.json()) as ExecutionEvaluationDto;
+  }
+  /**
+   * Evaluate a USER-WRITTEN strategy on its own timeframe.
+   *
+   * Deliberately a separate method rather than a flag on `evaluate`: it posts a
+   * different body to a different route and gets back a different shape. One
+   * method with a mode switch would make the two paths look interchangeable,
+   * and the whole design rests on them not being.
+   */
+  async evaluateUserStrategy(input: {
+    symbol: string;
+    rules: unknown;
+    lastEvaluatedBarTime?: string | null;
+    now?: string;
+    maxBarAgeMs?: number;
+  }): Promise<UserStrategyEvaluationDto> {
+    return this.post<UserStrategyEvaluationDto>('user-strategy/evaluate', input);
+  }
+
+  /** Certification only — no market read, for the arming surface. */
+  async certifyUserStrategy(rules: unknown): Promise<UserStrategyCertificationDto> {
+    return this.post<UserStrategyCertificationDto>('user-strategy/certify', { rules });
+  }
+
+  /** The shared transport. Every failure mode above, in one place. */
+  private async post<T>(path: string, body: unknown): Promise<T> {
+    const token = process.env.SENTINEL_SERVICE_TOKEN ?? '';
+    if (!token) {
+      throw new ServiceUnavailableException('SENTINEL_SERVICE_TOKEN is not configured; the execution loop is disabled.');
+    }
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-service-token': token },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (err) {
+      const name = (err as Error)?.name;
+      if (name === 'TimeoutError' || name === 'AbortError') {
+        throw new GatewayTimeoutException(`Sentinel did not respond within ${this.timeoutMs}ms`);
+      }
+      throw new BadGatewayException(`Sentinel service unreachable: ${(err as Error).message}`);
+    }
+    if (res.status === 503) {
+      throw new ServiceUnavailableException(await res.text().catch(() => 'Sentinel has no market data'));
+    }
+    if (!res.ok) {
+      throw new BadGatewayException(`Sentinel ${path} failed (${res.status}): ${await res.text().catch(() => '')}`);
+    }
+    return (await res.json()) as T;
   }
 }

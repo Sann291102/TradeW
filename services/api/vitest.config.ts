@@ -177,6 +177,10 @@ export default defineConfig({
       //    configured — entry through stop/target/trail/invalidation to a
       //    journal and a calibration the NEXT decision consumes.
       'src/paper-execution/paper-lifecycle.spec.ts',
+      // PHASE 6/7 ACCEPTANCE — an armed USER strategy paper-trades itself,
+      // with no human trigger at entry. Requires TEST_DATABASE_URL; skips
+      // loudly rather than silently degrading into a unit test.
+      'src/paper-execution/user-strategy-acceptance.spec.ts',
     ],
     environment: 'node',
     // The suite is deterministic and clock-injected; a slow test means a real
