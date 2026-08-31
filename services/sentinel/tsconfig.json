@@ -12,7 +12,12 @@
     "baseUrl": "./",
     "incremental": true,
     "strict": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    // The cross-engine parity corpus (src/user-strategy/parity-corpus.json) is
+    // imported by its spec. 320KB of fixture that only the test reads — it is
+    // checked in deliberately so CI can verify the port without a Python
+    // toolchain. See scripts/generate-parity-corpus.py.
+    "resolveJsonModule": true
   },
   // Compile only src/ for the Nest build. Without this, tsc also pulls in
   // scripts/**, which pushes the inferred rootDir up to the package root and
