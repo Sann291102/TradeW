@@ -72,6 +72,10 @@ function isConsequential(a: AssistantAction): string | null {
     case 'marketFlow':
     case 'chartDetect':
     case 'chartClearDrawings':
+    case 'analyzeMarket':
+      // Read-only: it fetches measurements and appends a turn. It changes
+      // nothing about the workspace, so confirming it would only add a click
+      // between a question and its answer.
       // Drawing is annotation, not workspace surgery: detection replaces only
       // its own tag and clearing it re-runs in one word, so neither destroys
       // anything the user would have to rebuild.

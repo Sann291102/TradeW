@@ -1,6 +1,6 @@
 # TradeW Assistant (Floating) — Product Blueprint
 
-Status: **largely implemented** in `apps/web` (`src/lib/assistant/`): natural-language + voice command routing, app navigation/panel/theme control, and the hard-boundary guard that refuses order placement, trade calls/targets, and relaying Sentinel's premium reasoning — all unit-tested (`detect.test.ts`, `planner.test.ts`, `voice-output.test.ts`, …). Still partial: automatic Sentinel-reasoning invocation on entitlement, and the deeper research answers that depend on the (unbuilt) `services/tradew-ai` runtime. Governed by [`TRADEW-OS.md`](TRADEW-OS.md) §5 (module boundaries). This is **not a new AI system** — it's an extension of TradeW AI's ambient copilot (`TRADEW-AI.md` §2.1): voice input, app-navigation commands, full application control, and — when entitlement allows — automatic invocation of Sentinel's premium reasoning. Same agent roster, same guardrails.
+Status: **largely implemented** in `apps/web` (`src/lib/assistant/`): natural-language + voice command routing, app navigation/panel/theme control, live quotes, NSE institutional data, FVG chart detection, **canonical market analysis** (§6 and `TRADEW-AI.md` §3a), and the hard-boundary guard that refuses order placement, trade calls/targets, and relaying Sentinel's premium *conclusions* — all unit-tested (`detect.test.ts`, `planner.test.ts`, `analysis.test.ts`, `chart-commands.test.ts`, `voice-output.test.ts`, …). The assistant is named **Tara** in the product. Still missing: sourced concept teaching (the `knowledge-base/` corpus has no FVG/BOS/CHoCH entry even though the engine detects all three), and the deeper research answers that depend on `services/tradew-ai` growing past a plan-router. Automatic Sentinel-*reasoning* invocation is not planned — see §6 for why the boundary moved instead. Governed by [`TRADEW-OS.md`](TRADEW-OS.md) §5 (module boundaries). This is **not a new AI system** — it's an extension of TradeW AI's ambient copilot (`TRADEW-AI.md` §2.1): voice input, app-navigation commands, full application control, and — when entitlement allows — automatic invocation of Sentinel's premium reasoning. Same agent roster, same guardrails.
 
 **The workspace agent, in one line:** TradeW AI can open and operate *every feature available to the current user* through text or voice — it is the OS-level command surface, not just a Q&A box (`TRADEW-OS.md` §1, §5).
 
@@ -11,6 +11,12 @@ Status: **largely implemented** in `apps/web` (`src/lib/assistant/`): natural-la
 | Docked chat panel + floating trigger, overlay on Home/Trading/Options/Portfolio | Floating trigger becomes **permanent on every page**, not just those four |
 | Text input, routed to AI Researcher agent | **Voice input** (speech-to-text before the same routing) |
 | Context-aware answers to analytical questions ("Explain this chart") | **Navigation/action commands** ("Open NIFTY", "Show Portfolio", "Open Option Chain") — a new intent class, not analysis |
+
+> **As built (2026-08-31):** the analysis intent is *not* routed to an LLM
+> specialist. "Analyse NIFTY on 15m" resolves in the deterministic grammar to an
+> `analyzeMarket` action, and the numbers come from the canonical measurement
+> route (`TRADEW-AI.md` §3a). The model can choose *what* to measure; it never
+> supplies a value.
 
 ## 2. Two intent classes
 
@@ -53,18 +59,43 @@ Per the direction update (§5), the assistant is capable of opening and navigati
 
 ## 6. Auto-invoking Sentinel (premium reasoning)
 
-> **Superseded in part — direction call 2026-07-26.** Sentinel is *the* premium
-> product, and the assistant must not relay, summarise or explain what Sentinel
-> is doing. The escalate-and-merge flow described in this section is therefore
-> **not the current intent**: the assistant navigates *to* Sentinel (a route
-> like any other) and stops there. Paraphrasing Sentinel's reasoning through the
-> free assistant would give away the thing users pay for. Implemented as a hard
-> boundary in `apps/web/src/lib/assistant/domain-guard.ts` (refuses only when
-> "sentinel" co-occurs with an explain-verb, so "open Sentinel" still works) —
-> see [[../../knowledge/Patterns/2026-07-26 - TradeW AI assistant control layer (Comet-style app control)]].
+> **Superseded in part — direction call 2026-07-26, boundary re-drawn 2026-08-31.**
+> The escalate-and-merge flow described in this section is **not the current
+> intent** and was never built. What replaced it is narrower and better defined:
+>
+> **The boundary is not "Sentinel" — it is MEASUREMENTS vs CONCLUSIONS.**
+>
+> - **Measurements cross.** Tara reads price, OHLC, volume, RSI/EMA/VWAP/MACD/CPR,
+>   support and resistance, market structure, liquidity, regime, option-chain
+>   aggregates, index-direction votes and data freshness — from a canonical
+>   projection of the same `MarketSnapshot` Sentinel and the paper agents use
+>   (`TRADEW-AI.md` §3a). Not entitlement-gated: this is arithmetic the user's
+>   own chart performs, and gating it protected nothing while the numbers stayed
+>   visible on screen.
+> - **Conclusions do not.** `synthesis`, the publication verdict, `sideInFocus`,
+>   `strategyAdvice`, `strategyMatches`, `confidence`. These are what the
+>   `sentinel` entitlement is for. The projection type has no field to carry
+>   them and both sides of the api↔sentinel hop check.
+>
+> The earlier boundary refused *anything* naming Sentinel beside an explain-verb.
+> That over-approximated in one direction (declining "what VWAP is Sentinel
+> seeing" while answering the identical question without the word) and, it turned
+> out, under-approximated in the other: it required an explain PHRASING, so
+> "what strategy is Sentinel using" and "sentinel setups today" reached no guard
+> at all. Both are fixed in `apps/web/src/lib/assistant/domain-guard.ts` —
+> measurement-only asks fall through to the observation route, verdict
+> vocabulary refuses on its own, and a navigational phrasing ("open Sentinel
+> strategies") still resolves to the route.
+>
+> **Also fixed 2026-08-31:** `matchNav` matched an item's sidebar label
+> verbatim, and Sentinel's label is "AI Sentinel" — so "open Sentinel", the
+> phrase this very section and the refusal copy both tell users to say, was
+> refused by the remit fence as off-topic. `NAV_SHORT_NAMES` in `commands.ts`
+> now resolves it.
+>
 > The architectural point this section makes — that any such orchestration
 > belongs at `services/api`, never as a direct `tradew-ai → sentinel` call
-> (ARCHITECTURE.md §9) — still stands, and applies if the direction reverses.
+> (ARCHITECTURE.md §9) — still stands and is what the shipped route does.
 
 **Scope (2026-07-21):** this flow applies platform-wide. The docked assistant is part of the shared shell, so it is available in every workspace — including Sentinel's, where a user is already looking at Sentinel's own output and the escalation is correspondingly less likely to add anything. A scope note briefly claimed the assistant was absent from Sentinel entirely, on the assumption Sentinel was becoming a standalone application; that direction was reversed the same day (`SENTINEL.md` §5, `TRADEW-OS.md` §1).
 

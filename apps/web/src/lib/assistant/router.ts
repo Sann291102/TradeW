@@ -19,7 +19,15 @@ import { analysisPlan, commandPlan, quotePlan, type AssistantPlan } from './type
  *   5. institutional data    — "were FIIs buying", answered from NSE
  *   6. concept question      — "what is a fair value gap"
  *   7. remit fence           — markets + this app only
- *   8. analysis              — parked for Phase 2
+ *   8. analysis fallback     — in-domain, but with no measurable subject
+ *
+ * Market ANALYSIS is no longer step 8. "Analyse NIFTY on 15m" resolves at step
+ * 3, inside the command grammar (`matchAnalyze`), because it is a request to
+ * run one specific read against one named symbol — as concrete as opening a
+ * contract. It emits an `analyzeMarket` action, and the executor fetches the
+ * canonical measurements and renders them without a model in the numeric path.
+ * Step 8 is now only what is left over: an in-domain question with nothing
+ * measurable in it.
  *
  * Boundaries sit above command resolution so no phrasing can reach a
  * prohibited capability. The remit fence sits below it, because a resolved
@@ -35,7 +43,7 @@ import { analysisPlan, commandPlan, quotePlan, type AssistantPlan } from './type
 const CAPABILITY_RE = /\b(what can you do|what do you do|who are you|your capabilities|what are you able|help me|how can you help|commands?\b.*\b(list|available)|what should i ask)\b/i;
 
 const CAPABILITY_REPLY = [
-  `I'm ${ASSISTANT_NAME} — I run this application for you and I read the market back to you. Three things:`,
+  `I'm ${ASSISTANT_NAME} — I run this application for you and I read the market back to you. Four things:`,
   '',
   '**I quote live prices.** Ask and I fetch the real number:',
   '• "what is NIFTY 50 trading at", "RELIANCE price"',
@@ -50,7 +58,16 @@ const CAPABILITY_REPLY = [
   '',
   '**You can speak instead of typing** — tap the mic and say any of the above, and tap the speaker if you would like me to reply out loud.',
   '',
-  "Still coming: reading a chart's structure, interpreting an option chain, and explaining what a move means. Those need the analysis agents and I'll tell you plainly when you've asked for one rather than improvising.",
+  '**I measure the market.** Ask and I read the canonical numbers:',
+  '• "analyse NIFTY", "analyse BANKNIFTY on 15m", "analyse the current chart"',
+  '• Price, OHLC, volume, RSI, EMA20/50, VWAP, MACD, CPR, realised volatility, VIX, breadth',
+  '• Support and resistance, market structure and breaks of it, liquidity and sweeps, the session profile and its regime',
+  '• Option context — PCR, max pain, OI walls, the at-the-money CE/PE row',
+  '• Every figure comes from the same engine our trading agents read, and anything that could not be measured is named as unavailable rather than filled in.',
+  '',
+  '**I mark fair value gaps** on the chart you have open — "find the FVGs", "clear the gaps".',
+  '',
+  "Still coming: teaching concepts from a sourced knowledge base, and interpreting what a move MEANS. I describe what is there; I don't tell you what it implies.",
   '',
   "What I won't do: place or cancel orders, give you trade calls or targets, relay Sentinel's premium analysis, or talk about anything outside markets and this app.",
 ].join('\n');
@@ -142,12 +159,27 @@ export function resolveUtterance(text: string, today = new Date()): AssistantPla
   const outOfDomain = guardDomain(t);
   if (outOfDomain) return outOfDomain;
 
-  // In-domain, but not a command — this is an analysis question. The reasoning
-  // agents (chart read, support/resistance, option-chain interpretation) are
-  // the next phase; say so rather than improvising an answer, which is exactly
-  // the failure mode TRADEW-AI.md §4 exists to prevent.
+  /**
+   * In-domain, not a command, and no symbol the analysis grammar could latch
+   * onto.
+   *
+   * This used to be where every market question died ("my analysis engine isn't
+   * wired up yet"). It is now a much narrower fallback: `matchAnalyze` serves
+   * anything that names a symbol or the active chart, from the canonical
+   * measurements. What reaches here is a market question with no measurable
+   * subject in it — "what happened in the market yesterday", "is the mood
+   * bullish" — which is interpretation rather than measurement, and improvising
+   * it is the failure mode `TRADEW-AI.md` §4 exists to prevent.
+   *
+   * So the reply says what IS available and how to ask for it, rather than
+   * claiming a capability gap that no longer exists.
+   */
   return analysisPlan(
-    "That's a market question I'm built for, but my analysis engine isn't wired up yet — that's the next phase. Right now I can navigate and control the app; ask me to open something and I'll take you straight there.",
-    ['Classified → market analysis', 'Analysis agents not yet connected (Phase 2)'],
+    [
+      "I can measure a market for you, but I need to know which one — I won't answer a market question from memory.",
+      '',
+      'Try "analyse NIFTY", "analyse BANKNIFTY on 15m", or "analyse the current chart". You get price, RSI, EMAs, VWAP, MACD, structure, levels, option context and how fresh the data is — all measured, none of it guessed.',
+    ].join('\n'),
+    ['Classified → market analysis', 'No symbol resolved from the request'],
   );
 }

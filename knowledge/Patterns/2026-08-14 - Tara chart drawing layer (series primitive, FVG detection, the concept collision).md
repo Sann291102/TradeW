@@ -169,6 +169,49 @@ return the latest value only, not a series.
 the chart overlay disagree about RSI on the same candles with no way to
 arbitrate which is right.
 
+## 8a. Update 2026-08-31 — three of §9's gaps closed, one differently than planned
+
+**The "and draw" poisoning.** `"Find FVG in BTC crypto and draw"` resolved
+perfectly on the whole utterance, then `AND_THEN_VERB` split it on `draw`, the
+bare fragment "draw" was refused as out-of-domain, and refusal-poisoning
+discarded the working plan. The user was told the analysis agents were not
+connected — for a detector sitting right there. §6's lesson generalised one step
+further: **a connective verb that is part of the first clause makes the split
+wrong, not the request off-topic.** `planner.ts` now distinguishes the two kinds
+of refusal: a hard boundary on a fragment still poisons (that is why poisoning
+exists), an out-of-domain *comprehension guess* falls back to the
+whole-utterance resolution. §6's own regression, `"show me the fvg and buy 50
+lots"`, is still refused and still tested.
+
+**Indicator single-source (§8) — resolved upward, not sideways.** §8 said
+Week 4's overlays must extend `lib/sentinel/indicators.ts` rather than add
+`technicalindicators`. Two facts changed the answer: that file has **no
+non-test callers** — `buildIndicatorStrip` is dead code — and the repository
+already carries *three* implementations (this one, `services/sentinel`,
+`services/sentinel-py`). So the canonical source for a supported NSE symbol is
+now `MarketIntelligenceService`, reached over the wire, and `apps/web` computes
+no indicator at all. Reviving the dead client copy would have made a fourth.
+
+**`chartDetect` is still not in the LLM's vocabulary. `analyzeMarket` is.** Not
+an inconsistency: `analyzeMarket` names a symbol and a timeframe and nothing
+else, so a hallucinated plan can measure the wrong market but cannot invent a
+price. `chartDetect` runs against the bars in the browser and stays with the
+deterministic grammar.
+
+**The timeframe is a store field now.** `workspaceStore.chartTimeframe`,
+published by `useChartDrawings` alongside the series. Deliberately NOT parsed
+out of `seriesKey`: §7 makes that string's format load-bearing for staleness,
+it is `SYMBOL|contract|timeframe` for an option chart where the naive split
+returns the contract, and it does not exist before the first candle arrives
+while the pill does.
+
+**Still one-shot (§9's first bullet), and only `ChartPanel` publishes a series.**
+Unchanged. But market ANALYSIS no longer depends on either: it reads the
+engine's own bars for the named symbol and timeframe, so "analyse the current
+chart" works on a screen whose chart publishes nothing — including the crypto
+workspace, where the read is refused for a *coverage* reason (Binance vs
+NSE/Dhan) rather than for want of candles.
+
 ## 9. What was not done
 
 - **Detection is one-shot**, not live. Zones are computed from the bars on

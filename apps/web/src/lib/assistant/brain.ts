@@ -85,6 +85,8 @@ const OVERLAYS = new Set(['commandPalette', 'notifications', 'shortcuts']);
 const THEMES = new Set(['light', 'dark', 'high-contrast']);
 const ASKS = new Set(['price', 'range', 'volume']);
 const SYMBOL_RE = /^[A-Z0-9&_-]{1,24}$/;
+/** The chart's own pill labels. Anything else is dropped rather than passed on. */
+const TIMEFRAME_RE = /^(1m|5m|15m|30m|1H|1D|1W)$/i;
 
 function str(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
@@ -132,6 +134,23 @@ export function validateAction(raw: unknown): AssistantAction | null {
       return { type: 'toggleSidebar' };
     case 'newWorkspaceTab':
       return { type: 'newWorkspaceTab' };
+    case 'analyzeMarket': {
+      /**
+       * Admitted to the model's vocabulary, unlike `chartDetect`, because it
+       * cannot fabricate anything: the action carries only a symbol and a
+       * timeframe, and every number in the answer comes from the API response
+       * that follows. The worst a bad plan can do is measure the wrong symbol,
+       * which the reply names explicitly.
+       *
+       * Both fields are optional and are narrowed here rather than trusted —
+       * the timeframe is bounded and the symbol is shape-checked, so neither
+       * can become an arbitrary string on the wire.
+       */
+      const symbol =
+        str(a.symbol) && SYMBOL_RE.test(a.symbol.toUpperCase()) ? a.symbol.toUpperCase() : null;
+      const timeframe = str(a.timeframe) && TIMEFRAME_RE.test(a.timeframe) ? a.timeframe : null;
+      return { type: 'analyzeMarket', symbol, timeframe };
+    }
     case 'quote': {
       if (!Array.isArray(a.symbols)) return null;
       const symbols = a.symbols

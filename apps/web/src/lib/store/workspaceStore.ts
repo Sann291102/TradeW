@@ -418,6 +418,30 @@ interface WorkspaceStore {
    */
   chartSeries: { seriesKey: string; candles: Candle[]; lastPrice: number | null } | null;
   publishChartSeries: (seriesKey: string, candles: Candle[], lastPrice: number | null) => void;
+
+  /**
+   * The timeframe the visible chart is on, as its own field.
+   *
+   * ── WHY THIS IS NOT READ OUT OF `seriesKey` ────────────────────────────
+   *
+   * It could be: the key is `SYMBOL|timeframe` and splitting on the pipe would
+   * usually work. It is a separate field because `seriesKey` exists to prove
+   * that two things describe the SAME series — that is its entire job, and it
+   * is why option-contract charts key as `SYMBOL|contract|timeframe`, where the
+   * naive split returns the contract. Parsing a value whose format is owned by
+   * an unrelated invariant is how "analyse this chart" quietly starts asking
+   * for the wrong interval the day someone adds a field to the key.
+   *
+   * It also has to exist when `chartSeries` does not. The timeframe pill is
+   * meaningful before the first candle arrives, and an analysis request made
+   * during that window must still carry the interval the user is looking at.
+   *
+   * Not persisted (absent from `partialize`) — a chart's interval belongs to
+   * the session in front of you, not to the browser profile.
+   */
+  chartTimeframe: string | null;
+  /** Published by the chart container whenever its interval changes. */
+  setChartTimeframe: (timeframe: string | null) => void;
   chartDrawings: { seriesKey: string; drawings: ChartDrawing[] } | null;
   /** Replace one tag's drawings for a series. Other tags are left untouched. */
   replaceChartDrawings: (seriesKey: string, tag: DrawingTag, next: ChartDrawing[]) => void;
@@ -512,6 +536,11 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
       chartSeries: null,
       chartDrawings: null,
+      chartTimeframe: null,
+      setChartTimeframe: (timeframe) =>
+        // Guarded so a chart re-render that publishes the same interval does not
+        // notify every subscriber — the assistant dock subscribes to this.
+        set((s) => (s.chartTimeframe === timeframe ? {} : { chartTimeframe: timeframe })),
       publishChartSeries: (seriesKey, candles, lastPrice) =>
         set((s) => ({
           chartSeries: { seriesKey, candles, lastPrice },

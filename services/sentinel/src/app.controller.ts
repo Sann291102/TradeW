@@ -20,6 +20,7 @@ import { ObserveRequest, TradeSummary } from './domain';
 import { ExecutionEvaluationService } from './execution/execution-evaluation.service';
 import { ExplainService } from './explain/explain.service';
 import { ContinuousImprovementService } from './improvement/continuous-improvement.service';
+import { MarketObservationService } from './intelligence/market-observation.service';
 import { StrategyEngineService } from './intelligence/strategy-engine.service';
 import { MarketCloseAnalysisService } from './market-close/market-close-analysis.service';
 import { SentinelOrchestratorService } from './orchestrator/sentinel-orchestrator.service';
@@ -71,6 +72,7 @@ export class AppController {
   constructor(
     private readonly orchestrator: SentinelOrchestratorService,
     private readonly executionEvaluation: ExecutionEvaluationService,
+    private readonly marketObservation: MarketObservationService,
     private readonly compliance: ComplianceService,
     private readonly explainSvc: ExplainService,
     private readonly knowledgeCenter: KnowledgeCenterService,
@@ -96,6 +98,65 @@ export class AppController {
       // No real market data. 503 (not 500) so the caller can tell "Sentinel is
       // disconnected from its data source" from "Sentinel crashed", and the
       // message reaches the workspace verbatim instead of a generic error.
+      if (err instanceof MarketDataUnavailableError) {
+        throw new ServiceUnavailableException(err.message);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * The OBSERVATION-ONLY read of one symbol — measurements, no verdict.
+   *
+   * ## What this is for
+   *
+   * The assistant surface (`apps/web`'s Tara) asking "what is NIFTY doing on
+   * 15m". It returns the projection in `intelligence/market-observation.ts`:
+   * price, OHLC, volume, indicators, structure, liquidity, regime, option-chain
+   * aggregates, index direction and data freshness — every one of them lifted
+   * from the same `MarketSnapshot` that `/observe` and `/execution/evaluate`
+   * are computed from.
+   *
+   * ## Why it is NOT `/observe` with fields removed
+   *
+   * `/observe` runs ten agents, a confidence engine and a four-condition
+   * publication gate to produce a CONCLUSION. That conclusion is the premium
+   * product and `services/api` gates it on the `sentinel` entitlement. This
+   * route runs none of that, so there is no verdict in it to leak: the
+   * `MarketObservation` type has no field to put one in, and
+   * `FORBIDDEN_OBSERVATION_FIELDS` is asserted by a test.
+   *
+   * The distinction the product depends on: reading VWAP off a chart is not
+   * Sentinel's reasoning, it is arithmetic anyone can do. What users pay for is
+   * Sentinel deciding what the arithmetic MEANS and whether it is worth acting
+   * on. Measurements cross this boundary; conclusions do not.
+   *
+   * ## Still not an order path
+   *
+   * A read, like everything else in this service. Sentinel has no binding to
+   * Order/Trade/Position and no client to the OMS.
+   */
+  @UseGuards(ServiceTokenGuard)
+  @Post('market-observation')
+  async marketObservationRead(
+    @Body() body: { symbol?: string; timeframe?: string; includeContracts?: boolean },
+  ) {
+    const symbol = typeof body?.symbol === 'string' ? body.symbol.trim().toUpperCase() : '';
+    if (!symbol) {
+      return { ok: false as const, reason: 'A symbol is required.' };
+    }
+    const timeframe = typeof body?.timeframe === 'string' && body.timeframe.trim() ? body.timeframe.trim() : '15m';
+
+    try {
+      return await this.marketObservation.observe({
+        symbol,
+        timeframe,
+        includeContracts: body?.includeContracts === true,
+      });
+    } catch (err) {
+      // Same 503-not-500 distinction the two routes above make: "there is no
+      // real data for this symbol" is an answer, not a crash, and the assistant
+      // has to be able to say which it hit rather than inventing a number.
       if (err instanceof MarketDataUnavailableError) {
         throw new ServiceUnavailableException(err.message);
       }

@@ -38,6 +38,30 @@ export const SNAPSHOT_INTERVAL: CandleInterval = '15m';
 /** How far back a snapshot reaches. Enough bars for a 50-period EMA at 15m. */
 export const SNAPSHOT_LOOKBACK_MS = 5 * 86_400_000;
 
+/**
+ * How far back to reach for each interval the engine can be asked for.
+ *
+ * ── WHY THIS EXISTS, AND WHAT IT IS NOT ────────────────────────────────────
+ *
+ * `SNAPSHOT_INTERVAL` remains the interval Sentinel's OWN observation runs on,
+ * and nothing about `/observe` or the execution path changes: they call
+ * `snapshot(symbol)` and get 15m bars exactly as before. This map exists only
+ * so the observation projection (`market-observation.ts`) can honour a caller
+ * that names a timeframe — "analyse NIFTY on 5m" has to read 5m bars or the
+ * answer describes a chart the user is not looking at.
+ *
+ * Each window is sized to comfortably clear `composeSnapshot`'s deepest input
+ * (a 50-period EMA), with slack for weekends and holidays. Bigger would be a
+ * slower request for bars no indicator here reads.
+ */
+const INTERVAL_LOOKBACK_MS: Record<CandleInterval, number> = {
+  '1m': 3 * 86_400_000,
+  '5m': 5 * 86_400_000,
+  '15m': SNAPSHOT_LOOKBACK_MS,
+  '1h': 30 * 86_400_000,
+  '1d': 200 * 86_400_000,
+};
+
 export interface MarketSnapshot {
   symbol: string;
   lastPrice: number;
@@ -139,9 +163,16 @@ export interface OptionChainRead {
 export class MarketIntelligenceService {
   constructor(@Inject(MARKET_DATA) private readonly marketData: MarketDataProvider) {}
 
-  async snapshot(symbol: string): Promise<MarketSnapshot> {
+  /**
+   * `interval` defaults to `SNAPSHOT_INTERVAL`, so every existing caller —
+   * `/observe`, the execution evaluation, the watch sweep, the market-close
+   * review — reads exactly the bars it always did. It is a parameter only so
+   * the observation projection can answer "analyse this on 5m" from the SAME
+   * composition rather than from a second engine.
+   */
+  async snapshot(symbol: string, interval: CandleInterval = SNAPSHOT_INTERVAL): Promise<MarketSnapshot> {
     const to = new Date();
-    const from = new Date(to.getTime() - SNAPSHOT_LOOKBACK_MS);
+    const from = new Date(to.getTime() - (INTERVAL_LOOKBACK_MS[interval] ?? SNAPSHOT_LOOKBACK_MS));
 
     // ── FOUR INDEPENDENT READS, CONCURRENTLY ──────────────────────────────
     //
@@ -166,7 +197,7 @@ export class MarketIntelligenceService {
     // when these were sequential. Breadth and the chain degrade to "no data" as
     // they always did.
     const [intraday, breadthResult, daily, chainResult] = await Promise.allSettled([
-      this.marketData.getCandles(symbol, SNAPSHOT_INTERVAL, from, to),
+      this.marketData.getCandles(symbol, interval, from, to),
       this.marketData.getMarketBreadth(),
       this.marketData.getCandles(symbol, '1d', new Date(to.getTime() - 10 * 86_400_000), to),
       this.marketData.getOptionChain(symbol),

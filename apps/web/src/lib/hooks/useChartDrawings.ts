@@ -32,14 +32,36 @@ export function useChartDrawings(
   seriesKey: string,
   candles: Candle[] | null | undefined,
   lastPrice: number | null | undefined,
+  /**
+   * The chart's interval, as the user sees it on the pill ('15m', '1H').
+   *
+   * Published as its OWN store field rather than parsed back out of
+   * `seriesKey`. The key's format is owned by the staleness invariant (and is
+   * `SYMBOL|contract|timeframe` for an option chart, where a naive split
+   * returns the contract), so reading an interval out of it couples "analyse
+   * this chart" to a string shape that exists for a different reason.
+   *
+   * Optional so existing callers that only want the drawing layer are
+   * unaffected; when omitted the timeframe is simply not published.
+   */
+  timeframe?: string,
 ): ChartDrawing[] | undefined {
   const publishChartSeries = useWorkspaceStore((s) => s.publishChartSeries);
+  const setChartTimeframe = useWorkspaceStore((s) => s.setChartTimeframe);
   const stored = useWorkspaceStore((s) => s.chartDrawings);
 
   useEffect(() => {
     if (!candles?.length) return;
     publishChartSeries(seriesKey, candles, lastPrice ?? null);
   }, [seriesKey, candles, lastPrice, publishChartSeries]);
+
+  // Separate from the series effect on purpose: the interval is meaningful
+  // before the first candle arrives, and an analysis request made in that
+  // window must still carry the timeframe the user is looking at.
+  useEffect(() => {
+    if (!timeframe) return;
+    setChartTimeframe(timeframe);
+  }, [timeframe, setChartTimeframe]);
 
   return stored?.seriesKey === seriesKey ? stored.drawings : undefined;
 }

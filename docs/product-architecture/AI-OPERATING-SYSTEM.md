@@ -194,8 +194,33 @@ privately; it needs an imperative control surface the execution layer can call:
 **Sentinel over the visible chart.** Once the chart can describe itself,
 Sentinel's existing engines can be pointed at exactly what the user is looking
 at. This does **not** loosen Sentinel's contract: still observation-only, still
-never a gate on the order flow, still entitlement-gated, still evidence →
-pattern-name → soft suggestion (`SENTINEL.md` §3).
+never a gate on the order flow, still evidence → pattern-name → soft suggestion
+(`SENTINEL.md` §3).
+
+> **Partly delivered 2026-08-31, by a different route than this section
+> assumed.** The chart still cannot describe itself — `TradeChart.tsx` renders
+> candles and price lines and has no indicator state to report, and the crypto
+> surface is a cross-origin TradingView iframe nothing on our side can read. So
+> rather than wait on a self-reporting chart, the engine is pointed at the
+> SYMBOL AND TIMEFRAME the user is on, and reads its own bars:
+>
+> - The chart publishes its interval as `workspaceStore.chartTimeframe` (a field
+>   of its own — never parsed out of `chartSeries.seriesKey`, whose format
+>   belongs to the drawing-staleness invariant).
+> - `analyzeMarket` carries `{symbol, timeframe}`; the canonical
+>   `MarketSnapshot` is composed on that interval and projected to measurements
+>   (`TRADEW-AI.md` §3a).
+>
+> Two corrections to what this section says. **The "structured state" half is
+> real and is authoritative, exactly as decided — but it comes from the ENGINE,
+> not from the chart.** And **the visual-capture half was not built and is not
+> currently planned**: with the numbers coming from the engine there is nothing
+> a screenshot would be authoritative for, and the cost was accepted for a
+> capability that no longer needs it. Revisit it if the chart ever gains
+> user-drawn annotations Tara must read back.
+>
+> The entitlement clause above was also too broad and has moved: measurements
+> are not gated, Sentinel's *conclusions* are (`TRADEW-ASSISTANT.md` §6).
 
 ---
 
@@ -291,7 +316,12 @@ Restated because a system this capable is exactly where they erode:
 4. **Entitlement-scoped.** The assistant can only reach what this user can reach;
    a gated feature resolves to the normal upgrade surface, never a dead command
    and never a bypass (`TRADEW-ASSISTANT.md` §5).
-5. **No fabricated data.** Every number carries its provenance. See
+5. **No fabricated data.** Every number carries its provenance. Since
+   2026-08-31 this is structural on the assistant path: measurements come from
+   the canonical `MarketSnapshot` as JSON and are rendered by deterministic
+   client code, so no layer here can produce an indicator value at all. An
+   unmeasurable value is `null` with a stated reason, never a zero and never an
+   estimate. See
    `knowledge/Patterns/2026-08-11 - Landing page as decision brief + mascot as
    shared agent identity.md` §6 for the two-market-data-clients trap that makes
    this concrete.
@@ -307,8 +337,10 @@ Sequenced so each phase is independently useful and independently revertible
 |---|---|---|
 | **1** | Safety tiers + confirmation UI · narration modes · preference memory · multi-step planner over the **existing** deterministic grammar | nothing — all client-side |
 | **2** | Chart control surface: imperative API on `TradeChart`, structured self-report, new `AssistantAction` variants | Phase 1 |
+| **2 — as shipped** | *Partial.* `chartDetect`/`chartClearDrawings` (FVG, 2026-08-14) and `analyzeMarket` + `chartTimeframe` (2026-08-31). The imperative chart API and the chart's structured self-report were **not** built — the engine reads its own bars instead, see §6 | — |
 | **3** | Conversation brain: `services/tradew-ai` stood up over `packages/ai-core`, reached through `services/api` per `ARCHITECTURE.md` §1; LLM fallback behind the deterministic fast path — **decided 2026-08-11: the real service, not a Next route handler.** The app already carries one ingress deviation (the Dhan feed bridge); a second, for the component that reaches an LLM with the user's context, is the wrong place to save a day's work | Phase 1 |
 | **4** | Sentinel over the visible chart; durable recall in Postgres | Phases 2 + 3 |
+| **4 — as shipped** | *Partial.* Canonical measurements over the selected symbol/timeframe, observation-only and un-gated (`TRADEW-AI.md` §3a). Durable recall in Postgres not started | — |
 | **5** | Voice output, continuous mode, barge-in | Phase 1 (modes) |
 
 Phase 1 is deliberately first and deliberately LLM-free: it is the spine every

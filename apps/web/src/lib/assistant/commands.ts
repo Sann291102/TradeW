@@ -97,6 +97,10 @@ export function resolveCommand(text: string, today = new Date()): AssistantPlan 
   return (
     matchContract(t, today) ??
     matchDetect(t) ??
+    // Above matchTheme/matchPanel/matchSymbol deliberately — see matchAnalyze's
+    // docblock. Below matchDetect, because "find the FVGs and analyse them" is
+    // a detection request that happens to use the word.
+    matchAnalyze(t) ??
     matchTheme(lower) ??
     matchOverlay(lower) ??
     matchLayout(lower) ??
@@ -197,6 +201,101 @@ function matchDetect(text: string): AssistantPlan | null {
       { type: 'chartDetect', detector: 'fvg' },
     ],
     ['Classified → chart detection', 'Detector → fair value gaps'],
+  );
+}
+
+// --- market analysis -------------------------------------------------------
+
+/**
+ * Verbs that mean "measure this market for me".
+ *
+ * Deliberately narrower than `EXPLAIN_RE` above: that one exists to spot the
+ * analysis HALF of a compound navigation command, and matching "insights" or
+ * "tell me about" here would turn "tell me about the Research page" into a
+ * market read.
+ */
+const ANALYSE_VERB_RE =
+  /\b(analys[ei]|analyz[ei]|analysis of|read (?:the )?(?:market|chart)|market read|how (?:is|does) .{1,30} (?:look|doing)|what (?:is|'s) .{1,30} doing)\b/i;
+
+/**
+ * Timeframes the user can name, mapped to the chart's own pill labels.
+ *
+ * The label is passed through to the API unchanged; `services/sentinel`'s
+ * `resolveInterval` owns the translation to a `CandleInterval` and owns saying
+ * no. Two normalisers would eventually disagree about what "1H" means, and the
+ * one that matters is the one beside the engine.
+ */
+const TIMEFRAME_RE =
+  /(?:^|[\s,([])(1\s*m(?:in(?:ute)?s?)?|5\s*m(?:in(?:ute)?s?)?|15\s*m(?:in(?:ute)?s?)?|30\s*m(?:in(?:ute)?s?)?|1\s*h(?:our|r)?|60\s*m(?:in)?|1\s*d(?:ay)?|daily|hourly|1\s*w(?:eek)?|weekly)(?:$|[\s,.)?!])/i;
+
+/** Phrasings that mean "the thing I am looking at" rather than a named symbol. */
+const CURRENT_CHART_RE =
+  /\b(this|the current|current|my|the active|active|on screen|on the screen)\s+(chart|market|symbol|instrument|timeframe)\b|\bthis\b\s*$/i;
+
+/** Normalise "15 min" / "1 hour" to the pill label the chart uses. */
+function normaliseTimeframeLabel(raw: string): string {
+  const compact = raw.toLowerCase().replace(/\s+/g, '');
+  if (/^1m(in(ute)?s?)?$/.test(compact)) return '1m';
+  if (/^5m(in(ute)?s?)?$/.test(compact)) return '5m';
+  if (/^15m(in(ute)?s?)?$/.test(compact)) return '15m';
+  if (/^30m(in(ute)?s?)?$/.test(compact)) return '30m';
+  if (/^(1h(our|r)?|60m(in)?|hourly)$/.test(compact)) return '1H';
+  if (/^(1d(ay)?|daily)$/.test(compact)) return '1D';
+  if (/^(1w(eek)?|weekly)$/.test(compact)) return '1W';
+  return raw.trim();
+}
+
+/**
+ * "Analyse NIFTY", "analyse NIFTY 15m", "analyse the current chart".
+ *
+ * ── WHY THIS SITS ABOVE `matchSymbol` AND `matchPanel` ─────────────────────
+ *
+ * Both would swallow it. `matchSymbol` resolves a bare "NIFTY" to *select the
+ * NIFTY symbol*, so "analyse NIFTY" would silently become a symbol switch and
+ * report success; `matchPanel` claims the word "chart", so "analyse the current
+ * chart" would open the chart panel. Either outcome is the failure mode
+ * `concepts.ts` was written about — an answer replaced by a plausible-looking
+ * navigation.
+ *
+ * ── WHY IT EMITS NULLS INSTEAD OF DEFAULTS ─────────────────────────────────
+ *
+ * A missing symbol becomes `null`, not `'NIFTY'`. Defaulting would mean
+ * "analyse this" silently measures an index the user may not be looking at and
+ * presents the result as their chart. The executor resolves nulls against the
+ * live workspace and says so plainly when it cannot.
+ *
+ * ── WHY IT DOES NOT NAVIGATE ───────────────────────────────────────────────
+ *
+ * Unlike `matchDetect`, this needs no chart on screen — the measurements come
+ * from the engine, not from the bars in the browser. Navigating would move the
+ * user somewhere they did not ask to go in order to answer a question.
+ */
+function matchAnalyze(text: string): AssistantPlan | null {
+  if (!ANALYSE_VERB_RE.test(text)) return null;
+
+  // "what is NIFTY doing" is an analysis ask; "what is a fair value gap" is a
+  // concept question and must reach `concepts.ts` untouched. The verb regex
+  // above cannot separate them, so a concept-explain phrasing with no symbol in
+  // it is handed back.
+  const found = findSymbol(text);
+  const wantsCurrent = CURRENT_CHART_RE.test(text);
+  if (!found && !wantsCurrent) return null;
+
+  const tfMatch = TIMEFRAME_RE.exec(text);
+  const timeframe = tfMatch ? normaliseTimeframeLabel(tfMatch[1]) : null;
+
+  const symbol = found?.symbol ?? null;
+  const target = symbol ?? 'the chart you have open';
+  const on = timeframe ? ` on ${timeframe}` : '';
+
+  return commandPlan(
+    `Reading ${target}${on}…`,
+    [{ type: 'analyzeMarket', symbol, timeframe }],
+    [
+      'Classified → market analysis',
+      symbol ? `Symbol → ${symbol}` : 'Symbol → the active chart',
+      timeframe ? `Timeframe → ${timeframe}` : 'Timeframe → the active chart’s',
+    ],
   );
 }
 
@@ -308,33 +407,57 @@ function matchChrome(lower: string): AssistantPlan | null {
 
 // --- navigation (derived from NAV_ITEMS) -----------------------------------
 
+/**
+ * Short names for pages whose sidebar LABEL is not what anyone calls them.
+ *
+ * ── THE CONTRADICTION THIS FIXES ───────────────────────────────────────────
+ *
+ * `matchNav` matches an item's label verbatim, and the Sentinel item is
+ * labelled "AI Sentinel". So "open Sentinel" matched nothing, fell through
+ * every resolver, and was refused by the remit fence as *outside what the
+ * assistant covers* — while the Sentinel boundary's own refusal copy, the
+ * capability reply and `TRADEW-ASSISTANT.md` §6 all instruct the user to say
+ * exactly that phrase. The product told people to say a sentence the product
+ * then declined.
+ *
+ * Keyed by href rather than by label so renaming a sidebar entry cannot
+ * silently orphan its alias.
+ */
+const NAV_SHORT_NAMES: Record<string, readonly string[]> = {
+  '/sentinel': ['sentinel'],
+};
+
 function matchNav(lower: string): AssistantPlan | null {
   // Longest label first so a two-word page can't be shadowed by a one-word one.
   const items = [...NAV_ITEMS].sort((a, b) => b.label.length - a.label.length);
 
   for (const item of items) {
     const label = item.label.toLowerCase();
-    if (!new RegExp(`\\b${label}\\b`).test(lower)) continue;
+    const names = [label, ...(NAV_SHORT_NAMES[item.href] ?? [])];
+    if (!names.some((n) => new RegExp(`\\b${n}\\b`).test(lower))) continue;
 
     // Bare mention isn't a command — "how does the dashboard work" is a
     // question about the app, not a request to navigate. Require a verb, or
     // that the whole utterance is essentially just the page name.
     const hasVerb = new RegExp(`\\b${OPEN_VERB}\\b`).test(lower);
-    const isBareName = lower.replace(/[^a-z\s]/g, '').trim() === label;
+    const bare = lower.replace(/[^a-z\s]/g, '').trim();
+    const isBareName = names.includes(bare);
     if (!hasVerb && !isBareName) continue;
 
     const actions: AssistantAction[] = [{ type: 'navigate', href: item.href }];
     const steps = [`Opened ${item.href}`];
 
     // Compound command: "open research and explain". The navigation half runs
-    // now; the narration half is the analysis agent (Phase 2), so say that
-    // plainly instead of implying an explanation is coming.
+    // now. Reading a PAGE back is still not a capability — what exists is a
+    // market read against a named symbol (`matchAnalyze`), which is a different
+    // thing — so say what is actually available rather than implying a
+    // narration of this screen is coming.
     if (EXPLAIN_RE.test(lower)) {
       return {
         intent: 'command',
-        reply: `Opened ${item.label}. Reading the page and explaining it is the analysis half of the assistant — that lands in the next phase, so for now I've just taken you there.`,
+        reply: `Opened ${item.label}. I can't narrate a page back to you — what I can do is measure a market: say "analyse NIFTY" (or any symbol, on any timeframe) and I'll read you the real numbers.`,
         actions,
-        steps: [...steps, 'Analysis requested → not yet available (Phase 2)'],
+        steps: [...steps, 'Page narration → not a capability; market analysis is per-symbol'],
       };
     }
 
