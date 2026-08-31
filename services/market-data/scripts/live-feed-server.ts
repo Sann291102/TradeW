@@ -1453,6 +1453,63 @@ async function main(): Promise<void> {
 
   const feed = await startFeed(ALL_INSTRUMENTS, kindOf);
 
+  // ── "UP, SUBSCRIBED, AND HOLDING NOTHING" — SAY SO, LOUDLY ────────────
+  //
+  // The bridge can be perfectly healthy by every measure it prints at boot —
+  // scrip master resolved, 553 instruments subscribed, HTTP server listening —
+  // and still hold not one price, because the websocket handshake was refused
+  // for a dead token and `feed.start()`'s rejection scrolled past twenty lines
+  // ago. Nothing after that says anything. The operator's first evidence is a
+  // dashboard, which is the worst possible place to learn it: the browser can
+  // only report what it was sent.
+  //
+  // So the process states it about itself, on a timer, in the terminal already
+  // being watched. Silence here means prices are flowing.
+  const NO_PRICE_FIRST_CHECK_MS = 45_000;
+  const NO_PRICE_REPEAT_MS = 300_000;
+  function reportIfHoldingNoPrices() {
+    const s = snapshot();
+    const held = s.indices.length + s.stocks.length + s.etfs.length + s.commodities.length;
+    if (held > 0) return;
+    const cred = dhanCredential.state();
+    console.error(
+      [
+        '',
+        '  ┌─────────────────────────────────────────────────────────────────┐',
+        '  │  NO PRICES HELD. The bridge is up and serving empty quotes.     │',
+        '  └─────────────────────────────────────────────────────────────────┘',
+        `  subscribed ....... ${ALL_INSTRUMENTS.length} instruments`,
+        `  market ........... ${isMarketOpen() ? 'OPEN (ticks should be arriving)' : 'closed (ticks resume next session)'}`,
+        `  feed status ...... ${feedStatus}${feedReason ? ` — ${feedReason}` : ''}`,
+        `  credential ....... source=${cred.source} healthy=${cred.healthy}` +
+          `${cred.lastFault ? ` lastFault=${cred.lastFault}` : ''}`,
+        '',
+        isMarketOpen()
+          ? '  The market is OPEN and nothing is ticking. That is almost always a'
+          : '  The market is closed, and the historical pre-fetch that would have',
+        isMarketOpen()
+          ? '  refused websocket handshake — an expired Dhan access token (they last'
+          : '  filled the index cards did not return bars either — usually the same',
+        isMarketOpen()
+          ? '  one trading day). Renew it:'
+          : '  expired token. Renew it:',
+        '',
+        '      npm run dhan:status      -w @tradew/market-data-service',
+        '      npm run dhan:consent     -w @tradew/market-data-service   # open the printed URL',
+        '      npm run dhan:token -- <tokenId|url> -w @tradew/market-data-service',
+        '',
+        '  Then restart this process. Until a real price arrives, /quotes stays',
+        '  empty ON PURPOSE — the dashboard reads that as "feed unavailable" and',
+        '  shows its labelled preview. It will never print 0.00 as a price.',
+        '',
+      ].join('\n'),
+    );
+  }
+  setTimeout(() => {
+    reportIfHoldingNoPrices();
+    setInterval(reportIfHoldingNoPrices, NO_PRICE_REPEAT_MS);
+  }, NO_PRICE_FIRST_CHECK_MS);
+
   // Market can flip open/closed with no tick in between (e.g. right at 15:30);
   // re-broadcast on a timer too so the badge in the browser stays honest.
   setInterval(broadcast, 30_000);
