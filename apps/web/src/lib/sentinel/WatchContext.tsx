@@ -17,6 +17,7 @@ import { useOptionInstruments, type PairInstruments } from './useOptionInstrumen
 import {
   DEFAULT_SELECTION,
   attachInstrument,
+  reconcileExpiry,
   reconcileWatchSelection,
   resolveWatchContext,
   selectExpiry,
@@ -243,19 +244,32 @@ export function SentinelWatchProvider({
   /**
    * Settle the expiry as soon as the list for THIS market resolves.
    *
-   * Only when it is still null: an operator who deliberately picked a later
-   * series must not have it pulled back to the nearest on the next poll. A
-   * confirmed 'none' means the instrument has no options market, which is what
+   * `reconcileExpiry` holds the rule and the reasoning: an expiry the list
+   * contains is left alone (a deliberately chosen later series is not pulled
+   * back to the nearest on the next poll), and one it does not contain — null,
+   * or a series that has since expired or rolled off — is replaced by the
+   * nearest with both legs dropped.
+   *
+   * This used to be a null-only check, which is how a persisted 25 Aug expiry
+   * survived into the 31st: the chain read stayed pinned to a dead series while
+   * the expiry <select>, having no option to match, displayed a different date
+   * entirely. See `reconcileExpiry`.
+   *
+   * A confirmed 'none' means the instrument has no options market, which is what
    * `underlyingOnly` records — matching `WatchCreator`'s long-standing rule
    * that an UNREADABLE list is never allowed to force the underlying (that bug
    * started watches on the index without saying so, 2026-08-17).
    */
   useEffect(() => {
     if (expiries.status === 'ready') {
-      setSelection((prev) => (prev.expiry === null ? { ...prev, expiry: expiries.nearest } : prev));
+      setSelection((prev) => reconcileExpiry(prev, expiries.expiries, expiries.nearest));
     } else if (expiries.status === 'none') {
       setSelection((prev) => (prev.underlyingOnly ? prev : { ...prev, underlyingOnly: true }));
     }
+    // `expiries.expiries` is a fresh array on every render of a cached query;
+    // its identity is not a signal. The status/nearest pair changes exactly when
+    // the list this reconciles against does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expiries.status, expiries.nearest]);
 
   /**
