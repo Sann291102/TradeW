@@ -24,6 +24,7 @@ import {
   understood,
 } from './fixtures';
 import { ALL_AGENT_IDS, type AgentId, type AgentVerdict } from '../types';
+import { hasDirectiveLanguage } from '../../vocabulary/vocabulary';
 
 /**
  * The ten reasoning agents.
@@ -338,5 +339,149 @@ describe('compliance-intelligence', () => {
     const second = a.reason(ctx());
 
     expect(second.headline).toMatch(/nothing to audit/);
+  });
+});
+
+
+/**
+ * The deliberation round, at the two agents that answer it.
+ *
+ * The property under test is not "does the agent change its mind" — it is that
+ * conferring can only add what NO SINGLE AGENT COULD SEE ALONE. The desk's
+ * lean lives in the peer verdicts; the defended levels live in the option
+ * book; neither agent holds both until this round.
+ */
+describe('the deliberation round', () => {
+  const peer = (
+    agent: AgentId,
+    stance: 'bullish' | 'bearish' | 'risk-elevated',
+    confidence = 0.8,
+  ): AgentVerdict =>
+    ({
+      agent,
+      subtaskId: `${agent}#1`,
+      stance,
+      confidence,
+      headline: 'peer verdict',
+      evidence: [],
+      supportingConcepts: [],
+      citations: [],
+      abstained: false,
+      abstentionReason: null,
+      dataQuality: 1,
+      latencyMs: 1,
+      veto: null,
+    }) as AgentVerdict;
+
+  /**
+   * A chain whose defended levels are set AGAINST a rise: the wall just above
+   * spot is being written into harder today, and the support just below is
+   * being abandoned by its writers.
+   */
+  function bookAgainstARise() {
+    const spot = 25_195;
+    const strikes = [25_000, 25_100, 25_200, 25_300, 25_400];
+    const frontExpiry = new Date('2026-08-06T10:00:00.000Z');
+    return optionChain({
+      entries: strikes.map((strike) => {
+        const above = strike > spot;
+        const callOI = above ? 2_000_000 - (strike - spot) * 4 : 300_000;
+        const putOI = above ? 200_000 : 2_000_000 - (spot - strike) * 4;
+        return {
+          strike,
+          expiry: frontExpiry,
+          callOI,
+          putOI,
+          callIV: 12.5,
+          putIV: 13.1,
+          callLtp: Math.max(1, spot - strike + 120),
+          putLtp: Math.max(1, strike - spot + 120),
+          // Calls written into on a falling premium; puts covered on a rising one.
+          callPrevOI: above ? callOI - 900_000 : 300_000,
+          callPrevClose: Math.max(1, spot - strike + 120) * 1.8,
+          putPrevOI: above ? 200_000 : putOI + 900_000,
+          putPrevClose: Math.max(1, strike - spot + 120) * 0.5,
+        };
+      }),
+    });
+  }
+
+  function ctxWith(agent: AgentId, chain: ReturnType<typeof optionChain>) {
+    const snap = snapshot({ optionChain: chain as never });
+    return context(agent, { snapshot: snap, risk: riskAssessment() });
+  }
+
+  it('options-chain: says nothing about a lean on the first pass', () => {
+    // `reason` is `deliberate` with no peers, so the first pass must be
+    // byte-for-byte the read this agent has always produced alone.
+    const ctx = ctxWith('options-chain-intelligence', bookAgainstARise());
+    const alone = new OptionsChainIntelligenceAgent().reason(ctx);
+    expect(alone.headline).not.toMatch(/the desk/i);
+  });
+
+  it('options-chain: reports elevated risk when the desk leans into a defended level', () => {
+    const ctx = ctxWith('options-chain-intelligence', bookAgainstARise());
+    const revised = new OptionsChainIntelligenceAgent().deliberate(ctx, [
+      peer('market-intelligence', 'bullish'),
+      peer('strategy-intelligence', 'bullish'),
+    ]);
+
+    // Elevated risk, NEVER the opposite direction. A book that disagrees with
+    // a bullish structure is not a bearish read of the book — it is a
+    // statement that the structure is heading into defended ground.
+    expect(revised.stance).toBe('risk-elevated');
+    expect(revised.headline).toMatch(/does not corroborate/i);
+  });
+
+  it('options-chain: ignores a desk that has not settled on a direction', () => {
+    const ctx = ctxWith('options-chain-intelligence', bookAgainstARise());
+    const split = new OptionsChainIntelligenceAgent().deliberate(ctx, [
+      peer('market-intelligence', 'bullish'),
+      peer('strategy-intelligence', 'bearish'),
+    ]);
+    expect(split.headline).not.toMatch(/the desk leans/i);
+  });
+
+  it('options-chain: never reads a risk warning as a direction', () => {
+    // A peer reporting a dangerous tape has taken no side. Counting it as one
+    // would let a risk warning decide which side the book is judged against.
+    const ctx = ctxWith('options-chain-intelligence', bookAgainstARise());
+    const verdict = new OptionsChainIntelligenceAgent().deliberate(ctx, [
+      peer('risk-intelligence', 'risk-elevated'),
+    ]);
+    expect(verdict.headline).not.toMatch(/the desk leans/i);
+  });
+
+  it('risk: raises the environment when the desk leans into a book set against it', () => {
+    const ctx = ctxWith('risk-intelligence', bookAgainstARise());
+    const agent = new RiskIntelligenceAgent();
+    const alone = agent.reason(ctx);
+    const conferred = agent.deliberate(ctx, [
+      peer('market-intelligence', 'bullish'),
+      peer('strategy-intelligence', 'bullish'),
+    ]);
+
+    expect(conferred.stance).toBe('risk-elevated');
+    expect(conferred.confidence).toBeGreaterThanOrEqual(alone.confidence);
+    expect(conferred.headline).toMatch(/positioning is set against it/i);
+  });
+
+  it('risk: stays on its own axis — it never returns a direction', () => {
+    const ctx = ctxWith('risk-intelligence', bookAgainstARise());
+    const conferred = new RiskIntelligenceAgent().deliberate(ctx, [peer('market-intelligence', 'bullish')]);
+    expect(['risk-elevated', 'neutral']).toContain(conferred.stance);
+  });
+
+  it('emits no directive language on either deliberated verdict', () => {
+    const peers = [peer('market-intelligence', 'bullish'), peer('strategy-intelligence', 'bullish')];
+    const verdicts = [
+      new OptionsChainIntelligenceAgent().deliberate(ctxWith('options-chain-intelligence', bookAgainstARise()), peers),
+      new RiskIntelligenceAgent().deliberate(ctxWith('risk-intelligence', bookAgainstARise()), peers),
+    ];
+    for (const verdict of verdicts) {
+      for (const text of [verdict.headline, ...verdict.evidence.map((e) => e.statement)]) {
+        expect({ text, directive: hasDirectiveLanguage(text) }).toEqual({ text, directive: false });
+      }
+    }
   });
 });

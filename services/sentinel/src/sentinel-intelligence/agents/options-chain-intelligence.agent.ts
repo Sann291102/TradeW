@@ -8,7 +8,7 @@ import {
   gatherConcepts,
   groundingScore,
 } from './agent.contract';
-import { describeOIAction } from '../../execution/option-positioning';
+import { describeOIAction, judgePositioning } from '../../execution/option-positioning';
 import type { AgentId, AgentVerdict } from '../types';
 
 /**
@@ -56,6 +56,29 @@ export class OptionsChainIntelligenceAgent implements IntelligenceAgent {
   readonly remit = 'Option-chain positioning: OI walls, put-call ratio, max-pain pin and the strike in focus.';
 
   reason(context: AgentContext): AgentVerdict {
+    return this.read(context, []);
+  }
+
+  /**
+   * The one thing this agent knows that no other agent can see.
+   *
+   * Market, strategy and historical intelligence all read the INDEX. This
+   * agent reads the option book, and the book's answer to "is the level you
+   * are heading for being defended harder or lighter today" is not derivable
+   * from any chart. So when the desk has settled on a direction, the useful
+   * contribution is not to restate positioning — it is to say whether the book
+   * corroborates that specific direction or contradicts it, and to name which
+   * level decides it.
+   *
+   * Strictly within remit (rule 2 on `IntelligenceAgent.deliberate`): the peer
+   * verdicts are read for one thing only, the direction the rest of the desk
+   * leans, and nothing about the structure behind that lean is restated here.
+   */
+  deliberate(context: AgentContext, peers: readonly AgentVerdict[]): AgentVerdict {
+    return this.read(context, peers);
+  }
+
+  private read(context: AgentContext, peers: readonly AgentVerdict[]): AgentVerdict {
     const builder = new VerdictBuilder(this.id, context.subtask.id);
     const chain = context.snapshot?.optionChain ?? null;
     const spot = context.snapshot?.lastPrice ?? 0;
@@ -259,9 +282,84 @@ export class OptionsChainIntelligenceAgent implements IntelligenceAgent {
     const depthQuality = Math.min(1, chain.strikesAnalysed / 20);
     const dataQuality = positioning?.hasOIChange ? depthQuality : depthQuality * 0.5;
 
+    // ---- the deliberation round -----------------------------------------
+    //
+    // Empty on the first pass, so everything above is exactly what this agent
+    // has always said on its own. With peers present, the agent answers ONE
+    // question that no other agent on the desk can: does the option book
+    // corroborate the direction the rest of them settled on, and which level
+    // decides it.
+    const lean = leadingPeerDirection(peers);
+    if (lean && positioning) {
+      const judged = judgePositioning(positioning, lean === 'bullish' ? 'CE' : 'PE');
+      builder.derived(
+        `The rest of the desk leans ${lean}; against that direction the book reads "${judged.verdict}" — ${judged.summary}`,
+        judged.score,
+        positioning.hasOIChange ? 0.85 : 0.5,
+      );
+      for (const signal of judged.signals) {
+        if (signal.value === 0) continue;
+        builder.derived(
+          `${signal.label} ${signal.value > 0 ? 'supports' : 'opposes'} the ${lean} case: ${signal.detail}`,
+          signal.value,
+          0.7,
+        );
+      }
+
+      if (judged.verdict === 'conflicts') {
+        // The disagreement IS the contribution, and it is expressed as this
+        // agent's own stance rather than as a note on someone else's — a
+        // verdict the cross-checker can weigh, not a comment it must parse.
+        //
+        // The stance is `risk-elevated`, never the opposite direction. The book
+        // disagreeing with a bullish structure is not a bearish read of the
+        // book; it is a statement that the structure is heading into defended
+        // ground, and the honest expression of that is elevated risk.
+        stance = 'risk-elevated';
+        structural = Math.max(structural, 0.65);
+        headline =
+          `The desk leans ${lean}, and option positioning does not corroborate it: ` +
+          `${judged.nextLevel === null ? 'no defended level stands in the path' : `the level that decides it is ${judged.nextLevel}`}. ${judged.summary}`;
+      } else if (judged.verdict === 'confirms') {
+        // Corroboration is REPORTED and does not move the stance or the
+        // confidence. The synthesis already rewards agreement between agents;
+        // an agent that also rewarded it internally would have the same
+        // agreement counted twice. See rule 3 on `IntelligenceAgent.deliberate`.
+        headline += ` Option positioning corroborates the ${lean} lean${judged.nextLevel === null ? '' : `, with ${judged.nextLevel} the level that decides it`}.`;
+      } else {
+        headline += ` Option positioning is neither for nor against the desk's ${lean} lean.`;
+      }
+    }
+
     return builder
       .quality(dataQuality)
       .conclude(stance, blendConfidence(structural, groundingScore(citations)), headline)
       .build();
   }
+}
+
+/**
+ * The direction the rest of the desk leans, or null when it has not settled.
+ *
+ * Weighted by each peer's own confidence, abstentions excluded, and
+ * `risk-elevated` ignored entirely — a peer reporting a dangerous tape has not
+ * taken a direction, and counting it as one would let a risk warning decide
+ * which side this agent judges the book against.
+ *
+ * Null when the two sides are within a tenth of each other. A desk that has
+ * not settled has no lean to corroborate, and picking the marginally larger
+ * half would manufacture one.
+ */
+function leadingPeerDirection(peers: readonly AgentVerdict[]): 'bullish' | 'bearish' | null {
+  let bullish = 0;
+  let bearish = 0;
+  for (const peer of peers) {
+    if (peer.abstained) continue;
+    const weight = peer.confidence * peer.dataQuality;
+    if (peer.stance === 'bullish') bullish += weight;
+    else if (peer.stance === 'bearish') bearish += weight;
+  }
+  if (bullish === 0 && bearish === 0) return null;
+  if (Math.abs(bullish - bearish) < 0.1) return null;
+  return bullish > bearish ? 'bullish' : 'bearish';
 }
