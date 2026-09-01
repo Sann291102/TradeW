@@ -8,6 +8,7 @@ import {
   gatherConcepts,
   groundingScore,
 } from './agent.contract';
+import { describeOIAction } from '../../execution/option-positioning';
 import type { AgentId, AgentVerdict } from '../types';
 
 /**
@@ -27,6 +28,27 @@ import type { AgentId, AgentVerdict } from '../types';
  * **Max pain is a pin, not a forecast.** Proximity to max pain raises the odds
  * of range-bound behaviour into expiry; it says nothing about which way price
  * leaves afterwards, and the agent does not pretend otherwise.
+ *
+ * ## What the 2026-09-01 pass added
+ *
+ * Everything above reads a SNAPSHOT of the book. A snapshot is the weakest
+ * thing a chain has to say: a 66-lakh call wall being added to and a 66-lakh
+ * call wall being unwound are identical in it and mean opposite things. So the
+ * agent now also reads `context.positioning` — the same shared read every
+ * other agent sees — which carries, per strike, today's change in open
+ * interest and the four-quadrant action that change plus the premium implies.
+ *
+ * That turns each wall from a level into a level plus a verb, and it is what
+ * makes the difference between "there is resistance at 24,100" (true on every
+ * day of the week and useful on none of them) and "the writers at 24,100
+ * reduced today while price rose", which is a statement about what is
+ * happening now.
+ *
+ * The stance still refuses to be a direction generator. Change in positioning
+ * can move the agent's confidence and can flip a neutral read to a directional
+ * one where the structure is unambiguous, but the vocabulary stays
+ * observational throughout — levels are defended, moves through them are
+ * accepted or rejected, and nothing here is a call to act.
  */
 @Injectable()
 export class OptionsChainIntelligenceAgent implements IntelligenceAgent {
@@ -53,18 +75,56 @@ export class OptionsChainIntelligenceAgent implements IntelligenceAgent {
     );
     builder.measured(`Max pain sits at ${chain.maxPain.toFixed(0)}`, chain.maxPain, 0.6);
 
-    if (chain.callOIWall !== null) {
+    // ---- the levels, and what their defenders did today -----------------
+    //
+    // `positioning` supersedes the two raw wall strikes when it is present:
+    // it carries the same levels ranked in the order price would meet them,
+    // plus the verb. The raw walls remain the fallback for a chain whose
+    // positioning could not be read at all, because a level with no verb is
+    // still better than no level.
+    const positioning = context.positioning;
+    const nearestResistance = positioning?.resistances[0] ?? null;
+    const nearestSupport = positioning?.supports[0] ?? null;
+
+    if (nearestResistance) {
+      builder.derived(nearestResistance.note, nearestResistance.strike, nearestResistance.defence === 'unknown' ? 0.6 : 0.8);
+    } else if (chain.callOIWall !== null) {
       builder.derived(
         `Heaviest call OI above spot is at ${chain.callOIWall.toFixed(0)} — writers are defending that level`,
         chain.callOIWall,
         0.7,
       );
     }
-    if (chain.putOIWall !== null) {
+    if (nearestSupport) {
+      builder.derived(nearestSupport.note, nearestSupport.strike, nearestSupport.defence === 'unknown' ? 0.6 : 0.8);
+    } else if (chain.putOIWall !== null) {
       builder.derived(
         `Heaviest put OI below spot is at ${chain.putOIWall.toFixed(0)} — writers are defending that level`,
         chain.putOIWall,
         0.7,
+      );
+    }
+
+    if (positioning?.hasOIChange) {
+      builder.measured(
+        `Previous-day open interest was published for ${(positioning.oiChangeCoverage * 100).toFixed(0)}% of the chain's legs, so today's change in positioning is readable`,
+        positioning.oiChangeCoverage,
+        0.9,
+      );
+      builder.derived(positioning.migration.note, positioning.migration.callShiftSteps ?? 0, 0.75);
+      const atm = positioning.strikes.find((row) => row.strike === positioning.atmStrike);
+      if (atm) {
+        builder.derived(
+          `At the ${atm.strike} strike nearest spot, calls show ${describeOIAction(atm.callAction)} and puts show ${describeOIAction(atm.putAction)}; strike-level put-call OI ratio ${atm.pcr === null ? 'not computable' : atm.pcr.toFixed(2)}`,
+          atm.pcr ?? 0,
+          0.7,
+        );
+      }
+    } else if (positioning) {
+      builder.derived(
+        "Previous-day open interest was not published for enough of this chain, so the levels below are known by size only and not by whether they are being reinforced or reduced",
+        positioning.oiChangeCoverage,
+        0.5,
       );
     }
 
@@ -139,6 +199,47 @@ export class OptionsChainIntelligenceAgent implements IntelligenceAgent {
       }
     }
 
+    // ---- what today's change does to that stance ------------------------
+    //
+    // Applied AFTER the static read rather than instead of it, and it moves
+    // the stance only where the structure is unambiguous: the level ahead is
+    // being abandoned by its defenders, the level behind is being reinforced,
+    // and the whole book migrated the same way. Two of the three agreeing is
+    // enough to raise confidence in the static read; all three is enough to
+    // take a direction the static read left neutral.
+    //
+    // Deliberately does not act on migration alone. A book migrating up while
+    // the levels themselves are unchanged is far more often a roll into the
+    // next expiry than a directional statement, and this agent has no way to
+    // tell those apart.
+    if (positioning?.hasOIChange) {
+      const migratedUp = positioning.migration.direction === 'up';
+      const migratedDown = positioning.migration.direction === 'down';
+      const bullishVotes =
+        (nearestResistance?.defence === 'eroding' ? 1 : 0) +
+        (nearestSupport?.defence === 'reinforcing' ? 1 : 0) +
+        (migratedUp ? 1 : 0);
+      const bearishVotes =
+        (nearestSupport?.defence === 'eroding' ? 1 : 0) +
+        (nearestResistance?.defence === 'reinforcing' ? 1 : 0) +
+        (migratedDown ? 1 : 0);
+
+      if (bullishVotes >= 2 && bullishVotes > bearishVotes) {
+        if (stance === 'neutral' && bullishVotes === 3) stance = 'bullish';
+        structural = Math.min(0.8, structural + 0.05 * bullishVotes);
+        headline += ` Today the structure moved with a bullish reading: ${bullishVotes} of three positioning changes point that way.`;
+      } else if (bearishVotes >= 2 && bearishVotes > bullishVotes) {
+        if (stance === 'neutral' && bearishVotes === 3) stance = 'bearish';
+        structural = Math.min(0.8, structural + 0.05 * bearishVotes);
+        headline += ` Today the structure moved with a bearish reading: ${bearishVotes} of three positioning changes point that way.`;
+      } else if (bullishVotes > 0 && bullishVotes === bearishVotes) {
+        // Both sides adding is a widening fight over the same ground, not a
+        // direction, and the honest report is that the book is contested.
+        structural = Math.max(structural, 0.5);
+        headline += ' Both sides added to their levels today, so the book is contested rather than trending.';
+      }
+    }
+
     if (chain.pcr > 1.8 || chain.pcr < 0.5) {
       // Extreme positioning is a fragility signal in either direction: an
       // unwind of a crowded side moves price violently regardless of which
@@ -150,7 +251,13 @@ export class OptionsChainIntelligenceAgent implements IntelligenceAgent {
 
     // Data quality follows chain depth: a five-strike chain supports far less
     // than a forty-strike one, and max pain over a thin chain is near-meaningless.
-    const dataQuality = Math.min(1, chain.strikesAnalysed / 20);
+    //
+    // Halved when today's change could not be read. That is not a penalty for
+    // a missing field — it is an accurate statement about how much of the
+    // question this verdict actually answered, and it is what stops a
+    // change-blind read carrying the same weight in synthesis as a complete one.
+    const depthQuality = Math.min(1, chain.strikesAnalysed / 20);
+    const dataQuality = positioning?.hasOIChange ? depthQuality : depthQuality * 0.5;
 
     return builder
       .quality(dataQuality)

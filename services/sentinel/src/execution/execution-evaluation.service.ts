@@ -24,6 +24,16 @@ import {
   type StrikeEvaluationPolicy,
   evaluateStrikeCandidates,
 } from './strike-candidates';
+import {
+  DEFAULT_POSITIONING_POLICY,
+  buildLadder,
+  judgePositioning,
+  readOptionPositioning,
+  type OptionPositioningRead,
+  type PositioningJudgement,
+  type PositioningLadder,
+  type PositioningPolicy,
+} from './option-positioning';
 
 /**
  * The execution-facing read of one Sentinel observation.
@@ -37,7 +47,7 @@ import {
  * here re-reads the market, re-scores confidence, or manufactures a side the
  * publication gate declined to publish.
  *
- * What it adds is four gates and one selection, all of which can only ever
+ * What it adds is five gates and one selection, all of which can only ever
  * SUBTRACT from what Sentinel already published:
  *
  *   1. DATA QUALITY   — how old are the bars this was computed on, and were
@@ -48,6 +58,10 @@ import {
  *                       option side. `index-direction.ts`.
  *   4. EVIDENCE       — of the evidence THIS strategy declares material, does
  *                       enough of it support the direction. `evidence.ts`.
+ *   5. POSITIONING    — does the option chain's own book agree: is the level
+ *                       ahead thinning or thickening, is the level behind
+ *                       holding, and is the structure migrating with the
+ *                       direction. `option-positioning.ts`.
  *
  * then the three-strike evaluation, which is deliberately absent from the
  * trader-facing contract (see `strike-candidates.ts` for why).
@@ -81,7 +95,9 @@ export type EvaluationVerdict =
   | 'stale-data'
   | 'no-agent-strategy'
   | 'index-direction-conflict'
-  | 'evidence-conflict';
+  | 'evidence-conflict'
+  // ---- added with the option-positioning gate (2026-09-01) ----
+  | 'positioning-conflict';
 
 /** What the agent strategy contributed, when one validated. */
 export interface AgentStrategyRead {
@@ -170,6 +186,23 @@ export interface ExecutionEvaluation {
   agentStrategy: AgentStrategyRead | null;
   /** The evidence that strategy declares, read for the evaluated direction. */
   evidence: EvidenceRead | null;
+  /**
+   * The option book as a map of defended levels, with today's change beside
+   * each. Null until a chain has been read — every verdict that returns before
+   * the chain check carries null here rather than an empty read.
+   */
+  positioning: OptionPositioningRead | null;
+  /** Whether that map agrees with the side in focus. Null with no chain. */
+  positioningJudgement: PositioningJudgement | null;
+  /**
+   * The conditional path from spot through the defended levels ahead — each
+   * rung with what would confirm it and what would invalidate it.
+   *
+   * Computed for EVERY verdict that got as far as a chain, including refusals:
+   * an operator asking "why did nothing trade?" is asking about the levels,
+   * and a refusal that shows the map is far more useful than one that does not.
+   */
+  ladder: PositioningLadder | null;
   /** The gates themselves, in order, as pass/fail with detail. */
   confirmations: ConfirmationRead[];
   /**
@@ -202,6 +235,8 @@ export interface EvaluateInput {
   /** The caller's confidence floor, applied ON TOP of Sentinel's own gate. */
   minConfidence?: number;
   policy?: StrikeEvaluationPolicy;
+  /** Thresholds for the positioning gate. Defaults are deliberately permissive. */
+  positioningPolicy?: PositioningPolicy;
 
   // ---- The agent's own configuration, passed through from the profile ----
   /**
@@ -474,13 +509,84 @@ export class ExecutionEvaluationService {
     }
 
     const expiry = new Date(chain.frontExpiry);
+    // The wire form carries `expiry` per the chain rather than per row, so
+    // re-attach it once and hand the SAME array to both readers below. Two
+    // mappings would be two arrays built from one body — harmless today and
+    // exactly the kind of duplication that later drifts.
+    const chainEntries = chain.entries.map((e) => ({ ...e, expiry }));
+
+    // ---- GATE 5: does the option book itself agree? ----------------------
+    //
+    // Everything above this line is derived from the INDEX: bars, structure,
+    // momentum, the strategy's own evidence. This gate is the only one that
+    // asks the option market what it is doing, and it asks in the only terms
+    // an option chain can honestly answer — where participants have money at
+    // risk, and what they did with it today.
+    //
+    // It runs AFTER the chain check because it needs the chain, and BEFORE
+    // strike selection because there is no point pricing a contract for a
+    // direction the book disagrees with.
+    //
+    // Three properties keep this from becoming a second signal generator:
+    //   · the side is an ARGUMENT to `judgePositioning`, never its output;
+    //   · `neutral` passes — the gate refuses only on a positive disagreement,
+    //     never on the absence of agreement;
+    //   · a chain with no previous-day OI cannot reach the conflict threshold
+    //     at all (see DEFAULT_POSITIONING_POLICY), so a feed that stops
+    //     publishing one field degrades the read instead of halting the agent.
+    const positioning = readOptionPositioning({
+      symbol: input.symbol,
+      spot: spot ?? 0,
+      entries: chainEntries,
+    });
+    const positioningPolicy = input.positioningPolicy ?? DEFAULT_POSITIONING_POLICY;
+    const positioningJudgement = positioning ? judgePositioning(positioning, side.side, positioningPolicy) : null;
+    const ladder = positioning ? buildLadder(positioning, direction) : null;
+
+    if (positioningJudgement && positioningJudgement.verdict === 'conflicts') {
+      return {
+        ...base,
+        agentStrategy,
+        evidence,
+        positioning,
+        positioningJudgement,
+        ladder,
+        expiry: chain.frontExpiry,
+        verdict: 'positioning-conflict',
+        executable: false,
+        reason:
+          `The index read and the strategy both support the ${direction} case, but the option book does not: ` +
+          positioningJudgement.summary,
+        confirmations: [
+          ...confirmations,
+          confirmation(
+            'option-positioning',
+            'Option positioning agrees',
+            false,
+            positioningJudgement.signals
+              .filter((sig) => sig.value < 0)
+              .map((sig) => `${sig.label}: ${sig.detail}`)
+              .join(' ') || positioningJudgement.summary,
+          ),
+        ],
+      };
+    }
+    confirmations.push(
+      confirmation(
+        'option-positioning',
+        'Option positioning agrees',
+        true,
+        positioningJudgement
+          ? `${positioningJudgement.verdict} at score ${positioningJudgement.score.toFixed(2)}. ${positioningJudgement.summary}`
+          : 'No positioning read was available for this chain; the gate passed rather than refusing on absent data.',
+      ),
+    );
+
     const strikes = evaluateStrikeCandidates({
       symbol: input.symbol,
       spot: spot ?? 0,
       side: side.side,
-      // The wire form carries `expiry` per the chain, not per row; re-attach it
-      // so the evaluator sees the same `OptionChainEntry` shape the engine uses.
-      chain: chain.entries.map((e) => ({ ...e, expiry })),
+      chain: chainEntries,
       policy: input.policy ?? DEFAULT_STRIKE_POLICY,
     });
 
@@ -489,6 +595,9 @@ export class ExecutionEvaluationService {
         ...base,
         agentStrategy,
         evidence,
+        positioning,
+        positioningJudgement,
+        ladder,
         verdict: 'no-tradable-strike',
         executable: false,
         reason: strikes.unavailableReason ?? 'No candidate strike passed evaluation.',
@@ -513,12 +622,17 @@ export class ExecutionEvaluationService {
       ...base,
       agentStrategy,
       evidence,
+      positioning,
+      positioningJudgement,
+      ladder,
       verdict: 'executable',
       executable: true,
       reason:
         `${agentStrategy.strategyName} v${agentStrategy.version} validated ${direction}; ` +
         `the index agrees at ${(indexDirection.strength * 100).toFixed(0)}% and ` +
         `${(evidence.supportRatio * 100).toFixed(0)}% of its declared evidence supports. ` +
+        `The option book ${positioningJudgement ? positioningJudgement.verdict : 'could not be read but did not object'}` +
+        `${positioningJudgement ? ` (score ${positioningJudgement.score.toFixed(2)}, next level ${positioningJudgement.nextLevel ?? 'none ahead'})` : ''}. ` +
         `${strikes.selected.strike} ${side.side} selected from three candidates at ${side.confidence}% confidence.`,
       strikes,
       expiry: chain.frontExpiry,
@@ -667,6 +781,9 @@ export class ExecutionEvaluationService {
       exitRuleEvaluations,
       agentStrategy: null,
       evidence: null,
+      positioning: null,
+      positioningJudgement: null,
+      ladder: null,
       strikes: { candidates: [], selected: null, atmStrike: null, strikeStep: null, unavailableReason: null },
       expiry: null,
       marketSnapshot: {

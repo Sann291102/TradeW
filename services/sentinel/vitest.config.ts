@@ -90,6 +90,13 @@ export default defineConfig({
       // published read), and an UNPRICED leg is never confused with one priced
       // at zero.
       'src/execution/strike-candidates.spec.ts',
+      // Option-chain POSITIONING — the levels plus the verb. Pins the property
+      // the gate rests on: a chain with no previous-day open interest degrades
+      // to a static read and can never reach the conflict threshold, so a feed
+      // that stops publishing one field cannot halt an agent. Also pins the
+      // four-quadrant read, the ladder's ordering, and Rule 2 over every string
+      // the module can emit.
+      'src/execution/option-positioning.spec.ts',
       // The outcome tagger's own scheduler, added 2026-08-21. Pins the reason
       // it exists: `MarketWatchService` writes occurrences on a timer and does
       // not call `/observe`, so tagging that depended on request traffic let

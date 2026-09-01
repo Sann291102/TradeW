@@ -783,6 +783,20 @@ export interface ObserveResponse {
       putIV?: number;
       callLtp?: number;
       putLtp?: number;
+      /**
+       * Previous-session OI and close per leg, when the feed published them.
+       *
+       * Carried on the wire for the same reason the premiums are: the
+       * execution layer's positioning gate reads today's CHANGE in open
+       * interest, and re-fetching the chain to get it would be a read at a
+       * different moment — a ΔOI that disagrees with the premium computed
+       * beside it is worse than no ΔOI at all. Absent (not zero) when the feed
+       * published nothing; see `OptionChainEntry` in `@tradew/types`.
+       */
+      callPrevOI?: number;
+      putPrevOI?: number;
+      callPrevClose?: number;
+      putPrevClose?: number;
     }[];
   } | null;
 }

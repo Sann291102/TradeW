@@ -667,6 +667,10 @@ export class SentinelOrchestratorService {
                 putIV: e.putIV,
                 callLtp: e.callLtp,
                 putLtp: e.putLtp,
+                callPrevOI: e.callPrevOI,
+                putPrevOI: e.putPrevOI,
+                callPrevClose: e.callPrevClose,
+                putPrevClose: e.putPrevClose,
               })),
             }
           : null

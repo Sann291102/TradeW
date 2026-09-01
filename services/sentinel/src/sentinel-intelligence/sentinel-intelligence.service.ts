@@ -7,6 +7,10 @@ import { NewsIntelligenceService } from '../intelligence/news-intelligence.servi
 import { RiskIntelligenceService } from '../intelligence/risk-intelligence.service';
 import { StrategyEngineService, type StrategyDetection } from '../intelligence/strategy-engine.service';
 import { TrapIntelligenceService } from '../intelligence/trap-intelligence.service';
+import {
+  readOptionPositioning,
+  type OptionPositioningRead,
+} from '../execution/option-positioning';
 import { AgentRegistryService } from './agents/agent-registry.service';
 import type { AgentContext, LiveBaseRate } from './agents/agent.contract';
 import { CorpusIngestionService } from './knowledge/corpus-ingestion.service';
@@ -454,6 +458,20 @@ export class SentinelIntelligenceService implements OnModuleInit, OnModuleDestro
       risk: riskAssessment,
       trades,
       baseRates: await this.baseRatesFor(detections),
+      // Computed ONCE, here, for the same reason the snapshot is: ten agents
+      // each deriving positioning from the same chain would be ten copies of
+      // one arithmetic, and — worse — the risk agent and the options agent
+      // could quote different levels inside one run because one of them
+      // rounded differently. Pure over the chain already in `snapshot`; no
+      // second read, no network.
+      positioning:
+        snapshot?.optionChain && snapshot.lastPrice > 0
+          ? readOptionPositioning({
+              symbol,
+              spot: snapshot.lastPrice,
+              entries: snapshot.optionChain.entries,
+            })
+          : null,
     };
   }
 
@@ -521,6 +539,7 @@ export class SentinelIntelligenceService implements OnModuleInit, OnModuleDestro
       understood,
       subtask,
       snapshot: shared.snapshot,
+      positioning: shared.positioning,
       signals: shared.signals,
       detections: shared.detections,
       risk: shared.risk,
@@ -620,6 +639,15 @@ export interface ReasonOptions {
 
 export interface SharedMarketState {
   snapshot: MarketSnapshot | null;
+  /**
+   * The option book as defended levels plus today's change at each — the map
+   * every agent reasons against, not just the options agent.
+   *
+   * Null when the instrument published no chain, when spot was unusable, or
+   * when the chain was too thin to read. An agent must treat null as "no
+   * positioning read", never as balanced positioning.
+   */
+  positioning: OptionPositioningRead | null;
   signals: Signal[];
   detections: StrategyDetection[];
   risk: RiskAssessment | null;

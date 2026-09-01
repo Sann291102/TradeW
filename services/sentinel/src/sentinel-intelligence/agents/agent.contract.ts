@@ -1,3 +1,4 @@
+import type { OptionPositioningRead } from '../../execution/option-positioning';
 import type { MarketSnapshot } from '../../intelligence/market-intelligence.service';
 import type { StrategyDetection } from '../../intelligence/strategy-engine.service';
 import type { RiskAssessment, Signal } from '../../domain';
@@ -37,6 +38,24 @@ export interface AgentContext {
   subtask: Subtask;
   /** Shared market read — computed once per run. Null when data was unavailable. */
   snapshot: MarketSnapshot | null;
+  /**
+   * The option book read as DEFENDED LEVELS plus today's change at each —
+   * where support and resistance actually are, whether their defenders added
+   * or reduced today, and which way the whole structure migrated.
+   *
+   * On the shared context rather than inside the options agent because it is
+   * not only the options agent's business. A trap read is a different read
+   * when price is pressed against a wall that is being reinforced; a risk read
+   * is a different read when the support behind price is being abandoned; and
+   * a strategy read that quoted different levels from the options agent's,
+   * inside one run, would be a fake disagreement the cross-checker could not
+   * tell from a real one. One computation, one set of levels, ten readers.
+   *
+   * Null when the instrument published no chain or spot was unusable. An agent
+   * must treat null as "no positioning read" and abstain on it, never as
+   * balanced positioning.
+   */
+  positioning: OptionPositioningRead | null;
   /** Signals from the existing deterministic engines, already computed. */
   signals: Signal[];
   /** Strategy detections from the existing Strategy Engine. */

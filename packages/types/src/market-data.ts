@@ -40,6 +40,32 @@ export interface OptionChainEntry {
   putIV?: number;
   callLtp?: number;
   putLtp?: number;
+  /**
+   * Open interest at the PREVIOUS session's close, per leg.
+   *
+   * Optional because not every provider publishes it — the simulator does not,
+   * and a newly listed strike genuinely has none. A consumer must therefore
+   * treat `undefined` as "change is unknowable here", never as zero: a missing
+   * previous OI subtracted from a live one reads as the entire wall having
+   * been built today, which is the most misleading number the chain can
+   * produce.
+   *
+   * Present because the difference between this and `callOI`/`putOI` is what
+   * separates a level from a level plus a verb — a wall being ADDED to and a
+   * wall being UNWOUND are identical in a snapshot and mean opposite things.
+   * See `services/sentinel/src/execution/option-positioning.ts`.
+   */
+  callPrevOI?: number;
+  putPrevOI?: number;
+  /**
+   * The previous session's closing premium, per leg.
+   *
+   * The second half of the four-quadrant read: the sign of ΔOI says whether
+   * money arrived or left, and the sign of Δpremium says which side of the
+   * contract it arrived on.
+   */
+  callPrevClose?: number;
+  putPrevClose?: number;
 }
 
 export interface MarketBreadth {

@@ -83,8 +83,21 @@ function bullishSnapshot(overrides: Partial<MarketSnapshot> = {}): MarketSnapsho
   } as MarketSnapshot;
 }
 
-/** A dense, liquid chain around spot so strike selection has something to pick. */
-function chainAround(spot: number, step = 50, width = 5) {
+/**
+ * A dense, liquid chain around spot so strike selection has something to pick.
+ *
+ * Deliberately carries NO previous-day open interest by default. That is the
+ * production shape for a provider that publishes none, and it keeps every
+ * pre-existing test in this file exercising the same path it always did: with
+ * no ΔOI the positioning gate degrades to a static read and cannot refuse.
+ * A test that wants the gate to bite supplies `prev` explicitly.
+ */
+function chainAround(
+  spot: number,
+  step = 50,
+  width = 5,
+  prev?: (strike: number, offsetSteps: number) => Record<string, number>,
+) {
   const atm = Math.round(spot / step) * step;
   const entries = [];
   for (let i = -width; i <= width; i++) {
@@ -99,6 +112,7 @@ function chainAround(spot: number, step = 50, width = 5) {
       putIV: 15,
       callLtp: Math.max(6, 120 - i * 18),
       putLtp: Math.max(6, 120 + i * 18),
+      ...(prev ? prev(strike, i) : {}),
     });
   }
   return { frontExpiry: new Date(Date.now() + 3 * 86_400_000).toISOString(), entries };
@@ -228,11 +242,48 @@ describe('ExecutionEvaluationService — the happy path', () => {
       'agent-strategy',
       'index-direction',
       'evidence-support',
+      'option-positioning',
       'tradable-strike',
     ]);
     expect(result.confirmations.every((c) => c.passed)).toBe(true);
   });
+
+  it('passes the positioning gate on a chain that published no previous open interest', async () => {
+    // The default fixture chain carries no `callPrevOI`. The gate must report
+    // that it could not read change and PASS — never refuse on absent data.
+    const snapshot = bullishSnapshot();
+    const service = serviceFor({ snapshot, detections: [detection('agent-trend-momentum', 'bullish')] });
+    const result = await service.evaluate(BASE_INPUT);
+
+    expect(result.verdict).toBe('executable');
+    expect(result.positioning?.hasOIChange).toBe(false);
+    expect(result.positioningJudgement?.verdict).not.toBe('conflicts');
+    expect(result.confirmations.find((c) => c.id === 'option-positioning')?.passed).toBe(true);
+  });
 });
+
+/**
+ * A chain whose book actively disagrees with a bullish read: every level above
+ * spot is being written into harder than yesterday, and every level below it is
+ * being abandoned. Heaviest-nearest on both sides so the ladder's first rung is
+ * deterministic regardless of where the at-the-money strike falls.
+ */
+function chainDisagreeingWithBullish(spot: number) {
+  return chainAround(spot, 50, 5, (_strike, i) => {
+    const callOI = i >= 0 ? 2_000_000 - i * 100_000 : 400_000;
+    const putOI = i <= 0 ? 2_000_000 + i * 100_000 : 300_000;
+    return {
+      callOI,
+      putOI,
+      // Call OI up on a falling premium — fresh writing, the level defended harder.
+      callPrevOI: i >= 0 ? callOI - 800_000 : 400_000,
+      callPrevClose: Math.max(6, 120 - i * 18) * 1.6,
+      // Put OI down on a rising premium — writers covering, the level abandoned.
+      putPrevOI: i <= 0 ? putOI + 800_000 : 300_000,
+      putPrevClose: Math.max(6, 120 + i * 18) * 0.6,
+    };
+  });
+}
 
 describe('ExecutionEvaluationService — the gates', () => {
   it('GATE 1: refuses stale bars before reporting anything as meaningful', async () => {
@@ -357,6 +408,46 @@ describe('ExecutionEvaluationService — the gates', () => {
     // correct refusals and both must leave `executable` false.
     expect(['evidence-conflict', 'index-direction-conflict']).toContain(result.verdict);
     expect(result.executable).toBe(false);
+  });
+
+  it('GATE 5: refuses when the option book disagrees with the side in focus', async () => {
+    // Index, strategy and evidence all say bullish. The chain says every level
+    // above spot is being written into harder and every level below it is
+    // being abandoned. That disagreement is the answer, and it belongs to the
+    // option market — nothing above this gate can see it.
+    const snapshot = bullishSnapshot();
+    const service = serviceFor({
+      snapshot,
+      detections: [detection('agent-trend-momentum', 'bullish')],
+      optionChain: chainDisagreeingWithBullish(snapshot.lastPrice),
+    });
+    const result = await service.evaluate(BASE_INPUT);
+
+    expect(result.verdict).toBe('positioning-conflict');
+    expect(result.executable).toBe(false);
+    expect(result.positioning?.hasOIChange).toBe(true);
+    expect(result.positioningJudgement?.verdict).toBe('conflicts');
+    // The refusal names which signals opposed it, not just that it refused.
+    expect(result.confirmations.find((c) => c.id === 'option-positioning')?.passed).toBe(false);
+    // And the map is still attached: "why did nothing trade?" is a question
+    // about the levels.
+    expect(result.ladder?.steps.length).toBeGreaterThan(0);
+    expect(result.ladder?.nextDecisionPoint).not.toBeNull();
+  });
+
+  it('GATE 5: judges the mirror side of the same book independently', async () => {
+    // The same chain that refuses a CE side must not automatically endorse a
+    // PE one — the two are separate readings of one book, and a gate that
+    // simply inverted would be a direction generator wearing a gate's clothes.
+    const snapshot = bullishSnapshot();
+    const service = serviceFor({
+      snapshot,
+      detections: [detection('agent-trend-momentum', 'bullish')],
+      optionChain: chainDisagreeingWithBullish(snapshot.lastPrice),
+    });
+    const result = await service.evaluate(BASE_INPUT);
+    expect(result.positioningJudgement?.side).toBe('CE');
+    expect(result.positioning).not.toBeNull();
   });
 
   it('refuses below the profile’s own confidence floor', async () => {
