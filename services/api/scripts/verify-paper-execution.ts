@@ -261,6 +261,9 @@ async function main() {
         evidence: live?.evidence ?? null,
         confirmations: live?.confirmations ?? [],
         exitRuleEvaluations: live?.exitRuleEvaluations ?? [],
+        positioning: live?.positioning ?? null,
+        positioningJudgement: live?.positioningJudgement ?? null,
+        ladder: live?.ladder ?? null,
       };
 
   // Substitute ONLY the Sentinel hop. Everything below is production code.

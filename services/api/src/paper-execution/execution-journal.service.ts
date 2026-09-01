@@ -141,6 +141,8 @@ export class ExecutionJournalService {
         rationale: intent.rationale,
         publication: (intent.publication ?? undefined) as Prisma.InputJsonValue | undefined,
         optionContext: (intent.optionContext ?? undefined) as Prisma.InputJsonValue | undefined,
+        positioning: (intent.positioning ?? undefined) as Prisma.InputJsonValue | undefined,
+        positioningJudgement: (intent.positioningJudgement ?? undefined) as Prisma.InputJsonValue | undefined,
         policyChecks: (marketSnapshot.policyChecks ?? undefined) as Prisma.InputJsonValue | undefined,
 
         walletEquity: intent.walletEquity,

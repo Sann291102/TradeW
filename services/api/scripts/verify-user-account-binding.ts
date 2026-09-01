@@ -245,6 +245,9 @@ async function main() {
     evidence: live?.evidence ?? null,
     confirmations: live?.confirmations ?? [],
     exitRuleEvaluations: live?.exitRuleEvaluations ?? [],
+    positioning: live?.positioning ?? null,
+    positioningJudgement: live?.positioningJudgement ?? null,
+    ladder: live?.ladder ?? null,
   };
   (execution as unknown as { sentinel: SentinelExecutionClient }).sentinel = { evaluate: async () => decision } as unknown as SentinelExecutionClient;
 
