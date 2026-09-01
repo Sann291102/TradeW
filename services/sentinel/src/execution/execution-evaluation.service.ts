@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { ObserveRequest, ObserveResponse, SideInFocus } from '../domain';
 import { SentinelOrchestratorService } from '../orchestrator/sentinel-orchestrator.service';
 import type { MarketSnapshot } from '../intelligence/market-intelligence.service';
-import { latestBarAt } from '../intelligence/market-intelligence.service';
+import { latestDataAt } from '../intelligence/market-intelligence.service';
 import {
   StrategyEngineService,
   type StrategyDefinition,
@@ -264,7 +264,12 @@ export class ExecutionEvaluationService {
     const dataQuality = assessDataQuality({
       now,
       candles: snapshot.candles.length,
-      newestBarAt: latestBarAt(snapshot),
+      // `latestDataAt`, not `latestBarAt`: this gate asks whether the read is
+      // LIVE, and during market hours the newest data is the bar still being
+      // written. Measuring against the last closed bar would charge every live
+      // observation up to a full 15 minutes of age it does not have, leaving
+      // almost nothing of the 30-minute allowance for a genuinely late poll.
+      newestBarAt: latestDataAt(snapshot),
       spot,
       optionChainStrikes: snapshot.optionChain?.entries.length ?? 0,
       minCandles: input.minCandles ?? DEFAULT_MIN_CANDLES,

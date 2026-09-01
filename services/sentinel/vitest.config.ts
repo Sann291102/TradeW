@@ -125,6 +125,13 @@ export default defineConfig({
       // The agent-facing evaluation as a whole, including the refusal when the
       // index direction and the published option side disagree.
       'src/execution/execution-evaluation.spec.ts',
+      // The still-forming bar. The bridge returns the in-progress candle as
+      // the last element during market hours, and every rule that measures the
+      // newest bar was reading it — so the same bar gave different answers
+      // depending on where in its fifteen minutes the 30-second tick landed.
+      // Pins both halves: a live snapshot drops it, an out-of-hours or
+      // replayed one keeps its last real bar.
+      'src/intelligence/forming-candle.spec.ts',
     ],
     environment: 'node',
     // Deterministic and clock-injected throughout: a slow test is a real hang,

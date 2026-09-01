@@ -32,7 +32,7 @@ import { deriveSentinelEvents } from '../events/sentinel-event';
 import { ExplainService } from '../explain/explain.service';
 import { EmotionIntelligenceService } from '../intelligence/emotion-intelligence.service';
 import { MarketBehaviourService, type MarketBehaviourRead } from '../intelligence/market-behaviour.service';
-import { MarketIntelligenceService, MarketSnapshot } from '../intelligence/market-intelligence.service';
+import { MarketIntelligenceService, MarketSnapshot, liveCandles } from '../intelligence/market-intelligence.service';
 import { NewsIntelligenceService } from '../intelligence/news-intelligence.service';
 import { RiskIntelligenceService } from '../intelligence/risk-intelligence.service';
 import { StrategyDetection, StrategyEngineService } from '../intelligence/strategy-engine.service';
@@ -692,7 +692,12 @@ export class SentinelOrchestratorService {
       // one audit guarantee to honour.
       chartAnnotations: buildReasoningAnnotations({
         symbol,
-        candles: snapshot.candles ?? [],
+        // Live bars, forming one included. These set the time SPAN a drawing
+        // is stretched across, and the browser draws its own candles from the
+        // bridge — which include the forming bar. A level line that stopped
+        // one bar short of the chart it is drawn on would look like the level
+        // had expired when it had not.
+        candles: liveCandles(snapshot),
         behaviour: behaviourRead,
         lifecycles: strategyLifecycles,
         support: snapshot.support,
