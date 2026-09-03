@@ -11,3 +11,4 @@
  * format, no chance of the two drifting into incompatible envelopes.
  */
 export * from './credential-crypto';
+export * from './migration-manifest';

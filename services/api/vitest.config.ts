@@ -48,6 +48,16 @@ export default defineConfig({
       'src/nse/nse.service.spec.ts',
       // Proof that a secret cannot be logged through the security logger.
       'src/common/security-log.spec.ts',
+      // How an unhandled error becomes an HTTP response. Sign-in returned a
+      // bare 500 "Internal server error" for every account on an un-migrated
+      // database until 2026-09-03; these assertions pin the classification
+      // (environment fault → 503 with a remedy, unexplained → 500), the
+      // request id that ties a response to its log line, and — just as
+      // important — that HttpException bodies still pass through untouched.
+      'src/common/all-exceptions.filter.spec.ts',
+      // The other half of that fix: reading the database's own migration
+      // bookkeeping and saying, at boot, exactly which migrations are missing.
+      'src/prisma/migration-status.spec.ts',
       // Learning Platform: entitlement/admin access decisions, and progress math.
       'src/learning/learning-access.spec.ts',
       'src/learning/learning-progress.spec.ts',
