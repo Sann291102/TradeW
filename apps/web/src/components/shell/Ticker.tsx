@@ -2,21 +2,38 @@
 
 import { useReducedMotion } from 'framer-motion';
 import { cn, Badge } from '@tradew/ui';
-import { INDEX_QUOTES, TICKER_EXTRA, type IndexQuote } from '@/lib/mock/market';
+import { INDEX_QUOTES, TICKER_EXTRA } from '@/lib/mock/market';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
-import { fmt, pct } from '@/lib/format';
+import { toDisplayRow, directionClass, directionOf, type QuoteDisplayRow } from '@/lib/markets/quoteDisplay';
+import { changeOrDash, fmtPrice, pctOrDash } from '@/lib/format';
 
-function TickerItem({ q }: { q: IndexQuote }) {
-  const up = q.change >= 0;
+function TickerItem({ q }: { q: QuoteDisplayRow }) {
   return (
     <span className="mx-4 inline-flex items-baseline gap-2 whitespace-nowrap">
       <span className="text-xs font-semibold text-muted">{q.name}</span>
-      <span className="font-mono text-xs font-bold tabular-nums text-text">{fmt(q.ltp)}</span>
-      <span className={cn('font-mono text-xs tabular-nums', up ? 'text-up' : 'text-down')}>
-        {pct(q.changePct)}
-      </span>
+      <span className="font-mono text-xs font-bold tabular-nums text-text">{q.price}</span>
+      <span className={cn('font-mono text-xs tabular-nums', directionClass(q.direction))}>{q.changePctText}</span>
     </span>
   );
+}
+
+/** The mock preview rows (TICKER_EXTRA, and INDEX_QUOTES when the bridge is
+ *  unreachable) through the same projection, so preview and live data render
+ *  by one set of rules rather than two. */
+function previewRow(q: { symbol: string; name: string; ltp: number; change: number; changePct: number }): QuoteDisplayRow {
+  return {
+    symbol: q.symbol,
+    name: q.name,
+    ltp: q.ltp,
+    change: q.change,
+    changePct: q.changePct,
+    price: fmtPrice(q.ltp),
+    changeText: changeOrDash(q.change),
+    changePctText: pctOrDash(q.changePct),
+    direction: directionOf(q.change),
+    atPreviousClose: false,
+    priceSource: null,
+  };
 }
 
 function MarketStatusBadge({ status }: { status: 'loading' | 'live' | 'closed' | 'unreachable' }) {
@@ -47,11 +64,11 @@ export function Ticker() {
     );
   }
 
-  const primary: IndexQuote[] =
+  const primary: QuoteDisplayRow[] =
     (status === 'live' || status === 'closed') && quotes
-      ? quotes.map((q) => ({ symbol: q.symbol, name: q.displayName, ltp: q.ltp, change: q.change, changePct: q.changePct, spark: [] }))
-      : INDEX_QUOTES;
-  const items = [...primary, ...TICKER_EXTRA];
+      ? quotes.map(toDisplayRow)
+      : INDEX_QUOTES.map(previewRow);
+  const items = [...primary, ...TICKER_EXTRA.map(previewRow)];
 
   if (reduce) {
     return (

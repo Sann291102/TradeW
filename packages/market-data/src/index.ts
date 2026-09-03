@@ -47,6 +47,13 @@ export * from './providers/binance/binance.client';
 // docstring for the evidence behind that.
 export * from './providers/twelvedata/twelvedata.client';
 
+// quotes — the last-valid-price invariant. A missing market update is not a
+// price of zero: this is the single place that decides what an instrument is
+// worth when the exchange sends nothing, and every runtime (the live-feed
+// bridge, the ingestor's database writes) reads that decision rather than
+// forming its own. See src/quotes/last-price.ts.
+export * from './quotes';
+
 // infrastructure
 export * from './cache/in-memory-quote-cache';
 export * from './rate-limit/token-bucket';

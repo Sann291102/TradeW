@@ -107,7 +107,7 @@ export function parsePacket(buf: Buffer, offset = 0, now: Date = new Date()): Pa
       if (buf.length - offset < 16) return null;
       const ltp = buf.readFloatLE(offset + 8);
       const ltt = buf.readInt32LE(offset + 12);
-      return { kind: 'tick', tick: { ref, at: tradeTime(ltt, now), source: 'dhan', ltp: roundPrice(ltp) } };
+      return { kind: 'tick', tick: { ref, at: tradeTime(ltt, now), source: 'dhan', ltp: price(ltp) } };
     }
 
     case FEED_CODE.PREV_CLOSE: {
@@ -118,7 +118,7 @@ export function parsePacket(buf: Buffer, offset = 0, now: Date = new Date()): Pa
           ref,
           at: now,
           source: 'dhan',
-          previousClose: roundPrice(buf.readFloatLE(offset + 8)),
+          previousClose: price(buf.readFloatLE(offset + 8)),
           openInterest: buf.readInt32LE(offset + 12),
         },
       };
@@ -138,16 +138,16 @@ export function parsePacket(buf: Buffer, offset = 0, now: Date = new Date()): Pa
           ref,
           at: tradeTime(ltt, now),
           source: 'dhan',
-          ltp: roundPrice(buf.readFloatLE(offset + 8)),
+          ltp: price(buf.readFloatLE(offset + 8)),
           lastTradedQuantity: buf.readInt16LE(offset + 12),
-          averageTradePrice: roundPrice(buf.readFloatLE(offset + 18)),
+          averageTradePrice: price(buf.readFloatLE(offset + 18)),
           volume: buf.readInt32LE(offset + 22),
           totalSellQuantity: buf.readInt32LE(offset + 26),
           totalBuyQuantity: buf.readInt32LE(offset + 30),
-          open: roundPrice(buf.readFloatLE(offset + 34)),
-          close: nonZero(roundPrice(buf.readFloatLE(offset + 38))),
-          high: roundPrice(buf.readFloatLE(offset + 42)),
-          low: roundPrice(buf.readFloatLE(offset + 46)),
+          open: price(buf.readFloatLE(offset + 34)),
+          close: price(buf.readFloatLE(offset + 38)),
+          high: price(buf.readFloatLE(offset + 42)),
+          low: price(buf.readFloatLE(offset + 46)),
         },
       };
     }
@@ -162,21 +162,24 @@ export function parsePacket(buf: Buffer, offset = 0, now: Date = new Date()): Pa
           ref,
           at: tradeTime(ltt, now),
           source: 'dhan',
-          ltp: roundPrice(buf.readFloatLE(offset + 8)),
+          ltp: price(buf.readFloatLE(offset + 8)),
           lastTradedQuantity: buf.readInt16LE(offset + 12),
-          averageTradePrice: roundPrice(buf.readFloatLE(offset + 18)),
+          averageTradePrice: price(buf.readFloatLE(offset + 18)),
           volume: buf.readInt32LE(offset + 22),
           totalSellQuantity: buf.readInt32LE(offset + 26),
           totalBuyQuantity: buf.readInt32LE(offset + 30),
           openInterest: buf.readInt32LE(offset + 34),
           dayHighOpenInterest: buf.readInt32LE(offset + 38),
           dayLowOpenInterest: buf.readInt32LE(offset + 42),
-          open: roundPrice(buf.readFloatLE(offset + 46)),
-          close: nonZero(roundPrice(buf.readFloatLE(offset + 50))),
-          high: roundPrice(buf.readFloatLE(offset + 54)),
-          low: roundPrice(buf.readFloatLE(offset + 58)),
-          bid: depth[0]?.bidPrice,
-          ask: depth[0]?.askPrice,
+          open: price(buf.readFloatLE(offset + 46)),
+          close: price(buf.readFloatLE(offset + 50)),
+          high: price(buf.readFloatLE(offset + 54)),
+          low: price(buf.readFloatLE(offset + 58)),
+          // A depth ladder with no resting order carries a 0 price, which is
+          // "no bid" and not a bid of nothing. `price()` keeps that out of the
+          // tick; the raw ladder below is left verbatim as the wire sent it.
+          bid: price(depth[0]?.bidPrice ?? 0),
+          ask: price(depth[0]?.askPrice ?? 0),
           depth,
         },
       };
@@ -260,7 +263,29 @@ function roundPrice(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Dhan sends 0 for day-close before market close; that is "absent", not zero. */
-function nonZero(n: number): number | undefined {
-  return n === 0 ? undefined : n;
+/**
+ * A price field off the wire: rounded, with zero read as ABSENT.
+ *
+ * Dhan encodes "this packet carries no value for this field" as 0.0. That is
+ * not a rare edge: outside session hours the exchange has no live values to
+ * send, so a Quote packet for a closed market arrives with LTP, open, high and
+ * low all zero. Reading those as real observations is where the dashboard's
+ * "NIFTY 50 — 0.00" came from, and this is the boundary at which it stops:
+ * every consumer downstream (the live-feed bridge's last-price store, the
+ * ingestor's Quote writes, Sentinel's signal inputs) reads `undefined` and
+ * keeps whatever it last knew.
+ *
+ * The MarketTick contract has always required this — "A consumer must be able
+ * to tell 'not sent in this mode' from 'sent as zero', so absent fields are
+ * `undefined` rather than defaulted" — but only the day-close field honoured
+ * it. No legitimate observation is lost: every instrument on NSE, BSE and MCX,
+ * indices and option premiums included, trades strictly above zero.
+ *
+ * Counts (volume, open interest, traded quantity) are deliberately NOT put
+ * through this: a genuine zero there means "nothing has traded", which is a
+ * fact worth carrying.
+ */
+function price(n: number): number | undefined {
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return roundPrice(n);
 }

@@ -115,7 +115,15 @@ async function loadQuotes(symbols: string[]): Promise<LiveQuote[]> {
   try {
     const snap = await fetchDhanQuotes();
     const all = [...snap.indices, ...snap.stocks, ...snap.etfs, ...snap.commodities];
-    const hits = all.filter((q) => wanted.has(q.symbol.toUpperCase()));
+    // A quote with no observed price is dropped, not defaulted. The assistant
+    // states numbers to a trader; "NIFTY is at 0" is worse than "I don't have a
+    // price for NIFTY", and the fall-through below reaches the simulated engine
+    // or says so. The bridge already carries the LAST VALID price forward, so
+    // this only excludes instruments genuinely never observed.
+    const hits = all.filter(
+      (q): q is typeof q & { ltp: number; change: number; changePct: number } =>
+        wanted.has(q.symbol.toUpperCase()) && typeof q.ltp === 'number' && typeof q.change === 'number' && typeof q.changePct === 'number',
+    );
     if (hits.length) {
       // The bridge leaves open/high/low/close nullable (no intraday history
       // before the first tick of a session); LiveQuote wants numbers. Fall back
@@ -126,6 +134,10 @@ async function loadQuotes(symbols: string[]): Promise<LiveQuote[]> {
         high: q.high ?? q.ltp,
         low: q.low ?? q.ltp,
         close: q.close ?? q.ltp,
+        bid: q.bid ?? q.ltp,
+        ask: q.ask ?? q.ltp,
+        volume: q.volume ?? 0,
+        updatedAt: q.updatedAt ?? new Date().toISOString(),
         marketStatus: q.marketStatus,
       }));
     }

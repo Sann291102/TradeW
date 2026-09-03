@@ -8,6 +8,43 @@ export function fmt(n: number): string {
   return inrFmt.format(n);
 }
 
+/**
+ * The glyph shown where a number is genuinely unknown. An em-dash, so it reads
+ * as "no value" at a glance and can never be mistaken for a quantity.
+ */
+export const NO_VALUE = '—';
+
+/**
+ * A price that may not be known.
+ *
+ * ── WHY THIS EXISTS ────────────────────────────────────────────────────────
+ *
+ * `fmt(n)` above takes a `number`, so every call site that had a maybe-absent
+ * price reached for `fmt(price ?? 0)` or `fmt(price || previousPrice)` — and
+ * `fmt(0)` renders "0.00", a price. That is how a closed market came to be
+ * reported on the dashboard as NIFTY 50 at 0.00: not one bug, but the same
+ * defaulting reflex repeated at every card.
+ *
+ * The market-data feed now says `null` when it has never observed a price
+ * (see DhanLiveQuote.ltp) and carries the last valid one forward otherwise, so
+ * `null` here means the value is genuinely unknown and the only correct thing
+ * to render is "—". Zero is never a fallback for a missing price.
+ */
+export function fmtPrice(n: number | null | undefined): string {
+  return typeof n === 'number' && Number.isFinite(n) ? fmt(n) : NO_VALUE;
+}
+
+/** Signed percent, or "—" when the move cannot be computed. An unmoved market
+ *  ("+0.00%") and an unknown move are different facts. */
+export function pctOrDash(n: number | null | undefined): string {
+  return typeof n === 'number' && Number.isFinite(n) ? pct(n) : NO_VALUE;
+}
+
+/** Signed absolute change, or "—". Pairs with `pctOrDash`. */
+export function changeOrDash(n: number | null | undefined): string {
+  return typeof n === 'number' && Number.isFinite(n) ? `${sign(n)}${fmt(Math.abs(n))}` : NO_VALUE;
+}
+
 /** Rupee amount, no decimals (e.g. ₹4,86,500). */
 export function inr(n: number, decimals: 0 | 2 = 0): string {
   return '₹' + (decimals === 0 ? inrFmt0 : inrFmt).format(Math.abs(n));
