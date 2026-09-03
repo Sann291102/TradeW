@@ -1,6 +1,6 @@
-import { INDEX_QUOTES, TICKER_EXTRA, WATCHLIST, TOP_GAINERS, TOP_LOSERS } from '@/lib/mock/market';
-import { FO_STOCK_UNIVERSE } from '@/lib/mock/foUniverse';
-import { ALL_NSE_INDICES } from '@/lib/mock/indices';
+import { INSTRUMENT_CATALOG } from '@/lib/instruments/catalog';
+import { resolveInstrument } from '@/lib/instruments/resolve';
+import type { InstrumentRef } from '@/lib/instruments/types';
 
 /**
  * Instrument & option-contract parsing for the assistant's control layer.
@@ -22,69 +22,44 @@ import { ALL_NSE_INDICES } from '@/lib/mock/indices';
 // Symbol universe
 // ---------------------------------------------------------------------------
 
-/** Every symbol the app knows, same sources the command palette searches
- *  (lib/search/providers.ts) so the assistant and the palette can never
- *  disagree about what exists. */
-export const SYMBOL_UNIVERSE: ReadonlyArray<{ symbol: string; name: string }> = (() => {
-  const map = new Map<string, string>();
-  for (const q of [...INDEX_QUOTES, ...TICKER_EXTRA]) map.set(q.symbol, q.name);
-  for (const w of WATCHLIST) map.set(w.symbol, w.name);
-  for (const m of [...TOP_GAINERS, ...TOP_LOSERS]) map.set(m.symbol, m.name);
-  for (const s of FO_STOCK_UNIVERSE) map.set(s.symbol, s.name);
-  for (const idx of ALL_NSE_INDICES) if (!map.has(idx.name)) map.set(idx.name, idx.name);
-  return Array.from(map.entries()).map(([symbol, name]) => ({ symbol, name }));
-})();
-
 /**
- * Spoken/typed forms that don't literally equal the traded symbol. Longest
- * phrases first — "bank nifty" must win over "nifty", or "open bank nifty"
- * resolves to NIFTY and silently opens the wrong instrument.
+ * Every symbol the app knows.
+ *
+ * Was assembled here from the NSE mock sources alone, which is precisely why
+ * "open BTC chart" and "open crypto" resolved to nothing: a crypto pair was not
+ * a thing this module could name. It now projects `INSTRUMENT_CATALOG`, which
+ * spans NSE/BSE, Binance, and Twelve Data's FX and US boards. The shape is
+ * unchanged so existing callers are untouched.
  */
-const SYMBOL_ALIASES: ReadonlyArray<[string, string]> = [
-  ['nifty bank', 'BANKNIFTY'],
-  ['bank nifty', 'BANKNIFTY'],
-  ['banknifty', 'BANKNIFTY'],
-  ['nifty fifty', 'NIFTY'],
-  ['nifty 50', 'NIFTY'],
-  ['nifty50', 'NIFTY'],
-  ['fin nifty', 'FINNIFTY'],
-  ['finnifty', 'FINNIFTY'],
-  ['midcap nifty', 'MIDCPNIFTY'],
-  ['nifty midcap', 'MIDCPNIFTY'],
-  ['midcpnifty', 'MIDCPNIFTY'],
-  ['sensex', 'SENSEX'],
-  ['bankex', 'BANKEX'],
-  ['nifty', 'NIFTY'],
-];
+export const SYMBOL_UNIVERSE: ReadonlyArray<{ symbol: string; name: string }> =
+  INSTRUMENT_CATALOG.map((i) => ({ symbol: i.symbol, name: i.displayName }));
 
 /**
- * Find the instrument named in `text`. Aliases are matched as phrases first,
- * then real symbols on word boundaries (so "ITC" doesn't match inside
- * "SWITCH"), then company names.
+ * Find the instrument named in `text`, across every venue.
+ *
+ * Delegates to `lib/instruments/resolve`, which owns the match ordering
+ * (longest form first, so "bank nifty" beats "nifty" and "btc usdt" beats
+ * "btc") and the word-boundary rules that keep "ADA" from matching inside
+ * "CANADA". Aliases now live on the catalog entry rather than in a table here,
+ * so teaching the assistant a new name for an instrument is a one-line change
+ * in one file.
  */
 export function findSymbol(text: string): { symbol: string; matched: string } | null {
-  const lower = text.toLowerCase();
+  const hit = resolveInstrument(text);
+  return hit ? { symbol: hit.ref.symbol, matched: hit.matched } : null;
+}
 
-  for (const [alias, symbol] of SYMBOL_ALIASES) {
-    if (new RegExp(`\\b${escapeRe(alias)}\\b`).test(lower)) return { symbol, matched: alias };
-  }
-
-  // Longest symbol first, so BANKNIFTY beats NIFTY when both could match.
-  const bySymbolLength = [...SYMBOL_UNIVERSE].sort((a, b) => b.symbol.length - a.symbol.length);
-  for (const s of bySymbolLength) {
-    if (new RegExp(`\\b${escapeRe(s.symbol.toLowerCase())}\\b`).test(lower)) {
-      return { symbol: s.symbol, matched: s.symbol };
-    }
-  }
-
-  // Company names are only worth matching when reasonably distinctive —
-  // two-letter fragments produce constant false positives.
-  for (const s of bySymbolLength) {
-    const name = s.name.toLowerCase();
-    if (name.length >= 5 && lower.includes(name)) return { symbol: s.symbol, matched: s.name };
-  }
-
-  return null;
+/**
+ * The same lookup, returning the full instrument.
+ *
+ * Callers that are about to *act* should use this rather than `findSymbol`:
+ * the capability fields (`chartSurface`, `candleSource`, `supportedIntervals`,
+ * `tradeable`) are what let a plan be checked for satisfiability before it
+ * runs, instead of the assistant navigating somewhere it cannot operate and
+ * reporting success anyway.
+ */
+export function findInstrument(text: string): InstrumentRef | null {
+  return resolveInstrument(text)?.ref ?? null;
 }
 
 function escapeRe(s: string): string {

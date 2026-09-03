@@ -55,6 +55,14 @@ export default defineConfig({
       // whether "should I buy NIFTY at this price" is answered with a number or
       // refused, and it is pure and framework-free by design (types.ts).
       'src/lib/assistant/**/*.test.ts',
+      // The instrument catalog and resolver. Two failure modes, both silent:
+      // an instrument that drops out of the catalog stops being nameable by
+      // the assistant entirely (which is how "open crypto" came to be answered
+      // with a sentence about the analysis engine), and a `chartSurface` that
+      // overstates what a venue supports makes the agent promise a timeframe
+      // it cannot set. The crypto/FX/US lists here MIRROR constants in
+      // services/api/src/crypto, so they are compared rather than trusted.
+      'src/lib/instruments/**/*.test.ts',
       // Active pricing — a drifted price is a billing incident with a UI in
       // front of it, and the withdrawn annual term must stay withdrawn.
       'src/lib/pricing.test.ts',

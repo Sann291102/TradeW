@@ -1,4 +1,4 @@
-import { NAV_ITEMS } from '@/components/shell/nav-config';
+import { matchDestination } from './destinations';
 import type { PanelKind, ThemeName } from '../store/workspaceStore';
 import { commandPlan, type AssistantAction, type AssistantPlan } from './types';
 import { EXPLAIN_RE as CONCEPT_EXPLAIN_RE } from './concepts';
@@ -306,41 +306,48 @@ function matchChrome(lower: string): AssistantPlan | null {
   return null;
 }
 
-// --- navigation (derived from NAV_ITEMS) -----------------------------------
+// --- navigation (resolved against the destination registry) -----------------
 
+/**
+ * Resolve a named place.
+ *
+ * Was derived from `NAV_ITEMS` alone, which is why "open crypto" stopped
+ * working the day Crypto became a Markets venue tab instead of a sidebar
+ * entry — see the doc comment in `destinations.ts`. The registry now covers
+ * pages, venues and redirect aliases, so a sidebar refactor cannot silently
+ * remove a capability again.
+ */
 function matchNav(lower: string): AssistantPlan | null {
-  // Longest label first so a two-word page can't be shadowed by a one-word one.
-  const items = [...NAV_ITEMS].sort((a, b) => b.label.length - a.label.length);
+  const hit = matchDestination(lower);
+  if (!hit) return null;
 
-  for (const item of items) {
-    const label = item.label.toLowerCase();
-    if (!new RegExp(`\\b${label}\\b`).test(lower)) continue;
+  // Bare mention isn't a command — "how does the dashboard work" is a question
+  // about the app, not a request to navigate. Require a verb, or that the whole
+  // utterance is essentially just the destination's name.
+  const hasVerb = new RegExp(`\\b${OPEN_VERB}\\b`).test(lower);
+  const isBareName = lower.replace(/[^a-z0-9\s]/g, '').trim() === hit.matched;
+  if (!hasVerb && !isBareName) return null;
 
-    // Bare mention isn't a command — "how does the dashboard work" is a
-    // question about the app, not a request to navigate. Require a verb, or
-    // that the whole utterance is essentially just the page name.
-    const hasVerb = new RegExp(`\\b${OPEN_VERB}\\b`).test(lower);
-    const isBareName = lower.replace(/[^a-z\s]/g, '').trim() === label;
-    if (!hasVerb && !isBareName) continue;
+  const { dest } = hit;
+  const actions: AssistantAction[] = [{ type: 'navigate', href: dest.href }];
+  const steps = [
+    `Resolved "${hit.matched}" → ${dest.label}`,
+    `Opened ${dest.href}`,
+  ];
 
-    const actions: AssistantAction[] = [{ type: 'navigate', href: item.href }];
-    const steps = [`Opened ${item.href}`];
-
-    // Compound command: "open research and explain". The navigation half runs
-    // now; the narration half is the analysis agent (Phase 2), so say that
-    // plainly instead of implying an explanation is coming.
-    if (EXPLAIN_RE.test(lower)) {
-      return {
-        intent: 'command',
-        reply: `Opened ${item.label}. Reading the page and explaining it is the analysis half of the assistant — that lands in the next phase, so for now I've just taken you there.`,
-        actions,
-        steps: [...steps, 'Analysis requested → not yet available (Phase 2)'],
-      };
-    }
-
-    return commandPlan(`Opened ${item.label}.`, actions, steps);
+  // Compound command: "open research and explain". The navigation half runs
+  // now; the narration half is the analysis agent (Phase 2), so say that
+  // plainly instead of implying an explanation is coming.
+  if (EXPLAIN_RE.test(lower)) {
+    return {
+      intent: 'command',
+      reply: `Opened ${dest.label}. Reading the page and explaining it is the analysis half of the assistant — that lands in the next phase, so for now I've just taken you there.`,
+      actions,
+      steps: [...steps, 'Analysis requested → not yet available (Phase 2)'],
+    };
   }
-  return null;
+
+  return commandPlan(`Opened ${dest.label}.`, actions, steps);
 }
 
 // --- bare symbol -----------------------------------------------------------
