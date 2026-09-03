@@ -75,6 +75,12 @@ export default defineConfig({
       // whoever logged in last" — the credential's storage scope is the fix,
       // so it is asserted rather than eyeballed.
       'src/lib/session-storage.test.ts',
+      // The routing cookie's two repair directions. The missing one let a
+      // `tw_auth` that outlived its token admit a signed-out browser to the
+      // workspace for the cookie's full 30 days — reported as "localhost skips
+      // the landing page but the tunnel URL doesn't", because a cookie jar is
+      // per-origin and the split therefore looks environmental.
+      'src/lib/auth-hint.test.ts',
       // The forming candle. Regression cover for a chart whose last-price line
       // sat at yesterday's close while the card beside it showed today's price.
       'src/lib/hooks/liveCandle.test.ts',
