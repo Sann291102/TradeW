@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { cn } from '@tradew/ui';
 import {
   filterStrikes,
@@ -11,6 +12,7 @@ import {
 } from '@/lib/sentinel/optionChain';
 import type { InstrumentStatus } from '@/lib/sentinel/useOptionInstruments';
 import type { OptionInstrument } from '@/lib/sentinel/watchState';
+import { ChevronDownIcon } from '@/components/shell/icons';
 
 /**
  * What the dropdown offers, for a given side's ladder and the typed query.
@@ -25,9 +27,35 @@ export function strikeOptions(rows: StrikeRow[], atmIndex: number, query: string
   return query.trim() ? filterStrikes(rows, query) : strikeWindow(rows, atmIndex);
 }
 
+function SearchIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <circle cx="9" cy="9" r="6" stroke="currentColor" strokeWidth="1.6" />
+      <path d="m14 14 3 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /**
- * One side's strike selector: typeable, searchable, and unable to return the
- * other side's contract.
+ * One side's strike selector: the SAME control shape as the market head next to
+ * it — a summary button that opens a searchable popover — reading one side's
+ * real ladder.
+ *
+ * ── WHY IT LOOKS LIKE `MarketSelector` ─────────────────────────────────────
+ *
+ * The market and the two strikes are one act of selection: "which contract is
+ * Sentinel watching". They sit on one row and are operated the same way — a
+ * head button showing the current value in the mono face, a popover with a
+ * search box over a scrollable list, a live-data footnote. The strike control
+ * used to be a bare text input inside a separate panel further down the form,
+ * which read as a different kind of thing from the market it belongs to and
+ * left the operator typing into a box while the market sat in a dropdown.
+ *
+ * The classes here mirror `components/sentinel/MarketSelector.tsx` deliberately
+ * (`rounded-xl border bg-card px-3.5 py-2.5 shadow-elev1` head, `w-[280px]`
+ * `shadow-elev3` popover, `font-mono text-sm font-bold` value). If that control
+ * is restyled, restyle this one with it — a near-match is worse than either
+ * extreme, because two controls one gap apart are read as a set.
  *
  * ── WHAT MAKES A CE BOX UNABLE TO PICK A PE ────────────────────────────────
  *
@@ -72,6 +100,7 @@ export function StrikeCombobox({
   instrumentStatus,
   instrument,
   focused = false,
+  context,
 }: {
   side: 'CE' | 'PE';
   /** THIS side's ladder. The only source of anything this control can select. */
@@ -84,13 +113,22 @@ export function StrikeCombobox({
   instrument: OptionInstrument | null;
   /** Purely visual — which side the workspace is emphasising. */
   focused?: boolean;
+  /**
+   * Which chain these strikes came from, e.g. "NIFTY · 1 Sep". Shown in the
+   * popover so the ladder is never read as free-floating: these strikes exist
+   * because THAT index and THAT expiry publish them, and changing either
+   * changes every row here.
+   */
+  context?: string;
 }) {
   const listId = useId();
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [rejected, setRejected] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
-  const boxRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const reduce = useReducedMotion();
 
   const options = useMemo(() => strikeOptions(rows, atmIndex, query), [rows, atmIndex, query]);
 
@@ -102,19 +140,14 @@ export function StrikeCombobox({
     setActiveIndex(0);
   }, [query, rows]);
 
-  // Close on an outside click. A combobox that stays open over the rest of the
-  // form is the difference between two usable selectors and two that fight.
+  // A disabled control cannot be left hanging open: the underlying-only tick
+  // and a market change both disable this mid-interaction.
   useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        setQuery('');
-      }
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
+    if (disabled) {
+      setOpen(false);
+      setQuery('');
+    }
+  }, [disabled]);
 
   const commit = (strike: number) => {
     onChange(strike);
@@ -145,16 +178,47 @@ export function StrikeCombobox({
             ? `No ${side} strikes are available to match against right now.`
             : null,
     );
+    setQuery('');
     setOpen(false);
   };
+
+  // Focus the search box on open — the same popover mechanics as the market
+  // head, so the two controls are operated identically: click, type, pick.
+  useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 20);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  // Close on an outside click or Escape. Clicking away COMMITS what was typed
+  // rather than discarding it: a trader who types a strike and clicks elsewhere
+  // meant to choose it, and a silent discard would leave the old leg in place
+  // with no explanation. The listeners are re-bound as the query changes because
+  // that is what `commitTyped` reads.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) commitTyped();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        setQuery('');
+        setRejected(null);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, query, rows, side]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
-      if (!open) {
-        setOpen(true);
-        return;
-      }
       setActiveIndex((i) => {
         if (options.length === 0) return 0;
         const next = e.key === 'ArrowDown' ? i + 1 : i - 1;
@@ -164,17 +228,11 @@ export function StrikeCombobox({
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (open && options[activeIndex]) {
+      if (options[activeIndex]) {
         commit(options[activeIndex].strike);
         return;
       }
       commitTyped();
-      return;
-    }
-    if (e.key === 'Escape') {
-      setOpen(false);
-      setQuery('');
-      setRejected(null);
     }
   };
 
@@ -182,101 +240,124 @@ export function StrikeCombobox({
   const ring = side === 'CE' ? 'border-up' : 'border-down';
 
   return (
-    <div
-      ref={boxRef}
-      className={cn(
-        'rounded-xl border bg-bg p-2.5 transition-colors duration-micro',
-        focused ? ring : 'border-border',
-      )}
-    >
-      <div className="mb-1.5 flex items-baseline justify-between gap-2">
-        <span className={cn('text-[11px] font-bold uppercase tracking-wide', tone)}>{side}</span>
-        <span className="truncate text-[10.5px] text-faint">
-          {rows.length > 0 ? `${rows.length} listed strikes` : 'no strikes'}
+    <div ref={rootRef} className="relative min-w-0">
+      <button
+        type="button"
+        onClick={() => !disabled && setOpen((v) => !v)}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`${side} strike`}
+        className={cn(
+          'flex w-full items-center gap-2.5 rounded-xl border bg-card px-3.5 py-2.5 text-left shadow-elev1',
+          'transition-colors duration-micro hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+          'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-card',
+          focused ? ring : 'border-border',
+        )}
+      >
+        <span className={cn('text-[10px] font-semibold uppercase tracking-wide', focused ? tone : 'text-faint')}>
+          {side}
         </span>
-      </div>
-
-      <div className="relative">
-        <input
-          type="text"
-          role="combobox"
-          aria-expanded={open}
-          aria-controls={listId}
-          aria-autocomplete="list"
-          aria-label={`${side} strike`}
-          disabled={disabled}
-          placeholder={value === null ? `Search ${side} strikes` : String(value)}
-          value={query}
-          onFocus={() => setOpen(true)}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setRejected(null);
-            setOpen(true);
-          }}
-          onKeyDown={onKeyDown}
-          onBlur={() => {
-            // Blur commits rather than discards: a trader who types a strike
-            // and tabs away meant to choose it.
-            if (query.trim()) commitTyped();
-          }}
-          className={cn(
-            'w-full rounded-lg border border-border bg-card px-2.5 py-2 font-mono text-[12.5px] text-text',
-            'placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-focus',
-            'disabled:opacity-50',
-          )}
+        <span className="font-mono text-sm font-bold text-text">{value === null ? '—' : value}</span>
+        <span className={cn('font-mono text-[12.5px] tabular-nums', tone)}>
+          {selectedRow ? formatLtp(selectedRow.ltp) : '—'}
+        </span>
+        <ChevronDownIcon
+          className={cn('ml-auto h-4 w-4 shrink-0 text-muted transition-transform duration-micro', open && 'rotate-180')}
+          aria-hidden="true"
         />
+      </button>
 
+      <AnimatePresence>
         {open && !disabled && (
-          <ul
-            id={listId}
-            role="listbox"
-            aria-label={`${side} strikes`}
-            className="absolute z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-border bg-card py-1 shadow-elev2"
+          <motion.div
+            initial={reduce ? { opacity: 0 } : { opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={reduce ? { opacity: 0 } : { opacity: 0, y: -6 }}
+            transition={{ duration: 0.14, ease: [0.4, 0, 0.2, 1] }}
+            className="absolute left-0 z-30 mt-2 w-[280px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-card shadow-elev3"
           >
-            {options.length === 0 ? (
-              <li className="px-2.5 py-2 text-[11.5px] text-muted">
-                {rows.length === 0 ? 'No live chain for this expiry.' : `No ${side} strike matches "${query.trim()}".`}
-              </li>
-            ) : (
-              options.map((row, i) => (
-                <li key={row.strike}>
+            <div className="border-b border-border p-2.5">
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-bg px-2.5">
+                <SearchIcon className="h-4 w-4 shrink-0 text-faint" />
+                <input
+                  ref={inputRef}
+                  type="text"
+                  role="combobox"
+                  aria-expanded={open}
+                  aria-controls={listId}
+                  aria-autocomplete="list"
+                  aria-label={`Search ${side} strikes`}
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setRejected(null);
+                  }}
+                  onKeyDown={onKeyDown}
+                  placeholder={`Search ${side} strikes`}
+                  className="w-full bg-transparent py-2 font-mono text-[13px] text-text placeholder:text-faint focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div
+              id={listId}
+              role="listbox"
+              aria-label={`${side} strikes`}
+              className="max-h-[320px] overflow-y-auto p-1.5"
+            >
+              <p className="px-2.5 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-faint">
+                {query.trim() ? `Matches in ${rows.length} listed strikes` : 'Around the money'}
+                {context ? ` · ${context}` : ''}
+              </p>
+              {options.length === 0 ? (
+                <p className="px-2.5 py-6 text-center text-[12.5px] text-muted">
+                  {rows.length === 0 ? 'No live chain for this expiry.' : `No ${side} strike matches “${query.trim()}”.`}
+                </p>
+              ) : (
+                options.map((row, i) => (
                   <button
+                    key={row.strike}
                     type="button"
                     role="option"
                     aria-selected={row.strike === value}
-                    // Mouse-down rather than click: the input's blur handler
-                    // fires first on click and would commit the typed text,
-                    // closing the list out from under the pointer.
+                    // Mouse-down rather than click: the outside-click handler
+                    // would otherwise fire first and close the list out from
+                    // under the pointer.
                     onMouseDown={(e) => {
                       e.preventDefault();
                       commit(row.strike);
                     }}
                     onMouseEnter={() => setActiveIndex(i)}
                     className={cn(
-                      'flex w-full items-baseline justify-between gap-3 px-2.5 py-1.5 text-left font-mono text-[12px]',
-                      i === activeIndex ? 'bg-bg' : '',
-                      row.strike === value ? 'font-bold text-text' : 'text-muted',
+                      'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors duration-micro',
+                      'hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+                      i === activeIndex && 'bg-hover',
                     )}
                   >
-                    <span>{row.strike}</span>
-                    <span className={cn('tabular-nums', tone)}>{formatLtp(row.ltp)}</span>
+                    <span className="w-16 shrink-0 font-mono text-[12.5px] font-semibold text-text">{row.strike}</span>
+                    <span className={cn('font-mono text-[12.5px] tabular-nums', tone)}>{formatLtp(row.ltp)}</span>
+                    {row.strike === value && (
+                      <span className="ml-auto text-[10px] font-semibold uppercase tracking-wide text-teal">Active</span>
+                    )}
                   </button>
-                </li>
-              ))
-            )}
-          </ul>
-        )}
-      </div>
+                ))
+              )}
+            </div>
 
-      {/* ── the readout: what is selected, what it costs, what it IS ──────── */}
-      <div className="mt-1.5 flex items-baseline justify-between gap-2">
-        <span className="truncate font-mono text-[12.5px] font-bold text-text">
-          {value === null ? '—' : `${value} ${side}`}
-        </span>
-        <span className={cn('shrink-0 font-mono text-[12px] font-semibold', tone)}>
-          {selectedRow ? formatLtp(selectedRow.ltp) : '—'}
-        </span>
-      </div>
+            <p className="border-t border-border px-3 py-2 text-[11px] leading-snug text-faint">
+              Live {side} strikes{context ? ` from the ${context} chain` : ''} via Dhan — every strike here is one the
+              chain published, and a strike it does not list is refused rather than rounded.
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── the readout: what is selected, and what it IS ──────────────────── */}
+      <p className="mt-1 truncate font-mono text-[10.5px] text-faint">
+        {value === null ? 'no strike selected' : `${value} ${side}`} ·{' '}
+        {rows.length > 0 ? `${rows.length} listed strikes` : 'no strikes'}
+      </p>
 
       {/*
         The contract identity, shown rather than implied. A strike number alone
@@ -284,9 +365,9 @@ export function StrikeCombobox({
         symbol can, and its absence is what the disabled "Start watching"
         button is about.
       */}
-      <p className="mt-0.5 truncate font-mono text-[10px] text-faint" aria-live="polite">
+      <p className="truncate font-mono text-[10px] text-faint" aria-live="polite">
         {value === null
-          ? 'no strike selected'
+          ? '—'
           : instrumentStatus === 'resolving'
             ? 'resolving contract…'
             : instrument

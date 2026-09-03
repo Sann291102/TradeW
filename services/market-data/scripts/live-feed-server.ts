@@ -72,7 +72,7 @@ const ALLOWED_ORIGINS = (process.env.FRONTEND_URL || 'http://localhost:3000')
 function isAllowedFeedOrigin(origin: string): boolean {
   if (ALLOWED_ORIGINS.includes(origin)) return true;
   if (process.env.NODE_ENV === 'production') return false;
-  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) || origin.endsWith('.trycloudflare.com');
 }
 
 /**
@@ -1399,6 +1399,66 @@ async function main(): Promise<void> {
         return { strike: s.strike, ce: apply(s.ce, 'CE'), pe: apply(s.pe, 'PE') };
       }),
     };
+  }
+
+  // Initialize baseline quotes for all tracked instruments so snapshot() is never empty on boot
+  for (const meta of ALL_INSTRUMENTS) {
+    const kind = kindOf(meta);
+    byKey.set(`${kind}:${meta.symbol}`, {
+      instrumentId: meta.securityId,
+      symbol: meta.symbol,
+      displayName: meta.displayName,
+      ltp: 0,
+      change: 0,
+      changePct: 0,
+      open: null,
+      high: null,
+      low: null,
+      close: null,
+      bid: 0,
+      ask: 0,
+      volume: 0,
+      marketStatus: isMarketOpen() ? 'open' : 'closed',
+      updatedAt: new Date().toISOString(),
+      source: 'dhan',
+    });
+  }
+
+  // Pre-fetch latest index close/LTP from Dhan historical API
+  const toDate = new Date();
+  const fromDate = istMidnightDaysAgo(toDate, 1);
+  for (const idx of INDEX_INSTRUMENTS) {
+    fetchDhanCandles(idx, '5m', fromDate, toDate)
+      .then((candles) => {
+        if (candles && candles.length > 0) {
+          const last = candles[candles.length - 1];
+          const prev = candles[0];
+          const prevClose = prev?.close ?? last.open ?? last.close;
+          const change = last.close - prevClose;
+          byKey.set(`index:${idx.symbol}`, {
+            instrumentId: idx.securityId,
+            symbol: idx.symbol,
+            displayName: idx.displayName,
+            ltp: last.close,
+            change: Number(change.toFixed(2)),
+            changePct: prevClose ? Number(((change / prevClose) * 100).toFixed(2)) : 0,
+            open: last.open,
+            high: last.high,
+            low: last.low,
+            close: last.close,
+            bid: last.close,
+            ask: last.close,
+            volume: last.volume,
+            marketStatus: isMarketOpen() ? 'open' : 'closed',
+            updatedAt: new Date(last.timestamp).toISOString(),
+            source: 'dhan',
+          });
+          scheduleBroadcast();
+        }
+      })
+      .catch(() => {
+        // non-blocking fallback
+      });
   }
 
   const feed = await startFeed(ALL_INSTRUMENTS, kindOf);

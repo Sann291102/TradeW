@@ -297,6 +297,47 @@ export function selectExpiry(prev: WatchSelection, expiry: string | null): Watch
 }
 
 /**
+ * Settle the expiry against the list the bridge just published for this market.
+ *
+ * ── THE BUG THIS EXISTS FOR (2026-08-31) ───────────────────────────────────
+ *
+ * The selection is persisted across reloads, so an operator who left the
+ * workspace on the 25 Aug series came back to it on the 31st — a date that no
+ * longer appears in ANY expiry list, because `useExpiries` filters to `>= today`.
+ * The provider only ever filled the expiry when it was null, so the dead date
+ * survived every poll: the chain read stayed pinned to it ("No live chain for
+ * NIFTY 25 Aug right now"), and `validateWatchPair` blocked the form ("The
+ * 2026-08-25 contracts have expired").
+ *
+ * Worse, the screen did not even agree with itself. A native `<select>` whose
+ * `value` matches no `<option>` displays the FIRST option, so the expiry control
+ * read "1 Sep" while the state, the chain read and the error message were all on
+ * 25 Aug. Three sentences about the same field, two of them wrong.
+ *
+ * ── THE RULE ───────────────────────────────────────────────────────────────
+ *
+ * An expiry the list CONTAINS is never touched — an operator who deliberately
+ * picked a later series must not be pulled back to the nearest on the next poll,
+ * which is the rule the null-only check was protecting. An expiry the list does
+ * NOT contain cannot be watched at all: there is no chain to read and no bar to
+ * come, so it is replaced by the nearest and both legs go with it, because the
+ * 24200 of a dead series is not the 24200 of the live one.
+ *
+ * Pure, so "a rolled-over expiry is replaced, a chosen one is kept" is asserted
+ * without a provider, a clock or a network.
+ */
+export function reconcileExpiry(
+  prev: WatchSelection,
+  listed: string[],
+  nearest: string | null,
+): WatchSelection {
+  if (prev.expiry !== null && listed.includes(prev.expiry)) return prev;
+  // `selectExpiry` rather than a spread: dropping both legs and both tokens on
+  // an expiry change is one rule, in one place, and this is an expiry change.
+  return selectExpiry(prev, nearest);
+}
+
+/**
  * Set one leg. Only that leg moves — the other leg, the index and their feeds
  * are untouched, which is what keeps an unrelated live series from being torn
  * down and rebuilt when the operator adjusts a strike.

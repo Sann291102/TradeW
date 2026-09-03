@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SELECTION,
   instrumentLabel,
+  reconcileExpiry,
   reconcileWatchSelection,
   resolveWatchContext,
   selectExpiry,
@@ -154,6 +155,60 @@ describe('selectExpiry', () => {
   it('returns the same object for the same expiry', () => {
     const prev = selection();
     expect(selectExpiry(prev, '2026-08-18')).toBe(prev);
+  });
+});
+
+describe('reconcileExpiry — a dead series must not survive a reload', () => {
+  // The 2026-08-31 report: the workspace came back on a persisted 25 Aug expiry,
+  // read a chain that no longer exists ("No live chain for NIFTY 25 Aug"), and
+  // showed "1 Sep" in the picker at the same time, because a <select> with no
+  // matching <option> renders the first one.
+  const LISTED = ['2026-09-01', '2026-09-08', '2026-09-15'];
+
+  /** A token for the dead series — the thing that must not outlive it. */
+  const deadCall = {
+    securityId: 'CE-24200',
+    exchangeSegment: 'NSE_FNO',
+    dhanInstrument: 'OPTIDX',
+    tradingSymbol: 'NIFTY 25AUG 24200 CE',
+    displayName: 'NIFTY 24200 CE',
+    underlying: 'NIFTY',
+    expiry: '2026-08-25',
+    strike: 24_200,
+    optionType: 'CE' as const,
+    lotSize: 75,
+    tickSize: 0.05,
+  };
+
+  it('replaces an expiry the live list no longer contains', () => {
+    const next = reconcileExpiry(selection({ expiry: '2026-08-25' }), LISTED, '2026-09-01');
+    expect(next.expiry).toBe('2026-09-01');
+  });
+
+  it('drops both legs with it — 24200 of a dead series is not 24200 of the live one', () => {
+    const next = reconcileExpiry(
+      selection({ expiry: '2026-08-25', callInstrument: deadCall }),
+      LISTED,
+      '2026-09-01',
+    );
+    expect(next).toMatchObject({ callStrike: null, putStrike: null, callInstrument: null, putInstrument: null });
+  });
+
+  it('fills a null expiry from the nearest', () => {
+    expect(reconcileExpiry(selection({ expiry: null }), LISTED, '2026-09-01').expiry).toBe('2026-09-01');
+  });
+
+  it('NEVER pulls a deliberately chosen later series back to the nearest', () => {
+    // The rule the old null-only check was protecting, kept intact: a listed
+    // expiry is untouched, and untouched means the same object — so the effect
+    // that calls this cannot loop or discard legs on every poll.
+    const prev = selection({ expiry: '2026-09-15' });
+    expect(reconcileExpiry(prev, LISTED, '2026-09-01')).toBe(prev);
+  });
+
+  it('leaves the selection on null rather than inventing an expiry when nothing is listed', () => {
+    const next = reconcileExpiry(selection({ expiry: '2026-08-25' }), [], null);
+    expect(next.expiry).toBeNull();
   });
 });
 

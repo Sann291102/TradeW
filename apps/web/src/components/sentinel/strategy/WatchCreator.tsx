@@ -12,8 +12,18 @@ import type { CreateWatchInput, UserStrategy, WatchSession } from '@/lib/sentine
 import { ChevronDownIcon } from '@/components/shell/icons';
 
 /**
- * Apply a saved strategy to something: market → expiry → CE/PE → strike →
- * "Start watching".
+ * Apply a saved strategy to something: market + strikes → expiry → CE/PE focus
+ * → "Start watching".
+ *
+ * ── THE MARKET AND ITS STRIKES ARE ONE ROW ─────────────────────────────────
+ *
+ * The market head and both strike heads are the same control — `MarketSelector`
+ * and `StrikeCombobox` share a shell, a mono face and a searchable popover — and
+ * they sit together on the first row. They are not three unrelated pickers: the
+ * strikes each head offers are the ones THIS index publishes for the chosen
+ * expiry, so the ladders are part of the market, not a separate panel further
+ * down the form that reads as a different kind of thing. `StrikeCombobox.test`
+ * asserts the two heads against each other so they cannot drift apart.
  *
  * The pickers are the existing live Dhan bridge, not a new data path — the
  * same expiry list and option chain the charts read. The one addition is that
@@ -100,6 +110,14 @@ export function WatchCreator({
    */
   const chainExpiry = chain.expiry ?? expiry;
 
+  /**
+   * The chain the two strike heads are reading, named for them: "NIFTY · 1 Sep".
+   * Passed down so a ladder is never presented as free-floating — those strikes
+   * exist because THIS index publishes them for THIS expiry, and both are one
+   * row above the popover that shows them.
+   */
+  const chainContext = `${symbol}${expiry ? ` · ${formatExpiry(expiry)}` : ''}`;
+
   // Clearing the market/expiry/strike on a market change, defaulting the
   // nearest expiry, forcing the underlying on a CONFIRMED 'none' and defaulting
   // the ATM strike all moved into the provider — they are facts about the
@@ -183,10 +201,65 @@ export function WatchCreator({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">Watch</span>
+      {/*
+        ── ONE ROW: THE MARKET AND THE TWO CONTRACTS LISTED ON IT ────────────
+
+        The market head and the two strike heads are the same control repeated
+        three times — same shell, same mono face, same popover — because they
+        are one act of selection: which contract Sentinel watches. The strikes
+        are shown as part of the market rather than in a panel of their own
+        precisely because they BELONG to it: every row either strike head can
+        offer comes from the chain this index publishes for the chosen expiry,
+        so changing the market or the expiry changes both ladders underneath.
+      */}
+      <div className="flex flex-wrap items-start gap-2">
+        <span className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-faint">Watch</span>
         <MarketSelector value={symbol} onChange={setMarket} />
-        {expiries.status === 'loading' && <span className="text-[11px] text-faint">checking expiries…</span>}
+
+        {hasOptions && (
+          <>
+            {/*
+              `chain.ce` and `chain.pe` — never one array with a side flag.
+              The separation is the guarantee: a control handed only the call
+              ladder has nothing to select a put from. Passing an empty ladder
+              while the chain is not live is deliberate too: a control must not
+              offer strikes it cannot currently confirm are listed.
+            */}
+            <div className="w-[176px] min-w-0">
+              <StrikeCombobox
+                side="CE"
+                rows={chain.status === 'live' ? chain.ce : []}
+                atmIndex={chain.atmIndex}
+                value={selection.callStrike}
+                onChange={setCallStrike}
+                disabled={underlyingOnly || chain.status !== 'live'}
+                instrumentStatus={legs.ce.status}
+                instrument={selection.callInstrument}
+                focused={focusedSide === 'CE'}
+                context={chainContext}
+              />
+            </div>
+            <div className="w-[176px] min-w-0">
+              <StrikeCombobox
+                side="PE"
+                rows={chain.status === 'live' ? chain.pe : []}
+                atmIndex={chain.atmIndex}
+                value={selection.putStrike}
+                onChange={setPutStrike}
+                disabled={underlyingOnly || chain.status !== 'live'}
+                instrumentStatus={legs.pe.status}
+                instrument={selection.putInstrument}
+                focused={focusedSide === 'PE'}
+                context={chainContext}
+              />
+            </div>
+          </>
+        )}
+
+        {expiries.status === 'loading' && <span className="mt-3 text-[11px] text-faint">checking expiries…</span>}
+        {hasOptions && !underlyingOnly && chain.status === 'live' && chain.spot != null && (
+          <span className="mt-3 text-[11px] text-faint">Spot {chain.spot.toLocaleString('en-IN')}</span>
+        )}
       </div>
 
       {expiries.status === 'unreadable' ? (
@@ -233,26 +306,18 @@ export function WatchCreator({
                 disabled={!hasOptions || underlyingOnly}
                 ariaLabel="Expiry"
               >
+                {expiry === null && <option value="">Select expiry</option>}
                 {/*
-                  ── THE CONTROL THAT PAINTED "25 Aug" ──────────────────────
-
-                  A `<select>` whose `value` matches no `<option>` does not
-                  render blank — it renders its FIRST option. So while the
-                  canonical expiry was the expired `2026-08-18` and the list
-                  held only live series, this dropdown displayed "25 Aug" and
-                  the application held 18 Aug. The screen was not showing two
-                  states out of sync; it was showing one state and one lie, and
-                  the lie was the reassuring half.
-
-                  The reconciliation in `WatchContext` means the value is a
-                  listed expiry within a tick of the list arriving. This is the
-                  belt to that braces: whenever the value is NOT in the list,
-                  say so explicitly rather than let the browser pick a label.
-                  Any future state bug of this shape now surfaces as a visible
-                  placeholder instead of a confident wrong date.
+                  A native <select> whose `value` matches no <option> renders
+                  the FIRST one — so an expiry missing from the list (the list
+                  is still loading, or the series rolled off between renders)
+                  made this control state a date the selection did not hold,
+                  while the chain read and the blocking message named the real
+                  one. `reconcileExpiry` replaces such an expiry within a beat;
+                  this makes the in-between frame honest rather than confident.
                 */}
-                {(expiry === null || !expiries.expiries.includes(expiry)) && (
-                  <option value="">{expiry === null ? 'Select expiry' : 'Rolling to the active expiry…'}</option>
+                {expiry !== null && !expiries.expiries.includes(expiry) && (
+                  <option value={expiry}>{formatExpiry(expiry)} — no longer listed</option>
                 )}
                 {expiries.expiries.map((e) => (
                   <option key={e} value={e}>
@@ -292,92 +357,58 @@ export function WatchCreator({
           </div>
 
           {/*
-            ── Option pair under observation ─────────────────────────────────
+            ── WHY THE LADDER IS NOT READABLE, WHEN IT IS NOT ─────────────────
 
-            Two independent selectors, each bound to its own side's real ladder.
-            The section is named for what it is so the screen cannot be read as
-            "pick a side, then a strike": both contracts are configured, both
-            are sent, and the focus toggle above only says which one the rules
-            are evaluated against.
+            The two strike heads live in the row at the top of this form, beside
+            the market whose chain they read. What stays here is everything that
+            row cannot say inside a 176px button: which state the chain is in,
+            and why a leg is blocking the watch.
+
+            Note what is NOT said here: nothing ranks the two legs, orders them
+            by attractiveness, or pre-selects one from the market's direction.
+            Both are configured, both are sent, and the focus toggle above only
+            says which one the rules are evaluated against — per Rule 2, a
+            ranked ladder of strikes is a recommendation however it is worded.
           */}
-          <fieldset className="min-w-0" disabled={underlyingOnly}>
-            <legend className="mb-1.5 flex w-full items-baseline justify-between gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-faint">
-                Option pair under observation
-              </span>
-              {chain.status === 'live' && chain.spot != null && (
-                <span className="truncate text-[10.5px] text-faint">Spot {chain.spot.toLocaleString('en-IN')}</span>
-              )}
-            </legend>
+          {underlyingOnly ? (
+            <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
+              Watching {symbol} itself — no option legs are part of this watch.
+            </p>
+          ) : chain.status === 'loading' ? (
+            <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
+              Loading the {formatExpiry(chainExpiry)} chain…
+            </p>
+          ) : chain.status === 'unavailable' ? (
+            /*
+              `chainExpiry`, NOT `expiry`. This line is the one captured in the
+              2026-08-19 report — "No live chain for NIFTY 18 Aug right now."
+              printed under a dropdown reading "25 Aug". It named the
+              selection's expiry, so it could describe a series the failed
+              request had nothing to do with. It now names the expiry the chain
+              state is actually about, which is the expiry the bridge served and
+              validated, so the sentence is either true or the request genuinely
+              failed for that series.
+            */
+            <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
+              No live chain for {symbol} {formatExpiry(chainExpiry)} right now.
+            </p>
+          ) : null}
 
-            {underlyingOnly ? (
-              <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
-                Watching {symbol} itself — no option legs are part of this watch.
-              </p>
-            ) : chain.status === 'loading' ? (
-              <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
-                Loading the {formatExpiry(chainExpiry)} chain…
-              </p>
-            ) : chain.status === 'unavailable' ? (
-              /*
-                `chainExpiry`, NOT `expiry`. This line is the one captured in the
-                2026-08-19 report — "No live chain for NIFTY 18 Aug right now."
-                printed under a dropdown reading "25 Aug". It named the
-                selection's expiry, so it could describe a series the failed
-                request had nothing to do with. It now names the expiry the
-                chain state is actually about, which is the expiry the bridge
-                served and validated, so the sentence is either true or the
-                request genuinely failed for that series.
-              */
-              <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
-                No live chain for {symbol} {formatExpiry(chainExpiry)} right now.
-              </p>
-            ) : (
-              <div className="grid gap-2.5 sm:grid-cols-2">
-                {/*
-                  `chain.ce` and `chain.pe` — never one array with a side flag.
-                  The separation is the guarantee: a control handed only the
-                  call ladder has nothing to select a put from.
-                */}
-                <StrikeCombobox
-                  side="CE"
-                  rows={chain.ce}
-                  atmIndex={chain.atmIndex}
-                  value={selection.callStrike}
-                  onChange={setCallStrike}
-                  instrumentStatus={legs.ce.status}
-                  instrument={selection.callInstrument}
-                  focused={focusedSide === 'CE'}
-                />
-                <StrikeCombobox
-                  side="PE"
-                  rows={chain.pe}
-                  atmIndex={chain.atmIndex}
-                  value={selection.putStrike}
-                  onChange={setPutStrike}
-                  instrumentStatus={legs.pe.status}
-                  instrument={selection.putInstrument}
-                  focused={focusedSide === 'PE'}
-                />
-              </div>
-            )}
-
-            {/*
-              Why each leg is blocking, named per leg. A single "invalid
-              selection" would leave the operator to work out which of the two
-              is at fault and in what way.
-            */}
-            {!underlyingOnly && problems.length > 0 && (
-              <ul className="mt-2 space-y-1">
-                {[...pairProblems, ...problemFor('CE'), ...problemFor('PE')].map((p) => (
-                  <li key={`${p.code}:${p.side ?? 'pair'}`} className="text-[11px] leading-snug text-warning">
-                    {p.side ? `${p.side}: ` : ''}
-                    {p.message}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </fieldset>
+          {/*
+            Why each leg is blocking, named per leg. A single "invalid
+            selection" would leave the operator to work out which of the two
+            is at fault and in what way.
+          */}
+          {!underlyingOnly && problems.length > 0 && (
+            <ul className="space-y-1">
+              {[...pairProblems, ...problemFor('CE'), ...problemFor('PE')].map((p) => (
+                <li key={`${p.code}:${p.side ?? 'pair'}`} className="text-[11px] leading-snug text-warning">
+                  {p.side ? `${p.side}: ` : ''}
+                  {p.message}
+                </li>
+              ))}
+            </ul>
+          )}
 
           {hasOptions && (
             <label className="flex items-center gap-2 text-[11.5px] text-muted">

@@ -11,6 +11,31 @@ import { TimelineEventCard } from '../TimelineEventCard';
 const POLL_MS = 10_000;
 
 /**
+ * Sections hidden from the frontend (2026-08-21) — hidden, not removed.
+ *
+ * Three parts of this panel were written for whoever wrote the evaluator, not
+ * for the person trading:
+ *
+ * - **Observed context** — `Vwap · Max Deviation Bucket 2+`, `Flag · Contraction
+ *   Ratio 0.7626`. Dozens of raw evaluator fields with no unit and no meaning
+ *   to a reader who has not read the evaluator source.
+ * - **Lifecycle feed** — a wall of alternating "wait and watch" / "setup
+ *   stepped back" cards, one pair per sweep. It documents the evaluator
+ *   oscillating, not anything the user can act on.
+ * - **Performance breakdown** — funnel counts, R expectancy and the
+ *   observation histograms, almost always sitting at zero or at one bucket.
+ *
+ * Everything behind them stays exactly as it was: the backend still computes,
+ * stores and reasons over all three, `/observe` still returns them, the
+ * contract still carries `latestObservation`, `lifecycle`, `performance` and
+ * `segments`, and the components below are still imported and still work.
+ * Flipping a flag to `true` brings its section straight back.
+ */
+const SHOW_OBSERVED_CONTEXT: boolean = false;
+const SHOW_LIFECYCLE_FEED: boolean = false;
+const SHOW_PERFORMANCE_BREAKDOWN: boolean = false;
+
+/**
  * "My strategy" — everything about the ONE strategy the user has selected:
  * what it is, how it is configured, what state its watch is in, what has
  * happened on it, and how it has behaved.
@@ -104,10 +129,13 @@ export function SelectedStrategyPanel({ strategyId }: { strategyId: string }) {
         </div>
       )}
 
-      <div className="border-t border-border pt-3.5">
-        <ObservedContextPanel observation={contract.latestObservation} />
-      </div>
+      {SHOW_OBSERVED_CONTEXT && (
+        <div className="border-t border-border pt-3.5">
+          <ObservedContextPanel observation={contract.latestObservation} />
+        </div>
+      )}
 
+      {SHOW_LIFECYCLE_FEED && (
       <div className="border-t border-border pt-3.5">
         <h4 className="mb-2 text-[12px] font-bold uppercase tracking-wide text-faint">
           {contract.name} · lifecycle
@@ -139,13 +167,16 @@ export function SelectedStrategyPanel({ strategyId }: { strategyId: string }) {
           </ul>
         )}
       </div>
+      )}
 
-      <div className="border-t border-border pt-3.5">
-        <StrategyPerformancePanel
-          performance={contract.performance}
-          segments={renderableSegments(contract)}
-        />
-      </div>
+      {SHOW_PERFORMANCE_BREAKDOWN && (
+        <div className="border-t border-border pt-3.5">
+          <StrategyPerformancePanel
+            performance={contract.performance}
+            segments={renderableSegments(contract)}
+          />
+        </div>
+      )}
     </div>
   );
 }

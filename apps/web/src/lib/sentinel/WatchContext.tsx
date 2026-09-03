@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { describeExpiryResolution, isValidFutureExpiry, resolveActiveExpiry } from '@tradew/types';
+import { isValidFutureExpiry } from '@tradew/types';
 import type { OptionType, WatchSession } from './strategyApi';
 import { useExpiries, type ExpiriesResult } from './useExpiries';
 import { useOptionChainStrikes, type OptionChainStrikes } from './useOptionChainStrikes';
@@ -18,6 +18,7 @@ import { useOptionInstruments, type PairInstruments } from './useOptionInstrumen
 import {
   DEFAULT_SELECTION,
   attachInstrument,
+  reconcileExpiry,
   reconcileWatchSelection,
   resolveWatchContext,
   selectExpiry,
@@ -245,73 +246,42 @@ export function SentinelWatchProvider({
    * Reconcile the canonical expiry against the list the market is ACTUALLY
    * offering — on every change to that list, not once.
    *
-   * ── THE 2026-08-19 BUG THIS CLOSES ────────────────────────────────────────
+   * `reconcileExpiry` holds the rule and the reasoning: an expiry the list
+   * contains is left alone (a deliberately chosen later series is not pulled
+   * back to the nearest on the next poll), and one it does not contain — null,
+   * or a series that has since expired or rolled off — is replaced by the
+   * nearest with both legs dropped.
    *
-   * This effect used to read, in full:
+   * This used to be a null-only check, which is how a persisted 25 Aug expiry
+   * survived into the 31st: the chain read stayed pinned to a dead series while
+   * the expiry <select>, having no option to match, displayed a different date
+   * entirely. See `reconcileExpiry`.
    *
-   *     if (expiries.status === 'ready') {
-   *       setSelection((prev) => (prev.expiry === null ? { ...prev, expiry: expiries.nearest } : prev));
-   *     }
+   * A confirmed 'none' means the instrument has no options market, which is what
+   * `underlyingOnly` records — matching `WatchCreator`'s long-standing rule
+   * that an UNREADABLE list is never allowed to force the underlying (that bug
+   * started watches on the index without saying so, 2026-08-17).
    *
-   * — write-once. `readStored()` restores `expiry` from localStorage, so on the
-   * morning after an expiry the restored value was `2026-08-18`, `prev.expiry`
-   * was not null, and the guard returned `prev` unchanged. The canonical expiry
-   * then stayed on a contract that had stopped trading for the entire session:
-   * the chain poll requested it, `/optionchain` answered with nothing, and the
-   * panel reported "No live chain for NIFTY 18 Aug right now."
-   *
-   * The dropdown above it read "25 Aug" — not because anything had rolled, but
-   * because `<select value="2026-08-18">` had no matching `<option>` (the list
-   * is filtered to live expiries) and browsers paint the first option when the
-   * value matches none. The control was displaying a value the application had
-   * never held. Two surfaces, one frame, two different expiries.
-   *
-   * ── WHY THIS IS NOT "ALWAYS TAKE THE NEAREST" ─────────────────────────────
-   *
-   * The write-once guard was protecting something real, and `resolveActiveExpiry`
-   * keeps it: a VALID request is always honoured, so an operator who chose a
-   * later series still keeps it across every poll. Only an expiry the market no
-   * longer offers is replaced. The rule moved from "has it been set?" — which
-   * cannot tell a deliberate choice from a stale one — to "is it still real?",
-   * which can.
-   *
-   * The roll is announced, never silent: `selectExpiry` drops both legs and
-   * both tokens, because the 24200 of the expired series and the 24200 of the
-   * next are different contracts, and `useOptionChainStrikes` re-defaults them
-   * from the new ladder. And it is logged — `describeExpiryResolution` prints
-   * the same line the bridge prints, so the two can be read side by side the
-   * next time they are suspected of disagreeing.
+   * A separate, shared `resolveActiveExpiry`/`describeExpiryResolution` utility
+   * (`@tradew/types`) also exists — it is the canonical cross-runtime resolver
+   * `services/sentinel`, `services/market-data` and other frontend call sites
+   * use. `reconcileExpiry` is this component's own, more recently hardened fix
+   * for the specific persisted-stale-expiry symptom described above; the two
+   * are not in conflict, they answer different questions, and this component
+   * only needs `isValidFutureExpiry` from that shared module (below).
    */
-  const availableExpiries = expiries.expiries;
-  const currentExpiry = selection.expiry;
-  const currentSymbol = selection.symbol;
-
   useEffect(() => {
-    if (expiries.status === 'none') {
+    if (expiries.status === 'ready') {
+      setSelection((prev) => reconcileExpiry(prev, expiries.expiries, expiries.nearest));
+    } else if (expiries.status === 'none') {
       setSelection((prev) => (prev.underlyingOnly ? prev : { ...prev, underlyingOnly: true }));
       return;
     }
-    if (expiries.status !== 'ready') return;
-
-    const resolution = resolveActiveExpiry({
-      symbol: currentSymbol,
-      availableExpiries,
-      requestedExpiry: currentExpiry,
-    });
-    if (resolution.status !== 'resolved' || resolution.value === currentExpiry) return;
-
-    // Computed OUTSIDE the updater on purpose: this logs, and React may invoke
-    // an updater more than once (it does, under StrictMode). The re-check
-    // inside guards the only thing that can have changed in between.
-    if (resolution.autoRolled) {
-      console.info(describeExpiryResolution(resolution));
-    }
-    setSelection((prev) =>
-      prev.expiry === currentExpiry && prev.symbol === currentSymbol
-        ? selectExpiry(prev, resolution.value)
-        : prev,
-    );
-  }, [expiries.status, availableExpiries, currentExpiry, currentSymbol]);
+    // `expiries.expiries` is a fresh array on every render of a cached query;
+    // its identity is not a signal. The status/nearest pair changes exactly when
+    // the list this reconciles against does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expiries.status, expiries.nearest]);
 
   /**
    * THE option-chain read for the workspace. Gated so nothing is fetched for a

@@ -130,31 +130,63 @@ browser :3001
 Plus two SSE channels served by dedicated route handlers (never the proxy):
 `/api/stream` and `/api/stream/knowledge`.
 
-### 2.2 The paper-execution loop
+### 2.2 The autonomous paper-agent loops
+
+Three timers, three leases, three cadences. Each cadence is derived from what the
+Dhan bridge can actually serve, not chosen for comfort — see
+[`docs/product-architecture/AUTONOMOUS-PAPER-AGENTS.md`](product-architecture/AUTONOMOUS-PAPER-AGENTS.md) §9.
 
 ```
-ExecutionSchedulerService (services/api, leader-elected)
-  ├── evaluate tick   default 60_000 ms   PAPER_EXECUTION_INTERVAL_MS
+ExecutionSchedulerService (services/api, three independent leader elections)
+  ├── manage tick     default  2_000 ms   PAPER_EXECUTION_MANAGE_MS
+  │     PositionManagerService.manageAll()
+  │       → SELECT ExecutionPosition WHERE state = OPEN   ← NOT profile.enabled
+  │       → one bridge read per pass, premium taken from the BID
+  │       → decidePosition(facts)  ONE authoritative decision, fixed precedence
+  │            EMERGENCY > STOP > TARGET > TRAIL > INVALIDATED > SQUARE_OFF
+  │       → trail: persist an ExecutionTrailAdjustment per 3-point step
+  │         exit : atomic claim OPEN → EXITING, then OrderService.exitPosition
+  ├── evaluate tick   default 30_000 ms   PAPER_EXECUTION_INTERVAL_MS
   │     PaperExecutionService.runAllEnabled()
   │       → preflight: enabled? PAPER? account authorized? trading day?
   │                    09:15–15:30 IST?
   │       → SentinelExecutionClient → services/sentinel :4010
   │                    POST /execution/evaluate (x-service-token, 30s timeout)
+  │            Sentinel side, in order:
+  │              1. data quality   (candle history, bar freshness, index spot)
+  │              2. agent strategy (code-defined roster only; YAML cannot opt in)
+  │              3. index direction(five weighted reads; the chain is NOT consulted)
+  │              4. evidence       (declared keys only, per strategy)
+  │              5. strike selection
   │       → resolve the selected strike to a real Instrument + live price
   │       → INSERT ExecutionIntent (claims the idempotency key first)
-  │       → evaluatePolicy(...)  9 gates
+  │       → planRisk(...)        stop, target, quantity from 3% / 9% / 20%
+  │       → evaluatePolicy(...)  gates, incl. quote-freshness and risk-plan
   │       → OrderService.placeOrder(...)   ← the existing paper OMS, untouched
-  │       → link Order ↔ intent, open an ExecutionOutcome on a fill
+  │       → modelPaperFill(...) stored on the intent
+  │       → link Order ↔ intent, open an ExecutionOutcome AND an ExecutionPosition
+  │         in the same transaction, levels re-derived from the ACTUAL fill price
   └── reconcile tick  default 15_000 ms   PAPER_EXECUTION_RECONCILE_MS
         ExecutionLifecycleService.squareOff()  then .reconcile()
           SUBMITTED → FILLED → CLOSED + ExecutionOutcome (P&L read from Trade
           rows the OMS booked, never recomputed)
+          → ExecutionJournalService.write(intentId) folds the outcome into
+            StrategyCalibration, then writes the ExecutionJournal row
 ```
 
-Both timers only start when `PAPER_EXECUTION_ENABLED=true`, and only the leader
-replica ticks. Exits go through `OrderService.exitPosition` — an ordinary MARKET
-order in the opposite direction, margin-settled and charged like any other. There
-is no direct position write anywhere in this module.
+All three timers only start when `PAPER_EXECUTION_ENABLED=true`, and only the
+leader replica for that particular lease ticks — three separate `JobLease` rows,
+so a slow 30 s evaluation can never stall the 2 s position management. Exits go
+through `OrderService.exitPosition` — an ordinary MARKET order in the opposite
+direction, margin-settled and charged like any other. There is no direct position
+write anywhere in this module.
+
+**Disarming is not a kill switch for open positions.** `manageAll` and
+`squareOff` both select on position/intent state and never on `profile.enabled`
+(the latter did filter on it before 2026-08-30, which could strand an open
+position on a disarmed profile). Disarming an agent stops NEW ENTRIES; the
+position it already holds keeps its stop, its target, its trail and its
+end-of-day square-off.
 
 ---
 
@@ -198,11 +230,17 @@ All seven, every pass:
 6. Sentinel returns `executable` with a selected strike and expiry above the
    profile's confidence floor. Silence writes **nothing** — a row per quiet
    minute would bury the real decisions.
-7. All nine policy gates pass: `profile-enabled`, `environment-paper`,
-   `market-open`, `before-square-off` (default 15:10 IST), `confidence-floor`
-   (default 70%), `max-open-positions` (default 1, counted per profile),
-   `max-orders-per-day` (default 6), `daily-loss-limit` (default ₹25,000,
-   account-wide), `affordable`.
+7. Sentinel's own four gates pass, in order — `stale-data`,
+   `no-agent-strategy`, `index-direction-conflict`, `evidence-conflict` — and
+   then every policy gate on the API side: `profile-enabled`,
+   `environment-paper`, `market-open`, `before-square-off` (default 15:10 IST),
+   `quote-freshness` (default 15 s; an unknown quote age FAILS),
+   `index-direction` (the intent's own direction must still agree),
+   `confidence-floor` (platform floor 70%, raised — never lowered — by
+   calibration), `risk-plan` / `allocation-ceiling` / `risk-budget`,
+   `max-open-positions` (default 1, counted per profile), `max-orders-per-day`
+   (default 6), `daily-loss-limit` (default ₹25,000, account-wide),
+   `affordable`.
 
 ### 3.2 The honest caveat an operator needs
 
@@ -231,6 +269,40 @@ invisible there until the user picks **Executed**.
 
 Ordered by what an operator actually loses without it. Every item names the file
 it lands in.
+
+### Shipped 2026-08-30 — the autonomous-agent console
+
+The paper-execution loop became a complete trading cycle (entry → management →
+exit → journal → calibration), and `/orders` grew the three panels an operator
+needs to supervise one without a database client.
+
+1. **Live positions.** `GET /admin/execution/positions` — every `OPEN`/`EXITING`
+   position with its entry, stop, target, current trail, trail-step count, last
+   observed premium and its age, and unrealized P&L. The stop and target on this
+   panel are the ones the 2 s loop is actually monitoring, read from
+   `ExecutionPosition`, not recomputed for display.
+   *(`position-manager.service.ts`, `admin.controller.ts`, `(console)/orders/page.tsx`.)*
+
+2. **What each agent is thinking right now.** `GET /admin/execution/agents` —
+   per armed profile: the index direction and its strength, the strategy that
+   matched, the confidence and the effective floor it was measured against, the
+   evidence that supported and opposed it, the data-quality verdict, and — when
+   nothing traded — the named gate that stopped it. This is the panel that
+   answers "it is armed and it is ticking, so why is it not trading?" without a
+   log grep.
+   *(`paper-execution.service.ts` `lastDecision`/`agentState`, `admin.controller.ts`.)*
+
+3. **Trade journal and calibration.** `GET /admin/execution/journal` renders one
+   row per closed trade with its full decision context, and
+   `GET /admin/execution/calibration` shows every learning bucket — (agent,
+   symbol, strategy, version, regime), its trade count, average R, and the
+   confidence-floor adjustment it currently contributes, with its version. The
+   join from a journal row to the calibration version that the *next* trade
+   consumed is what makes "it learns" checkable rather than claimed.
+   *(`execution-journal.service.ts`, `execution-calibration.service.ts`.)*
+
+All four routes are reads. They are on the deny-by-default allowlist as GET only;
+nothing on this console can open, move, trail or close a position.
 
 ### Shipped 2026-08-20 — the P0 set
 
@@ -388,6 +460,7 @@ it has become a second system to keep correct.
 ## 7. Related reading
 
 - `apps/admin/README.md` — the app's own status note.
+- `docs/product-architecture/AUTONOMOUS-PAPER-AGENTS.md` — the full agent reference: strategies, capital model, exit precedence, cadence, learning bounds.
 - `knowledge/Decisions/2026-08-18 - Sentinel paper execution loop (execution capability, not a second Sentinel).md`
 - `knowledge/Decisions/2026-08-18 - Sentinel paper execution bound to real TradeW user accounts.md`
 - `knowledge/Gotchas/2026-08-18 - Paper orders invisible in Admin_Web is usually no order, not a read bug.md`

@@ -84,8 +84,17 @@ export interface AccountAuthorizationInput {
  * should be unreachable, not reachable. Index options only — the three-strike
  * evaluator assumes a listed strike ladder, which a single stock's chain may
  * not have.
+ *
+ * SENSEX and BANKEX joined the list on 2026-08-30, with the autonomous SENSEX
+ * agent. They are BSE indices, so their options are `BSE_FNO` rather than
+ * `NSE_FNO` — the live-feed bridge resolves the segment from the scrip-master
+ * row rather than assuming it (a hardcoded `NSE_FNO` had previously dropped
+ * every SENSEX option tick), and `strike-candidates.ts` already carries their
+ * 100-point strike intervals. Adding a market here is a deliberate act: it is
+ * the list that decides which chains an autonomous agent may price a contract
+ * from.
  */
-export const DEFAULT_ALLOWED_SYMBOLS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY'];
+export const DEFAULT_ALLOWED_SYMBOLS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
 
 /** Agent identities permitted to execute. Same reasoning as the symbol list. */
 export const DEFAULT_ALLOWED_AGENTS = ['sentinel-alpha', 'sentinel-beta', 'sentinel-gamma'];

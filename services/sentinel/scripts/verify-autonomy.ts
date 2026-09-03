@@ -170,6 +170,19 @@ async function main(): Promise<void> {
     barAt !== null,
     `latestBarAt=${barAt?.toISOString() ?? 'null'} sessionBars=${snapshot.sessionCandles.length}`,
   );
+
+  // The forming bar, made visible. Run inside a session this should report a
+  // dropped bar; run after the close it should report none. Either way the
+  // bars the rules saw are stated, because "which bars did it read?" is not a
+  // question an operator should have to infer from a detection's timestamp.
+  const forming = snapshot.formingCandle;
+  record(
+    'the still-forming bar is excluded from the bars the rules read',
+    snapshot.candles.every((c) => c.timestamp.getTime() !== forming?.timestamp.getTime()),
+    forming
+      ? `dropped the bar opening ${forming.timestamp.toISOString()} (still forming); ${snapshot.candles.length} closed bars reached the rules`
+      : `no bar was forming at this clock; all ${snapshot.candles.length} bars reached the rules`,
+  );
   if (detections.length === 0) {
     // Not a failure: no confirmed rule anywhere in the handbook is a legitimate
     // market state, and inventing one to make a check pass would defeat it.

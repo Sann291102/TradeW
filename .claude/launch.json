@@ -66,6 +66,19 @@
       "autoPort": false
     },
     {
+      "name": "ad-reel",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4900",
+        "--directory",
+        "C:/Users/vivek/AppData/Local/Temp/claude/D--TradeW-LLC-TradeW/e31a69ee-39d5-4129-9e3b-19c919ceb7ab/scratchpad"
+      ],
+      "port": 4900,
+      "autoPort": false
+    },
+    {
       "name": "tradew-ai",
       "runtimeExecutable": "npm",
       "runtimeArgs": [

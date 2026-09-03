@@ -52,6 +52,9 @@ function snapshot(bars: Candle[], sessionBars: Candle[] = bars): MarketSnapshot 
     resistance: null,
     candles: bars,
     sessionCandles: sessionBars,
+    // These bars are all closed — this spec is about the SCAN clock being
+    // stale relative to them, which is the opposite of a forming bar.
+    formingCandle: null,
     priorDay: null,
     marketProfile: null,
     trendAnalysis: null,

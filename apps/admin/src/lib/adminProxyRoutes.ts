@@ -105,6 +105,14 @@ export const ADMIN_PROXY_ROUTES: RouteRule[] = [
   // the profile binding itself; both are audited upstream with the acting
   // operator, and neither can place an order.
   { method: 'GET', segments: ['execution', 'accounts'] },
+  // Watching the agents work. All read-only: live positions with their stop,
+  // target and trailing level; each agent's last decision including the passes
+  // that correctly did nothing; the completed-trade journal; and what each
+  // calibration bucket has learned.
+  { method: 'GET', segments: ['execution', 'positions'] },
+  { method: 'GET', segments: ['execution', 'agents'] },
+  { method: 'GET', segments: ['execution', 'journal'] },
+  { method: 'GET', segments: ['execution', 'calibration'] },
   { method: 'GET', segments: ['execution', 'profiles', '*', 'authorization'] },
   { method: 'POST', segments: ['execution', 'accounts', '*', 'agent-trading'] },
   { method: 'POST', segments: ['execution', 'profiles'] },

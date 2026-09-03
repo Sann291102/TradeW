@@ -20,6 +20,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { StrikeCombobox, strikeOptions } from './StrikeCombobox';
+import { MarketSelector } from '@/components/sentinel/MarketSelector';
 import { resolveTypedStrike, type StrikeRow } from '@/lib/sentinel/optionChain';
 import type { OptionInstrument } from '@/lib/sentinel/watchState';
 
@@ -200,5 +201,66 @@ describe('the readout states what is selected and whether it is addressable', ()
     expect(render({ rows: [], atmIndex: -1, value: null, instrument: null, instrumentStatus: 'idle' })).toContain(
       'no strikes',
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The strike heads and the market head are ONE control repeated
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The brief for this row is "the same kind of dropdown as the market indices,
+ * and the strikes beside it in the same font". That is a property of two
+ * components at once, so it is asserted against BOTH rather than eyeballed on
+ * one: the shell of the head button and the face its value is set in are read
+ * out of the real `MarketSelector` render and required of the strike head.
+ *
+ * If the market head is restyled, this fails — which is the point. Two controls
+ * one gap apart are read as a set, and a near-match is worse than either
+ * extreme.
+ */
+function headButtonClasses(html: string): string {
+  const match = /<button[^>]*class="([^"]*)"/.exec(html);
+  return match ? match[1] : '';
+}
+
+describe('the strike head is the market head, repeated', () => {
+  const marketHead = headButtonClasses(renderToStaticMarkup(<MarketSelector value="NIFTY" onChange={() => {}} />));
+  const strikeHead = headButtonClasses(render());
+
+  it('reads the market head out of the real component, not a copied string', () => {
+    // Guards the two assertions below: a regex that stopped matching would
+    // otherwise make them pass against an empty string.
+    expect(marketHead).toContain('rounded-xl');
+    expect(strikeHead).not.toBe('');
+  });
+
+  it('wears the same shell — radius, surface, padding and elevation', () => {
+    for (const token of ['rounded-xl', 'bg-card', 'px-3.5', 'py-2.5', 'shadow-elev1']) {
+      expect(marketHead).toContain(token);
+      expect(strikeHead).toContain(token);
+    }
+  });
+
+  it('sets its value in the same font as the market symbol beside it', () => {
+    const marketHtml = renderToStaticMarkup(<MarketSelector value="NIFTY" onChange={() => {}} />);
+    expect(marketHtml).toContain('font-mono text-sm font-bold text-text');
+    expect(render()).toContain('font-mono text-sm font-bold text-text');
+  });
+
+  it('opens a listbox rather than exposing a bare text input, like the market head', () => {
+    // The old control was an always-visible <input role="combobox"> sitting in
+    // a panel of its own. The head is a button that opens a searchable popover;
+    // the search box lives INSIDE it, so nothing is typeable until it is open.
+    const html = render();
+    expect(html).toContain('aria-haspopup="listbox"');
+    expect(html).not.toContain('<input');
+  });
+
+  it('names the chain its strikes belong to, so the ladder is never free-floating', () => {
+    // Closed, the context lives in the popover; what the head must still show is
+    // the strike, its premium and its contract — asserted above. This pins the
+    // prop through to the component so the row cannot silently drop it.
+    expect(render({ context: 'NIFTY · 1 Sep' })).toContain('24350 CE');
   });
 });

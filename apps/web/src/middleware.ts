@@ -67,7 +67,7 @@ const PUBLIC_PATHS = new Set<string>([
  * disclosure. `lib/footer/links.test.ts` asserts every legal slug in the footer
  * matches this prefix, so an auth-gated legal page fails the build.
  */
-const PUBLIC_PREFIXES = ['/legal/'];
+const PUBLIC_PREFIXES = ['/legal/', '/feed/'];
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PATHS.has(pathname)) return true;
@@ -93,10 +93,10 @@ export function middleware(req: NextRequest) {
 
 export const config = {
   /**
-   * Everything except Next's own internals, the API proxy routes, and static
+   * Everything except Next's own internals, the API & Feed proxy routes, and static
    * files. The negative lookahead is the documented Next pattern; the file
    * extension clause keeps images and fonts out of the gate so a signed-out
    * landing page can still load its own assets.
    */
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/|.*\\.[\\w]+$).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/|feed/|.*\\.[\\w]+$).*)'],
 };

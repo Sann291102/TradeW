@@ -179,6 +179,35 @@ export default defineConfig({
       // End-to-end: the assistant pipeline as exercised through its service
       // surface, including direct-API attempts that bypass the UI.
       'src/ai/assistant.e2e.spec.ts',
+      // ---- Autonomous paper agents (2026-08-30) --------------------------
+      //  · risk — the three percentages and their three DIFFERENT bases, plus
+      //    the invariant the whole capital model rests on: realised risk never
+      //    exceeds the budget. Swept over the input space rather than sampled,
+      //    because an arithmetic bug hides in the cases nobody picks.
+      'src/paper-execution/execution-risk.spec.ts',
+      //  · fill — a paper fill's stated provenance, and the detection of the
+      //    SYNTHETIC bid/ask the price service fabricates when a tick carries
+      //    no depth. A P&L computed against an invented 10bp spread is
+      //    systematically optimistic, and a journal that cannot say which it
+      //    got reads as more accurate than it is.
+      'src/paper-execution/execution-fill.spec.ts',
+      //  · freshness — "the feed is reachable" is not "the feed is alive". The
+      //    2026-08-17 incident is the whole reason this exists: the bridge
+      //    answered every request in ~30 ms while serving a tick map that had
+      //    stopped advancing. Unknown age FAILS.
+      'src/paper-execution/execution-freshness.spec.ts',
+      //  · position decisions — the ONE authoritative exit decision per
+      //    observation, its precedence order, and the trailing ratchet that
+      //    may never loosen.
+      'src/paper-execution/position-decision.spec.ts',
+      //  · calibration — bounded learning. A completed trade may move ONE
+      //    number, in ONE direction past a hard floor, and the 70% platform
+      //    bar is unreachable from it by construction.
+      'src/paper-execution/execution-calibration.spec.ts',
+      //  · the lifecycle end to end, against a real Postgres when one is
+      //    configured — entry through stop/target/trail/invalidation to a
+      //    journal and a calibration the NEXT decision consumes.
+      'src/paper-execution/paper-lifecycle.spec.ts',
     ],
     environment: 'node',
     // The suite is deterministic and clock-injected; a slow test means a real

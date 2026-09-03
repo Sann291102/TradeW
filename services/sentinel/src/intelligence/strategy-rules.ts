@@ -14,6 +14,7 @@
 
 import { Candle } from '@tradew/types';
 import { averageVolume, swingLevels } from './indicators';
+import { analyseStructure, detectSweep } from './market-structure';
 import { MarketSnapshot } from './market-intelligence.service';
 
 export interface RuleOutcome {
@@ -340,6 +341,217 @@ export const STRATEGY_RULES: Record<string, StrategyRule> = {
     return last.volume >= avgVol
       ? yes(`Current bar volume is ${(last.volume / avgVol).toFixed(1)}x the 20-bar average`)
       : no(`Current bar volume is only ${(last.volume / avgVol).toFixed(1)}x the 20-bar average`);
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // AGENT-GRADE RULES (2026-08-30)
+  //
+  // Added for the four autonomous paper strategies. Every one is
+  // DIRECTION-AGNOSTIC by construction — it reports that a condition holds,
+  // and `resolveBias` names the side separately.
+  //
+  // That is not a stylistic choice. `price_above_vwap` and
+  // `ema_fast_above_slow` above are bullish-only predicates, so any strategy
+  // built on them can only ever produce a CE, and an agent built on those
+  // strategies is structurally incapable of taking the short side of a market
+  // that is falling. The four agent strategies use the paired rules below
+  // instead, so both CE and PE are reachable from the same rule set.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Price and both EMAs stacked the same way — a trend, either direction.
+   *
+   * The direction-agnostic counterpart of `ema_fast_above_slow`. Requires
+   * price on the same side of the fast EMA as the fast EMA is of the slow one:
+   * price below a rising stack is a pullback, and a continuation strategy that
+   * fires there is buying into the retracement it should be waiting out.
+   */
+  ema_stack_aligned: (s) => {
+    if (s.ema20 === null || s.ema50 === null) return no('EMA pair unavailable');
+    const stackUp = s.ema20 > s.ema50;
+    const priceUp = s.lastPrice > s.ema20;
+    return stackUp === priceUp
+      ? yes(
+          `Price ${s.lastPrice.toFixed(1)}, EMA20 ${s.ema20.toFixed(1)} and EMA50 ${s.ema50.toFixed(1)} are stacked ${stackUp ? 'bullish' : 'bearish'}`,
+        )
+      : no(`Price ${s.lastPrice.toFixed(1)} sits against the EMA20/50 stack — a pullback, not an aligned trend`);
+  },
+
+  /** Price decisively off VWAP on either side. Pairs with `price_above_vwap`. */
+  price_beyond_vwap: (s) => {
+    if (s.vwap === null || !(s.vwap > 0)) return no('VWAP unavailable');
+    const distPct = ((s.lastPrice - s.vwap) / s.vwap) * 100;
+    return Math.abs(distPct) >= 0.05
+      ? yes(`Price is ${distPct >= 0 ? '+' : ''}${distPct.toFixed(2)}% clear of VWAP ${s.vwap.toFixed(1)}`)
+      : no(`Price is sitting on VWAP ${s.vwap.toFixed(1)} (${distPct.toFixed(2)}%), on neither side of it`);
+  },
+
+  /** The session has actually travelled, and it held. Not merely a direction. */
+  trend_momentum_confirmed: (s) => {
+    const t = s.trendAnalysis;
+    if (!t) return no('No session trend to measure');
+    if (t.direction === 'neutral') return no('The session has no directional read to confirm');
+    return t.momentumScore >= 0.4
+      ? yes(`Session is ${t.direction} with momentum ${t.momentumScore.toFixed(2)} on ${t.sessionChangePct >= 0 ? '+' : ''}${t.sessionChangePct.toFixed(2)}%`)
+      : no(`Session is ${t.direction} but momentum is only ${t.momentumScore.toFixed(2)} — below the 0.40 continuation floor`);
+  },
+
+  /** INVALIDATION: the momentum a continuation trade joined has gone. */
+  momentum_faded: (s) => {
+    const t = s.trendAnalysis;
+    if (!t) return no('No session trend to measure');
+    return t.momentumScore < 0.25 || t.direction === 'neutral'
+      ? yes(`Session momentum has fallen to ${t.momentumScore.toFixed(2)} (${t.direction}) — the move being joined has stopped`)
+      : no(`Session momentum is still ${t.momentumScore.toFixed(2)}`);
+  },
+
+  /**
+   * INVALIDATION: price has crossed back through VWAP against the EMA stack.
+   *
+   * Deliberately requires BOTH — VWAP alone flickers all session on an index
+   * that oscillates around it, and an invalidation that fires on noise closes
+   * every trade at the first wobble.
+   */
+  vwap_reclaimed_against: (s) => {
+    if (s.vwap === null || s.ema20 === null || s.ema50 === null) return no('VWAP or EMA pair unavailable');
+    const stackUp = s.ema20 > s.ema50;
+    const priceAboveVwap = s.lastPrice > s.vwap;
+    return stackUp !== priceAboveVwap
+      ? yes(
+          `Price is ${priceAboveVwap ? 'above' : 'below'} VWAP ${s.vwap.toFixed(1)} while the EMA stack reads ${stackUp ? 'bullish' : 'bearish'} — the two disagree`,
+        )
+      : no('Price and the EMA stack are still on the same side of VWAP');
+  },
+
+  /**
+   * A confirmed break of structure or change of character.
+   *
+   * Reads `analyseStructure` — the same swing engine the market-structure
+   * module already uses — rather than re-deriving swings here. Two
+   * implementations of "did structure break" is exactly the drift the shared
+   * module exists to prevent.
+   */
+  structure_break_confirmed: (s) => {
+    if (s.candles.length < 10) return no('Not enough bars to resolve swing structure');
+    const st = analyseStructure(s.candles);
+    if (!st.event) return no(`Swing structure reads ${st.state} with no break or change of character`);
+    return yes(
+      `${st.event === 'break-of-structure' ? 'Break of structure' : 'Change of character'} in the ${st.eventDirection ?? 'unstated'} direction, structure now ${st.state}`,
+    );
+  },
+
+  /**
+   * INVALIDATION: the structure has turned over against the trade.
+   *
+   * A change-of-character is the earliest structural evidence that a trend has
+   * ended (see `market-structure.ts`), so a continuation or structure-shift
+   * trade whose structure prints one has lost the thing it was built on.
+   */
+  structure_reversed: (s) => {
+    if (s.candles.length < 10) return no('Not enough bars to resolve swing structure');
+    const st = analyseStructure(s.candles);
+    if (st.event === 'change-of-character') {
+      return yes(`Structure printed a change of character in the ${st.eventDirection ?? 'unstated'} direction`);
+    }
+    return st.state === 'range'
+      ? yes('Swing structure has collapsed into a range — the trend that was traded is gone')
+      : no(`Swing structure still reads ${st.state}`);
+  },
+
+  /**
+   * A displacement bar — the impulsive, expanded candle that marks
+   * participation entering rather than price drifting.
+   *
+   * Measured as range against the recent average range AND a close in the
+   * upper/lower third of its own bar. Range alone catches a wide indecision
+   * bar that closed mid-range, which is the opposite of displacement.
+   */
+  displacement_bar: (s) => {
+    if (s.candles.length < 6) return no('Not enough bars to measure displacement');
+    const last = lastBar(s);
+    if (!last) return no('No bars available');
+    const window = s.candles.slice(-6, -1);
+    const avgRange = window.reduce((sum, c) => sum + (c.high - c.low), 0) / window.length;
+    if (!(avgRange > 0)) return no('No range baseline');
+    const range = last.high - last.low;
+    if (!(range > 0)) return no('The latest bar has no range');
+    const closePosition = (last.close - last.low) / range;
+    const expanded = range >= avgRange * 1.5;
+    const decisive = closePosition >= 0.67 || closePosition <= 0.33;
+    return expanded && decisive
+      ? yes(
+          `Displacement: range ${(range / avgRange).toFixed(1)}x the recent average, closing at ${(closePosition * 100).toFixed(0)}% of its own bar`,
+        )
+      : no(
+          expanded
+            ? `Bar is ${(range / avgRange).toFixed(1)}x average range but closed mid-bar at ${(closePosition * 100).toFixed(0)}% — expansion without direction`
+            : `Bar range is only ${(range / avgRange).toFixed(1)}x the recent average`,
+        );
+  },
+
+  /** The session is expanding its own range rather than compressing. */
+  session_range_expanding: (s) => {
+    if (s.sessionCandles.length < 4) return no('Not enough session bars to compare ranges');
+    const half = Math.floor(s.sessionCandles.length / 2);
+    const early = s.sessionCandles.slice(0, half);
+    const late = s.sessionCandles.slice(half);
+    const avg = (cs: Candle[]) => cs.reduce((sum, c) => sum + (c.high - c.low), 0) / Math.max(1, cs.length);
+    const earlyRange = avg(early);
+    const lateRange = avg(late);
+    if (!(earlyRange > 0)) return no('No early-session range baseline');
+    return lateRange > earlyRange
+      ? yes(`Session range is expanding — recent bars average ${(lateRange / earlyRange).toFixed(2)}x the early ones`)
+      : no(`Session range is compressing — recent bars average ${(lateRange / earlyRange).toFixed(2)}x the early ones`);
+  },
+
+  /**
+   * A liquidity pool above or below was taken and price closed back through
+   * it — the stop-hunt signature, either side.
+   *
+   * Uses the shared `detectSweep`, which reads a 20-bar extreme rather than
+   * the single swing level `liquidity_sweep` above uses. The two are
+   * deliberately different reads: `liquidity_sweep` fires on the nearest swing
+   * (frequent, shallow), this one on the window's extreme (rarer, and the one
+   * an agent should be willing to fade).
+   */
+  liquidity_pool_swept: (s) => {
+    const sweep = detectSweep(s.candles);
+    if (!sweep) return no('No 20-bar extreme was taken by the latest bar');
+    return sweep.reclaimed
+      ? yes(`Liquidity ${sweep.side} ${sweep.price.toFixed(1)} was swept and the level reclaimed on the close`)
+      : no(`The ${sweep.side} extreme ${sweep.price.toFixed(1)} was taken but not reclaimed — that is a break, not a sweep`);
+  },
+
+  /** Momentum is at an extreme — the precondition for fading a move. */
+  momentum_stretched: (s) => {
+    if (s.rsi14 === null) return no('RSI unavailable');
+    if (s.rsi14 >= 70) return yes(`RSI(14) at ${s.rsi14.toFixed(1)} — overbought`);
+    if (s.rsi14 <= 30) return yes(`RSI(14) at ${s.rsi14.toFixed(1)} — oversold`);
+    return no(`RSI(14) at ${s.rsi14.toFixed(1)} — not stretched in either direction`);
+  },
+
+  /**
+   * A rejection bar — a long wick with a close back the other way.
+   *
+   * The candle-level companion to `liquidity_pool_swept`: the sweep says a
+   * level was taken, this says the bar that took it was rejected.
+   */
+  rejection_bar: (s) => {
+    const last = lastBar(s);
+    if (!last) return no('No bars available');
+    const range = last.high - last.low;
+    if (!(range > 0)) return no('The latest bar has no range');
+    const body = Math.abs(last.close - last.open);
+    const upperWick = last.high - Math.max(last.open, last.close);
+    const lowerWick = Math.min(last.open, last.close) - last.low;
+    const dominant = Math.max(upperWick, lowerWick);
+    return dominant >= range * 0.5 && body <= range * 0.4
+      ? yes(
+          `Rejection: the ${upperWick >= lowerWick ? 'upper' : 'lower'} wick is ${((dominant / range) * 100).toFixed(0)}% of the bar with a ${((body / range) * 100).toFixed(0)}% body`,
+        )
+      : no(
+          `No rejection — the dominant wick is ${((dominant / range) * 100).toFixed(0)}% of the bar with a ${((body / range) * 100).toFixed(0)}% body`,
+        );
   },
 };
 

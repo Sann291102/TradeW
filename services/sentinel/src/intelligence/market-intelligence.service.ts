@@ -45,8 +45,87 @@ export const SNAPSHOT_INTERVAL: CandleInterval = '15m';
 /** How far back a snapshot reaches. Enough bars for a 50-period EMA at 15m. */
 export const SNAPSHOT_LOOKBACK_MS = 5 * 86_400_000;
 
+/**
+ * How much market time one bar of each interval covers.
+ *
+ * Needed because a candle carries only its OPEN timestamp (Dhan's intraday
+ * chart API, and therefore the whole bridge, timestamps bars at their start —
+ * see `computeOpeningRange`, whose 30-minute window works only under that
+ * reading). A bar that opened at T is finished once the clock passes
+ * `T + INTERVAL_MS[interval]`, and not before.
+ */
+export const INTERVAL_MS: Record<CandleInterval, number> = {
+  '1m': 60_000,
+  '5m': 5 * 60_000,
+  '15m': 15 * 60_000,
+  '1h': 60 * 60_000,
+  '1d': 86_400_000,
+};
+
+/**
+ * Split a bar series into the bars that have FINISHED and the one still forming.
+ *
+ * ── WHY THIS EXISTS ───────────────────────────────────────────────────────
+ * The market-data bridge returns the in-progress bar as the final element
+ * during market hours. A partially-formed 15m bar has a smaller range and a
+ * lower volume than the finished bar will have, so any rule that measures the
+ * newest bar — `displacement_bar` against the previous five ranges,
+ * `volume_supports_move` against the 20-bar average, `rejection_bar`'s
+ * wick-to-body, `detectSweep`'s 20-bar extreme — systematically under-fires in
+ * the first minutes of a bar and can flip from true to false as the same bar
+ * fills in. The agent's read then depends on where in the 15-minute window the
+ * 30-second evaluation tick happened to land, which is not a market fact.
+ *
+ * `services/sentinel-py/app/watch/evaluator.py` has answered this since it was
+ * written (`closed_candles`, "confirmation before notification"). This is the
+ * same rule for the TypeScript agent path.
+ *
+ * ── WHY IT IS NOT AN UNCONDITIONAL `slice(0, -1)` ─────────────────────────
+ * The Python version slices unconditionally because its poller only ever runs
+ * live. That assumption does not hold here: `composeSnapshot` is also the
+ * Module 12 backtest replay's entry point, and `snapshot()` is polled out of
+ * hours and against stored history. In both of those the trailing bar is a
+ * real, closed bar, and dropping it would silently throw away the most recent
+ * thing the market did. So the test is against the clock, not against the
+ * position in the array.
+ */
+export function splitClosedAndForming(
+  candles: Candle[],
+  interval: CandleInterval = SNAPSHOT_INTERVAL,
+  now: Date = new Date(),
+): { closed: Candle[]; forming: Candle | null } {
+  const last = candles[candles.length - 1];
+  if (!last) return { closed: candles, forming: null };
+
+  // Same normalisation as `latestBarAt`: declared a Date, but the provider
+  // chain includes JSON hops where it arrives as an ISO string or epoch ms.
+  const openedAt = last.timestamp instanceof Date ? last.timestamp : new Date(last.timestamp);
+  const openedMs = openedAt.getTime();
+  if (Number.isNaN(openedMs)) return { closed: candles, forming: null };
+
+  // Strictly before its own close: at exactly `open + interval` the bar is
+  // done. An unparseable interval would be `undefined` here and make every
+  // comparison false, which is the safe direction — keep the bar.
+  const stillForming = now.getTime() < openedMs + INTERVAL_MS[interval];
+  return stillForming
+    ? { closed: candles.slice(0, -1), forming: last }
+    : { closed: candles, forming: null };
+}
+
 export interface MarketSnapshot {
   symbol: string;
+  /**
+   * The most recent traded price — the LIVE one, taken from the forming bar
+   * when there is one.
+   *
+   * Deliberately the one field on this snapshot that reads the in-progress
+   * bar. Everything else here is computed from closed bars only (see
+   * `splitClosedAndForming`), but `lastPrice` is the spot: it picks the ATM
+   * strike, prices a candidate contract and answers the data-quality gate's
+   * "is there a usable index price?". A spot that lagged by up to a full
+   * 15-minute bar would be a worse number for every one of those, and none of
+   * them is a bar measurement.
+   */
   lastPrice: number;
   rsi14: number | null;
   ema20: number | null;
@@ -61,9 +140,29 @@ export interface MarketSnapshot {
   breadthRatio: number | null; // advances / declines
   support: number | null;
   resistance: number | null;
+  /**
+   * CLOSED bars only — the bar currently forming is never in here.
+   *
+   * Every rule in `strategy-rules.ts` reads this array, and a rule that
+   * measures the newest bar's range or volume is measuring a finished fact or
+   * it is measuring nothing. The bar being dropped is not lost: it is
+   * `formingCandle` below, for the few consumers that genuinely want it.
+   */
   candles: Candle[];
-  /** the bars belonging to the most recent session in `candles` */
+  /** the bars belonging to the most recent session in `candles` — closed only */
   sessionCandles: Candle[];
+  /**
+   * The still-forming bar the bridge returned, or null.
+   *
+   * Null out of hours, on stored history, and in backtest replay — anywhere
+   * the trailing bar is genuinely finished. Present only during market hours,
+   * which makes it also the honest answer to "is this a live read?".
+   *
+   * Read it for freshness, for a live price, or to draw a chart. Never to
+   * measure a range, a volume or a wick: that is precisely what it cannot yet
+   * tell you.
+   */
+  formingCandle: Candle | null;
   /** the prior completed daily bar, when history reaches back that far */
   priorDay: Candle | null;
   /** Module 1 — today's regime classification */
@@ -74,6 +173,16 @@ export interface MarketSnapshot {
   openingRange: { high: number; low: number; establishedAt: Date } | null;
   /** front-expiry option chain analytics — null when the instrument has no chain */
   optionChain: OptionChainRead | null;
+}
+
+/** Normalise a candle timestamp that may have survived a JSON hop. */
+function barTime(bar: Candle | null | undefined): Date | null {
+  if (!bar) return null;
+  // Declared as a Date, but the provider chain includes JSON hops where it
+  // arrives as an ISO string or epoch ms. Normalising here keeps every caller
+  // from having to know that.
+  const at = bar.timestamp instanceof Date ? bar.timestamp : new Date(bar.timestamp);
+  return Number.isNaN(at.getTime()) ? null : at;
 }
 
 /**
@@ -89,19 +198,52 @@ export interface MarketSnapshot {
  * snapshot with no session bars yet still reports the last real bar instead of
  * the wall clock. Returns null only when the snapshot carries no candles at
  * all — the one case where a caller genuinely has nothing but its own clock.
+ *
+ * CLOSED bars only, because those arrays are closed-only. That is the right
+ * reading for its callers: a detection is about the bar that finished, so a
+ * setup found at 11:47 is dated to the 11:30 bar it actually formed on rather
+ * than to a bar the market has not finished writing. For "how fresh is this
+ * data?" — a different question — use `latestDataAt`.
  */
 export function latestBarAt(
   snapshot: Pick<MarketSnapshot, 'candles' | 'sessionCandles'>,
 ): Date | null {
   const session = snapshot.sessionCandles ?? [];
   const history = snapshot.candles ?? [];
-  const bar = session[session.length - 1] ?? history[history.length - 1] ?? null;
-  if (!bar) return null;
-  // Declared as a Date, but the provider chain includes JSON hops where it
-  // arrives as an ISO string or epoch ms. Normalising here keeps every caller
-  // from having to know that.
-  const at = bar.timestamp instanceof Date ? bar.timestamp : new Date(bar.timestamp);
-  return Number.isNaN(at.getTime()) ? null : at;
+  return barTime(session[session.length - 1] ?? history[history.length - 1] ?? null);
+}
+
+/**
+ * The newest market time in this snapshot, forming bar INCLUDED.
+ *
+ * The freshness question, as opposed to `latestBarAt`'s market-event question.
+ * "Is this a live read or is it stored history?" is answered by the newest
+ * data of any kind, and during market hours the newest data is the bar still
+ * being written — so measuring staleness against the last CLOSED bar would
+ * charge every live observation up to a full bar of age it does not have. At
+ * 15m against a 30-minute allowance that is most of the budget spent on
+ * nothing, and a late poll would then report a live market as `stale-data`.
+ */
+export function latestDataAt(
+  snapshot: Pick<MarketSnapshot, 'candles' | 'sessionCandles' | 'formingCandle'>,
+): Date | null {
+  return barTime(snapshot.formingCandle) ?? latestBarAt(snapshot);
+}
+
+/**
+ * The snapshot's bars with the forming one put back on the end.
+ *
+ * For the two consumers that want the market as it looks RIGHT NOW rather than
+ * as it has finished happening: drawing a chart, and comparing the index
+ * series against the CE/PE legs (which are read raw and therefore carry their
+ * own forming bars — dropping it from only one of the three would compare
+ * different amounts of time and call the difference divergence).
+ */
+export function liveCandles(
+  snapshot: Pick<MarketSnapshot, 'candles' | 'formingCandle'>,
+): Candle[] {
+  const bars = snapshot.candles ?? [];
+  return snapshot.formingCandle ? [...bars, snapshot.formingCandle] : bars;
 }
 
 export interface OptionChainRead {
@@ -191,14 +333,27 @@ export class MarketIntelligenceService {
     // than failing the whole observation.
     const chain: OptionChainEntry[] = chainResult.status === 'fulfilled' ? chainResult.value : [];
 
+    // The LIVE last bar, deliberately — this is the spot the option chain is
+    // read against, and max pain relative to a spot a bar behind is max pain
+    // relative to the wrong number. `composeSnapshot` drops the forming bar
+    // from everything that measures a bar; this is not one of those.
     const last = candles[candles.length - 1];
+    // `dayCandles[length - 2]`, not `[length - 1]`: the newest daily bar is
+    // today's, still forming. The daily series has always been handled this
+    // way — the intraday series is what had not been.
     const priorDay = dayCandles[dayCandles.length - 2] ?? null;
 
-    return composeSnapshot(symbol, candles, priorDay, {
-      vix: breadth.vix ?? null,
-      breadthRatio: breadth.declines > 0 ? breadth.advances / breadth.declines : null,
-      optionChain: readOptionChain(chain, last?.close ?? 0),
-    });
+    return composeSnapshot(
+      symbol,
+      candles,
+      priorDay,
+      {
+        vix: breadth.vix ?? null,
+        breadthRatio: breadth.declines > 0 ? breadth.advances / breadth.declines : null,
+        optionChain: readOptionChain(chain, last?.close ?? 0),
+      },
+      { interval: SNAPSHOT_INTERVAL, now: to },
+    );
   }
 
   /**
@@ -224,7 +379,22 @@ export class MarketIntelligenceService {
    * the read the workspace already produced.
    */
   async contracts(snapshot: MarketSnapshot): Promise<ContractAlignment> {
-    const bars = snapshot.sessionCandles.length ? snapshot.sessionCandles : snapshot.candles;
+    // ── THE ONE PLACE THAT PUTS THE FORMING BAR BACK ──────────────────────
+    // `readSeries` measures each series from its first open to its last close,
+    // and the CE/PE legs below are fetched raw — so they carry their own
+    // forming bars. Comparing a closed-bar index against forming-bar premiums
+    // would compare different amounts of time and then call the difference
+    // divergence, which is the exact failure the shared `SNAPSHOT_INTERVAL`
+    // exists to prevent. Symmetry matters more here than closure, and nothing
+    // in this method measures a single bar's range or volume.
+    // Re-sliced from the live series rather than appending the forming bar to
+    // `sessionCandles`: on the session's FIRST bar the closed bars still end on
+    // yesterday, so appending would hand `readSeries` a two-day span and report
+    // yesterday's open as today's. Slicing the live series picks the newest
+    // calendar day present, which is the one bar that has actually traded.
+    const live = liveCandles(snapshot);
+    const session = sessionSlice(live);
+    const bars = session.length ? session : live;
     const base = {
       underlying: snapshot.symbol,
       interval: SNAPSHOT_INTERVAL,
@@ -420,17 +590,39 @@ export class MarketIntelligenceService {
  * `snapshot()` above and the Module 12 backtest replay both call this, so a
  * strategy is replayed against exactly the structure it was detected on —
  * there is no second, drifting copy of the indicator wiring.
+ *
+ * ── THE FORMING BAR IS DROPPED HERE, ONCE ─────────────────────────────────
+ * `candles` arrives from the bridge with the in-progress bar on the end during
+ * market hours. It comes off here rather than in each of the dozen rules that
+ * read the newest bar, because a per-rule fix is a fix that the next rule
+ * forgets. Everything below this line — indicators, swing levels, the session
+ * slice, the profile, the trend read, and therefore every rule, signal and
+ * agent that consumes them — sees only finished bars.
+ *
+ * `lastPrice` is the deliberate exception; see its doc on `MarketSnapshot`.
  */
 export function composeSnapshot(
   symbol: string,
-  candles: Candle[],
+  rawCandles: Candle[],
   priorDay: Candle | null,
   external: {
     vix: number | null;
     breadthRatio: number | null;
     optionChain: OptionChainRead | null;
   },
+  /**
+   * How to tell whether the trailing bar is still forming. Defaults match the
+   * live path; the backtest replay leaves them alone because its `now` is the
+   * real clock, long past every bar it replays, so nothing is dropped.
+   */
+  clock: { interval?: CandleInterval; now?: Date } = {},
 ): MarketSnapshot {
+  const { closed: candles, forming } = splitClosedAndForming(
+    rawCandles,
+    clock.interval ?? SNAPSHOT_INTERVAL,
+    clock.now ?? new Date(),
+  );
+
   const closes = candles.map((c) => c.close);
   const last = candles[candles.length - 1];
   const ema20Series = ema(closes, 20);
@@ -441,7 +633,10 @@ export function composeSnapshot(
 
   return {
     symbol,
-    lastPrice: last?.close ?? 0,
+    // The live price, from the forming bar when there is one — the ONE thing
+    // here that reads it, and only because a spot that lagged a full bar would
+    // pick a stale strike and price a stale contract.
+    lastPrice: forming?.close ?? last?.close ?? 0,
     rsi14: rsi(closes),
     ema20: ema20Series[ema20Series.length - 1] ?? null,
     ema50: ema50Series[ema50Series.length - 1] ?? null,
@@ -457,6 +652,7 @@ export function composeSnapshot(
     resistance: levels?.resistance ?? null,
     candles,
     sessionCandles,
+    formingCandle: forming,
     priorDay,
     marketProfile: classifyProfile(sessionCandles, priorDay, trendAnalysis),
     trendAnalysis,
