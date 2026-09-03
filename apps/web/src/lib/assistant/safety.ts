@@ -72,6 +72,7 @@ function isConsequential(a: AssistantAction): string | null {
     case 'marketFlow':
     case 'chartDetect':
     case 'chartClearDrawings':
+    case 'chartTimeframe':
       // Drawing is annotation, not workspace surgery: detection replaces only
       // its own tag and clearing it re-runs in one word, so neither destroys
       // anything the user would have to rebuild.

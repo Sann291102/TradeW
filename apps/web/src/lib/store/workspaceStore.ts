@@ -187,6 +187,22 @@ function clamp(n: number, [min, max]: readonly [number, number]) {
 // Workspace tabs
 // ---------------------------------------------------------------------------
 
+/**
+ * The timeframes the chart offers, and the single source of truth for them.
+ *
+ * Declared here rather than in `ChartPanel` because the assistant, the store
+ * and the panel must agree on the exact set — an assistant that can request
+ * '30m' when no such button exists produces a plan that validates, executes,
+ * and changes nothing, which is the failure mode `brain.ts` documents for
+ * `showPanel: 'discipline'`.
+ */
+export const CHART_TIMEFRAMES = ['1m', '5m', '15m', '1H', '1D', '1W'] as const;
+export type ChartTimeframe = (typeof CHART_TIMEFRAMES)[number];
+
+export function isChartTimeframe(v: unknown): v is ChartTimeframe {
+  return typeof v === 'string' && (CHART_TIMEFRAMES as readonly string[]).includes(v);
+}
+
 export interface WorkspaceTab {
   id: string;
   name: string;
@@ -195,6 +211,23 @@ export interface WorkspaceTab {
   rightWidth: number;
   mainHeightPct: number;
   selectedSymbol: string;
+  /**
+   * The chart's timeframe.
+   *
+   * ── WHY THIS IS STORE STATE AND NOT COMPONENT STATE ────────────────────
+   *
+   * It lived in `ChartPanel` as `const [tf, setTf] = useState('15m')`. That
+   * made "change the timeframe to 5 minutes" not merely unimplemented but
+   * unreachable: nothing outside that component's render could read it or
+   * write it, so the assistant had no way to set it and no way to check
+   * whether a set had landed.
+   *
+   * Per workspace TAB, like `selectedSymbol`, for the same reason — two tabs
+   * looking at the same instrument on different timeframes is the normal case,
+   * and a global field would make them fight. Persisted with the rest of the
+   * tab, so a reload comes back on the timeframe you were reading.
+   */
+  chartTimeframe: ChartTimeframe;
   watchlistTab: string;
   /** Last-applied preset id, shown in the Layout menu; diverges once the user
    *  manually resizes/moves/closes a panel (tracked via `layoutDirty`). */
@@ -217,6 +250,7 @@ function newTab(name: string, layoutId = 'swing', id?: string): WorkspaceTab {
     rightWidth: DEFAULT_RIGHT_WIDTH,
     mainHeightPct: DEFAULT_MAIN_HEIGHT_PCT,
     selectedSymbol: 'NIFTY',
+    chartTimeframe: '15m',
     watchlistTab: 'My Watchlist',
     activeLayoutId: preset.id,
     layoutDirty: false,
@@ -447,6 +481,9 @@ interface WorkspaceStore {
   movePanelToSlot: (id: PanelKind, slot: SlotId) => void;
   reorderPanel: (id: PanelKind, direction: 'up' | 'down') => void;
   setSelectedSymbol: (symbol: string) => void;
+  /** Set the active tab's chart timeframe. Rejects anything not in
+   *  `CHART_TIMEFRAMES` rather than storing a value the panel cannot render. */
+  setChartTimeframe: (tf: ChartTimeframe) => void;
   setWatchlistTab: (tab: string) => void;
 
   // notifications
@@ -687,6 +724,20 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           workspaceTabs: s.workspaceTabs.map((t) => (t.id === s.activeTabId ? { ...t, selectedSymbol: symbol } : t)),
         })),
 
+      setChartTimeframe: (tf) =>
+        set((s) => {
+          // Guard the write, not just the type. This setter is reachable from
+          // an assistant action, and an action's payload originates outside
+          // this codebase — a timeframe the panel has no button for would
+          // store cleanly, render nothing, and let the trace claim success.
+          if (!isChartTimeframe(tf)) return {};
+          return {
+            workspaceTabs: s.workspaceTabs.map((t) =>
+              t.id === s.activeTabId ? { ...t, chartTimeframe: tf } : t,
+            ),
+          };
+        }),
+
       setWatchlistTab: (tab) =>
         set((s) => ({
           workspaceTabs: s.workspaceTabs.map((t2) => (t2.id === s.activeTabId ? { ...t2, watchlistTab: tab } : t2)),
@@ -727,6 +778,15 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<WorkspaceStore>;
         const merged: WorkspaceStore = { ...current, ...p };
+        // Tabs persisted before `chartTimeframe` existed have no such field,
+        // and `undefined` would reach the panel as the selected timeframe —
+        // no button would light up and TF_CONFIG lookup would be undefined.
+        // Backfilled here rather than by bumping `version`, because a version
+        // bump discards the whole persisted workspace to fix one missing
+        // string, and repo Rule 1 is never-delete.
+        merged.workspaceTabs = merged.workspaceTabs.map((t) =>
+          isChartTimeframe(t.chartTimeframe) ? t : { ...t, chartTimeframe: '15m' as const },
+        );
         // activeTabId may point at a tab that no longer exists across schema
         // changes; fall back to the first tab rather than rendering nothing.
         if (!merged.workspaceTabs.some((t) => t.id === merged.activeTabId)) {

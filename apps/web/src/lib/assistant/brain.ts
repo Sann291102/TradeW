@@ -1,5 +1,6 @@
 import { api } from '../api';
 import type { AssistantAction } from './types';
+import type { ChartTimeframe } from '../store/workspaceStore';
 
 /**
  * Layer 1 of the AI operating system, client half — the LLM fallback
@@ -82,6 +83,11 @@ const PANELS = new Set([
 ]);
 
 const OVERLAYS = new Set(['commandPalette', 'notifications', 'shortcuts']);
+/** Mirrors `CHART_TIMEFRAMES` in workspaceStore. Asserted against it in
+ *  `brain.test.ts` rather than trusted, because a timeframe that validates here
+ *  but has no button in ChartPanel would store cleanly, render nothing, and let
+ *  the trace report a success the user never sees. */
+const TIMEFRAMES_SET = new Set(['1m', '5m', '15m', '1H', '1D', '1W']);
 const THEMES = new Set(['light', 'dark', 'high-contrast']);
 const ASKS = new Set(['price', 'range', 'volume']);
 const SYMBOL_RE = /^[A-Z0-9&_-]{1,24}$/;
@@ -128,6 +134,10 @@ export function validateAction(raw: unknown): AssistantAction | null {
       return str(a.panel) && PANELS.has(a.panel) ? { type: 'hidePanel', panel: a.panel as never } : null;
     case 'applyLayout':
       return str(a.layoutId) ? { type: 'applyLayout', layoutId: a.layoutId } : null;
+    case 'chartTimeframe':
+      return str(a.timeframe) && TIMEFRAMES_SET.has(a.timeframe)
+        ? { type: 'chartTimeframe', timeframe: a.timeframe as ChartTimeframe }
+        : null;
     case 'toggleSidebar':
       return { type: 'toggleSidebar' };
     case 'newWorkspaceTab':

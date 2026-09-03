@@ -1,4 +1,4 @@
-import type { PanelKind, ThemeName } from '../store/workspaceStore';
+import type { ChartTimeframe, PanelKind, ThemeName } from '../store/workspaceStore';
 import type { DrawingTag } from '../charts/drawings';
 import type { DetectorId } from '../charts/detectors';
 import type { QuoteAsk } from './quotes';
@@ -73,7 +73,22 @@ export type AssistantAction =
    */
   | { type: 'chartDetect'; detector: DetectorId }
   /** Erase one producer's drawings. Tag-scoped — there is no "clear the chart". */
-  | { type: 'chartClearDrawings'; tag: DrawingTag };
+  | { type: 'chartClearDrawings'; tag: DrawingTag }
+  /**
+   * Set the chart's timeframe.
+   *
+   * The first genuine chart-CONTROL action, as opposed to the detection
+   * actions above which only annotate. It became expressible when the
+   * timeframe moved out of `ChartPanel`'s `useState` and into the workspace
+   * store: an action can only address state something other than the owning
+   * component can reach.
+   *
+   * The payload is a `ChartTimeframe`, not a string, so a value the panel has
+   * no button for is a compile error here and a rejected write in the store —
+   * two checks, because this action's payload can originate outside this
+   * codebase.
+   */
+  | { type: 'chartTimeframe'; timeframe: ChartTimeframe };
 
 // ---------------------------------------------------------------------------
 // Intents

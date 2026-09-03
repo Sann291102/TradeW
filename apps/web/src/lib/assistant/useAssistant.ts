@@ -244,6 +244,7 @@ export function useAssistant() {
   const applyLayout = useWorkspaceStore((s) => s.applyLayout);
   const toggleSidebar = useWorkspaceStore((s) => s.toggleSidebar);
   const addWorkspaceTab = useWorkspaceStore((s) => s.addWorkspaceTab);
+  const setChartTimeframe = useWorkspaceStore((s) => s.setChartTimeframe);
   const replaceChartDrawings = useWorkspaceStore((s) => s.replaceChartDrawings);
   const clearChartDrawings = useWorkspaceStore((s) => s.clearChartDrawings);
 
@@ -430,10 +431,18 @@ export function useAssistant() {
         case 'chartClearDrawings':
           clearChartDrawings(action.tag);
           break;
+        case 'chartTimeframe':
+          // Reaches the chart because the timeframe is store state now. While
+          // it was `useState` inside ChartPanel there was nothing to call: the
+          // action could be parsed, validated and traced, and still change
+          // nothing on screen.
+          setChartTimeframe(action.timeframe);
+          break;
       }
     },
     [
       router,
+      setChartTimeframe,
       replaceChartDrawings,
       clearChartDrawings,
       setSelectedSymbol,

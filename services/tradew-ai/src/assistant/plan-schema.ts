@@ -21,6 +21,16 @@
  * If a future phase adds a chart action (AI-OPERATING-SYSTEM.md §6), it is
  * added here AND in `apps/web/src/lib/assistant/types.ts` AND in the client
  * validator. Three places on purpose: the friction is the feature.
+ *
+ * `chartTimeframe` was the first such action, added 2026-09-03, and it was
+ * added in all three. Worth recording what the friction bought and what it did
+ * not: it caught nothing, because the change was mechanical, and it will keep
+ * catching nothing while the vocabulary grows one hand-written case at a time.
+ * The friction is a real safety property for the ORDER boundary — there is no
+ * order action to switch on, in three places — and a real ceiling on an
+ * extensible study framework, where the plan is to keep both validators and
+ * GENERATE them from one registry so the closed-union guarantee survives
+ * without being retyped per capability.
  */
 
 /** Routes the brain may navigate to. Anything else is dropped. */
@@ -52,6 +62,15 @@ const PANELS = new Set([
 const OVERLAYS = new Set(['commandPalette', 'notifications', 'shortcuts']);
 const THEMES = new Set(['light', 'dark', 'high-contrast']);
 const ASKS = new Set(['price', 'range', 'volume']);
+/**
+ * Mirrors `CHART_TIMEFRAMES` in `apps/web`'s workspaceStore.
+ *
+ * Same rule as PANELS above, for the same reason: accepting any string would
+ * let the model emit a timeframe the chart has no button for, which validates
+ * cleanly, is rejected silently by the store's own guard, and leaves the trace
+ * claiming a success the user never sees.
+ */
+const TIMEFRAMES = new Set(['1m', '5m', '15m', '1H', '1D', '1W']);
 
 /** Hard ceiling on plan length, mirrored in the agent's guardrails. */
 export const MAX_STEPS = 8;
@@ -114,6 +133,9 @@ export function validateAction(a: unknown): Record<string, unknown> | null {
     case 'applyLayout':
       if (!isStr(act.layoutId)) return null;
       return { type: 'applyLayout', layoutId: act.layoutId };
+    case 'chartTimeframe':
+      if (!isStr(act.timeframe) || !TIMEFRAMES.has(act.timeframe)) return null;
+      return { type: 'chartTimeframe', timeframe: act.timeframe };
     case 'toggleSidebar':
       return { type: 'toggleSidebar' };
     case 'newWorkspaceTab':
