@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { API_URL, api, setSession } from '@/lib/api';
+import { API_URL, ApiError, api, setSession } from '@/lib/api';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { useSettingsStore } from '@/lib/store/settingsStore';
 import { CandleLoader } from '@tradew/ui';
@@ -25,10 +25,33 @@ import { CandleLoader } from '@tradew/ui';
 type Tab = 'email' | 'google' | 'phone';
 type Methods = { password: boolean; google: boolean; phone: boolean };
 
-function friendlyError(message: string): string {
+/**
+ * Turn a thrown API failure into a sentence that says what to do next.
+ *
+ * The case this was rewritten for: a database one migration behind made
+ * `POST /auth/login` fail, and every user saw the API's default body — the
+ * literal words "Internal server error" — with no hint that the fault was the
+ * deployment's rather than their password's. The API now classifies that as
+ * 503 with a real explanation, so a 5xx message is worth showing; a bare 500
+ * still is not, and gets the reference id instead, which is what actually
+ * locates the stack trace in the API log.
+ */
+function friendlyError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err ?? '');
   if (/fetch|network|load failed/i.test(message)) {
     return "Couldn't reach the TradeW server. Check that the API is running and NEXT_PUBLIC_API_URL is set correctly.";
   }
+
+  if (err instanceof ApiError && err.status >= 500) {
+    const reference = err.requestId ? ` Reference ${err.requestId}.` : '';
+    // A 503 from the API is a classified, actionable message about the
+    // deployment. A 500 is by definition one it could not explain.
+    return err.status === 500
+      ? `The TradeW server hit an error while signing you in — this is a problem on the server, not with your ` +
+          `credentials.${reference} Check the API server log for the matching entry.`
+      : `${message}${reference}`;
+  }
+
   return message || 'Something went wrong. Please try again.';
 }
 
@@ -145,7 +168,7 @@ export function AuthPanel() {
       });
       await enter(res.accessToken, res.refreshToken);
     } catch (err: any) {
-      setError(friendlyError(err?.message));
+      setError(friendlyError(err));
     } finally {
       setBusy(false);
     }
@@ -165,7 +188,7 @@ export function AuthPanel() {
       // a Twilio account. With a provider configured this is always absent.
       setDevCode(res.devCode ?? null);
     } catch (err: any) {
-      setError(friendlyError(err?.message));
+      setError(friendlyError(err));
     } finally {
       setBusy(false);
     }
@@ -182,7 +205,7 @@ export function AuthPanel() {
       });
       await enter(res.accessToken, res.refreshToken);
     } catch (err: any) {
-      setError(friendlyError(err?.message));
+      setError(friendlyError(err));
     } finally {
       setBusy(false);
     }
