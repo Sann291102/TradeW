@@ -9,22 +9,45 @@ const DHAN_LIVE_URL = process.env.NEXT_PUBLIC_DHAN_LIVE_URL || '/feed';
  * simulated-engine routes.
  */
 
+/**
+ * Where a quote's price came from. `live` is a trade printed in the session the
+ * quote names; the other two are a carried-forward LAST VALID price, which is
+ * what every instrument shows once the market shuts.
+ */
+export type DhanPriceSource = 'live' | 'previous-close' | 'last-session-bar';
+
 export interface DhanLiveQuote {
   instrumentId: string;
   symbol: string;
   displayName: string;
-  ltp: number;
-  change: number;
-  changePct: number;
+  /**
+   * The last valid price, of any age — NEVER a placeholder zero.
+   *
+   * `null` means, and only means, that no valid price has ever been observed
+   * for this instrument. Render it as "—" (see `fmtPrice`). Coalescing it to 0
+   * recreates the defect this contract was changed to end: with the market
+   * closed, the dashboard's index cards read "0.00", which is not a missing
+   * price but a false statement about the market.
+   */
+  ltp: number | null;
+  previousClose: number | null;
+  /** Null — not 0 — when it cannot be computed. A market that did not move and
+   *  a move that is unknown must not look the same. */
+  change: number | null;
+  changePct: number | null;
   open: number | null;
   high: number | null;
   low: number | null;
   close: number | null;
-  bid: number;
-  ask: number;
-  volume: number;
+  bid: number | null;
+  ask: number | null;
+  volume: number | null;
+  /** Provenance of `ltp`. Null when `ltp` is null. */
+  priceSource: DhanPriceSource | null;
+  /** IST trading day (YYYY-MM-DD) `ltp` was observed in. */
+  session: string | null;
   marketStatus: 'open' | 'closed';
-  updatedAt: string;
+  updatedAt: string | null;
   source: 'dhan';
 }
 

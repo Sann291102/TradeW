@@ -606,7 +606,7 @@ export default function ChartPanel({
                 <TradeChart
                   candles={candles}
                   height={chartHeight}
-                  liveLast={liveMatch?.ltp}
+                  liveLast={liveMatch?.ltp ?? undefined}
                   fitKey={`${q.symbol}|${tf}`}
                   intervalMinutes={TF_MINUTES[tf]}
                   priceLines={priceLines}

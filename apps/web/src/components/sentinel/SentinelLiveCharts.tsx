@@ -439,9 +439,11 @@ export function SentinelLiveCharts({
             reading={reads.index}
             candles={indexCandles}
             status={indexStatus}
-            liveLast={liveIndex?.ltp}
+            liveLast={liveIndex?.ltp ?? undefined}
             changePct={liveIndex?.changePct ?? null}
-            ohlc={liveIndex && liveIndex.open != null && liveIndex.high != null && liveIndex.low != null
+            // An OHLC strip needs all four numbers; with no observed price there
+            // is no close, so the strip is omitted rather than closed at zero.
+            ohlc={liveIndex && liveIndex.open != null && liveIndex.high != null && liveIndex.low != null && liveIndex.ltp != null
               ? { open: liveIndex.open, high: liveIndex.high, low: liveIndex.low, close: liveIndex.ltp }
               : null}
             height={indexHeight}

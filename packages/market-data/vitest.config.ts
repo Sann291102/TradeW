@@ -26,6 +26,11 @@ export default defineConfig({
       // classification, and the load bounding that stops one dead credential
       // becoming a metered-API retry storm.
       'src/providers/dhan/dhan-reliability.spec.ts',
+      // The market-closed price invariant: real Dhan bytes -> parser -> last-
+      // price store -> the projection the browser receives. Cover for the
+      // defect where a closed exchange rendered every index card at 0.00,
+      // and for the two places that zero came from.
+      'src/quotes/last-price.spec.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,

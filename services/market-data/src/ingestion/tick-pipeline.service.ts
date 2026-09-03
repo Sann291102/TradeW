@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { InMemoryQuoteCache, MarketTick, refKey } from '@tradew/market-data';
+import { InMemoryQuoteCache, MarketTick, isValidPrice, refKey } from '@tradew/market-data';
 import { InstrumentRegistryService } from '../instruments/instrument-registry.service';
 import { PrismaService } from '../prisma.service';
 
@@ -144,21 +144,40 @@ export class TickPipelineService implements OnModuleDestroy {
       // removes the bulk of the write volume without losing anything: Quote is
       // a snapshot, and re-writing an identical snapshot changes nothing but
       // updatedAt.
-      const fingerprint = `${data.ltp?.toString() ?? ''}|${data.volume?.toString() ?? ''}`;
+      // `previousClose` is part of the fingerprint because it is now the field
+      // that carries a closed market's only news. Keyed on price+volume alone,
+      // the subscribe-time PREV_CLOSE packet — which has neither — matched the
+      // empty fingerprint of every other priceless tick and was skipped, so the
+      // one value worth persisting outside session hours never reached the row.
+      const fingerprint = `${data.ltp?.toString() ?? ''}|${data.previousClose?.toString() ?? ''}|${data.volume?.toString() ?? ''}`;
       if (this.lastPersisted.get(instrumentId) === fingerprint) {
         this.stats.skippedUnchanged++;
         return false;
       }
 
-      // Quote.instrumentId is unique, so this is a genuine upsert rather than
-      // find-then-write — no read-modify-write race between flushes. `ltp` is
-      // non-nullable on create; a tick carrying no price (an OI-only packet,
-      // say) would otherwise fail the insert.
-      await this.prisma.quote.upsert({
-        where: { instrumentId },
-        update: data,
-        create: { ...data, instrumentId, ltp: data.ltp ?? new Prisma.Decimal(tick.previousClose ?? 0) },
-      });
+      // `Quote.ltp` is non-nullable, so a first-ever row needs SOME price. The
+      // only honest candidates are the tick's own price and the previous close
+      // it carries — never a synthesized 0. `?? 0` here used to insert exactly
+      // that: a Quote row asserting the instrument is worth nothing, which then
+      // read back as a real price for the rest of its life because every later
+      // update kept it (an OI-only or out-of-session tick writes no `ltp`).
+      //
+      // With no valid price to insert there is nothing to say about this
+      // instrument yet, so an existing row is updated and no new one is
+      // created. `updateMany` is the update-if-present form — zero rows matched
+      // is a no-op, not an error.
+      const createLtp = data.ltp ?? (isValidPrice(tick.previousClose) ? new Prisma.Decimal(tick.previousClose) : null);
+      if (createLtp === null) {
+        await this.prisma.quote.updateMany({ where: { instrumentId }, data });
+      } else {
+        // Quote.instrumentId is unique, so this is a genuine upsert rather than
+        // find-then-write — no read-modify-write race between flushes.
+        await this.prisma.quote.upsert({
+          where: { instrumentId },
+          update: data,
+          create: { ...data, instrumentId, ltp: createLtp },
+        });
+      }
       this.lastPersisted.set(instrumentId, fingerprint);
       return true;
     } catch (err) {
@@ -177,13 +196,18 @@ export class TickPipelineService implements OnModuleDestroy {
    */
   private toQuoteData(tick: MarketTick): QuoteWriteData {
     const data: Record<string, unknown> = { source: tick.source };
-    if (tick.ltp !== undefined) data.ltp = new Prisma.Decimal(tick.ltp);
-    if (tick.open !== undefined) data.open = new Prisma.Decimal(tick.open);
-    if (tick.high !== undefined) data.high = new Prisma.Decimal(tick.high);
-    if (tick.low !== undefined) data.low = new Prisma.Decimal(tick.low);
-    if (tick.bid !== undefined) data.bid = new Prisma.Decimal(tick.bid);
-    if (tick.ask !== undefined) data.ask = new Prisma.Decimal(tick.ask);
-    if (tick.previousClose !== undefined) data.previousClose = new Prisma.Decimal(tick.previousClose);
+    // `isValidPrice` rather than `!== undefined`, as a second line of defence.
+    // The Dhan parser already drops wire zeros, but this pipeline is
+    // provider-neutral and a future adapter that reports 0-for-absent must not
+    // be able to blank a good price here — a Quote row is a latest-value
+    // snapshot, so a zero written into it is not corrected by anything.
+    if (isValidPrice(tick.ltp)) data.ltp = new Prisma.Decimal(tick.ltp);
+    if (isValidPrice(tick.open)) data.open = new Prisma.Decimal(tick.open);
+    if (isValidPrice(tick.high)) data.high = new Prisma.Decimal(tick.high);
+    if (isValidPrice(tick.low)) data.low = new Prisma.Decimal(tick.low);
+    if (isValidPrice(tick.bid)) data.bid = new Prisma.Decimal(tick.bid);
+    if (isValidPrice(tick.ask)) data.ask = new Prisma.Decimal(tick.ask);
+    if (isValidPrice(tick.previousClose)) data.previousClose = new Prisma.Decimal(tick.previousClose);
     if (tick.volume !== undefined) {
       // Quote.volume is BigInt; the Dhan wire types volume as int32, so a very
       // active low-priced counter can approach that ceiling. Clamping at zero

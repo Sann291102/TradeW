@@ -104,6 +104,12 @@ export default defineConfig({
       // cross-origin iframe there is nothing that can detect the mismatch at
       // runtime. It draws a plausible chart of the wrong market.
       'src/lib/markets/tradingViewSymbols.test.ts',
+      // The last leg of the market-data path: a bridge quote -> the strings a
+      // card renders. Cover for the reported defect where a closed market
+      // showed every index at 0.00, and for the `?? 0` reflex that caused it —
+      // an unknown price is "—" here, never a number. The backend half of the
+      // same path is packages/market-data/src/quotes/last-price.spec.ts.
+      'src/lib/markets/quoteDisplay.test.ts',
       // Chart-detection routing. Pins the collision between "mark the fair
       // value gaps" (draw) and "what is a fair value gap" (explain), which
       // reach the same matcher with the same words.
