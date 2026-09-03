@@ -1,7 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { fetchDhanQuotes, type DhanLiveQuote, type DhanLiveSnapshot } from '../dhanLiveFeed';
+import {
+  fetchDhanQuotes,
+  hasNoPricedQuotes,
+  withPricedQuotes,
+  type DhanLiveQuote,
+  type DhanLiveSnapshot,
+} from '../dhanLiveFeed';
 
 export type DhanFeedStatus = 'loading' | 'live' | 'closed' | 'unreachable';
 
@@ -65,18 +71,32 @@ function scheduleUnreachable() {
   }, GRACE_MS);
 }
 
+/**
+ * Publish a snapshot to every widget — but only the rows that carry a real
+ * price, and only if any of them do.
+ *
+ * `hasNoPricedQuotes` covers what used to be a plain length check. The two
+ * cases it merges look different on the wire and identical on screen:
+ *
+ *  - the arrays are empty (the bridge is booting, or holds nothing yet);
+ *  - the arrays are FULL of rows whose `ltp` is 0 (the bridge is up but has no
+ *    prices — a refused Dhan credential, a closed market whose historical
+ *    pre-fetch failed, a placeholder seeded at boot).
+ *
+ * The old length check called the second case healthy, so the dashboard drew
+ * `0.00` for every index instead of falling back to its labelled preview.
+ * Treating it as the outage it is — after the same GRACE_MS, so a single
+ * unlucky poll still does not flip the pill — is the fix. See
+ * `isPricedQuote` in ../dhanLiveFeed for the full story.
+ */
 function apply(data: DhanLiveSnapshot) {
-  const empty =
-    data.indices.length === 0 &&
-    data.stocks.length === 0 &&
-    data.etfs.length === 0 &&
-    data.commodities.length === 0;
-  if (empty) {
+  if (hasNoPricedQuotes(data)) {
     scheduleUnreachable();
     return;
   }
   clearGrace();
-  setState({ snapshot: data, status: data.marketOpen ? 'live' : 'closed' });
+  const priced = withPricedQuotes(data);
+  setState({ snapshot: priced, status: priced.marketOpen ? 'live' : 'closed' });
 }
 
 /**
