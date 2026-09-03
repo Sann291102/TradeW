@@ -3491,7 +3491,17 @@ model FinancialStatement {
   /// One statement per (company, type, basis, frequency, period, revision).
   /// Re-ingesting the same filing is therefore a no-op, and a genuine
   /// restatement is a different row rather than a conflict.
-  @@unique([companyId, statementType, consolidation, frequency, periodEnd, restated])
+  ///
+  /// `map:` is load-bearing, not cosmetic. Migration 20260819020000 created
+  /// this index as `FinancialStatement_unique_period`, while Prisma's default
+  /// name for these six columns is
+  /// `FinancialStatement_companyId_statementType_consolidation_fr_key`. Without
+  /// the map the two disagree, and `prisma migrate diff` reports drift on a
+  /// database that is in fact correct — which is exactly what CI caught. The
+  /// migration's name is kept rather than the default because the index already
+  /// exists under that name wherever this migration has been applied, and
+  /// renaming it would be DDL against live databases to no purpose.
+  @@unique([companyId, statementType, consolidation, frequency, periodEnd, restated], map: "FinancialStatement_unique_period")
   @@index([companyId, statementType, periodEnd])
   @@index([companyId, fiscalYear])
   @@index([reconciliationStatus])
