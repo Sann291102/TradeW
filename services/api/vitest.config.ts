@@ -22,6 +22,22 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: [
+      // Backtesting. The money suite pins the identity that makes a result
+      // trustworthy — gross - fees - slippage = net, on every trade — plus the
+      // pessimistic fill rules (stop before target within a bar, a gap fills at
+      // the open) and the risk gates. The metrics suite pins the other half:
+      // which numbers are suppressed for insufficient sample rather than
+      // printed as if they meant something.
+      // Agent Trading Laboratory, Phase 0. Pins the three properties whose
+      // absence is silent: an idempotency key that is not idempotent, a health
+      // gate that cannot tell "switched off" from "waiting", and an
+      // availability record that calls a closed market a degraded feed. Also
+      // asserts the no-fake-dashboard rule structurally - an event kind whose
+      // machinery does not exist yet cannot be emitted.
+      'src/lab/lab-phase0.spec.ts',
+      'src/backtest/execution-simulator.spec.ts',
+      'src/backtest/backtest-metrics.spec.ts',
+      'src/backtest/backtest-config.spec.ts',
       'src/discipline/discipline-limits.spec.ts',
       'src/discipline/market-calendar.spec.ts',
       // Broker OAuth: which callback may write a credential, and whose.
@@ -148,6 +164,21 @@ export default defineConfig({
       // The sentinel-py ingress allowlist: the alert tier the notification bell
       // styles from must cross into the row, and nothing unreviewed may.
       'src/sentinel/sentinel-py-notify.spec.ts',
+      // The advice boundary. TRADEW-OS.md §1 requires "observation, never
+      // advice" to hold architecturally, so these suites are the evidence that
+      // it does — both that advice is blocked and that ordinary market
+      // commentary is not.
+      'src/ai/compliance/compliance.rules.spec.ts',
+      'src/ai/compliance/compliance.gate.spec.ts',
+      // Persona names are user-controlled text that reaches a model prompt.
+      'src/ai/persona/persona-name.filter.spec.ts',
+      // The 02:30 IST trading-day boundary, incl. DST-free IST offset math.
+      'src/ai/conversation/trading-day.spec.ts',
+      // Intent classification upstream of the agents.
+      'src/ai/orchestrator/intent.spec.ts',
+      // End-to-end: the assistant pipeline as exercised through its service
+      // surface, including direct-API attempts that bypass the UI.
+      'src/ai/assistant.e2e.spec.ts',
       // ---- Autonomous paper agents (2026-08-30) --------------------------
       //  · risk — the three percentages and their three DIFFERENT bases, plus
       //    the invariant the whole capital model rests on: realised risk never

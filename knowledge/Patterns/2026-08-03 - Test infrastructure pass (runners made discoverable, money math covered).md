@@ -34,6 +34,7 @@ The existing tests were judged **high quality, not vacuous**: pure functions, in
 - `packages/market-data` gained `"test": "npm run verify"` so the parser harness gates.
 - `apps/web/vitest.config.mjs` now names both files explicitly and resolves the `@` alias. `vitest.sentinel.config.mjs` is retained (Rule 1) and still works for focused runs.
 - New `.github/workflows/ci.yml` — runs `npm test` plus typechecks on every push and PR. Note it must run `prisma generate` first: `entitlements.spec.ts` imports `SubscriptionStatus` from `@prisma/client` and **no package declares a postinstall hook**.
+	- **Update 2026-08-19**: the root `postinstall` now exists — but it only builds `@tradew/types`, `@tradew/ai-core`, `@tradew/market-data`. It still does **not** run `prisma generate`, so the trap above is unchanged for any fresh checkout. Confirmed on two new worktrees off `main` @ `6928301`: `npm install` succeeded, then `npm test` exited 1 with 3 suites failing to *load* (407 tests passed, 0 assertions failed) — `entitlements.spec.ts`, `coupon-redeem.spec.ts` on `SubscriptionStatus.ACTIVE`, and `auth/otp-disclosure.spec.ts` on `OtpPurpose.phone_verify`, all `TypeError: Cannot read properties of undefined`. A Prisma-enum import that reads `undefined` at module load is this, every time. Fix: `npm run db:generate` after install. Setup order for a clean workspace is `npm install` → `npm run db:generate` → `npm test`.
 
 Result: `npm test` at the root = 265 tests (34 web + 203 api + 28 sentinel) + the parser harness, exit 0.
 

@@ -100,6 +100,17 @@ export function WatchCreator({
   const hasOptions = expiries.status === 'ready';
 
   /**
+   * The expiry to NAME when talking about the chain.
+   *
+   * `chain.expiry` is what the bridge served; `expiry` is what the selection
+   * asked for. They agree in the steady state and are allowed to differ for the
+   * frame between a rollover being detected and the new chain arriving — which
+   * is exactly the frame the 2026-08-19 screenshot caught. Falling back to the
+   * selection keeps the sentence complete before the first response lands.
+   */
+  const chainExpiry = chain.expiry ?? expiry;
+
+  /**
    * The chain the two strike heads are reading, named for them: "NIFTY · 1 Sep".
    * Passed down so a ladder is never presented as free-floating — those strikes
    * exist because THIS index publishes them for THIS expiry, and both are one
@@ -145,7 +156,13 @@ export function WatchCreator({
     { ...selection, underlyingOnly: watchingUnderlying },
     ladders,
     Date.now(),
-    new Date().toISOString().slice(0, 10),
+    // The trading date the expiry list was filtered against, not a second
+    // reading of the clock. Two things on one screen deciding "has this
+    // expired?" from two different dates is the general shape of the bug this
+    // whole change is about; `new Date().toISOString().slice(0, 10)` — what
+    // this was — additionally answered in UTC, so it disagreed with the IST
+    // list for the five and a half hours after midnight every day.
+    expiries.tradingDate,
   );
   const problemFor = (side: 'CE' | 'PE') => problems.filter((p) => p.side === side);
   const pairProblems = problems.filter((p) => p.side === null);
@@ -277,7 +294,10 @@ export function WatchCreator({
           <div className="grid grid-cols-2 gap-2.5">
             <Field label="Expiry">
               <Select
-                value={expiry ?? ''}
+                // `''` — never a value with no matching option, which is the
+                // state the browser resolves by painting the first one. See the
+                // block comment on the options below.
+                value={expiry !== null && expiries.expiries.includes(expiry) ? expiry : ''}
                 // No second strike reset here: `selectExpiry` already drops
                 // BOTH legs and both their tokens, because the 24200 of one
                 // series is a different contract from the 24200 of the next.
@@ -356,11 +376,21 @@ export function WatchCreator({
             </p>
           ) : chain.status === 'loading' ? (
             <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
-              Loading the {formatExpiry(expiry)} chain…
+              Loading the {formatExpiry(chainExpiry)} chain…
             </p>
           ) : chain.status === 'unavailable' ? (
+            /*
+              `chainExpiry`, NOT `expiry`. This line is the one captured in the
+              2026-08-19 report — "No live chain for NIFTY 18 Aug right now."
+              printed under a dropdown reading "25 Aug". It named the
+              selection's expiry, so it could describe a series the failed
+              request had nothing to do with. It now names the expiry the chain
+              state is actually about, which is the expiry the bridge served and
+              validated, so the sentence is either true or the request genuinely
+              failed for that series.
+            */
             <p className="rounded-lg border border-border bg-bg px-2.5 py-2 text-[12px] text-muted">
-              No live chain for {symbol} {formatExpiry(expiry)} right now.
+              No live chain for {symbol} {formatExpiry(chainExpiry)} right now.
             </p>
           ) : null}
 

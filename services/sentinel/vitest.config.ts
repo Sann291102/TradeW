@@ -105,6 +105,14 @@ export default defineConfig({
       // Decomposition: which agents a given intent routes to, and the skip
       // paths that keep an agent from being asked a question it has no data for.
       'src/sentinel-intelligence/understanding/task-decomposer.spec.ts',
+      // The historical replay. The look-ahead suite is adversarial rather than
+      // expectation-based: it corrupts and truncates the FUTURE and demands the
+      // past does not move, because a look-ahead leak makes results better and
+      // so has no visible symptom to assert on directly.
+      'src/backtest/strategy-replay.spec.ts',
+      // Coverage analysis: what a window actually contained. A half-covered
+      // backtest is a different backtest, not a shorter one.
+      'src/backtest/historical-bars.spec.ts',
       // ---- Autonomous paper agents (2026-08-30) --------------------------
       // The provenance chain, checked against the knowledge base ON DISK:
       // every concept an agent strategy cites must exist, every evidence key

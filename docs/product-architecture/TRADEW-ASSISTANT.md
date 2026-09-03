@@ -2,6 +2,8 @@
 
 Status: **largely implemented** in `apps/web` (`src/lib/assistant/`): natural-language + voice command routing, app navigation/panel/theme control, and the hard-boundary guard that refuses order placement, trade calls/targets, and relaying Sentinel's premium reasoning — all unit-tested (`detect.test.ts`, `planner.test.ts`, `voice-output.test.ts`, …). Still partial: automatic Sentinel-reasoning invocation on entitlement, and the deeper research answers that depend on the (unbuilt) `services/tradew-ai` runtime. Governed by [`TRADEW-OS.md`](TRADEW-OS.md) §5 (module boundaries). This is **not a new AI system** — it's an extension of TradeW AI's ambient copilot (`TRADEW-AI.md` §2.1): voice input, app-navigation commands, full application control, and — when entitlement allows — automatic invocation of Sentinel's premium reasoning. Same agent roster, same guardrails.
 
+**Expanded 2026-08-10.** The direction update of that date turns the assistant from a capable dock into the product's operating layer, and splits three concerns into their own docs: [`AI-PERSONA.md`](AI-PERSONA.md) (the user names the AI before signup; that name is the identity everywhere), [`AI-VOICE.md`](AI-VOICE.md) (wake word and full duplex voice, replacing the single phrase "voice input" in this doc), and [`AI-CONVERSATION-LIFECYCLE.md`](AI-CONVERSATION-LIFECYCLE.md) (the thread persists all day and rolls at 02:30 IST). What that update adds *here* is §9–§11: the request pipeline every interaction runs through, the assistant's ability to compose the workspace as part of an answer, and the server-side compliance gate.
+
 **The workspace agent, in one line:** TradeW AI can open and operate *every feature available to the current user* through text or voice — it is the OS-level command surface, not just a Q&A box (`TRADEW-OS.md` §1, §5).
 
 ## 1. What's new vs. what already exists
@@ -104,3 +106,57 @@ services/api  ── entitlement check ──►  has Sentinel?
 ## 8. Why no new service
 
 Voice-to-text and intent classification are request-scoped, stateless operations — they belong inside `services/tradew-ai`'s existing request path, not a new `services/voice` or `services/nav` service. Splitting them out would add a network hop for no architectural benefit, same reasoning `ARCHITECTURE.md` §2.1 applies to `services/auth`. The Sentinel escalation (§6) likewise adds no new service — it reuses the existing `services/api` → `services/sentinel` path that already exists in the dependency graph.
+
+## 9. The request pipeline (added 2026-08-10)
+
+Every user request — typed or spoken, navigation or analysis — runs the same six stages. This is what "the assistant is the product's operating system" means concretely: one path in, one path out, no feature-specific side doors.
+
+```
+Input (voice → transcript, or text)
+   │
+   1. UNDERSTAND    what is the user trying to do?          intent + entities
+   │
+   2. ROUTE         which specialists are needed?           AI Researcher (router)
+   │
+   3. GATHER        pull the data those specialists need    market-data, analytics, portfolio
+   │
+   4. REASON        analyse across it                       specialist agents
+   │
+   5. COMPLY        check before the user ever sees it      §11 — server-side, fail-closed
+   │
+   6. RESPOND       speech + text + UI actions              §10
+```
+
+| Stage | Runs in | Status today |
+|---|---|---|
+| 1. Understand | `apps/web` for commands (deterministic); `services/tradew-ai` for analysis | **Built** for commands — `lib/assistant/router.ts`. Not built for analysis |
+| 2. Route | `services/tradew-ai` (AI Researcher, `TRADEW-AI.md` §3) | Not built — `services/tradew-ai` is a stub; the agent logic lives in `packages/ai-core` |
+| 3. Gather | `services/api` fans out to `market-data` / `analytics` / portfolio (read-only) | Data services exist; the fan-out for AI requests does not |
+| 4. Reason | `services/tradew-ai` specialists; `services/sentinel` when entitled (§6) | Not built |
+| 5. Comply | `services/api`, on the response path | **Partial and in the wrong place** — see §11 |
+| 6. Respond | `apps/web` — speech (`AI-VOICE.md` §5), text, and actions | Actions built; speech not |
+
+**Stage 1 short-circuits.** A resolved navigation command skips stages 2–4 entirely and goes straight to 6 — that is §2's rule, and it is why "open the option chain" is instant and free while "explain this chart" is neither. Stage 5 still runs on everything.
+
+## 10. The living AI workspace (added 2026-08-10)
+
+Beyond answering, the assistant **composes the workspace as part of its answer.** "Summarise today's market" produces a short spoken summary *and*, where it helps, a panel in the dashboard holding the detail behind it — one request, one conversation, several surfaces updated.
+
+This is the existing `AssistantAction` capability set (`apps/web/src/lib/assistant/types.ts`) extended from "navigate and toggle panels" to "assemble a view," and it inherits every constraint that set was built with:
+
+- **Composition is view-level only.** Opening, arranging, and populating panels — never placing, modifying, or cancelling an order (§7, `TRADEW-OS.md` §2.3). The capability type has no order variant and gains none here.
+- **Entitlement-scoped** exactly as §5 requires; a panel the user isn't entitled to resolves to the upgrade surface, not a blank.
+- **The user stays in control of their layout.** A composed panel is announced in the trace, is dismissible in one action, and never silently rearranges surfaces the user placed themselves. An assistant that reorganises your desk while answering a question is a liability, not a feature.
+- **Speech summarises; the panel holds the detail** (`AI-VOICE.md` §5). The two are one response, not a spoken version and a written version of the same thing.
+
+## 11. Compliance is a gate, not a prompt (added 2026-08-10)
+
+`TRADEW-OS.md` §1 requires observation-never-advice as an *architectural* property. Today it is not one: `apps/web/src/lib/assistant/domain-guard.ts` is real and working, but it runs **in the browser, on the request path** — which means it is bypassable by anyone talking to the API directly, and it cannot see model output at all, because there is no model output yet.
+
+The requirement, when stage 4 starts producing text:
+
+- **Every response passes a server-side compliance gate at `services/api` before reaching the client** — regardless of which agent produced it, whether it came from `tradew-ai` or `sentinel`, and whether the request arrived by voice, text, or an internal call.
+- **Fail closed.** A response the gate cannot evaluate is not shown. Availability is not the value being protected here.
+- **The gate is not a prompt instruction.** System-prompt guidance is a first line and will be there; it is not the control, because prompts are probabilistic and a user-supplied persona name flows into the same prompt (`AI-PERSONA.md` §5).
+- **Verdicts are logged** with the message (`AI-CONVERSATION-LIFECYCLE.md` §6, `complianceVerdict`), so the posture is auditable rather than asserted.
+- `domain-guard.ts` stays where it is as fast client-side feedback — it becomes a UX affordance, not the enforcement point.

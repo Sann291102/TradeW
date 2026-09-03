@@ -143,6 +143,10 @@ export default defineConfig({
       // an empty one, telling the user to start a watch when the service could
       // not be reached.
       'src/components/sentinel/strategyFeedStates.test.tsx',
+      // Wake-word matching and speech text preparation: pure, no DOM. The
+      // matcher's false-positive behaviour is the thing worth asserting — a
+      // wake word that fires on ordinary speech is worse than none.
+      'src/lib/voice/**/*.test.ts',
     ],
     environment: 'node',
     // The strategy components are rendered with renderToStaticMarkup, which

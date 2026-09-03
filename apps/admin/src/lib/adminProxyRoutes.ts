@@ -133,6 +133,20 @@ export const ADMIN_PROXY_ROUTES: RouteRule[] = [
   { method: 'GET', segments: ['graph', 'path'] },
   { method: 'GET', segments: ['graph', 'events'] },
 
+  // --- Agent Trading Laboratory (Phase 0: read-only) ------------------------
+  // Every route below is a READ. There is deliberately no command, no arm and
+  // no execute here, because none exists upstream yet — Phase 0 observes and
+  // records. `tick` runs one observation pass immediately instead of waiting
+  // for the timer; it is the SAME pass the loop makes, subject to the same
+  // health gate, and it writes at most one event per profile per bar because
+  // the dedupe key is content-derived. When Phase 1 adds commands they arrive
+  // as individually-listed POSTs, never through a wildcard.
+  { method: 'GET', segments: ['lab', 'health'] },
+  { method: 'GET', segments: ['lab', 'profiles'] },
+  { method: 'GET', segments: ['lab', 'events'] },
+  { method: 'GET', segments: ['lab', 'events', 'summary'] },
+  { method: 'GET', segments: ['lab', 'tick'] },
+
   // --- Knowledge workspace (read-only vault) --------------------------------
   { method: 'GET', segments: ['knowledge', 'tree'] },
   { method: 'GET', segments: ['knowledge', 'file'] },

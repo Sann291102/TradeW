@@ -44,14 +44,29 @@ const CHAIN: DhanOptionChain = {
 };
 
 describe('pickNearestExpiry', () => {
-  it('returns the earliest valid ISO date without a today reference', () => {
-    expect(pickNearestExpiry(['2026-08-14', '2026-07-31', '2026-08-07'])).toBe('2026-07-31');
+  /**
+   * Pinned to an explicit date rather than omitting one. The original spelling
+   * — `pickNearestExpiry(['2026-08-14', '2026-07-31', '2026-08-07'])` with no
+   * second argument — passed only while those dates were still in the future,
+   * because omitting the date now means "today" rather than "ignore dates".
+   * A test whose result depends on the day it is run cannot fail usefully.
+   */
+  it('returns the earliest valid ISO date, unsorted input', () => {
+    expect(pickNearestExpiry(['2026-08-14', '2026-07-31', '2026-08-07'], '2026-07-20')).toBe('2026-07-31');
   });
   it('drops past dates when today is known', () => {
     expect(pickNearestExpiry(['2026-07-10', '2026-07-31', '2026-08-07'], '2026-07-30')).toBe('2026-07-31');
   });
-  it('falls back to the last date when all are past', () => {
-    expect(pickNearestExpiry(['2026-07-01', '2026-07-10'], '2026-07-30')).toBe('2026-07-10');
+  /**
+   * Changed 2026-08-19, with the expiry-rollover fix. This used to assert
+   * `toBe('2026-07-10')` — the most recent PAST expiry — which meant "nothing
+   * is live" and "this contract is live" were the same return value. The chain
+   * poll then requested the dead contract and rendered the empty reply as "no
+   * live chain", which is how the workspace came to report a market outage for
+   * what was really a rolled-over series. Nothing valid must be `null`.
+   */
+  it('returns null when every listed expiry is already past', () => {
+    expect(pickNearestExpiry(['2026-07-01', '2026-07-10'], '2026-07-30')).toBeNull();
   });
   it('ignores malformed entries and returns null when nothing valid', () => {
     expect(pickNearestExpiry(['not-a-date', ''])).toBeNull();

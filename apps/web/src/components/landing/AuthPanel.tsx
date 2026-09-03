@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { API_URL, api, setSession } from '@/lib/api';
+import { readLocalPersonaName } from '@/lib/assistant/persona';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { useSettingsStore } from '@/lib/store/settingsStore';
 import { CandleLoader } from '@tradew/ui';
@@ -141,7 +142,16 @@ export function AuthPanel() {
     try {
       const res = await api(`/auth/${mode}`, {
         method: 'POST',
-        body: JSON.stringify({ email, password }),
+        // Carry the name the user gave their assistant before signing up
+        // (AI-PERSONA.md §2). Ignored by `login`, re-validated server-side, and
+        // a rejected name never fails the signup.
+        body: JSON.stringify({
+          email,
+          password,
+          ...(mode === 'signup' && readLocalPersonaName()
+            ? { aiPersonaName: readLocalPersonaName() }
+            : {}),
+        }),
       });
       await enter(res.accessToken, res.refreshToken);
     } catch (err: any) {

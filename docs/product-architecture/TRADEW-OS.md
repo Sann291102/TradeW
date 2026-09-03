@@ -18,6 +18,7 @@ It sits *above* `ARCHITECTURE.md` (which remains the binding technical service-b
 
 - **Marketing surface ≠ application architecture.** A dedicated Sentinel landing page, marketing site, domain or subdomain, and independent SEO and product marketing are all fine and expected — marketing reaches people who are not yet users. The rule binds from sign-in onward: once authenticated, Sentinel is experienced as part of TradeW. Never let a marketing decision propagate into the application's navigation, shell, or identity.
 - **The application is always alive.** Live data, ambient intelligence, and restored state mean the product is never a cold, empty page — it resumes (§ Workspace Continuity, `WORKSPACE-CONTINUITY.md`).
+- **The AI is the shell, and it has a name the user gave it.** *(Added 2026-08-10.)* An operating system is something you speak to, not a chat box in the corner of a dashboard. The user names the AI before they sign up; that name is the wake word, the voice, and the identity on every surface thereafter (`AI-PERSONA.md`). It runs the application, answers from real data, teaches, and knows what the user is looking at — one assistant, one conversation, every surface (`TRADEW-ASSISTANT.md` §9–§10, `AI-VOICE.md`, `AI-CONVERSATION-LIFECYCLE.md`). A feature reachable only by hunting through menus is a feature the shell has not finished absorbing.
 - **Observation, never advice.** TradeW explains, reflects, and educates. It never issues buy/sell instructions and never places a trade on the user's behalf. This is a product identity, a compliance posture (SEBI/DPDP), and a hard architectural rule all at once — see §5.
 
 ## 2. Architectural principles (the non-negotiables)
@@ -110,6 +111,7 @@ Every document below is subordinate to this constitution:
 - `README.md` — pillar overview and reading order
 - `GENESIS-V2-BLUEPRINT.md` — unified deliverable map + phased roadmap
 - Pillars: `TRADEW-AI.md`, `TRADEW-ASSISTANT.md`, `SENTINEL.md`, `LEARNING-HUB.md`
+- AI shell (§1): `AI-PERSONA.md` (the user-chosen name), `AI-VOICE.md` (wake word, duplex voice), `AI-CONVERSATION-LIFECYCLE.md` (the trading-day thread)
 - Memory: `KNOWLEDGE-GRAPH.md`, `RESEARCH-VAULT.md`, `CONTINUOUS-LEARNING-PIPELINE.md`
 - Cross-cutting: `AGENT-ARCHITECTURE.md`, `EXPLAINABILITY.md`, `WORKSPACE-CONTINUITY.md`, `SUBSCRIPTIONS.md`, `ONBOARDING.md`, `TRADINGVIEW-WORKSPACE.md`, `N8N-WORKFLOWS.md`
 - Design: `../design-reference/DESIGN-SYSTEM.md`

@@ -145,6 +145,24 @@ export interface DhanOptionStrike {
 export interface DhanOptionChain {
   spot: number | null;
   strikes: DhanOptionStrike[];
+  /**
+   * The expiry the bridge ACTUALLY served, which may not be the one asked for.
+   *
+   * The bridge validates every requested expiry against the live list and rolls
+   * an expired or delisted one forward (see `resolveRequestedExpiry` in
+   * live-feed-server.ts). Carrying its answer back means the client displays the
+   * series it received rather than the one it requested — the specific failure
+   * in the 2026-08-19 report, where a panel named "18 Aug" in a message about
+   * data that could only ever have been about some other series.
+   *
+   * Optional because a bridge older than this change omits it; consumers fall
+   * back to the requested expiry, which is what they used before.
+   */
+  resolvedExpiry?: string | null;
+  /** What the client asked for, echoed. Present alongside `resolvedExpiry`. */
+  requestedExpiry?: string | null;
+  /** True when `resolvedExpiry` differs from `requestedExpiry`. */
+  autoRolled?: boolean;
 }
 
 /**

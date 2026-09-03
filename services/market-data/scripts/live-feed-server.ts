@@ -18,6 +18,13 @@ import {
   type ResolvedCredential,
   type ScripMasterRow,
 } from '@tradew/market-data';
+import {
+  describeExpiryResolution,
+  liveExpiries,
+  resolveActiveExpiry,
+  tradingDateIso,
+  type ExpiryResolution,
+} from '@tradew/types';
 // The at-rest format for BrokerCredential.accessToken. Owned by the package that
 // owns the schema, so this process and services/api cannot drift into
 // incompatible envelopes. Static, not dynamic like the Prisma import below: it
@@ -1060,6 +1067,43 @@ async function fetchExpiryList(u: OptionUnderlying): Promise<string[]> {
   return json.data ?? [];
 }
 
+/**
+ * The expiry a request will ACTUALLY be served on, decided here rather than
+ * trusted from the query string.
+ *
+ * ── WHY THE SERVER DECIDES THIS AT ALL ─────────────────────────────────────
+ *
+ * On 2026-08-19 a browser asked this bridge for `NIFTY 2026-08-18` — a series
+ * that had expired the previous day — because its own state had gone stale. The
+ * bridge did as it was told, Dhan returned nothing for a contract that no longer
+ * trades, and the empty reply was rendered as "No live chain for NIFTY 18 Aug
+ * right now", which reads as a market-data outage rather than a rolled-over
+ * series.
+ *
+ * The frontend fix stops the stale request being SENT. This stops it being
+ * SERVED, which is the half that survives a client we did not write, an old tab,
+ * a bookmarked URL, or the next state bug of the same shape. The client is told
+ * what happened (`requestedExpiry` vs `resolvedExpiry` on every response), so
+ * "the server quietly gave me something else" is not a new way for the two to
+ * disagree — it is the mechanism by which they are forced to agree.
+ *
+ * Costs one expiry-list read, which `expiryGuard` serves from a 5-minute cache
+ * and collapses across concurrent callers, so the steady-state upstream cost of
+ * this validation is zero.
+ */
+async function resolveRequestedExpiry(
+  symbol: string,
+  underlying: OptionUnderlying,
+  requestedExpiry: string,
+): Promise<ExpiryResolution> {
+  const raw = await expiryGuard.get(symbol.toUpperCase(), () => queueDhanCall(() => fetchExpiryList(underlying)));
+  return resolveActiveExpiry({
+    symbol: symbol.toUpperCase(),
+    availableExpiries: raw,
+    requestedExpiry,
+  });
+}
+
 function toLegOut(raw: DhanOptionLegRaw | undefined): OptionLegOut | null {
   if (!raw) return null;
   return {
@@ -1700,8 +1744,33 @@ async function main(): Promise<void> {
       // calls against a limit that allows one call every ~3s.
       expiryGuard
         .get(symbol.toUpperCase(), () => queueDhanCall(() => fetchExpiryList(underlying)))
-        .then((expiries) => {
-          res.end(JSON.stringify({ expiries }));
+        .then((raw) => {
+          /**
+           * Normalised and date-filtered HERE, on the way out — never on the way
+           * into the cache.
+           *
+           * The distinction is the whole reason this route could serve a dead
+           * contract: `expiryGuard` holds an entry for five minutes, and a list
+           * filtered before storage would carry the trading date it was filtered
+           * ON. Across an IST midnight — or simply across the 15:30 expiry-day
+           * boundary into the next session — that cached list keeps offering a
+           * series that has since stopped trading, and every client that trusts
+           * it inherits the staleness. Filtering per response means the cache
+           * holds what Dhan said and the answer is always judged against now.
+           */
+          const tradingDate = tradingDateIso();
+          const expiries = liveExpiries(raw, tradingDate);
+          res.end(
+            JSON.stringify({
+              expiries,
+              // The active series, so a client has no reason to re-derive one.
+              // Same function the workspace calls, so it cannot derive a
+              // different one either.
+              resolvedExpiry: expiries[0] ?? null,
+              expirySource: expiries.length > 0 ? 'market_api' : 'none',
+              tradingDate,
+            }),
+          );
         })
         .catch((err) => {
           // An empty list here is NOT "this symbol has no options" — that answer
@@ -1717,60 +1786,141 @@ async function main(): Promise<void> {
     if (url.pathname === '/optionchain') {
       res.setHeader('Content-Type', 'application/json');
       const symbol = url.searchParams.get('symbol') ?? '';
-      const expiry = url.searchParams.get('expiry') ?? '';
+      const requestedExpiry = url.searchParams.get('expiry') ?? '';
       const underlying = resolveOptionUnderlying(symbol);
-      if (!underlying || !expiry) {
-        res.end(JSON.stringify({ spot: null, strikes: [] }));
-        return;
-      }
-      const cacheKey = `${symbol}:${expiry}`;
-      const cached = optionChainCache.get(cacheKey);
-      if (cached && Date.now() - cached.at < OPTION_CHAIN_TTL_MS) {
-        // Serve the cached REST body but re-overlay live prices on the way out:
-        // the cache exists to spare Dhan's rate limit, and it must never pin a
-        // price for its whole TTL when a newer websocket tick already exists.
-        res.end(JSON.stringify(withLiveOptionPrices(symbol, expiry, cached.payload)));
+      if (!underlying || !requestedExpiry) {
+        res.end(JSON.stringify({ spot: null, strikes: [], requestedExpiry: requestedExpiry || null }));
         return;
       }
 
-      // Collapse concurrent misses onto ONE upstream call. Without this, several
-      // widgets (or a fast poll) each enqueue their own Dhan request, and the
-      // queue's rate limiting then starts returning empties — which blanked the
-      // whole chain in the UI. Prices must never "stop".
-      let pending = optionChainInFlight.get(cacheKey);
-      if (!pending) {
-        pending = queueDhanCall(() => fetchOptionChain(underlying, expiry)).finally(() =>
-          optionChainInFlight.delete(cacheKey),
-        );
-        optionChainInFlight.set(cacheKey, pending);
-      }
+      /**
+       * Validate before spending anything on the request.
+       *
+       * The order matters: resolution comes FIRST, and every cache key, upstream
+       * call, websocket subscription and response field below is keyed on
+       * `expiry` — the RESOLVED one — never on what the client asked for. Key any
+       * one of them on the request instead and an auto-rolled response gets
+       * filed under the dead contract's name, which is a stale-data bug wearing
+       * the fix's clothes.
+       */
+      void resolveRequestedExpiry(symbol, underlying, requestedExpiry)
+        .then((resolution) => {
+          // Logged only when the answer differs from the question. A line per
+          // poll on a 4-second cadence would bury the one that matters; the
+          // rollover is the event worth a log, and it prints the same fields the
+          // workspace prints for the same decision.
+          if (resolution.autoRolled) console.info(describeExpiryResolution(resolution));
 
-      pending
-        .then((payload) => {
-          // An empty result means rate-limited / no data right now, NOT that the
-          // chain ceased to exist. Fall back to the last good one so the table
-          // keeps rendering and keeps ticking off the websocket overlay.
-          if (!payload.strikes.length) {
-            const lastGood = lastGoodChain.get(cacheKey);
+          const expiry = resolution.value;
+          if (expiry === null) {
+            // No live series at all. Deliberately NOT served from `lastGoodChain`
+            // — the last good chain for an expired contract is exactly the stale
+            // data this route now exists to refuse, and serving it is how the
+            // client was left unable to tell a rolled-over series from a live one.
             res.end(
-              JSON.stringify(lastGood ? withLiveOptionPrices(symbol, expiry, lastGood) : { spot: null, strikes: [] }),
+              JSON.stringify({
+                spot: null,
+                strikes: [],
+                requestedExpiry,
+                resolvedExpiry: null,
+                expirySource: 'none',
+                autoRolled: false,
+                tradingDate: resolution.tradingDate,
+              }),
             );
             return;
           }
-          optionChainCache.set(cacheKey, { at: Date.now(), payload });
-          lastGoodChain.set(cacheKey, payload);
-          // Start streaming this window's strikes so subsequent responses (and
-          // the overlay above) carry real-time prices rather than REST-cadence ones.
-          ensureOptionSubscription(symbol, expiry, payload.strikes, payload.spot);
-          res.end(JSON.stringify(withLiveOptionPrices(symbol, expiry, payload)));
-        })
-        .catch((err) => {
-          const lastGood = lastGoodChain.get(cacheKey);
-          if (lastGood) {
-            res.end(JSON.stringify(withLiveOptionPrices(symbol, expiry, lastGood)));
+
+          /** Stamped onto every response so the client can never disagree
+           *  silently about which series it is looking at. */
+          const provenance = {
+            requestedExpiry,
+            resolvedExpiry: expiry,
+            expirySource: resolution.source,
+            autoRolled: resolution.autoRolled,
+            tradingDate: resolution.tradingDate,
+          };
+
+          const cacheKey = `${symbol}:${expiry}`;
+          const cached = optionChainCache.get(cacheKey);
+          if (cached && Date.now() - cached.at < OPTION_CHAIN_TTL_MS) {
+            // Serve the cached REST body but re-overlay live prices on the way out:
+            // the cache exists to spare Dhan's rate limit, and it must never pin a
+            // price for its whole TTL when a newer websocket tick already exists.
+            res.end(JSON.stringify({ ...withLiveOptionPrices(symbol, expiry, cached.payload), ...provenance }));
             return;
           }
-          res.end(JSON.stringify({ spot: null, strikes: [], error: err instanceof Error ? err.message : String(err) }));
+
+          // Collapse concurrent misses onto ONE upstream call. Without this, several
+          // widgets (or a fast poll) each enqueue their own Dhan request, and the
+          // queue's rate limiting then starts returning empties — which blanked the
+          // whole chain in the UI. Prices must never "stop".
+          let pending = optionChainInFlight.get(cacheKey);
+          if (!pending) {
+            pending = queueDhanCall(() => fetchOptionChain(underlying, expiry)).finally(() =>
+              optionChainInFlight.delete(cacheKey),
+            );
+            optionChainInFlight.set(cacheKey, pending);
+          }
+
+          return pending
+            .then((payload) => {
+              // An empty result means rate-limited / no data right now, NOT that the
+              // chain ceased to exist. Fall back to the last good one so the table
+              // keeps rendering and keeps ticking off the websocket overlay.
+              //
+              // Safe to do here in a way it was not before: `cacheKey` now names
+              // the RESOLVED expiry, so the fallback can only ever return the
+              // last good chain for the series actually being served.
+              if (!payload.strikes.length) {
+                const lastGood = lastGoodChain.get(cacheKey);
+                res.end(
+                  JSON.stringify(
+                    lastGood
+                      ? { ...withLiveOptionPrices(symbol, expiry, lastGood), ...provenance }
+                      : { spot: null, strikes: [], ...provenance },
+                  ),
+                );
+                return;
+              }
+              optionChainCache.set(cacheKey, { at: Date.now(), payload });
+              lastGoodChain.set(cacheKey, payload);
+              // Start streaming this window's strikes so subsequent responses (and
+              // the overlay above) carry real-time prices rather than REST-cadence ones.
+              ensureOptionSubscription(symbol, expiry, payload.strikes, payload.spot);
+              res.end(JSON.stringify({ ...withLiveOptionPrices(symbol, expiry, payload), ...provenance }));
+            })
+            .catch((err) => {
+              const lastGood = lastGoodChain.get(cacheKey);
+              if (lastGood) {
+                res.end(JSON.stringify({ ...withLiveOptionPrices(symbol, expiry, lastGood), ...provenance }));
+                return;
+              }
+              res.end(
+                JSON.stringify({
+                  spot: null,
+                  strikes: [],
+                  error: err instanceof Error ? err.message : String(err),
+                  ...provenance,
+                }),
+              );
+            });
+        })
+        .catch((err) => {
+          // The expiry list itself could not be read — a named upstream fault,
+          // not a statement about the contract. Reported as a fault so the
+          // consumer keeps the distinction `describeFault` exists to preserve.
+          res.end(
+            JSON.stringify({
+              spot: null,
+              strikes: [],
+              requestedExpiry,
+              resolvedExpiry: null,
+              expirySource: 'none',
+              autoRolled: false,
+              ...describeFault(err),
+            }),
+          );
         });
       return;
     }

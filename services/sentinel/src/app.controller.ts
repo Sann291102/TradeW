@@ -18,6 +18,8 @@ import { StrategyIntelligenceService } from './brain/strategy-intelligence.servi
 import { ComplianceService } from './compliance/compliance.service';
 import { ObserveRequest, TradeSummary } from './domain';
 import { ExecutionEvaluationService } from './execution/execution-evaluation.service';
+import { BacktestScanService } from './backtest/backtest-scan.service';
+import type { BacktestScanRequest } from './backtest/replay-contract';
 import { ExplainService } from './explain/explain.service';
 import { ContinuousImprovementService } from './improvement/continuous-improvement.service';
 import { StrategyEngineService } from './intelligence/strategy-engine.service';
@@ -71,6 +73,7 @@ export class AppController {
   constructor(
     private readonly orchestrator: SentinelOrchestratorService,
     private readonly executionEvaluation: ExecutionEvaluationService,
+    private readonly backtestScan: BacktestScanService,
     private readonly compliance: ComplianceService,
     private readonly explainSvc: ExplainService,
     private readonly knowledgeCenter: KnowledgeCenterService,
@@ -162,6 +165,25 @@ export class AppController {
       }
       throw err;
     }
+  }
+
+  /**
+   * Replay a strategy over stored historical bars and report where it fired.
+   *
+   * SERVICE-TOKEN ONLY, like `/execution/evaluate`, and for a related reason:
+   * the response names bar indices and biases across a whole window, which is
+   * an analysis surface for the backtest engine rather than anything a trader
+   * should be handed directly. `services/api` turns it into a portfolio
+   * simulation, applies ownership, and persists the result.
+   *
+   * It is a READ over the `Candle` table. Sentinel places nothing, writes
+   * nothing here, and this route cannot reach the OMS — there is no client to
+   * it in this service.
+   */
+  @UseGuards(ServiceTokenGuard)
+  @Post('backtest/scan')
+  async backtestScanRoute(@Body() body: BacktestScanRequest) {
+    return this.backtestScan.scan(body);
   }
 
   /** Compliance-audit trail backing the Observation Feed / Agent Activity Timeline. */

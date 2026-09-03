@@ -10,6 +10,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { isValidFutureExpiry } from '@tradew/types';
 import type { OptionType, WatchSession } from './strategyApi';
 import { useExpiries, type ExpiriesResult } from './useExpiries';
 import { useOptionChainStrikes, type OptionChainStrikes } from './useOptionChainStrikes';
@@ -242,7 +243,8 @@ export function SentinelWatchProvider({
   const expiries = useExpiries(selection.symbol);
 
   /**
-   * Settle the expiry as soon as the list for THIS market resolves.
+   * Reconcile the canonical expiry against the list the market is ACTUALLY
+   * offering — on every change to that list, not once.
    *
    * `reconcileExpiry` holds the rule and the reasoning: an expiry the list
    * contains is left alone (a deliberately chosen later series is not pulled
@@ -259,12 +261,21 @@ export function SentinelWatchProvider({
    * `underlyingOnly` records — matching `WatchCreator`'s long-standing rule
    * that an UNREADABLE list is never allowed to force the underlying (that bug
    * started watches on the index without saying so, 2026-08-17).
+   *
+   * A separate, shared `resolveActiveExpiry`/`describeExpiryResolution` utility
+   * (`@tradew/types`) also exists — it is the canonical cross-runtime resolver
+   * `services/sentinel`, `services/market-data` and other frontend call sites
+   * use. `reconcileExpiry` is this component's own, more recently hardened fix
+   * for the specific persisted-stale-expiry symptom described above; the two
+   * are not in conflict, they answer different questions, and this component
+   * only needs `isValidFutureExpiry` from that shared module (below).
    */
   useEffect(() => {
     if (expiries.status === 'ready') {
       setSelection((prev) => reconcileExpiry(prev, expiries.expiries, expiries.nearest));
     } else if (expiries.status === 'none') {
       setSelection((prev) => (prev.underlyingOnly ? prev : { ...prev, underlyingOnly: true }));
+      return;
     }
     // `expiries.expiries` is a fresh array on every render of a cached query;
     // its identity is not a signal. The status/nearest pair changes exactly when
@@ -278,8 +289,26 @@ export function SentinelWatchProvider({
    * re-resolving "nearest" independently — two components resolving nearest
    * separately is how they end up on two different series.
    */
-  const chainEnabled = !selection.underlyingOnly && expiries.status === 'ready';
-  const chain = useOptionChainStrikes(selection.symbol, chainEnabled, selection.expiry);
+  /**
+   * ── AND WHY THE EXPIRY MUST BE VALID BEFORE ANYTHING IS FETCHED ───────────
+   *
+   * The reconciliation above and this render are not the same tick: on the
+   * render where a stale expiry is first noticed, the effect has not run yet,
+   * so without this guard the chain poll would fire one request for the dead
+   * contract before the roll lands. That request is not harmless — it spends a
+   * slot on a bridge that serialises option calls behind a 3.1-second floor,
+   * and it comes back empty, which is indistinguishable at the call site from
+   * "the market has no chain" and briefly paints exactly that.
+   *
+   * So the rule is the flat one the report asked for: never call the
+   * market-data API with an expiry we already know is not on offer. `null` is
+   * `useOptionChainStrikes`' documented "a picker owns this and has not settled
+   * yet" value, which is precisely the state we are in for that one render.
+   */
+  const expiryIsLive =
+    expiries.status === 'ready' && isValidFutureExpiry(selection.expiry, expiries.expiries, expiries.tradingDate);
+  const chainEnabled = !selection.underlyingOnly && expiryIsLive;
+  const chain = useOptionChainStrikes(selection.symbol, chainEnabled, expiryIsLive ? selection.expiry : null);
 
   /**
    * Fill empty legs from the real ladder's at-the-money row, and drop a leg the
@@ -320,7 +349,15 @@ export function SentinelWatchProvider({
     selection.expiry,
     selection.callStrike,
     selection.putStrike,
-    !selection.underlyingOnly,
+    // Same guard as the chain, and needed for the same reason plus one more.
+    // On a restored session BOTH the expiry and the strikes come back from
+    // localStorage, so without this the very first render resolves
+    // `NIFTY|2026-08-18|24200|CE` — a scrip-master lookup for a contract that
+    // has been delisted — and reports 'unresolvable', which the form renders as
+    // "the 24200 CE contract could not be resolved to an instrument". That is a
+    // true sentence about a contract nobody is on, printed while the rollover
+    // is one tick away from discarding the strike entirely.
+    !selection.underlyingOnly && expiryIsLive,
   );
 
   /**
