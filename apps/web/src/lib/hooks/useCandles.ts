@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Candle, CandleInterval } from '@tradew/types';
 import { fetchDhanCandles } from '../dhanLiveFeed';
+import { fetchCryptoCandles } from '../externalMarkets';
+import { instrumentBySymbol } from '../instruments/catalog';
 import { useDhanLiveFeed } from './useDhanLiveFeed';
 import { mergeLiveCandle } from './liveCandle';
 
@@ -42,6 +44,58 @@ export type CandlesUnavailableReason = 'api-unreachable' | 'no-history';
  * Dhan rate-limit mid-session turned into charts that looked fine and were
  * fabricated. Removed 2026-08-10 — both halves of it.
  */
+/**
+ * Route a bar request to the provider the instrument declares.
+ *
+ * Only the two sources that can feed the NATIVE chart are here. Twelve Data
+ * (FX, US equities) is deliberately absent: its free tier allows 8 requests a
+ * minute, which a mounted chart refetching on a 60s timer would spend on a
+ * single tab, so those instruments stay `chartSurface: 'embed'` in the catalog
+ * until a server-side candle cache exists. An instrument whose `candleSource`
+ * this function does not handle gets no bars and the caller says so — it does
+ * not silently fall through to Dhan and render another market's history under
+ * this symbol's name.
+ *
+ * Binance's kline ceiling is 1000 bars and it takes a count, not a day range,
+ * so `days` is converted using the interval's own bar duration and clamped.
+ */
+const BARS_PER_DAY: Record<string, number> = {
+  // Crypto trades continuously, so a day really is 1440 one-minute bars.
+  '1m': 1440,
+  '5m': 288,
+  '15m': 96,
+  '1h': 24,
+  '1d': 1,
+};
+
+/**
+ * A bar as it arrives from a provider, before the timestamp is revived.
+ *
+ * Dhan sends epoch milliseconds, Binance sends an ISO string over JSON. The
+ * single `new Date(c.timestamp)` in the caller normalises both — which is why
+ * this type is loose about that one field and exact about the rest.
+ */
+type WireCandle = Omit<Candle, 'timestamp'> & { timestamp: Date | string | number };
+
+async function loadBars(symbol: string, interval: CandleInterval, days: number): Promise<WireCandle[]> {
+  const ref = instrumentBySymbol(symbol);
+
+  if (ref?.candleSource === 'binance') {
+    const limit = Math.min(1000, Math.max(1, Math.round((BARS_PER_DAY[interval] ?? 96) * days)));
+    return fetchCryptoCandles(symbol, interval, limit);
+  }
+
+  // Unknown symbols keep the Dhan path: the catalog does not enumerate every
+  // option contract or every listed scrip, and the bridge is the authority on
+  // those. A symbol the catalog DOES know with a non-Dhan source never gets
+  // here, which is the part that matters.
+  if (!ref || ref.candleSource === 'dhan') {
+    return fetchDhanCandles(symbol, interval, days);
+  }
+
+  return [];
+}
+
 export function useCandles(
   symbol: string,
   interval: CandleInterval,
@@ -74,10 +128,15 @@ export function useCandles(
         return;
       }
       try {
-        const real = await fetchDhanCandles(symbol, interval, days);
+        // WHICH BACKEND serves this instrument is a property of the instrument,
+        // not of this hook. Before the catalog existed this went straight to
+        // Dhan for every symbol, so a crypto pair could only ever come back
+        // empty — which the panel then reported, accurately but uselessly, as
+        // "Dhan returned no candles for BTCUSDT".
+        const real = await loadBars(symbol, interval, days);
         if (cancelled) return;
         if (real.length === 0) {
-          // The bridge answered and Dhan simply has no bars for this contract.
+          // The provider answered and simply has no bars for this contract.
           setCandles(null);
           setStatus('unavailable');
           setReason('no-history');

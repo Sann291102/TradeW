@@ -90,6 +90,44 @@ export function fetchUsStockQuotes(symbols?: string[]): Promise<StockQuote[]> {
 }
 
 /**
+ * Real Binance OHLCV for one pair.
+ *
+ * ── WHY THIS WAS MISSING, AND WHY IT MATTERS ───────────────────────────────
+ *
+ * `GET /crypto/candles/:symbol` has existed and worked for a while, returning
+ * the same `Candle[]` shape `TradeChart` already draws. Nothing in apps/web
+ * called it: `useCandles` went straight to `fetchDhanCandles` and nowhere else,
+ * so crypto could only ever be shown through the TradingView embed on the
+ * Markets board.
+ *
+ * That is what made "open BTC chart on 15m" unimplementable rather than merely
+ * unbuilt. Inside a cross-origin iframe the assistant has no hands: it cannot
+ * set a timeframe, read the series back, or draw a zone. Routing crypto through
+ * our own chart gives it drawings, detectors, structure studies and timeframe
+ * control at once — none of which were ever NSE-specific. Only the fetch was.
+ *
+ * `timestamp` arrives as an ISO string over JSON and is revived to a Date here,
+ * matching what `useCandles` already does for the Dhan path.
+ */
+export async function fetchCryptoCandles(
+  symbol: string,
+  interval: string,
+  limit = 500,
+): Promise<Array<{ timestamp: Date; open: number; high: number; low: number; close: number; volume: number }>> {
+  const res = (await api(
+    `/crypto/candles/${encodeURIComponent(symbol)}?interval=${encodeURIComponent(interval)}&limit=${limit}`,
+  )) as { candles?: Array<Record<string, unknown>> };
+  return (res.candles ?? []).map((c) => ({
+    timestamp: new Date(c.timestamp as string),
+    open: Number(c.open),
+    high: Number(c.high),
+    low: Number(c.low),
+    close: Number(c.close),
+    volume: Number(c.volume),
+  }));
+}
+
+/**
  * How often each board re-asks the server.
  *
  * Crypto polls faster because Binance imposes no meaningful quota on this
