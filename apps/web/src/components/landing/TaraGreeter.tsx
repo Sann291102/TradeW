@@ -6,6 +6,7 @@ import { Mascot } from './Mascot';
 import { ASSISTANT_NAME, ASSISTANT_DISCLAIMER } from '@/lib/assistant/identity';
 import { useVoiceOutput } from '@/lib/assistant/useVoiceOutput';
 import { SpeakerIcon, SpeakerOffIcon } from '@/components/shell/icons';
+import type { AuthMode } from '@/lib/auth-mode';
 
 /**
  * Tara introduces herself on the landing page, and answers real questions.
@@ -78,7 +79,10 @@ const EXCHANGES: Exchange[] = [
 
 const GREETING = `Hi, I'm ${ASSISTANT_NAME} — TradeW's AI. I run this platform for the people who use it. Ask me anything about it.`;
 
-export function TaraGreeter() {
+/** See `LandingHeaderProps.onAuthIntent` — this CTA offers account creation. */
+export type TaraGreeterProps = { onAuthIntent?: (mode: AuthMode) => void };
+
+export function TaraGreeter({ onAuthIntent }: TaraGreeterProps = {}) {
   const reduce = useReducedMotion();
   const [typed, setTyped] = useState(reduce ? GREETING : '');
   const [asked, setAsked] = useState<Exchange[]>([]);
@@ -201,6 +205,7 @@ export function TaraGreeter() {
           {remaining.length === 0 && (
             <a
               href="#auth"
+              onClick={() => onAuthIntent?.('signup')}
               className="rounded-full bg-teal px-4 py-1.5 text-fs2xs font-semibold text-bg transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
             >
               That&rsquo;s everything I can answer out here — create an account to really talk to me →

@@ -167,9 +167,48 @@ export function parseRetryAfter(header: string | null, now: number = Date.now())
   return Math.max(0, Math.ceil((at - now) / 1000));
 }
 
-function apiError(res: Response, data: { message?: string }): ApiError {
+/**
+ * The best human-readable sentence available for a non-OK response.
+ *
+ * The old fallback was the bare string "API request failed", which told a user
+ * nothing and told a developer even less — it was equally the message for a
+ * wrong password, a 404 from a mistyped API base URL, and an HTML error page
+ * from a proxy in front of a dead server. Three different problems with three
+ * different fixes, all wearing the same four words.
+ *
+ * So: use the server's own message when there is one, understanding that Nest
+ * speaks in two shapes (`message` is a string for a thrown HttpException and
+ * an ARRAY of failed constraints from `ValidationPipe`), and when the body
+ * carries nothing usable, say what actually happened — the status, its reason
+ * phrase, and the route — rather than inventing a generic failure.
+ */
+export function describeApiFailure(
+  status: number,
+  statusText: string,
+  path: string,
+  data: unknown,
+): string {
+  const body = (data ?? {}) as { message?: unknown; error?: unknown };
+  const { message } = body;
+
+  if (typeof message === 'string' && message.trim()) return message.trim();
+  // ValidationPipe: every failed constraint, in the order it was declared.
+  if (Array.isArray(message)) {
+    const parts = message.filter((m): m is string => typeof m === 'string' && !!m.trim());
+    if (parts.length) return parts.join('. ');
+  }
+  if (typeof body.error === 'string' && body.error.trim()) return body.error.trim();
+
+  // Nothing usable in the body — a non-JSON response (a proxy's HTML error
+  // page, an empty 502) or a shape this client does not know. Describe the
+  // response itself; it is the only true thing we have.
+  const reason = statusText?.trim() ? `${status} ${statusText.trim()}` : String(status);
+  return `${path} failed with ${reason}`;
+}
+
+function apiError(res: Response, path: string, data: unknown): ApiError {
   return new ApiError(
-    data.message || 'API request failed',
+    describeApiFailure(res.status, res.statusText, path, data),
     res.status,
     parseRetryAfter(res.headers?.get?.('Retry-After') ?? null),
   );
@@ -197,11 +236,11 @@ export async function api(path: string, options: RequestInit = {}) {
       },
     });
     const retryData = await retry.json().catch(() => ({}));
-    if (!retry.ok) throw apiError(retry, retryData);
+    if (!retry.ok) throw apiError(retry, path, retryData);
     return retryData;
   }
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw apiError(res, data);
+  if (!res.ok) throw apiError(res, path, data);
   return data;
 }

@@ -143,6 +143,14 @@ export default defineConfig({
       // an empty one, telling the user to start a watch when the service could
       // not be reached.
       'src/components/sentinel/strategyFeedStates.test.tsx',
+      // The auth screen's mode. Regression cover for a panel that offered to
+      // create an account above a sign-in form: the heading and the form are
+      // now driven by one value, and this pins the copy pairs and the URL
+      // parsing that picks between them. It also pins the failure messages
+      // `api()` produces, because "API request failed" — one sentence for a
+      // wrong password, a mistyped API URL and a dead upstream — is how that
+      // screen reported every one of those.
+      'src/lib/auth-mode.test.ts',
       // Wake-word matching and speech text preparation: pure, no DOM. The
       // matcher's false-positive behaviour is the thing worth asserting — a
       // wake word that fires on ordinary speech is worse than none.
