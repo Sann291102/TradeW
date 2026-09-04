@@ -8,6 +8,7 @@ import { Mascot } from './Mascot';
 import { TaraGreeter } from './TaraGreeter';
 import { ASSISTANT_NAME } from '@/lib/assistant/identity';
 import { AuthPanel } from './AuthPanel';
+import { AUTH_COPY, readAuthMode, type AuthMode } from '@/lib/auth-mode';
 import { SiteFooter } from '@/components/footer/SiteFooter';
 import { NameYourAI } from './NameYourAI';
 import {
@@ -434,9 +435,43 @@ const SECURITY = [
 ];
 
 export function LandingPage() {
+  /**
+   * Which half of the auth panel is showing, owned HERE rather than inside the
+   * panel so the section heading and the form can never contradict each other
+   * (see `lib/auth-mode.ts`). Default is sign-in — the common case for a
+   * returning visitor — and every route into the section that means "create an
+   * account" says so, either through the URL or through the CTA below.
+   */
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+
+  // A URL can ask for a mode: `/signup` redirects to `/?auth=signup#auth`, and
+  // any hand-written link may carry the same parameter. Run once on mount;
+  // after that the panel's own toggle is the only thing that changes it.
+  useEffect(() => {
+    const requested = readAuthMode(window.location.search, window.location.hash);
+    if (!requested) return;
+    setAuthMode(requested);
+    // The browser only scrolls for a fragment that matches an id, so a URL
+    // that named the mode in the query (or in a fragment of its own) would
+    // otherwise leave the visitor at the top of a long marketing page with no
+    // sign of the form they asked for.
+    document.getElementById('auth')?.scrollIntoView({ block: 'start' });
+  }, []);
+
+  /**
+   * Send a same-page CTA to the auth section in the mode it advertises.
+   *
+   * The href stays `#auth`, so the link still works without JavaScript and
+   * still scrolls; this only makes the panel show the half the button's label
+   * promised. `scroll-mt-16` on the section keeps it clear of the header.
+   */
+  function goToAuth(mode: AuthMode) {
+    setAuthMode(mode);
+  }
+
   return (
     <div className="h-screen overflow-y-auto overflow-x-hidden bg-bg text-text">
-      <LandingHeader />
+      <LandingHeader onAuthIntent={goToAuth} />
 
       <main>
         {/* ---------------------------------------------------------------- Hero */}
@@ -498,6 +533,7 @@ export function LandingPage() {
                     "read on first". */}
                 <a
                   href="#auth"
+                  onClick={() => goToAuth('signup')}
                   className="rounded-xl bg-teal px-6 py-3 text-fsSm font-semibold text-bg shadow-glowTeal transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
                 >
                   Create your account
@@ -628,7 +664,7 @@ export function LandingPage() {
         <section id="assistant" className="scroll-mt-16 border-t border-border px-6 py-24">
           <div className="mx-auto max-w-6xl">
             <Reveal>
-              <TaraGreeter />
+              <TaraGreeter onAuthIntent={goToAuth} />
             </Reveal>
 
             <div className="mt-4 grid gap-4">
@@ -1047,16 +1083,13 @@ export function LandingPage() {
             <Reveal className="text-center">
               <Mascot size={92} className="mx-auto" />
               <h2 className="mt-6 text-balance text-fs2xl font-bold tracking-tightTrack text-navy sm:text-fs3xl">
-                Create your TradeW account.
+                {AUTH_COPY[authMode].heading}
               </h2>
-              <p className="mt-4 text-fsSm leading-normal2 text-muted">
-                Choose how you&rsquo;d like to begin. Paper trading by default — nothing moves
-                real money until you connect a broker yourself.
-              </p>
+              <p className="mt-4 text-fsSm leading-normal2 text-muted">{AUTH_COPY[authMode].sub}</p>
             </Reveal>
 
             <Reveal delay={0.08} className="mt-10">
-              <AuthPanel />
+              <AuthPanel mode={authMode} onModeChange={setAuthMode} />
             </Reveal>
           </div>
         </section>

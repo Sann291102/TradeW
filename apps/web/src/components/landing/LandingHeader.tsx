@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ASSISTANT_NAME } from '@/lib/assistant/identity';
+import type { AuthMode } from '@/lib/auth-mode';
 
 /**
  * Kept to five entries even though the page now has ten sections. The nav is a
@@ -32,7 +33,14 @@ const NAV = [
  * landing container, not `window` (globals.css pins `body { overflow: hidden }`
  * for the workspace shell). A sentinel works no matter which ancestor scrolls.
  */
-export function LandingHeader() {
+/**
+ * `onAuthIntent` lets the page keep the auth section's heading in step with the
+ * button that was pressed: "Get started" means signup, "Sign in" means login.
+ * Optional, and the links still work (and still scroll) without it.
+ */
+export type LandingHeaderProps = { onAuthIntent?: (mode: AuthMode) => void };
+
+export function LandingHeader({ onAuthIntent }: LandingHeaderProps = {}) {
   const sentinel = useRef<HTMLDivElement | null>(null);
   const [stuck, setStuck] = useState(false);
 
@@ -89,12 +97,14 @@ export function LandingHeader() {
                 should have to work out that they are the same control. */}
             <a
               href="#auth"
+              onClick={() => onAuthIntent?.('login')}
               className="rounded-lg px-3 py-2 text-sm font-medium text-text transition-colors hover:bg-hover"
             >
               Sign in
             </a>
             <a
               href="#auth"
+              onClick={() => onAuthIntent?.('signup')}
               className="rounded-lg bg-teal px-4 py-2 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
             >
               Get started

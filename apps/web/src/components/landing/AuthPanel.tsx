@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { API_URL, api, setSession } from '@/lib/api';
+import { API_URL, ApiError, api, setSession } from '@/lib/api';
+import type { AuthMode } from '@/lib/auth-mode';
 import { readLocalPersonaName } from '@/lib/assistant/persona';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { useSettingsStore } from '@/lib/store/settingsStore';
@@ -26,12 +27,67 @@ import { CandleLoader } from '@tradew/ui';
 type Tab = 'email' | 'google' | 'phone';
 type Methods = { password: boolean; google: boolean; phone: boolean };
 
-function friendlyError(message: string): string {
-  if (/fetch|network|load failed/i.test(message)) {
-    return "Couldn't reach the TradeW server. Check that the API is running and NEXT_PUBLIC_API_URL is set correctly.";
+/**
+ * What to put in the alert box.
+ *
+ * The rule is that the message names the problem the user or the operator can
+ * act on. A thrown `TypeError` from `fetch` means the request never reached a
+ * server, which is a local setup problem and reads nothing like a rejected
+ * password. An `ApiError` means the server answered, and its status says which
+ * kind of "no" it was — so a wrong password says so instead of surfacing the
+ * server's deliberately vague wording, and a 5xx says the server broke rather
+ * than implying the credentials were wrong.
+ */
+type ErrorContext = AuthMode | 'phone';
+
+function friendlyError(err: unknown, context: ErrorContext): string {
+  const message = (err as { message?: string } | undefined)?.message ?? '';
+
+  if (!(err instanceof ApiError)) {
+    if (/fetch|network|load failed/i.test(message)) {
+      return `Couldn't reach the TradeW server at ${API_URL}. Check that the API is running and NEXT_PUBLIC_API_URL is set correctly.`;
+    }
+    return message || 'Something went wrong. Please try again.';
   }
-  return message || 'Something went wrong. Please try again.';
+
+  switch (err.status) {
+    case 400:
+      // ValidationPipe's constraint list, which is specific and worth showing.
+      return message || 'Those details were rejected. Check the email and password and try again.';
+    case 401:
+      if (context === 'login') return 'Email or password is incorrect.';
+      if (context === 'phone') return message || 'That code is not valid. Request a new one.';
+      return message || 'That request was rejected. Please try again.';
+    case 403:
+      return message || 'This account is not permitted to sign in.';
+    case 404:
+      return `The API at ${API_URL} has no route for this request. Check NEXT_PUBLIC_API_URL points at the TradeW API.`;
+    case 409:
+      return message || 'An account with that email already exists. Sign in instead.';
+    case 429: {
+      const wait = err.retryAfterSeconds;
+      return wait
+        ? `Too many attempts. Try again in ${wait} second${wait === 1 ? '' : 's'}.`
+        : 'Too many attempts. Please wait a moment and try again.';
+    }
+    default:
+      if (err.status >= 500) {
+        return `The TradeW server failed to handle that (${err.status}). It is not your credentials — try again shortly.`;
+      }
+      return message || 'Something went wrong. Please try again.';
+  }
 }
+
+export type AuthPanelProps = {
+  /**
+   * The mode to show. Optional: passing it (with `onModeChange`) lets the page
+   * around the panel keep its heading in step with the form — see
+   * `lib/auth-mode.ts` for why that is not left to chance. Omitted, the panel
+   * owns the state itself and behaves exactly as it always did.
+   */
+  mode?: AuthMode;
+  onModeChange?: (mode: AuthMode) => void;
+};
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'email', label: 'Email' },
@@ -42,15 +98,21 @@ const TABS: { id: Tab; label: string }[] = [
 const inputClass =
   'mt-1.5 w-full rounded-xl border border-border2 bg-bg px-3.5 py-2.5 text-fsXs text-text placeholder:text-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus';
 
-export function AuthPanel() {
+export function AuthPanel({ mode: controlledMode, onModeChange }: AuthPanelProps = {}) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('email');
   const [methods, setMethods] = useState<Methods | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // Email tab
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  // Email tab. `controlledMode` wins when the page supplies one; the local
+  // state is the fallback for a standalone panel.
+  const [uncontrolledMode, setUncontrolledMode] = useState<AuthMode>('login');
+  const mode = controlledMode ?? uncontrolledMode;
+  const setMode = (next: AuthMode) => {
+    setUncontrolledMode(next);
+    onModeChange?.(next);
+  };
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -154,8 +216,8 @@ export function AuthPanel() {
         }),
       });
       await enter(res.accessToken, res.refreshToken);
-    } catch (err: any) {
-      setError(friendlyError(err?.message));
+    } catch (err) {
+      setError(friendlyError(err, mode));
     } finally {
       setBusy(false);
     }
@@ -174,8 +236,8 @@ export function AuthPanel() {
       // Present only when SMS is unconfigured, so local testing works without
       // a Twilio account. With a provider configured this is always absent.
       setDevCode(res.devCode ?? null);
-    } catch (err: any) {
-      setError(friendlyError(err?.message));
+    } catch (err) {
+      setError(friendlyError(err, 'phone'));
     } finally {
       setBusy(false);
     }
@@ -191,8 +253,8 @@ export function AuthPanel() {
         body: JSON.stringify({ phone, code }),
       });
       await enter(res.accessToken, res.refreshToken);
-    } catch (err: any) {
-      setError(friendlyError(err?.message));
+    } catch (err) {
+      setError(friendlyError(err, 'phone'));
     } finally {
       setBusy(false);
     }
