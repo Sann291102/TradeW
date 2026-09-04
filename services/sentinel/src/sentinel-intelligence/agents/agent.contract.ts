@@ -1,3 +1,4 @@
+import type { OptionPositioningRead } from '../../execution/option-positioning';
 import type { MarketSnapshot } from '../../intelligence/market-intelligence.service';
 import type { StrategyDetection } from '../../intelligence/strategy-engine.service';
 import type { RiskAssessment, Signal } from '../../domain';
@@ -37,6 +38,24 @@ export interface AgentContext {
   subtask: Subtask;
   /** Shared market read — computed once per run. Null when data was unavailable. */
   snapshot: MarketSnapshot | null;
+  /**
+   * The option book read as DEFENDED LEVELS plus today's change at each —
+   * where support and resistance actually are, whether their defenders added
+   * or reduced today, and which way the whole structure migrated.
+   *
+   * On the shared context rather than inside the options agent because it is
+   * not only the options agent's business. A trap read is a different read
+   * when price is pressed against a wall that is being reinforced; a risk read
+   * is a different read when the support behind price is being abandoned; and
+   * a strategy read that quoted different levels from the options agent's,
+   * inside one run, would be a fake disagreement the cross-checker could not
+   * tell from a real one. One computation, one set of levels, ten readers.
+   *
+   * Null when the instrument published no chain or spot was unusable. An agent
+   * must treat null as "no positioning read" and abstain on it, never as
+   * balanced positioning.
+   */
+  positioning: OptionPositioningRead | null;
   /** Signals from the existing deterministic engines, already computed. */
   signals: Signal[];
   /** Strategy detections from the existing Strategy Engine. */
@@ -95,6 +114,48 @@ export interface IntelligenceAgent {
   /** One line describing what this agent is responsible for. */
   readonly remit: string;
   reason(context: AgentContext): Promise<AgentVerdict> | AgentVerdict;
+  /**
+   * OPTIONAL second look, having seen what the other agents concluded.
+   *
+   * ## Why this exists
+   *
+   * Until this hook, the ten agents reasoned in complete isolation and met
+   * only in `CrossCheckService`, which can detect a disagreement and PENALISE
+   * it but cannot ask either party about it. That is a strange shape for a
+   * desk: the options agent may hold the one fact that explains why the market
+   * agent's bullish structure is about to run into a wall being reinforced,
+   * and in the isolated design that fact reaches the synthesis as an
+   * unexplained conflict rather than as an explanation.
+   *
+   * So agents get exactly one round of reply. `peers` is every OTHER agent's
+   * first-pass verdict; the returned verdict replaces this agent's own.
+   *
+   * ## The three rules that keep this from becoming an echo chamber
+   *
+   * 1. **One round, never a negotiation.** A second round would let two agents
+   *    converge by talking rather than by evidence, and a desk that agrees
+   *    because it conferred has destroyed the independence that made
+   *    corroboration mean anything.
+   * 2. **An agent may only speak to its OWN remit.** The options agent may say
+   *    the book contradicts a bullish structure; it may not restate the
+   *    structure. `deliberate` receives no new market data for this reason —
+   *    the same `context`, plus what the others said.
+   * 3. **A deliberation may not manufacture agreement.** Raising confidence in
+   *    a DIRECTION because peers share it is double-counting: the synthesis
+   *    already rewards corroboration on that axis, so an agent that also
+   *    rewarded it internally would have the same evidence counted twice.
+   *    `AgentRegistryService.deliberate` enforces this, dropping a revision
+   *    that raises confidence while holding a bullish or bearish stance.
+   *
+   *    `risk-elevated` is exempt: it is not on the directional axis and never
+   *    counts toward corroboration, so an agent that learns from a peer that
+   *    the environment is more dangerous than it could see alone is expected
+   *    to say so more firmly, not less.
+   *
+   * Omit the hook entirely when an agent has nothing to say to its peers; the
+   * registry then keeps its first-pass verdict untouched.
+   */
+  deliberate?(context: AgentContext, peers: readonly AgentVerdict[]): Promise<AgentVerdict> | AgentVerdict;
 }
 
 /**

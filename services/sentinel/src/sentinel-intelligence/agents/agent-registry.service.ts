@@ -103,6 +103,61 @@ export class AgentRegistryService {
       return abstention(context, `The agent failed while reasoning: ${(err as Error).message}`);
     }
   }
+
+  /**
+   * Give one agent its single round of reply, having seen its peers.
+   *
+   * Returns null — meaning "keep the first-pass verdict" — in every case where
+   * a revision is not clearly better than what the agent already said:
+   *
+   *   · the agent implements no `deliberate` hook;
+   *   · the hook threw. A crash in a SECOND look must never lose the first
+   *     one. This is the difference between deliberation being additive and
+   *     deliberation being a new way for a run to get worse;
+   *   · the hook tried to raise its confidence in a DIRECTIONAL stance. See
+   *     rule 3 on `IntelligenceAgent.deliberate`: the synthesis already
+   *     rewards corroboration on the directional axis, so an agent that also
+   *     rewarded it internally would have the same agreement counted twice,
+   *     and a desk that talks itself into a direction is precisely what a
+   *     reasoning network must not be.
+   *
+   *     `risk-elevated` is deliberately exempt, because it is not on that
+   *     axis and is not counted toward corroboration (ADR — see
+   *     `CrossCheckService`'s header). An agent that learns from a peer that
+   *     the environment is more dangerous than it could see alone SHOULD say
+   *     so with more confidence, not less; that is the whole point of a desk
+   *     conferring, and suppressing it would leave the one finding worth
+   *     escalating as the one finding deliberation could not raise.
+   *
+   * Peers are the other agents' verdicts only. An agent never sees its own
+   * first pass here — it already has it, and handing it back invites an agent
+   * to reason about its own output rather than about its inputs.
+   */
+  async deliberate(
+    context: AgentContext,
+    peers: readonly AgentVerdict[],
+    first: AgentVerdict,
+  ): Promise<AgentVerdict | null> {
+    const agent = this.agents.get(context.subtask.agent);
+    if (!agent?.deliberate) return null;
+    try {
+      const revised = await trackAgent(agent.id, async () => agent.deliberate!(context, peers), {
+        detail: `deliberation over ${peers.length} peer verdict(s)`,
+      });
+      const directional = revised.stance === 'bullish' || revised.stance === 'bearish';
+      if (directional && revised.confidence > first.confidence) {
+        this.logger.warn(
+          `agent ${agent.id} raised its own confidence in a directional stance during deliberation ` +
+            `(${first.confidence.toFixed(2)} → ${revised.confidence.toFixed(2)}); keeping the first-pass verdict.`,
+        );
+        return null;
+      }
+      return revised;
+    } catch (err) {
+      this.logger.error(`agent ${agent.id} threw while deliberating: ${(err as Error).message}`);
+      return null;
+    }
+  }
 }
 
 function abstention(context: AgentContext, reason: string): AgentVerdict {

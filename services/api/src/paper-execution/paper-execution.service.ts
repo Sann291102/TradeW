@@ -749,6 +749,15 @@ export class PaperExecutionService {
           dataQuality: (evaluation.dataQuality ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
           evidence: (evaluation.evidence ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
           confirmations: (evaluation.confirmations ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
+          // Written in the SAME insert as the decision, because it cannot be
+          // recovered afterwards: `previous_oi` is the previous session's
+          // close and is overwritten every morning, so a decision's change in
+          // open interest is either recorded now or gone by the time the daily
+          // calibration loop asks for it.
+          positioning: (evaluation.positioning ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
+          positioningJudgement: (evaluation.positioningJudgement ?? undefined) as unknown as
+            | Prisma.InputJsonValue
+            | undefined,
 
           // ---- The plan, written BEFORE any order exists -----------------
           walletEquity: plan.walletEquity,
@@ -854,6 +863,10 @@ export class PaperExecutionService {
                 dataQuality: (evaluation.dataQuality ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
                 evidence: (evaluation.evidence ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
                 confirmations: (evaluation.confirmations ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
+                positioning: (evaluation.positioning ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
+                positioningJudgement: (evaluation.positioningJudgement ?? undefined) as unknown as
+                  | Prisma.InputJsonValue
+                  | undefined,
               },
             });
             if (claimed.count === 1) {

@@ -155,9 +155,15 @@ The extraction triggers are written down (Chapter 5, §5.7) so that "should we s
 
 **Enforced in code:** `services/sentinel`'s `ServiceTokenGuard` rejects any request without the shared `SERVICE_TOKEN` header (`services/sentinel/src/app.controller.ts:26-33`). Only `services/api` holds that token. There is no code path from a browser to Sentinel.
 
-### 1.4.4 No AI-initiated trades, ever
+### 1.4.4 AI-initiated orders only inside a written mandate
 
-Not gated. Not with a confirmation. Not "for the sandbox." The `ToolRegistry` in `packages/ai-core/src/tools/` contains no order-placement tool, and its absence is documented as intentional in the package's own index docstring.
+*Changed 2026-09-01. This section read "No AI-initiated trades, ever" until [ADR-046](26-decision-records.md#adr-046--ai-initiated-orders-under-registration-and-inside-a-mandate) superseded ADR-002; the company's SEBI registration removed the single premise that rule rested on.*
+
+An agent may place, modify and cancel orders — but only through an `ExecutionProfile`, which is a bounded, revocable, audited grant naming the symbol, the strategy roster, the size, the daily order and loss caps, the square-off time and the account it applies to. Outside its mandate an agent has no order capability at all.
+
+The general-purpose `ToolRegistry` in `packages/ai-core/src/tools/` still contains no order-placement tool, and that absence is still intentional: a conversational assistant reaching the order path is a different and much worse thing than a mandated execution loop, and nothing in ADR-046 authorises it.
+
+Arming stays two deliberate acts in two mechanisms — the `PAPER_EXECUTION_ENABLED` process flag and the profile's own `enabled` column — plus, on a real person's account, that person's recorded consent. Today this runs in `PAPER` only; `ExecutionEnvironment` has exactly one member and nothing in the schema can represent live money.
 
 ### 1.4.5 Document-driven architecture
 
@@ -345,11 +351,13 @@ Beyond Genesis, the five-year direction (Chapter 27) is:
 |---|---|---|
 | **Year 1** | Finish Genesis | All eleven phases; first paying Sentinel cohort; measured latency budgets replacing targets. |
 | **Year 2** | Real money, carefully | `services/trading-engine` migration; Dhan live order routing under user credentials; SEBI-aligned audit surface; `services/auth` extraction if session load triggers it. |
-| **Year 3** | Autonomy in research, never in execution | Autonomous research agents that run overnight and file evidence into the Research Vault; multi-broker abstraction; mobile. |
+| **Year 3** | Autonomy in research, and in mandated execution | Autonomous research agents that run overnight and file evidence into the Research Vault; the execution mandate widened on measured calibration evidence rather than on appetite; multi-broker abstraction; mobile. |
 | **Year 4** | Scale and platform | Redis Streams → Kafka if and only if a durability need Redis cannot meet appears; ClickHouse for analytics; public developer API via `packages/sdk`. |
 | **Year 5** | Enterprise and institutional | Team/organisation entitlements (`Subscription.organizationId` already exists for this); white-label; compliance-desk product. |
 
-Two things are deliberately absent from every horizon: **automated execution of AI-generated signals**, and **discretionary advice**. They are absent in Year 5 for the same reason they are absent in Year 1.
+One thing is deliberately absent from every horizon: **discretionary advice**. It is absent in Year 5 for the same reason it is absent in Year 1 (ADR-004).
+
+**Automated execution used to be the second item on that list.** It came off on 2026-09-01, when the company's SEBI registration removed the premise ADR-002 rested on. It is now in scope — bounded by the mandate mechanism in ADR-046 rather than by its own impossibility. Note that these were always two separate decisions: being authorised to execute inside a mandate says nothing about being authorised to tell a person what to do, and only the first one moved.
 
 ---
 
@@ -407,7 +415,7 @@ If you retain nothing else from this chapter:
 
 > **ARCH-1 — One public ingress.** `apps/*` talk only to `services/api`. Never directly to `sentinel`, `market-data`, `trading-engine`, or any AI runtime.
 >
-> **ARCH-2 — No AI-initiated trades.** No AI service reaches the order path. There is no tool for it, no endpoint for it, and no arrow for it in the dependency graph.
+> **ARCH-2 — No order without a mandate.** An agent reaches the order path only through an `ExecutionProfile` that names what it may trade, how big, how often, and how much it may lose in a day — armed by two separate acts, and revocable in one. No ambient order capability exists for any AI service, and the conversational runtimes have none at all. *(Superseded ADR-002's flat prohibition on 2026-09-01; see ADR-046.)*
 >
 > **ARCH-3 — Sentinel never gates.** It observes in parallel with the order flow. It cannot block, delay, or add a step.
 >

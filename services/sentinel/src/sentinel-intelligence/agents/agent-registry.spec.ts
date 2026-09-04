@@ -11,7 +11,7 @@ import { RiskIntelligenceAgent } from './risk-intelligence.agent';
 import { StrategyIntelligenceAgent } from './strategy-intelligence.agent';
 import { TrapIntelligenceAgent } from './trap-intelligence.agent';
 import { context, subtask } from './fixtures';
-import { ALL_AGENT_IDS, type AgentId } from '../types';
+import { ALL_AGENT_IDS, type AgentId, type AgentVerdict } from '../types';
 
 /**
  * The dispatcher.
@@ -131,5 +131,86 @@ describe('the agent registry', () => {
 
   it('exposes the compliance agent for the text injection it needs', () => {
     expect(registry().complianceAgent).toBeInstanceOf(ComplianceIntelligenceAgent);
+  });
+});
+
+/**
+ * The deliberation round.
+ *
+ * The dispatcher's promise here is the mirror of the one above: a second look
+ * may only ever IMPROVE a run. Every way a deliberation could make things
+ * worse — a crash, an agent talking itself into a direction, an agent with
+ * nothing to add — must resolve to the first-pass verdict, untouched.
+ */
+describe('the deliberation round', () => {
+  const peer = (stance: 'bullish' | 'bearish', confidence = 0.8): AgentVerdict =>
+    ({
+      agent: 'market-intelligence',
+      subtaskId: 'market-intelligence#1',
+      stance,
+      confidence,
+      headline: 'peer',
+      evidence: [],
+      supportingConcepts: [],
+      citations: [],
+      abstained: false,
+      abstentionReason: null,
+      dataQuality: 1,
+      latencyMs: 1,
+      veto: null,
+    }) as AgentVerdict;
+
+  it('keeps the first-pass verdict for an agent that implements no hook', async () => {
+    const r = registry();
+    const ctx = context('news-intelligence');
+    const first = await r.run(ctx);
+    expect(await r.deliberate(ctx, [peer('bullish')], first)).toBeNull();
+  });
+
+  it('keeps the first-pass verdict when the hook throws', async () => {
+    // A crash in a SECOND look must never lose the first one. Without this,
+    // deliberation would be a new way for a run to get worse.
+    const r = registry();
+    const ctx = context('options-chain-intelligence');
+    const first = await r.run(ctx);
+    vi.spyOn(r.get('options-chain-intelligence')!, 'deliberate' as never).mockImplementation(() => {
+      throw new Error('deliberation blew up');
+    });
+
+    expect(await r.deliberate(ctx, [peer('bullish')], first)).toBeNull();
+  });
+
+  it('rejects a revision that raises confidence in a DIRECTIONAL stance', async () => {
+    // Double-counting guard: the synthesis already rewards corroboration on
+    // the directional axis, so an agent that also rewarded it internally would
+    // have the same agreement counted twice.
+    const r = registry();
+    const ctx = context('options-chain-intelligence');
+    const first = await r.run(ctx);
+    vi.spyOn(r.get('options-chain-intelligence')!, 'deliberate' as never).mockReturnValue({
+      ...first,
+      stance: 'bullish',
+      confidence: Math.min(1, first.confidence + 0.2),
+    } as never);
+
+    expect(await r.deliberate(ctx, [peer('bullish')], first)).toBeNull();
+  });
+
+  it('ALLOWS a revision that raises confidence in risk-elevated', async () => {
+    // Risk is not on the directional axis and never counts toward
+    // corroboration, so an agent that learns from a peer that the environment
+    // is more dangerous than it could see alone should say so more firmly.
+    const r = registry();
+    const ctx = context('risk-intelligence');
+    const first = await r.run(ctx);
+    vi.spyOn(r.get('risk-intelligence')!, 'deliberate' as never).mockReturnValue({
+      ...first,
+      stance: 'risk-elevated',
+      confidence: Math.min(1, first.confidence + 0.2),
+    } as never);
+
+    const revised = await r.deliberate(ctx, [peer('bullish')], first);
+    expect(revised?.stance).toBe('risk-elevated');
+    expect(revised!.confidence).toBeGreaterThan(first.confidence);
   });
 });

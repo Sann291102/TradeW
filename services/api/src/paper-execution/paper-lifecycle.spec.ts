@@ -179,6 +179,11 @@ function evaluation(overrides: Partial<ExecutionEvaluationDto> = {}): ExecutionE
     evidence: { items: [], opposing: [], unavailable: [], supportRatio: 1, summary: 'All supporting.' },
     confirmations: [],
     exitRuleEvaluations: [],
+    // Gate 5 present but empty: this fixture is about the ORDER lifecycle, and
+    // a decision that reached an order necessarily passed the positioning gate.
+    positioning: null,
+    positioningJudgement: null,
+    ladder: null,
     ...overrides,
   };
 }

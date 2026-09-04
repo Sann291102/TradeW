@@ -273,7 +273,7 @@ TradeW is **not** a registered investment adviser and does not intend to become 
 | C2 | Output structure fixed: evidence → pattern → **soft** suggestion | orchestrator, by construction |
 | C3 | Every AI output carries a disclaimer | `SENTINEL_DISCLAIMER` is a response field, not UI copy |
 | C4 | Every observation logged with evidence + SEBI category | `ComplianceService` |
-| C5 | No AI-initiated trades | ARCH-2 — no tool, no client, no arrow |
+| C5 | No order outside a written mandate, and no mandate without recorded consent | ARCH-2 / ADR-046 — the `ExecutionProfile` row, two-switch arming, `User.agentPaperTradingEnabledAt`, and an `ExecutionIntent` written before any order exists |
 | C6 | Confidence never claims certainty | 0.95 cap |
 | C7 | Statistics withheld below sample size | `MIN_SAMPLE = 5` |
 | C8 | Unavailable dimensions reported honestly | never fabricated |

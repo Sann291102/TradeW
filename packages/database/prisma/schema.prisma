@@ -2350,6 +2350,29 @@ model ExecutionIntent {
   // Which required confirmations passed, and which did not.
   confirmations Json?
 
+  // ---- OPTION POSITIONING at decision time -------------------------------
+  //
+  // The option book read as DEFENDED LEVELS plus the previous close's open
+  // interest beside today's — per strike, per side: the change, and the
+  // four-quadrant action that change and the premium imply. Plus the ladder
+  // the decision was made against and, on a bearish or bullish path, what
+  // would have confirmed or invalidated each rung.
+  // See `services/sentinel/src/execution/option-positioning.ts`.
+  //
+  // Stored ALONGSIDE `optionContext` rather than inside it because they are
+  // different facts with different lifetimes: `optionContext` is the static
+  // snapshot the trader-facing side carries, and this is the read that
+  // includes today's change — which is the half a post-mortem actually needs.
+  // The question "the levels were right, so why did it fail?" is answerable
+  // only if the levels' DIRECTION of travel was recorded at the time. It
+  // cannot be reconstructed later: the previous close's OI is overwritten
+  // every session.
+  positioning Json?
+  // Whether that book agreed with the side in focus, with the weighted signals
+  // behind the answer. The gate's own record: a refusal is auditable and a
+  // pass is measurable against the outcome.
+  positioningJudgement Json?
+
   // ---- The risk plan, computed and stored BEFORE any order exists --------
   //
   // Written in the same INSERT that claims the idempotency key, so a position
@@ -2688,6 +2711,18 @@ model ExecutionJournal {
   publication   Json?
   optionContext Json?
   policyChecks  Json?
+  // The option BOOK at decision time — defended levels, the previous close's
+  // open interest beside today's, and whether that book agreed with the side
+  // taken. Copied from the intent for the same reason everything else here is:
+  // a journal has to say what the agent knew AT THE TIME, and this particular
+  // fact is unreconstructable later because the previous session's open
+  // interest is overwritten every morning.
+  //
+  // This is what lets the daily loop ask the question the gate exists to
+  // answer: over a run of closed trades, did the book's agreement actually
+  // correlate with the outcome — and at what threshold.
+  positioning          Json?
+  positioningJudgement Json?
 
   // ---- The plan ----------------------------------------------------------
   walletEquity     Decimal? @db.Decimal(14, 2)

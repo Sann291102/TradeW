@@ -1,5 +1,9 @@
 import type { Candle } from '@tradew/types';
 import type { AgentContext, LiveBaseRate } from './agent.contract';
+import {
+  readOptionPositioning,
+  type OptionPositioningRead,
+} from '../../execution/option-positioning';
 import type { MarketSnapshot } from '../../intelligence/market-intelligence.service';
 import type { StrategyDetection } from '../../intelligence/strategy-engine.service';
 import type { KnowledgeIndexService } from '../knowledge/knowledge-index.service';
@@ -248,6 +252,11 @@ export function context(agent: AgentId, over: Partial<AgentContext> = {}): Agent
     understood: understood(),
     subtask: subtask(agent),
     snapshot: snapshot(),
+    // Derived from whatever chain the caller's snapshot carries, exactly as
+    // `composeSharedState` derives it in production — so an override of the
+    // snapshot's chain is automatically an override of the positioning read,
+    // and the two can never disagree inside one fixture.
+    positioning: positioningFor((over.snapshot ?? snapshot()) as MarketSnapshot | null),
     signals: [signal()],
     detections: [detection()],
     risk: null as unknown as RiskAssessment,
@@ -271,15 +280,21 @@ export function context(agent: AgentId, over: Partial<AgentContext> = {}): Agent
 export function optionChain(over: Record<string, unknown> = {}) {
   const spot = 25_195;
   const strikes = [25_000, 25_100, 25_200, 25_300, 25_400];
+  const frontExpiry = new Date('2026-08-06T10:00:00.000Z');
   return {
     pcr: 1.18,
     maxPain: 25_200,
     callOIWall: 25_400,
     putOIWall: 25_000,
     strikesAnalysed: strikes.length,
-    frontExpiry: new Date('2026-08-06T10:00:00.000Z'),
+    frontExpiry,
     entries: strikes.map((strike) => ({
       strike,
+      // Carried per entry, matching `OptionChainEntry`. It was omitted while
+      // the only reader was the agent's own wall arithmetic, which never
+      // looked at it; `option-positioning.ts` narrows to the front expiry
+      // before computing anything, so an entry without one is not a chain.
+      expiry: frontExpiry,
       callOI: strike > spot ? 900_000 : 250_000,
       putOI: strike < spot ? 850_000 : 220_000,
       callIV: 12.5,
@@ -289,6 +304,22 @@ export function optionChain(over: Record<string, unknown> = {}) {
     })),
     ...over,
   };
+}
+
+/**
+ * The positioning read for a fixture snapshot, or null when it carries no chain.
+ *
+ * Uses the real reader rather than a hand-written stub: a fixture that
+ * fabricated levels would let an agent pass its tests against a map the
+ * production reader would never produce.
+ */
+export function positioningFor(snap: MarketSnapshot | null): OptionPositioningRead | null {
+  if (!snap?.optionChain || !(snap.lastPrice > 0)) return null;
+  return readOptionPositioning({
+    symbol: 'NIFTY',
+    spot: snap.lastPrice,
+    entries: snap.optionChain.entries,
+  });
 }
 
 export function riskAssessment(over: Record<string, unknown> = {}): RiskAssessment {

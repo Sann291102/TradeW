@@ -104,7 +104,8 @@ export interface ExecutionEvaluationDto {
     | 'stale-data'
     | 'no-agent-strategy'
     | 'index-direction-conflict'
-    | 'evidence-conflict';
+    | 'evidence-conflict'
+    | 'positioning-conflict';
   executable: boolean;
   reason: string;
   runId: string | null;
@@ -133,11 +134,27 @@ export interface ExecutionEvaluationDto {
   expiry: string | null;
   marketSnapshot: Record<string, unknown>;
 
-  // ---- The four agent gates (2026-08-30). Present on EVERY verdict. -------
+  // ---- The agent gates. Present on EVERY verdict. -------------------------
   dataQuality: DataQualityDto;
   indexDirection: IndexDirectionDto;
   agentStrategy: AgentStrategyDto | null;
   evidence: EvidenceDto | null;
+  /**
+   * Gate 5 (2026-09-01) — the option book as defended levels plus today's
+   * change at each, the judgement of whether it agrees with the side in focus,
+   * and the conditional path from spot through the levels ahead.
+   *
+   * Typed loosely on purpose. Sentinel owns the shape (see
+   * `services/sentinel/src/execution/option-positioning.ts`); this service
+   * stores it verbatim on the intent for the journal and the calibration loop
+   * to read back, and never reasons over its internals. Restating the shape
+   * here would be a second copy to drift.
+   *
+   * Null on any verdict reached before a chain was read.
+   */
+  positioning: Record<string, unknown> | null;
+  positioningJudgement: Record<string, unknown> | null;
+  ladder: Record<string, unknown> | null;
   confirmations: { id: string; label: string; passed: boolean; detail: string }[];
   /**
    * Exit-rule state for the strategies whose positions are already open on

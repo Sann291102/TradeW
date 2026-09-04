@@ -109,7 +109,7 @@ TradeW/
 │   ├── api/           🟢 NestJS — single public ingress, auth, OMS, entitlements, payments, aggregation
 │   ├── market-data/   🟢 NestJS ingestor + standalone live Dhan feed bridge (port 4600)
 │   ├── sentinel/      🟢 Safety-net service — backtest engine, brain, orchestrator, ontology (port 4010)
-│   ├── sentinel-py/   🟢 Python/FastAPI personal strategy watcher (port 4011) — parse → watch → alert, never auto-trades
+│   ├── sentinel-py/   🟢 Python/FastAPI personal strategy watcher (port 4011) — parse → watch → alert; alert-only, holds no execution mandate
 │   ├── trading-engine/🟡 Python/Dhan — order execution, webhook intake (README only; OMS lives in services/api/sim)
 │   ├── tradew-ai/     🟡 Research backend service (thin scaffold; foundation in packages/ai-core)
 │   ├── notification/  🟡 Alert fanout (in-app notifications live in services/api)
@@ -163,7 +163,7 @@ TradeW/
 | **services/api** | NestJS aggregator — the single public API gateway. Handles auth, OMS, entitlements, market data, broker OAuth, discipline, news, notifications, and calls internal services. | 🟢 Running, 14 modules mapped |
 | **services/market-data** | NestJS quote ingestor **plus** a standalone live Dhan feed bridge (port 4600) serving real quotes, charts and option chains to the app. | 🟢 Live feed bridge in use; NestJS ingestor writes Postgres `Quote` |
 | **services/sentinel** | Safety-net service — EMA-cross backtest engine on real Dhan candles, persistent knowledge brain, orchestrator, state machine, compliance, ontology. Internal-only (service token). | 🟢 Running as its own service (port 4010) |
-| **services/sentinel-py** | Python/FastAPI **personal strategy watcher** — parses the user's own text strategy into rules, watches live candles (`IDLE→FORMING→CONFIRMED`), in-trade R-multiple monitoring, alerts via `services/api`. Internal-only (service token); never proposes/auto-trades. | 🟢 Running (port 4011); P0–P4 complete |
+| **services/sentinel-py** | Python/FastAPI **personal strategy watcher** — parses the user's own text strategy into rules, watches live candles (`IDLE→FORMING→CONFIRMED`), in-trade R-multiple monitoring, alerts via `services/api`. Internal-only (service token); alert-only — it holds no execution mandate and places no orders (ADR-046). | 🟢 Running (port 4011); P0–P4 complete |
 | **services/trading-engine** | Python/Dhan engine for webhook-driven strategy execution. | 🟡 README only; the paper-trading OMS is implemented in `services/api/src/sim` |
 | **services/tradew-ai** | LLM-powered Research *backend* agents (Company Analysis, News, Technical, Strategy Builder). | 🟡 README only; the AI foundation is in `packages/ai-core` and the in-app assistant in `apps/web` |
 | **packages/database** | Centralized Prisma schema (53 models) and migration history. Single source of truth for schema. | 🟢 28 migrations applied, 100% synced |

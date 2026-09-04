@@ -681,7 +681,9 @@ Engineering view in Chapter 27.
 | **Y4** | Platform | Public developer API; ClickHouse analytics; Kafka *if and only if* a real durability need appears |
 | **Y5** | Enterprise | Organisation entitlements (`Subscription.organizationId` already modelled); white-label; compliance-desk product |
 
-**Permanently out of scope, at every horizon:** automated execution of AI-generated signals; discretionary investment advice; custody of client funds.
+**Permanently out of scope, at every horizon:** discretionary investment advice; custody of client funds. Real-money order flow, when it exists, routes to a licensed broker under the user's own credentials.
+
+**No longer out of scope (changed 2026-09-01):** automated execution. The company's SEBI registration removed the premise behind ADR-002, and [ADR-046](26-decision-records.md#adr-046--ai-initiated-orders-under-registration-and-inside-a-mandate) replaces the flat prohibition with a mandate: an agent trades only what an `ExecutionProfile` names, at the size it names, within the daily order and loss caps it names, on an account whose owner has recorded consent. Today that runs in paper only.
 
 ---
 

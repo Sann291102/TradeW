@@ -13,7 +13,7 @@ The rejected alternatives are the point. A decision without its alternatives is 
 | ADR | Title | Status |
 |---|---|---|
 | 001 | One public ingress (ARCH-1) | ✅ accepted |
-| 002 | No AI-initiated trades (ARCH-2) | ✅ accepted |
+| 002 | No AI-initiated trades (ARCH-2) | ⛔ superseded by ADR-046 |
 | 003 | Sentinel never gates the order flow (ARCH-3) | ✅ accepted |
 | 004 | Observation, never advice (ARCH-4) | ✅ accepted |
 | 005 | One schema owner per table (ARCH-5) | ✅ accepted |
@@ -57,6 +57,7 @@ The rejected alternatives are the point. A decision without its alternatives is 
 | 043 | Withhold statistics below a sample size | ✅ accepted |
 | 044 | The distillation path via provider abstraction | ✅ accepted |
 | 045 | `trading-engine` remains un-migrated pending approval | ✅ accepted |
+| 046 | AI-initiated orders, under registration and inside a mandate (supersedes ADR-002) | ✅ accepted |
 
 ---
 
@@ -76,7 +77,7 @@ The rejected alternatives are the point. A decision without its alternatives is 
 ---
 
 ## ADR-002 — No AI-initiated trades (ARCH-2)
-**2026-07-16 · ✅ accepted**
+**2026-07-16 · ⛔ superseded by ADR-046 on 2026-09-01**
 
 **Decision.** No AI service can place, modify, or cancel an order. Enforced three ways: no tool exists in the registry, no HTTP client exists, no arrow exists in the dependency graph.
 
@@ -85,6 +86,10 @@ The rejected alternatives are the point. A decision without its alternatives is 
 - *"Just for backtesting"* — a backtest path that can place orders is an order path.
 
 **Consequences.** Some genuinely useful automation is impossible. Accepted permanently, at every roadmap horizon. ⚖️ The regulatory distance between "analyses" and "executes" is the company's entire compliance posture.
+
+**Why it was superseded.** The single premise this ADR rested on — that TradeW is not authorised to execute on anyone's behalf, and therefore must not be *able* to — no longer holds: the company is SEBI-registered (particulars recorded in ADR-046). Everything above remains correct reasoning for an unregistered platform, which is why it is kept in full rather than deleted. The next engineer who wants to remove execution should be able to see exactly which premise changed, and check whether it still holds.
+
+Note what did **not** change with it. ADR-003 (Sentinel never gates a human's order flow) and ADR-004 (observation, never advice) both stand unmodified. Authorisation to execute inside a mandate is not authorisation to tell a person what to do; the two were always separate decisions that happened to point the same way, and only one of them moved.
 
 ---
 
@@ -577,6 +582,59 @@ The rejected alternatives are the point. A decision without its alternatives is 
 
 ---
 
+## ADR-046 — AI-initiated orders, under registration and inside a mandate
+**2026-09-01 · ✅ accepted · supersedes [ADR-002](#adr-002--no-ai-initiated-trades-arch-2)**
+
+**Context.** ADR-002 forbade any AI service from placing, modifying or cancelling an order, and enforced it by making the capability structurally absent: no tool, no client, no arrow. That decision rested on exactly one premise — that TradeW is not authorised to execute on anyone's behalf — and it was the right decision for as long as the premise held.
+
+The premise no longer holds. The company is registered with SEBI, and that registration is what permits an execution product. This ADR records the change of decision that follows, and replaces "the capability must not exist" with "the capability exists, is bounded, is audited, and is revocable."
+
+> 📋 **Registration particulars — to be filled in by the compliance owner before any LIVE arming.** Registration category (research analyst / investment adviser / stock broker / portfolio manager — they permit materially different things), registration number, registered entity name, and the date of registration. This ADR deliberately does **not** transcribe them from memory: a registration particular written down wrongly is worse than one not written down at all, and every control below is keyed to which category was actually granted. Until this block is completed, the arming ceremony in §Enforcement treats LIVE as unavailable.
+
+**Decision.** An automated agent **may** place, modify and cancel orders on an account, in both the `PAPER` and (once implemented) `LIVE` environments — but only through a **mandate**, never as an ambient capability.
+
+A mandate is an `ExecutionProfile` row. It is a written, bounded, revocable grant naming exactly what the agent may do:
+
+```
+   WHAT      symbol · strategy roster · long options only
+   HOW BIG   lots · capitalAllocationPct · riskPerTradePct · rewardPerTradePct
+   HOW OFTEN maxOrdersPerDay · maxOpenPositions
+   HOW BAD   maxLossPerDay · squareOffMinute
+   HOW GOOD  minConfidence · minCandles · maxBarAgeMinutes (the data floors)
+   WHERE     environment (PAPER today; LIVE is not yet representable)
+   FOR WHOM  accountUserId + a recorded consent on the account itself
+```
+
+Outside its mandate an agent has no order capability at all. That is the substantive difference from "a gated tool with a confirmation step", the alternative ADR-002 rejected: a gate is a boolean somebody flips, whereas a mandate is a row with a shape, an owner, an audit trail and an expiry in the operator's hands.
+
+**Enforcement — what replaces "the capability does not exist".**
+
+1. **Arming is two deliberate acts in two mechanisms**: the process-level `PAPER_EXECUTION_ENABLED` flag AND the profile's own `enabled` column, flipped through an audited admin endpoint. Neither alone starts anything. LIVE, when it exists, requires a third: the registration block above completed, and the environment explicitly named on the mandate.
+2. **Recorded consent per account.** A mandate over a real person's account additionally requires `User.agentPaperTradingEnabledAt` — that person's own recorded consent, granted through an audited operator action, never by a seed script.
+3. **A decision exists before an order does.** Every entry writes an `ExecutionIntent` in the same insert that claims its idempotency key, carrying the evidence, all five gates, the option book, the risk plan, the stop and the target. A position can never exist without the plan that governs it.
+4. **Five gates that can only subtract**, all of them narrowing what Sentinel already published: data quality, agent strategy, index direction, strategy evidence, and option positioning. None of them can create a side.
+5. **Idempotency by unique constraint.** Retries, restarts, SSE reconnects and two racing replicas converge on one key; Postgres rejects the second write.
+6. **Standing limits that stop the day, not just the order**: max orders per day, max open positions, max loss per day, and a square-off minute.
+7. **A journal per completed trade**, folded into a per-(agent, symbol, strategy, regime) calibration bucket. The agent's own record is the evidence for whether the mandate should be widened, narrowed or withdrawn.
+
+**Rejected.**
+
+- *Keeping ADR-002.* Its premise is gone. Retaining a control whose stated reason no longer applies teaches everyone that the written reasons are decoration, which is far more corrosive than the control is protective.
+- *Auto-trading as a capability rather than a mandate* — an agent that "can trade" is unbounded by construction, and every limit then lives in whichever code path happens to run. The mandate makes the bound a row you can read, diff, audit and revoke.
+- *The same arming ceremony for LIVE as for PAPER* — the two differ by the only thing that matters. LIVE stays behind its own switch, its own consent, and the completed registration block.
+- *Auto-trading without recording the option book with the decision* — considered and rejected as a space saving. The previous session's open interest is overwritten every morning, so a decision's change in positioning is unreconstructable after the fact, and the post-mortem that matters most is the one you cannot run.
+
+**Consequences.**
+
+- ⚖️ The company's regulatory category changes from "analyses" to "executes under registration". Every control above is now compliance surface, not merely engineering hygiene, and the audit answer to "show me everything this agent did on this account" must stay one query.
+- ADR-003 and ADR-004 are unaffected and still binding. Sentinel still never gates, delays or adds a confirmation step to a **human's** order flow, and no surface may tell a person what to do. An agent acting inside its own mandate is not advice given to anyone.
+- The code today implements this for `PAPER` only: `ExecutionEnvironment` still has exactly one member, and nothing in the schema can represent live money. This ADR authorises the direction and specifies the controls; it does not itself make live routing exist. See ADR-045 and the Year-2 line in Chapter 27.
+- ⭐ The most valuable property of ADR-002 is preserved by different means: it is still impossible for an agent to place an order *nobody wrote down the boundaries of*. What changed is that the boundaries are now a record instead of an absence.
+
+**⚖️🔒 Compliance / security implications.** Substantial, and the point of the ADR. The registration block above is a hard prerequisite for LIVE. Every mandate change, arming, consent grant and revocation is an audited operator action. The intent and journal tables are the retained record of what was decided, on what evidence, under which mandate version.
+
+---
+
 ## 26.1 Open decisions
 
 Deliberately unresolved. Guessing would be worse than leaving them open.
@@ -590,6 +648,7 @@ Deliberately unresolved. Guessing would be worse than leaving them open.
 | **OD-5** | When to migrate `extreme_algo_package` | real money | CTO |
 | **OD-6** | Reconciling the two simulated engines before Migration 2 | `Candle` | architecture |
 | **OD-7** | Fundamentals data source for the screener | screener | product |
+| **OD-8** | Which SEBI registration category was granted, and what it permits an agent to do on a client account | LIVE arming under ADR-046 | compliance + CTO |
 | **OD-A** | ⚠️ **Dhan partner account vs. per-user accounts** | live market data | CTO + legal |
 | **OD-B** | Dhan data API cost | budget | CTO |
 | **OD-C** | Static IP reservation (needed if order APIs are ever in scope) | future orders | infra |

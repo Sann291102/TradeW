@@ -7,6 +7,10 @@ import { NewsIntelligenceService } from '../intelligence/news-intelligence.servi
 import { RiskIntelligenceService } from '../intelligence/risk-intelligence.service';
 import { StrategyEngineService, type StrategyDetection } from '../intelligence/strategy-engine.service';
 import { TrapIntelligenceService } from '../intelligence/trap-intelligence.service';
+import {
+  readOptionPositioning,
+  type OptionPositioningRead,
+} from '../execution/option-positioning';
 import { AgentRegistryService } from './agents/agent-registry.service';
 import type { AgentContext, LiveBaseRate } from './agents/agent.contract';
 import { CorpusIngestionService } from './knowledge/corpus-ingestion.service';
@@ -454,6 +458,20 @@ export class SentinelIntelligenceService implements OnModuleInit, OnModuleDestro
       risk: riskAssessment,
       trades,
       baseRates: await this.baseRatesFor(detections),
+      // Computed ONCE, here, for the same reason the snapshot is: ten agents
+      // each deriving positioning from the same chain would be ten copies of
+      // one arithmetic, and — worse — the risk agent and the options agent
+      // could quote different levels inside one run because one of them
+      // rounded differently. Pure over the chain already in `snapshot`; no
+      // second read, no network.
+      positioning:
+        snapshot?.optionChain && snapshot.lastPrice > 0
+          ? readOptionPositioning({
+              symbol,
+              spot: snapshot.lastPrice,
+              entries: snapshot.optionChain.entries,
+            })
+          : null,
     };
   }
 
@@ -507,6 +525,11 @@ export class SentinelIntelligenceService implements OnModuleInit, OnModuleDestro
    * `dependsOn` until 2026-08-21, which implied an execution DAG this method
    * has never built; the rename makes the plan say what the code does.
    *
+   * Then ONE deliberation round, added 2026-09-01, in which every agent is
+   * offered its peers' first-pass verdicts and may revise its own. Still not a
+   * DAG: the round is a second parallel pass over a frozen input set, so it
+   * adds one wave of latency and no ordering between agents.
+   *
    * Compliance is the exception and genuinely must run last: it audits the
    * text the other nine produced.
    */
@@ -521,6 +544,7 @@ export class SentinelIntelligenceService implements OnModuleInit, OnModuleDestro
       understood,
       subtask,
       snapshot: shared.snapshot,
+      positioning: shared.positioning,
       signals: shared.signals,
       detections: shared.detections,
       risk: shared.risk,
@@ -536,6 +560,42 @@ export class SentinelIntelligenceService implements OnModuleInit, OnModuleDestro
     const otherTasks = subtasks.filter((s) => s.agent !== 'compliance-intelligence');
 
     const verdicts = await Promise.all(otherTasks.map((subtask) => this.registry.run(build(subtask))));
+
+    // ---- ONE round of deliberation --------------------------------------
+    //
+    // Until this pass the nine agents reasoned in complete isolation and met
+    // only in `CrossCheckService`, which can detect a disagreement and penalise
+    // it but cannot ask either party about it. So the options agent could be
+    // holding the fact that explains the market agent's structure — a wall
+    // being reinforced right where the structure was heading — and that fact
+    // reached the synthesis as an unexplained conflict rather than as an
+    // explanation.
+    //
+    // Every agent is now offered the floor once, with its peers' first-pass
+    // verdicts. Most decline (no `deliberate` hook) and keep their verdict
+    // untouched. See `IntelligenceAgent.deliberate` for the three rules that
+    // stop this becoming an echo chamber; the one enforced HERE is the
+    // parallelism: every agent deliberates over the SAME first-pass set, so no
+    // agent can see another's revision and revise in response to it. That is
+    // what makes this one round rather than an unbounded negotiation.
+    const revisions = await Promise.all(
+      otherTasks.map((subtask, i) =>
+        this.registry.deliberate(
+          build(subtask),
+          verdicts.filter((_, j) => j !== i),
+          verdicts[i],
+        ),
+      ),
+    );
+    for (let i = 0; i < revisions.length; i++) {
+      const revised = revisions[i];
+      if (!revised) continue;
+      this.logger.debug(
+        `${verdicts[i].agent} revised after deliberation: ${verdicts[i].stance} → ${revised.stance} ` +
+          `(confidence ${verdicts[i].confidence.toFixed(2)} → ${revised.confidence.toFixed(2)})`,
+      );
+      verdicts[i] = revised;
+    }
 
     for (const subtask of complianceTasks) {
       const auditable = verdicts
@@ -620,6 +680,15 @@ export interface ReasonOptions {
 
 export interface SharedMarketState {
   snapshot: MarketSnapshot | null;
+  /**
+   * The option book as defended levels plus today's change at each — the map
+   * every agent reasons against, not just the options agent.
+   *
+   * Null when the instrument published no chain, when spot was unusable, or
+   * when the chain was too thin to read. An agent must treat null as "no
+   * positioning read", never as balanced positioning.
+   */
+  positioning: OptionPositioningRead | null;
   signals: Signal[];
   detections: StrategyDetection[];
   risk: RiskAssessment | null;

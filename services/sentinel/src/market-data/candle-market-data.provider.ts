@@ -144,6 +144,18 @@ interface FeedOptionLeg {
   oi?: number;
   volume?: number;
   iv?: number;
+  /**
+   * Previous-session OI and close, exactly as the bridge already serves them.
+   *
+   * The bridge has mapped Dhan's `previous_oi` / `previous_close_price` onto
+   * every leg since the option-chain endpoint was written; this provider was
+   * simply dropping both on the floor, so the engine could see WHERE open
+   * interest sat and never whether it had grown or shrunk. Reading them costs
+   * nothing — same call, same body — and it is the whole input to
+   * `execution/option-positioning.ts`.
+   */
+  previousOi?: number;
+  previousClose?: number;
 }
 interface FeedOptionChain {
   spot?: number | null;
@@ -484,6 +496,15 @@ export class CandleMarketDataProvider implements MarketDataProvider {
         putIV: row.pe?.iv ?? undefined,
         callLtp: row.ce?.ltp ?? undefined,
         putLtp: row.pe?.ltp ?? undefined,
+        // `?? undefined`, never `?? 0`. Zero is a legitimate previous OI for a
+        // newly listed strike, so the absent case has to stay distinguishable
+        // from it — `option-positioning.ts` reads `undefined` as "change is
+        // unknowable" and 0 as "this strike carried nothing yesterday", and
+        // collapsing the two would report every wall as built today.
+        callPrevOI: row.ce?.previousOi ?? undefined,
+        putPrevOI: row.pe?.previousOi ?? undefined,
+        callPrevClose: row.ce?.previousClose ?? undefined,
+        putPrevClose: row.pe?.previousClose ?? undefined,
       }));
 
     this.chainCache.set(cacheKey, { at: Date.now(), entries });
