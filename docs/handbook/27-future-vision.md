@@ -6,18 +6,20 @@ Everything here is ⚪ **roadmap** unless marked otherwise: directionally agreed
 
 ---
 
-## 27.0 The two things that never change
+## 27.0 The things that do not change
 
 Before any roadmap, the constraints that survive every horizon:
 
 ```
-   ❌ AUTOMATED EXECUTION OF AI-GENERATED SIGNALS
    ❌ DISCRETIONARY INVESTMENT ADVICE
+   ⚖️ AUTOMATED EXECUTION — ONLY INSIDE A WRITTEN MANDATE
 ```
 
-Absent in Year 5 for the same reason they are absent in Year 1 (ADR-002, ADR-004). Every item below is designed so that neither becomes possible as a side effect.
+Discretionary advice is absent in Year 5 for the same reason it is absent in Year 1 (ADR-004). Every item below is designed so that it does not become possible as a side effect.
 
-A third, softer constraint: **we do not custody client funds.** Real-money order flow, when it exists, routes to a licensed broker under the user's own credentials.
+**Automated execution was the second ❌ until 2026-09-01.** The company's SEBI registration removed the premise ADR-002 rested on, and [ADR-046](26-decision-records.md#adr-046--ai-initiated-orders-under-registration-and-inside-a-mandate) replaced "the capability must not exist" with "the capability exists, is bounded, is audited, and is revocable". An agent trades only what an `ExecutionProfile` names — symbol, strategy roster, size, daily order and loss caps, square-off time, account — and nothing at all outside it. Today that runs in paper; the registration particulars in ADR-046 must be completed before anything is armed live.
+
+A softer constraint that has not moved: **we do not custody client funds.** Real-money order flow, when it exists, routes to a licensed broker under the user's own credentials.
 
 ---
 
@@ -31,8 +33,9 @@ A third, softer constraint: **we do not custody client funds.** Real-money order
       ────────────────────        trading-engine migration · live routing ·
                                   ⚖️ SEBI audit surface
 
-  Y3  AUTONOMY IN RESEARCH        never in execution
-      ──────────────────          overnight agents · multi-broker · mobile
+  Y3  AUTONOMY IN RESEARCH        and inside the execution mandate
+      ──────────────────          overnight agents · widened mandates ·
+                                  multi-broker · mobile
 
   Y4  SCALE AND PLATFORM          earned, not anticipated
       ──────────────────          Kafka IF a real need appears · ClickHouse ·
@@ -206,9 +209,11 @@ The single most important UX problem of Year 2.
 
 ---
 
-## 27.4 Year 3 — Autonomy in research, never in execution
+## 27.4 Year 3 — Autonomy in research, and inside the execution mandate
 
-**Theme: the AI does more work, with the same boundary.**
+**Theme: the AI does more work, inside boundaries that are now written down rather than absent.**
+
+*This section was titled "never in execution" until 2026-09-01. [ADR-046](26-decision-records.md#adr-046--ai-initiated-orders-under-registration-and-inside-a-mandate) changed the execution half of it. The research half below is unchanged and still binding: research produces knowledge, never signals, and the validation gate stands.*
 
 ### 27.4.1 Autonomous research agents
 
@@ -478,7 +483,8 @@ The architectural discipline is genuinely strong. The **operational** discipline
    AT EVERY HORIZON, UNCHANGED:
 
      ARCH-1  one public ingress
-     ARCH-2  no AI-initiated trades
+     ARCH-2  no order without a mandate   (was: no AI-initiated
+             trades — changed 2026-09-01, ADR-046)
      ARCH-3  Sentinel never gates
      ARCH-4  observation, never advice
    ─────────────────────────────────────────────────────────────

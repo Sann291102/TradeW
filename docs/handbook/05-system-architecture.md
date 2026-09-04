@@ -11,7 +11,7 @@ Every structural decision in this chapter derives from four rules. They are not 
 | ID | Rule | Enforced by |
 |---|---|---|
 | **ARCH-1** | **One public ingress.** `apps/*` reach the backend only through `services/api`. | `ServiceTokenGuard` on every internal service; network topology; code review |
-| **ARCH-2** | **No AI-initiated trades.** No AI service calls the order path — not gated, not with an override. | Absence of the tool; absence of the client; absence of the arrow in §5.8 |
+| **ARCH-2** | **No order without a mandate.** An agent reaches the order path only through an `ExecutionProfile` naming what, how big, how often and how much it may lose in a day. Conversational AI runtimes have no order capability at all. *(Replaced "no AI-initiated trades" on 2026-09-01 — ADR-046.)* | The mandate row itself; two-switch arming (`PAPER_EXECUTION_ENABLED` + `ExecutionProfile.enabled`); recorded per-account consent; the five evaluation gates; the intent written before the order; absence of any order tool in `packages/ai-core` |
 | **ARCH-3** | **Sentinel never gates.** It observes in parallel with the order flow. | Sentinel is never awaited on an order path; `/observe` is a separate endpoint |
 | **ARCH-4** | **Observation, never advice.** | `CORE_GUARDRAILS` in every prompt; deterministic fallback composition; copy review |
 

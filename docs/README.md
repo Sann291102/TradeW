@@ -56,6 +56,21 @@ meant to be re-read often, not written once.
   layer cannot cross. Read it before touching `services/api/src/paper-execution/`
   or `services/sentinel/src/execution/`.
 
+- **`AUTONOMOUS-TRADING.md`** — what an execution mandate is, what has to be
+  true before an agent places an order, and the ordered diagnosis for "the
+  bots aren't buying or selling" (which is almost always "nothing is armed" —
+  arming is deliberately two separate acts in two mechanisms). Also the
+  arming procedure itself and what ADR-046 did *not* change. Read alongside
+  `handbook/26-decision-records.md` ADR-046, the decision of record since
+  2026-09-01.
+
+- **`OPTION-CHAIN-POSITIONING.md`** — reading the chain as a map of defended
+  levels rather than a snapshot of open interest: the four-quadrant ΔOI read,
+  the support/resistance ladder and what each rung's defenders did today,
+  structure migration, the agreement judgement that can only ever subtract,
+  and the conditional ladder that replaces "hold until the number" with a
+  sequence that can be invalidated at each step.
+
 - **`APPLICATION-STATUS.md`** — living status doc: what's built, what's
   partial, current known issues and risks. If you need to know "does X
   actually work right now," this is the file to check (and update) rather
