@@ -30,6 +30,22 @@ export const qk = {
     list: (limit: number) => ['notifications', limit] as const,
   },
 
+  /**
+   * Tradable universe. The search key carries every filter because each
+   * combination is a genuinely different server-side query — collapsing them
+   * would serve one market's page under another market's key.
+   *
+   * `all` is the invalidation prefix a universe resync would clear.
+   */
+  universe: {
+    all: ['universe'] as const,
+    search: (params: Record<string, string | boolean | number | undefined>) =>
+      ['universe', 'search', params] as const,
+    facets: () => ['universe', 'facets'] as const,
+    stats: () => ['universe', 'stats'] as const,
+    instrument: (ref: string) => ['universe', 'instrument', ref] as const,
+  },
+
   /** Paper-trading account. */
   portfolio: {
     all: ['portfolio'] as const,

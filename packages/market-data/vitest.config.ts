@@ -26,6 +26,12 @@ export default defineConfig({
       // classification, and the load bounding that stops one dead credential
       // becoming a metered-API retry storm.
       'src/providers/dhan/dhan-reliability.spec.ts',
+      // The tradable universe. Two suites, both fixture-driven and offline:
+      // the currency policy (every assertion is a wrong number that would
+      // otherwise be shippable and plausible), and the three catalogue
+      // adapters against the response shapes their vendors document.
+      'src/universe/currency-policy.spec.ts',
+      'src/universe/universe-catalogue.spec.ts',
     ],
     environment: 'node',
     testTimeout: 5_000,
