@@ -58,6 +58,11 @@ export async function validatePersonaName(name: string): Promise<NameValidation>
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
     });
+    // A non-OK response is the SERVICE failing, not the name being rejected.
+    // Without this check an error body (`{statusCode:500,message:"..."}`) casts
+    // to a NameValidation with `ok` undefined — so an API outage told the user
+    // their name was refused, quoting the server's error as the reason.
+    if (!res.ok) return { ok: true, name: name.trim() };
     return (await res.json()) as NameValidation;
   } catch {
     // API unreachable. Let the name through locally — the server will validate
@@ -67,13 +72,19 @@ export async function validatePersonaName(name: string): Promise<NameValidation>
   }
 }
 
+const FALLBACK_SUGGESTIONS = ['Nova', 'Atlas', 'Vega', 'Iris'];
+
 export async function fetchSuggestions(): Promise<string[]> {
   try {
     const res = await fetch(`${API_URL}/ai/persona/suggestions`);
+    // Same reasoning as above: an unchecked 5xx parsed to `{}` and returned an
+    // EMPTY list, so a failing optional service silently removed the suggested
+    // names rather than falling back to them.
+    if (!res.ok) return FALLBACK_SUGGESTIONS;
     const data = (await res.json()) as { suggestions?: string[] };
-    return data.suggestions ?? [];
+    return data.suggestions?.length ? data.suggestions : FALLBACK_SUGGESTIONS;
   } catch {
-    return ['Nova', 'Atlas', 'Vega', 'Iris'];
+    return FALLBACK_SUGGESTIONS;
   }
 }
 

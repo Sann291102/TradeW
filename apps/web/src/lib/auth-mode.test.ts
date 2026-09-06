@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AUTH_COPY, readAuthMode } from './auth-mode';
-import { describeApiFailure } from './api';
+import { describeApiFailure, isUpstreamUnreachable } from './api';
 
 /**
  * The auth screen used to say two different things at once: the heading offered
@@ -90,5 +90,50 @@ describe('describeApiFailure', () => {
 
   it('ignores a blank message rather than showing an empty alert', () => {
     expect(describeApiFailure(404, 'Not Found', '/auth/login', { message: '   ' })).toContain('404');
+  });
+});
+
+/**
+ * "The API is down" vs "the API returned an error".
+ *
+ * Both arrive as a 5xx, and telling them apart is what the sign-in 500
+ * investigation turned on: `/auth/methods` and `/ai/persona/suggestions` return
+ * compile-time constants and cannot fail, yet both reported 500 — because the
+ * response came from Next's `/api/*` rewrite proxy after `connect ECONNREFUSED`
+ * to services/api, not from services/api at all.
+ *
+ * The discriminator is the body. AllExceptionsFilter gives every error services/api
+ * produces a JSON body with `statusCode` and `requestId`; the proxy's HTML page
+ * parses to `{}`.
+ */
+describe('isUpstreamUnreachable', () => {
+  it('flags a 5xx whose body never came from the API', () => {
+    // Next's proxy error page, parsed by `res.json().catch(() => ({}))`.
+    expect(isUpstreamUnreachable(500, {})).toBe(true);
+    expect(isUpstreamUnreachable(500, null)).toBe(true);
+    expect(isUpstreamUnreachable(502, undefined)).toBe(true);
+  });
+
+  it('does NOT flag a genuine API 500, which always carries the filter’s fields', () => {
+    expect(
+      isUpstreamUnreachable(500, {
+        statusCode: 500,
+        message: 'Internal server error',
+        requestId: 'cbd924a5-b677-49f5-9486-df61af6e08f8',
+      }),
+    ).toBe(false);
+  });
+
+  it('does not flag the API’s 503 for a drifted database schema', () => {
+    // The other 5xx worth telling apart: this one IS from services/api and
+    // already explains itself, so it must keep its own message.
+    expect(
+      isUpstreamUnreachable(503, { statusCode: 503, message: 'The database schema is out of date' }),
+    ).toBe(false);
+  });
+
+  it('never flags a 4xx — a bodyless 404 is not a dead backend', () => {
+    expect(isUpstreamUnreachable(404, {})).toBe(false);
+    expect(isUpstreamUnreachable(401, {})).toBe(false);
   });
 });
