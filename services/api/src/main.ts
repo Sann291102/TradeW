@@ -11,6 +11,7 @@ loadEnv({ path: resolve(__dirname, '../../../.env') });
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { SWAGGER_PATH, isSwaggerEnabled, setupSwagger } from './swagger/swagger.setup';
 
 async function bootstrap() {
@@ -144,9 +145,26 @@ async function bootstrap() {
     // one the web client waits on before retrying — without it exposed, that
     // client falls back to guessing and retries into a window it was told the
     // exact length of.
-    exposedHeaders: ['Retry-After'],
+    // X-Request-Id is on this list for the same reason Retry-After is: the web
+    // app and the API are separate origins, so a header not named here is
+    // invisible to `fetch` even though it arrived. It is the id that ties an
+    // error the user is looking at to the stack trace in the API log — see
+    // AllExceptionsFilter.
+    exposedHeaders: ['Retry-After', 'X-Request-Id'],
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+
+  /**
+   * Every unhandled error becomes an HTTP response HERE, and nowhere else.
+   *
+   * Without it, Nest answers anything it does not recognise with a bare
+   * `{"statusCode":500,"message":"Internal server error"}` — which is what an
+   * un-migrated database looked like on `POST /auth/login`, for every account,
+   * with nothing in the body to say so. The filter classifies the cause,
+   * returns 503 for an environment fault rather than 500, and stamps every
+   * error with a request id that also appears in the log line.
+   */
+  app.useGlobalFilters(new AllExceptionsFilter());
 
   // After the pipes and CORS so the document reflects the app as it actually
   // runs, and after the middleware above so the docs page is served with the

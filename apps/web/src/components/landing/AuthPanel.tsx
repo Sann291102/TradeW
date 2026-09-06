@@ -37,6 +37,11 @@ type Methods = { password: boolean; google: boolean; phone: boolean };
  * kind of "no" it was — so a wrong password says so instead of surfacing the
  * server's deliberately vague wording, and a 5xx says the server broke rather
  * than implying the credentials were wrong.
+ *
+ * A 5xx also carries a `requestId` when the API's AllExceptionsFilter set one
+ * (see `services/api/src/common/all-exceptions.filter.ts`) — appending it is
+ * the difference between "it said internal server error" and finding the
+ * matching stack trace in the API log.
  */
 type ErrorContext = AuthMode | 'phone';
 
@@ -70,11 +75,13 @@ function friendlyError(err: unknown, context: ErrorContext): string {
         ? `Too many attempts. Try again in ${wait} second${wait === 1 ? '' : 's'}.`
         : 'Too many attempts. Please wait a moment and try again.';
     }
-    default:
+    default: {
       if (err.status >= 500) {
-        return `The TradeW server failed to handle that (${err.status}). It is not your credentials — try again shortly.`;
+        const reference = err.requestId ? ` Reference ${err.requestId}.` : '';
+        return `The TradeW server failed to handle that (${err.status}). It is not your credentials — try again shortly.${reference}`;
       }
       return message || 'Something went wrong. Please try again.';
+    }
   }
 }
 
