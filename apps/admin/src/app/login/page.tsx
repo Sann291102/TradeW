@@ -42,7 +42,7 @@ function LoginForm() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg p-4">
-      <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-6">
+      <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6">
         <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-faint">TradeW · Operator Console</p>
         <h1 className="mb-4 text-lg font-bold text-text">Sign in</h1>
 
@@ -77,7 +77,7 @@ function LoginForm() {
           <button
             type="submit"
             disabled={submitting || email.length === 0 || password.length === 0}
-            className="w-full rounded bg-accent px-3 py-2 text-[13px] font-semibold text-bg transition-opacity disabled:opacity-50"
+            className="w-full rounded bg-teal px-3 py-2 text-[13px] font-semibold text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {submitting ? 'Signing in…' : 'Sign in'}
           </button>
