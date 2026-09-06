@@ -154,17 +154,37 @@ export class ApiError extends Error {
    * never reached the API at all.
    */
   readonly requestId: string | null;
+  /**
+   * True when the response came from the PROXY, not from services/api.
+   *
+   * `/api/*` is a Next.js rewrite to services/api (see apps/web/next.config.mjs).
+   * When nothing is listening on the far end, Next logs `Failed to proxy ...
+   * ECONNREFUSED` and answers the browser with a bare HTML 500 — no JSON, no
+   * requestId. That is indistinguishable from an API crash if you only look at
+   * the status code, and it is what made "login returns 500" so hard to place:
+   * the same 500 also appeared on `/auth/methods` and `/ai/persona/suggestions`,
+   * two handlers that return compile-time constants and cannot fail.
+   *
+   * The tell is the body. Every error services/api produces goes through
+   * AllExceptionsFilter, which ALWAYS emits JSON carrying `statusCode` and a
+   * `requestId`. So a 5xx whose body is not that shape was never seen by the
+   * API at all — the request died in the proxy. Callers use this to name the
+   * real fault (the API is not running) instead of blaming the endpoint.
+   */
+  readonly upstreamUnreachable: boolean;
   constructor(
     message: string,
     status: number,
     retryAfterSeconds: number | null = null,
     requestId: string | null = null,
+    upstreamUnreachable = false,
   ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.retryAfterSeconds = retryAfterSeconds;
     this.requestId = requestId;
+    this.upstreamUnreachable = upstreamUnreachable;
   }
 }
 
@@ -180,6 +200,23 @@ export function parseRetryAfter(header: string | null, now: number = Date.now())
   const at = Date.parse(trimmed);
   if (Number.isNaN(at)) return null;
   return Math.max(0, Math.ceil((at - now) / 1000));
+}
+
+/**
+ * Did this 5xx come from the proxy rather than from services/api?
+ *
+ * services/api answers every error through AllExceptionsFilter, which always
+ * emits a JSON body carrying `statusCode` (and a `requestId`). Next's rewrite
+ * proxy, when the upstream refuses the connection, answers with an HTML error
+ * page instead — so the parsed body is empty and carries neither field.
+ *
+ * Restricted to 5xx on purpose: a 4xx never has this ambiguity, and treating a
+ * bodyless 404 as "the API is down" would be its own wrong diagnosis.
+ */
+export function isUpstreamUnreachable(status: number, data: unknown): boolean {
+  if (status < 500) return false;
+  const body = (data ?? {}) as { statusCode?: unknown; requestId?: unknown; message?: unknown };
+  return body.statusCode === undefined && body.requestId === undefined && body.message === undefined;
 }
 
 /**
@@ -228,6 +265,7 @@ function apiError(res: Response, path: string, data: unknown): ApiError {
     res.status,
     parseRetryAfter(res.headers?.get?.('Retry-After') ?? null),
     requestId || res.headers?.get?.('X-Request-Id') || null,
+    isUpstreamUnreachable(res.status, data),
   );
 }
 

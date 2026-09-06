@@ -76,6 +76,17 @@ function friendlyError(err: unknown, context: ErrorContext): string {
         : 'Too many attempts. Please wait a moment and try again.';
     }
     default: {
+      // Nothing answered. The status is 5xx but no part of it came from
+      // services/api, so naming "the server" would point at the wrong process:
+      // the request died in the /api proxy because nothing is listening behind
+      // it. Say which dependency is down and how to start it.
+      if (err.upstreamUnreachable) {
+        return (
+          `Could not reach the TradeW API through ${API_URL} — nothing answered, so the API server is ` +
+          `almost certainly not running. Start it with \`npm run dev:api\`; if it exits immediately it is ` +
+          `reporting a configuration fault, and \`npm run preflight\` names it.`
+        );
+      }
       if (err.status >= 500) {
         const reference = err.requestId ? ` Reference ${err.requestId}.` : '';
         return `The TradeW server failed to handle that (${err.status}). It is not your credentials — try again shortly.${reference}`;
