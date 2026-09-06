@@ -145,11 +145,26 @@ function refreshAccessToken(): Promise<boolean> {
 export class ApiError extends Error {
   readonly status: number;
   readonly retryAfterSeconds: number | null;
-  constructor(message: string, status: number, retryAfterSeconds: number | null = null) {
+  /**
+   * The server's id for THIS failure, from the `requestId` field the API's
+   * AllExceptionsFilter puts on every error body (and its `X-Request-Id`
+   * header). It appears verbatim in the API's own log line, so quoting it is
+   * the difference between "it said internal server error" and finding the
+   * stack trace. Null for a response that predates the filter, or one that
+   * never reached the API at all.
+   */
+  readonly requestId: string | null;
+  constructor(
+    message: string,
+    status: number,
+    retryAfterSeconds: number | null = null,
+    requestId: string | null = null,
+  ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.requestId = requestId;
   }
 }
 
@@ -207,10 +222,12 @@ export function describeApiFailure(
 }
 
 function apiError(res: Response, path: string, data: unknown): ApiError {
+  const requestId = (data as { requestId?: string } | null)?.requestId;
   return new ApiError(
     describeApiFailure(res.status, res.statusText, path, data),
     res.status,
     parseRetryAfter(res.headers?.get?.('Retry-After') ?? null),
+    requestId || res.headers?.get?.('X-Request-Id') || null,
   );
 }
 

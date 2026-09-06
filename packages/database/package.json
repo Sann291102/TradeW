@@ -13,6 +13,8 @@
     "migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
     "seed": "ts-node prisma/seed.ts",
     "admin:grant": "ts-node scripts/grant-admin.ts",
+    "//admin:reconcile": "Withdraw application-admin access in bulk. Audit-only with no arguments; dry-run with --keep; writes only with --apply. Cleanup for the unfiltered updateMany in the removed create-admin.ts, which made every account an admin. Never grants — that stays admin:grant.",
+    "admin:reconcile": "ts-node scripts/reconcile-admins.ts",
     "operator:create": "ts-node scripts/create-operator.ts",
     "execution:profile": "ts-node scripts/create-execution-profile.ts",
     "//agents:seed": "Create the NIFTY and SENSEX autonomous paper agents, DISARMED. Arming stays a separate console act on top of PAPER_EXECUTION_ENABLED.",
