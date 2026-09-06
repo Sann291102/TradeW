@@ -35,6 +35,12 @@ export default defineConfig({
       // asserts the no-fake-dashboard rule structurally - an event kind whose
       // machinery does not exist yet cannot be emitted.
       'src/lab/lab-phase0.spec.ts',
+      // The tradable universe's read path. Pins the properties that only fail
+      // once the catalogue is genuinely large: the server-side page ceiling,
+      // the keyset seek's agreement with Postgres enum ordering, and the
+      // default status filter (which must keep FX pairs, whose status is
+      // UNKNOWN by definition, while hiding delisted equities).
+      'src/universe/universe.service.spec.ts',
       'src/backtest/execution-simulator.spec.ts',
       'src/backtest/backtest-metrics.spec.ts',
       'src/backtest/backtest-config.spec.ts',

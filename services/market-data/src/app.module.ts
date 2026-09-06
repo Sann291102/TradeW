@@ -5,6 +5,8 @@ import { TickPipelineService } from './ingestion/tick-pipeline.service';
 import { InstrumentRegistryService } from './instruments/instrument-registry.service';
 import { PrismaService } from './prisma.service';
 import { ScripMasterService } from './scrip-master/scrip-master.service';
+import { UniverseRefreshScheduler } from './universe/universe-refresh.scheduler';
+import { UniverseSyncService } from './universe/universe-sync.service';
 
 /**
  * Market data ingestion runtime.
@@ -15,7 +17,19 @@ import { ScripMasterService } from './scrip-master/scrip-master.service';
  */
 @Module({
   controllers: [HealthController],
-  providers: [PrismaService, InstrumentRegistryService, TickPipelineService, FeedManagerService, ScripMasterService],
-  exports: [ScripMasterService],
+  providers: [
+    PrismaService,
+    InstrumentRegistryService,
+    TickPipelineService,
+    FeedManagerService,
+    ScripMasterService,
+    // The tradable universe's WRITE side. It lives here rather than in
+    // services/api because a sync downloads ~15 MiB and writes hundreds of
+    // thousands of rows — work that belongs in the ingestion runtime, not on a
+    // request path. The scheduler is inert unless UNIVERSE_REFRESH_ENABLED=true.
+    UniverseSyncService,
+    UniverseRefreshScheduler,
+  ],
+  exports: [ScripMasterService, UniverseSyncService],
 })
 export class AppModule {}

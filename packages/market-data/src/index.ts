@@ -57,3 +57,9 @@ export * from './registry';
 // the whole subsystem is shaped around.
 export * from './providers/fundamentals';
 export { dhanBucketStart } from './providers/dhan/dhan-bar-bucket';
+
+// The tradable universe — the multi-market instrument CATALOGUE (what can be
+// traded), as distinct from the feeds above (what it is worth). Five markets,
+// three providers, one shape. Its `currency-policy` module is the single owner
+// of the market-currency vs paper-account-currency distinction.
+export * from './universe';

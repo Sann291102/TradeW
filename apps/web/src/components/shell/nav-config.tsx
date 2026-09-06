@@ -60,6 +60,12 @@ export const NAV_ITEMS: NavItem[] = [
   // test that asserts the exact string; renaming the label broke nothing.
   { href: '/dashboard', label: 'Home', icon: HomeIcon, group: 'primary' },
   { href: '/markets', label: 'Markets', icon: MarketsIcon, group: 'primary' },
+  // The CATALOGUE, beside the live board. Markets answers "what is it worth
+  // right now" for a handful of instruments; Universe answers "what exists, on
+  // which venue, in which currency" for all ~10^5 of them. Same icon family,
+  // deliberately adjacent, but a separate route because the two have opposite
+  // data shapes — one polls a few rows, the other paginates a great many.
+  { href: '/universe', label: 'Universe', icon: MarketsIcon, group: 'primary' },
   { href: '/portfolio', label: 'Portfolio', icon: PortfolioIcon, group: 'primary' },
   { href: '/trade', label: 'Trade', icon: TradeIcon, group: 'primary' },
   // Orders and Positions are the Portfolio workspace's own sections, promoted

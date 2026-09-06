@@ -160,7 +160,7 @@ What lives in this repo instead:
 | `database` | The single `schema.prisma` + migration history (owns the shared Postgres schema) | `services/api` (and `services/auth` once extracted) |
 | `ui` | Design-system components extracted from `apps/web` as they stabilize — don't pre-extract UI that's still changing weekly | `apps/web`, `apps/admin`, later `apps/mobile`'s web-shared views if any |
 | `ai-core` | Provider-agnostic AI primitives — LLM client, prompt assembly, guardrail/disclaimer helpers | `services/api`, `services/sentinel`, `services/tradew-ai` |
-| `market-data` | Hand-written Dhan WebSocket binary parser + market types (verified by `scripts/verify-parser.ts`) | `services/market-data`, `services/sentinel` |
+| `market-data` | Hand-written Dhan WebSocket binary parser + market types (verified by `scripts/verify-parser.ts`), plus the multi-market tradable-universe catalogue (`src/universe` — five markets, three provider adapters, and the single owner of the market-currency vs paper-account-currency distinction; see `docs/product-architecture/TRADABLE-UNIVERSE.md`) | `services/market-data`, `services/api`, `services/sentinel` |
 | `sdk` | Typed client generated from `services/api`'s OpenAPI spec — not built yet | `apps/*` internally now; external developers once the Phase 3 public API ships |
 
 `services/trading-engine` (Python) and `services/sentinel-py` (Python) do not consume the TypeScript packages above — they're different runtimes with their own dependency sets. `sentinel-py` does read/write the shared Postgres schema that `packages/database` owns (directly via `asyncpg`, never through Prisma — one schema owner, never one ORM, §1.4). See §2 above for `trading-engine`'s migration path.
