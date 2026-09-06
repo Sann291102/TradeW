@@ -1,5 +1,5 @@
-import { NAV_ITEMS } from '@/components/shell/nav-config';
-import type { PanelKind, ThemeName } from '../store/workspaceStore';
+import { matchDestination } from './destinations';
+import type { ChartTimeframe, PanelKind, ThemeName } from '../store/workspaceStore';
 import { commandPlan, type AssistantAction, type AssistantPlan } from './types';
 import { EXPLAIN_RE as CONCEPT_EXPLAIN_RE } from './concepts';
 import { contractHref, findSymbol, parseContract } from './instruments';
@@ -96,6 +96,7 @@ export function resolveCommand(text: string, today = new Date()): AssistantPlan 
 
   return (
     matchContract(t, today) ??
+    matchTimeframe(t) ??
     matchDetect(t) ??
     matchTheme(lower) ??
     matchOverlay(lower) ??
@@ -137,6 +138,76 @@ function matchContract(text: string, today: Date): AssistantPlan | null {
   }
 
   return commandPlan(reply, [{ type: 'selectSymbol', symbol: c.symbol }, { type: 'navigate', href }], steps);
+}
+
+// --- timeframe -------------------------------------------------------------
+
+/**
+ * Spoken timeframes → the store's `ChartTimeframe`.
+ *
+ * Longest phrase first, and "1 minute" before "1m", because the resolver takes
+ * the first hit. Deliberately generous about phrasing ("5 min", "five minute",
+ * "m5") and strict about the RESULT: everything here maps onto a value the
+ * panel has a button for, checked by `timeframe.test.ts` against
+ * `CHART_TIMEFRAMES` rather than eyeballed.
+ */
+const TIMEFRAME_ALIASES: ReadonlyArray<[phrase: string, tf: ChartTimeframe]> = [
+  ['one minute', '1m'], ['1 minute', '1m'], ['1 min', '1m'], ['1m', '1m'], ['m1', '1m'],
+  ['five minute', '5m'], ['5 minutes', '5m'], ['5 minute', '5m'], ['5 min', '5m'], ['5m', '5m'], ['m5', '5m'],
+  ['fifteen minute', '15m'], ['15 minutes', '15m'], ['15 minute', '15m'], ['15 min', '15m'], ['15m', '15m'], ['m15', '15m'],
+  ['one hour', '1H'], ['1 hour', '1H'], ['hourly', '1H'], ['60 min', '1H'], ['1h', '1H'],
+  ['one day', '1D'], ['1 day', '1D'], ['daily', '1D'], ['1d', '1D'],
+  ['one week', '1W'], ['1 week', '1W'], ['weekly', '1W'], ['1w', '1W'],
+];
+
+/**
+ * Words that make a timeframe the OBJECT of the request rather than an
+ * incidental mention.
+ *
+ * Without this, "what's the daily range on NIFTY" — a quote lookup — would be
+ * captured here and answered by silently changing the chart, and "open the 15m
+ * chart of RELIANCE" would set a timeframe while dropping the instrument. The
+ * same collision class `matchDetect` documents for FVG, one layer down.
+ */
+const TIMEFRAME_INTENT_RE =
+  /\b(timeframe|time frame|interval|candles?|chart|switch|change|set|make it|go to|show)\b/i;
+
+/**
+ * "change the timeframe to 5 minutes", "make it hourly", "switch to daily".
+ *
+ * Sits directly below contract parsing and above everything else, because a
+ * timeframe phrase is short and collides with almost every other matcher —
+ * "1D" is inside plenty of strings and `matchNav` would happily see "chart".
+ */
+function matchTimeframe(text: string): AssistantPlan | null {
+  if (!TIMEFRAME_INTENT_RE.test(text)) return null;
+
+  const lower = text.toLowerCase();
+  for (const [phrase, tf] of TIMEFRAME_ALIASES) {
+    if (!new RegExp(`\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(lower)) continue;
+
+    // A named instrument means "open X on 15m" — one request, two steps. The
+    // symbol is set first so the timeframe lands on the instrument the user
+    // asked about, not on whatever was already loaded.
+    const sym = findSymbol(text);
+    const actions: AssistantAction[] = sym
+      ? [
+          { type: 'selectSymbol', symbol: sym.symbol },
+          { type: 'navigate', href: `/trade?symbol=${encodeURIComponent(sym.symbol)}` },
+          { type: 'chartTimeframe', timeframe: tf },
+        ]
+      : [{ type: 'chartTimeframe', timeframe: tf }];
+
+    return commandPlan(
+      sym ? `${sym.symbol} on ${tf}.` : `Timeframe is now ${tf}.`,
+      actions,
+      [
+        ...(sym ? [`Resolved symbol → ${sym.symbol}`] : []),
+        `Parsed timeframe → ${tf} (from "${phrase}")`,
+      ],
+    );
+  }
+  return null;
 }
 
 // --- chart detection -------------------------------------------------------
@@ -306,41 +377,48 @@ function matchChrome(lower: string): AssistantPlan | null {
   return null;
 }
 
-// --- navigation (derived from NAV_ITEMS) -----------------------------------
+// --- navigation (resolved against the destination registry) -----------------
 
+/**
+ * Resolve a named place.
+ *
+ * Was derived from `NAV_ITEMS` alone, which is why "open crypto" stopped
+ * working the day Crypto became a Markets venue tab instead of a sidebar
+ * entry — see the doc comment in `destinations.ts`. The registry now covers
+ * pages, venues and redirect aliases, so a sidebar refactor cannot silently
+ * remove a capability again.
+ */
 function matchNav(lower: string): AssistantPlan | null {
-  // Longest label first so a two-word page can't be shadowed by a one-word one.
-  const items = [...NAV_ITEMS].sort((a, b) => b.label.length - a.label.length);
+  const hit = matchDestination(lower);
+  if (!hit) return null;
 
-  for (const item of items) {
-    const label = item.label.toLowerCase();
-    if (!new RegExp(`\\b${label}\\b`).test(lower)) continue;
+  // Bare mention isn't a command — "how does the dashboard work" is a question
+  // about the app, not a request to navigate. Require a verb, or that the whole
+  // utterance is essentially just the destination's name.
+  const hasVerb = new RegExp(`\\b${OPEN_VERB}\\b`).test(lower);
+  const isBareName = lower.replace(/[^a-z0-9\s]/g, '').trim() === hit.matched;
+  if (!hasVerb && !isBareName) return null;
 
-    // Bare mention isn't a command — "how does the dashboard work" is a
-    // question about the app, not a request to navigate. Require a verb, or
-    // that the whole utterance is essentially just the page name.
-    const hasVerb = new RegExp(`\\b${OPEN_VERB}\\b`).test(lower);
-    const isBareName = lower.replace(/[^a-z\s]/g, '').trim() === label;
-    if (!hasVerb && !isBareName) continue;
+  const { dest } = hit;
+  const actions: AssistantAction[] = [{ type: 'navigate', href: dest.href }];
+  const steps = [
+    `Resolved "${hit.matched}" → ${dest.label}`,
+    `Opened ${dest.href}`,
+  ];
 
-    const actions: AssistantAction[] = [{ type: 'navigate', href: item.href }];
-    const steps = [`Opened ${item.href}`];
-
-    // Compound command: "open research and explain". The navigation half runs
-    // now; the narration half is the analysis agent (Phase 2), so say that
-    // plainly instead of implying an explanation is coming.
-    if (EXPLAIN_RE.test(lower)) {
-      return {
-        intent: 'command',
-        reply: `Opened ${item.label}. Reading the page and explaining it is the analysis half of the assistant — that lands in the next phase, so for now I've just taken you there.`,
-        actions,
-        steps: [...steps, 'Analysis requested → not yet available (Phase 2)'],
-      };
-    }
-
-    return commandPlan(`Opened ${item.label}.`, actions, steps);
+  // Compound command: "open research and explain". The navigation half runs
+  // now; the narration half is the analysis agent (Phase 2), so say that
+  // plainly instead of implying an explanation is coming.
+  if (EXPLAIN_RE.test(lower)) {
+    return {
+      intent: 'command',
+      reply: `Opened ${dest.label}. Reading the page and explaining it is the analysis half of the assistant — that lands in the next phase, so for now I've just taken you there.`,
+      actions,
+      steps: [...steps, 'Analysis requested → not yet available (Phase 2)'],
+    };
   }
-  return null;
+
+  return commandPlan(`Opened ${dest.label}.`, actions, steps);
 }
 
 // --- bare symbol -----------------------------------------------------------

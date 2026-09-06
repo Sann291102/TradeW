@@ -11,6 +11,7 @@ import { narrate } from './narration';
 import { ASSISTANT_NAME } from './identity';
 import { riskOf } from './safety';
 import { askBrain, type BrainPlan } from './brain';
+import { traceLine, verifyAction, type WorkspaceSnapshot } from './verify';
 import type { QuoteAsk } from './quotes';
 import { formatBreadth, formatCashFlow, formatPositioning } from './flows';
 import { fetchBreadth, fetchFiiDii, fetchParticipantOi } from '../sentinel/nse';
@@ -186,6 +187,38 @@ function contextSnapshot(): Record<string, unknown> {
   };
 }
 
+/**
+ * What the workspace ACTUALLY looks like, read after a plan has run.
+ *
+ * Deliberately reads the store fresh via `getState()` rather than through a
+ * hook: this is called from inside a timer callback after execution, and a
+ * value captured at render time would be exactly the stale snapshot that makes
+ * a verifier agree with the plan instead of with the screen.
+ */
+function workspaceSnapshot(): WorkspaceSnapshot {
+  const s = useWorkspaceStore.getState();
+  const tab = s.workspaceTabs.find((t) => t.id === s.activeTabId);
+  return {
+    route: typeof window !== 'undefined' ? window.location.pathname : null,
+    selectedSymbol: tab?.selectedSymbol ?? null,
+    chartTimeframe: tab?.chartTimeframe ?? null,
+    theme: s.theme,
+    visiblePanels: (tab?.panels ?? []).filter((p) => p.visible).map((p) => p.kind),
+    drawingTags: Array.from(new Set((s.chartDrawings?.drawings ?? []).map((d) => d.tag))),
+  };
+}
+
+/**
+ * How long to wait before reading state back.
+ *
+ * `router.push` is asynchronous and the store commits on the next tick, so
+ * verifying immediately would report every navigation as failed. This is a
+ * settle delay, not a poll: one read, and whatever is true then is what the
+ * trace says. Long enough for a client-side route change, short enough that the
+ * trace does not visibly rewrite itself under the user's eyes.
+ */
+const VERIFY_SETTLE_MS = 350;
+
 /** Turn a brain reply into transcript turns. */
 function brainTurns(brain: BrainPlan, mode: ReturnType<typeof narrate> extends never ? never : Parameters<typeof narrate>[0]): AssistantTurn[] {
   if (brain.unsupported) {
@@ -244,6 +277,7 @@ export function useAssistant() {
   const applyLayout = useWorkspaceStore((s) => s.applyLayout);
   const toggleSidebar = useWorkspaceStore((s) => s.toggleSidebar);
   const addWorkspaceTab = useWorkspaceStore((s) => s.addWorkspaceTab);
+  const setChartTimeframe = useWorkspaceStore((s) => s.setChartTimeframe);
   const replaceChartDrawings = useWorkspaceStore((s) => s.replaceChartDrawings);
   const clearChartDrawings = useWorkspaceStore((s) => s.clearChartDrawings);
 
@@ -430,10 +464,18 @@ export function useAssistant() {
         case 'chartClearDrawings':
           clearChartDrawings(action.tag);
           break;
+        case 'chartTimeframe':
+          // Reaches the chart because the timeframe is store state now. While
+          // it was `useState` inside ChartPanel there was nothing to call: the
+          // action could be parsed, validated and traced, and still change
+          // nothing on screen.
+          setChartTimeframe(action.timeframe);
+          break;
       }
     },
     [
       router,
+      setChartTimeframe,
       replaceChartDrawings,
       clearChartDrawings,
       setSelectedSymbol,
@@ -473,14 +515,75 @@ export function useAssistant() {
       });
 
       const failed = done.filter((s) => s.status === 'failed');
-      const trace = done.map(
-        (s) => `${s.status === 'done' ? '✓' : '✕'} ${s.describe}${s.error ? ` — ${s.error}` : ''}`,
+      /**
+       * The provisional trace: what was ASKED FOR, not yet what happened.
+       *
+       * Not throwing is a very weak signal — `router.push` returns before the
+       * route changes and `restorePanel` sets a flag whether or not anything
+       * renders the panel — so these lines are marked `·` rather than `✓` and
+       * are replaced by `verifyPlan` once state has settled. A tick is only
+       * written after a post-condition has been read back.
+       */
+      const trace = done.map((s) =>
+        traceLine(s.describe, s.status === 'failed' ? 'failed' : 'done', null, s.error),
       );
 
       return { done, failed, trace };
     },
     [executeAction],
   );
+
+  /**
+   * Read the workspace back and rewrite the turn's trace with what is true.
+   *
+   * This is the step the assistant never had. Every previous version asserted
+   * its own success: the trace was built from the plan, before or during
+   * execution, and said "✓ Opened /trade" whether or not the route had moved.
+   * The two documented regressions in this file — a panel flag nothing renders,
+   * and a `?view=` change a mounted panel ignored — were both invisible for
+   * exactly that reason, and both were reported by a user contradicting the
+   * assistant while it insisted it had succeeded.
+   *
+   * Scheduled rather than awaited so the reply lands instantly; the trace
+   * settles a moment later. A step whose post-condition fails is downgraded to
+   * `failed` here, so `planSteps` in the dock shows the real outcome too.
+   */
+  const verifyPlan = useCallback((turnIdToPatch: string, steps: PlanStep[]) => {
+    if (typeof window === 'undefined') return;
+    window.setTimeout(() => {
+      const snap = workspaceSnapshot();
+      const verified = steps.map((s) => {
+        if (s.status === 'failed') return s;
+        const v = verifyAction(s.action, snap);
+        return v && !v.ok
+          ? { ...s, status: 'failed' as const, error: v.detail }
+          : s;
+      });
+      const trace = steps.map((s) =>
+        traceLine(
+          s.describe,
+          s.status === 'failed' ? 'failed' : 'done',
+          s.status === 'failed' ? null : verifyAction(s.action, snap),
+          s.error,
+        ),
+      );
+
+      setTurns((prev) =>
+        prev.map((t) =>
+          t.id === turnIdToPatch
+            ? {
+                ...t,
+                rawSteps: trace,
+                // Silent mode hides `steps` entirely; leave it alone rather
+                // than repopulating what the user asked not to see.
+                steps: t.steps?.length ? trace : t.steps,
+                planSteps: t.planSteps ? verified : undefined,
+              }
+            : t,
+        ),
+      );
+    }, VERIFY_SETTLE_MS);
+  }, []);
 
   const send = useCallback(
     (raw: string) => {
@@ -549,18 +652,49 @@ export function useAssistant() {
         ]);
 
         void askBrain(text, contextSnapshot()).then((brain) => {
+          /**
+           * The brain answered, or it did not — and those are different facts.
+           *
+           * ── THE BUG THIS BRANCH FIXES ────────────────────────────────────
+           *
+           * When `askBrain` returned null this fell back to `plan.reply`,
+           * which for an unmatched utterance is the fast path's "I didn't
+           * understand" copy. That copy used to describe the analysis engine
+           * as unbuilt, so an unreachable or unconfigured runtime was reported
+           * to the user as a missing product feature. "Open crypto" produced
+           * exactly that: a comprehension miss, published as a roadmap.
+           *
+           * A refusal is different and still falls through unchanged — an
+           * out-of-domain judgement the brain could not reconsider is still an
+           * out-of-domain judgement, and saying "I couldn't reach my language
+           * understanding" there would be the same mistake in reverse.
+           */
           const replacement: AssistantTurn[] = brain
             ? brainTurns(brain, mode)
-            : [
-                {
-                  id: turnId(),
-                  role: 'assistant',
-                  text: plan.reply,
-                  intent: plan.intent,
-                  refusalReason: plan.refusalReason,
-                  disclaimer: plan.disclaimer,
-                },
-              ];
+            : plan.intent === 'refusal'
+              ? [
+                  {
+                    id: turnId(),
+                    role: 'assistant',
+                    text: plan.reply,
+                    intent: plan.intent,
+                    refusalReason: plan.refusalReason,
+                    disclaimer: plan.disclaimer,
+                  },
+                ]
+              : [
+                  {
+                    id: turnId(),
+                    role: 'assistant',
+                    intent: 'command',
+                    text:
+                      "I couldn't reach my language understanding just now, so I only have my " +
+                      'built-in commands for this one. Those still work — name a screen, an ' +
+                      'instrument or a contract and I\'ll take you there.',
+                    steps: mode === 'silent' ? [] : ['Fast path → no match', 'Conversation brain → unreachable'],
+                    rawSteps: ['Fast path → no match', 'Conversation brain → unreachable'],
+                  },
+                ];
 
           setTurns((prev) =>
             prev.flatMap((t) => (t.id === placeholderId ? replacement : [t])),
@@ -621,12 +755,13 @@ export function useAssistant() {
 
       const { done, failed, trace } = runPlan(plan);
       const rawSteps = plan.steps.length ? trace : plan.steps.map((s) => s.describe);
+      const replyId = turnId();
 
       setTurns((prev) => [
         ...prev,
         { id: turnId(), role: 'user', text },
         {
-          id: turnId(),
+          id: replyId,
           role: 'assistant',
           text:
             failed.length && done.length > failed.length
@@ -640,8 +775,11 @@ export function useAssistant() {
           disclaimer: plan.disclaimer,
         },
       ]);
+
+      // Read the workspace back and correct the trace to match it.
+      if (done.length) verifyPlan(replyId, done);
     },
-    [runPlan],
+    [runPlan, verifyPlan],
   );
 
   /** The user said yes to a confirmation. Runs the plan it was holding. */
@@ -654,11 +792,12 @@ export function useAssistant() {
       const mode = useWorkspaceStore.getState().assistantMode;
       const { done, trace } = runPlan(plan);
 
+      const replyId = turnId();
       setTurns((prev) => [
         // Clear the pending flag so the prompt cannot be answered twice.
         ...prev.map((t) => (t.id === turnIdToResolve ? { ...t, pendingPlan: undefined } : t)),
         {
-          id: turnId(),
+          id: replyId,
           role: 'assistant',
           text: 'Done.',
           steps: narrate(mode, trace, plan.steps.map((s) => s.action)),
@@ -667,8 +806,12 @@ export function useAssistant() {
           intent: 'command',
         },
       ]);
+
+      // A confirmed plan is the one most worth verifying: the user was asked
+      // first precisely because it changes something they would have to rebuild.
+      if (done.length) verifyPlan(replyId, done);
     },
-    [runPlan],
+    [runPlan, verifyPlan],
   );
 
   /** The user said no. Nothing ran, and the transcript says so. */

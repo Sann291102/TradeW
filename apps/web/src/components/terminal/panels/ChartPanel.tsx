@@ -21,6 +21,8 @@ import { InstrumentHeader } from '@/components/trade/InstrumentHeader';
 import { SparkleIcon, CloseIcon } from '../../shell/icons';
 import { ChartExpandButton } from '@/components/charts/ChartExpandButton';
 import type { DockPanelContentProps } from './types';
+import { CHART_TIMEFRAMES, useWorkspaceStore } from '@/lib/store/workspaceStore';
+import { instrumentBySymbol } from '@/lib/instruments/catalog';
 
 export interface ContractContext {
   strike: number;
@@ -34,7 +36,43 @@ export interface ContractContext {
   ivPct: number;
 }
 
-const TIMEFRAMES = ['1m', '5m', '15m', '1H', '1D', '1W'] as const;
+/**
+ * Re-exported from the store, not re-declared.
+ *
+ * The set has to be identical in three places — the buttons here, the store's
+ * validator, and the assistant's command grammar — or the assistant can ask
+ * for a timeframe that stores cleanly and renders nothing. One declaration in
+ * `workspaceStore` removes the possibility.
+ */
+const TIMEFRAMES = CHART_TIMEFRAMES;
+/**
+ * Name the provider that actually failed.
+ *
+ * These messages hardcoded "Dhan" and the port of its bridge, which was exactly
+ * right while Dhan was the only candle source. Now that the catalog routes
+ * crypto to Binance, blaming an unrelated Indian-market bridge for a missing
+ * BTCUSDT chart would send someone to restart a service that has nothing to do
+ * with it. The panel says what is actually disconnected — the same rule the
+ * no-fabricated-data comments above already apply to prices.
+ */
+function candleProviderCopy(symbol: string): { name: string; unreachable: string } {
+  const source = instrumentBySymbol(symbol)?.candleSource;
+  if (source === 'binance') {
+    return {
+      name: 'Binance',
+      unreachable:
+        'Binance could not be reached through our API, so no real candles could be loaded. ' +
+        'Nothing is drawn in the meantime — no simulated series will stand in for it.',
+    };
+  }
+  return {
+    name: 'Dhan',
+    unreachable:
+      'The Dhan live-feed bridge (port 4600) is not reachable, so no real candles could be loaded. ' +
+      'Start it and reload — no simulated series will be drawn in the meantime.',
+  };
+}
+
 const VIEWS = ['markets', 'charts', 'technicals', 'optionChain', 'depth'] as const;
 type View = (typeof VIEWS)[number];
 const VIEW_LABEL: Record<View, string> = {
@@ -177,7 +215,19 @@ export default function ChartPanel({
   fillHeight = false,
 }: ChartPanelProps) {
   const [view, setView] = useState<View>(initialView ?? 'charts');
-  const [tf, setTf] = useState<(typeof TIMEFRAMES)[number]>('15m');
+  /**
+   * The timeframe lives in the workspace store, per tab — NOT in `useState`.
+   *
+   * It was local state, which is what made "change the timeframe to 5 minutes"
+   * unreachable rather than merely unimplemented: nothing outside this render
+   * could read it or write it, so the assistant could neither set it nor check
+   * that a set had landed. Reading it from the store also means a reload comes
+   * back on the timeframe you were reading.
+   */
+  const tf = useWorkspaceStore(
+    (s) => s.workspaceTabs.find((t) => t.id === s.activeTabId)?.chartTimeframe ?? '15m',
+  );
+  const setTf = useWorkspaceStore((s) => s.setChartTimeframe);
   const [maximized, setMaximized] = useState(false);
 
   /**
@@ -328,6 +378,10 @@ export default function ChartPanel({
     TOP_GAINERS.find((i) => i.symbol === symbolKey)?.name ??
     TOP_LOSERS.find((i) => i.symbol === symbolKey)?.name ??
     COMMODITIES.find((i) => i.symbol === symbolKey)?.name ??
+    // The instrument catalog covers the venues the mock lists never did, so a
+    // crypto pair reads as "Bitcoin / Tether" rather than as its raw ticker.
+    // Consulted AFTER the NSE lists so no Indian symbol's naming changes.
+    instrumentBySymbol(symbolKey)?.displayName ??
     liveMatch?.displayName ??
     symbolKey;
   const q: { symbol: string; name: string; ltp: number | null; changePct: number | null } = {
@@ -618,12 +672,12 @@ export default function ChartPanel({
               ) : candlesReason === 'api-unreachable' ? (
                 <DataUnavailable
                   title="Market data API not connected"
-                  detail="The Dhan live-feed bridge (port 4600) is not reachable, so no real candles could be loaded. Start it and reload — no simulated series will be drawn in the meantime."
+                  detail={candleProviderCopy(q.symbol).unreachable}
                 />
               ) : (
                 <DataUnavailable
                   title="No history available"
-                  detail={`Dhan returned no candles for ${q.symbol} at ${tf}. Try a different timeframe, or check that this symbol is covered by the feed.`}
+                  detail={`${candleProviderCopy(q.symbol).name} returned no candles for ${q.symbol} at ${tf}. Try a different timeframe, or check that this symbol is covered by the feed.`}
                 />
               )}
             </div>

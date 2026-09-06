@@ -142,12 +142,30 @@ export function resolveUtterance(text: string, today = new Date()): AssistantPla
   const outOfDomain = guardDomain(t);
   if (outOfDomain) return outOfDomain;
 
-  // In-domain, but not a command — this is an analysis question. The reasoning
-  // agents (chart read, support/resistance, option-chain interpretation) are
-  // the next phase; say so rather than improvising an answer, which is exactly
-  // the failure mode TRADEW-AI.md §4 exists to prevent.
+  /**
+   * In-domain, and not a command this grammar recognises.
+   *
+   * ── WHY THE OLD COPY HERE WAS A BUG, NOT A WORDING PREFERENCE ────────────
+   *
+   * This branch used to say: "That's a market question I'm built for, but my
+   * analysis engine isn't wired up yet — that's the next phase." It read as a
+   * statement about the product. It is not one. This is the LAST line of a
+   * deterministic cascade, so everything the cascade failed to parse lands
+   * here — including requests that are not analysis questions at all.
+   *
+   * "Open crypto" landed here. The word `crypto` is in the in-domain
+   * vocabulary, so it was not refused; it simply named nothing the navigation
+   * grammar could see any more, and the user was told the analysis engine was
+   * unbuilt. The reply was confident, specific, and about the wrong subsystem.
+   *
+   * So this now says what is actually known: the fast path did not understand.
+   * When the conversation brain is reachable it answers instead of this, and
+   * when it is not, `useAssistant` says THAT rather than reusing this text —
+   * an outage and a comprehension miss are different facts and neither is a
+   * roadmap.
+   */
   return analysisPlan(
-    "That's a market question I'm built for, but my analysis engine isn't wired up yet — that's the next phase. Right now I can navigate and control the app; ask me to open something and I'll take you straight there.",
-    ['Classified → market analysis', 'Analysis agents not yet connected (Phase 2)'],
+    "I didn't catch what you wanted there. I can open any screen, chart or contract, read live prices, and mark fair value gaps on a chart — try naming one of those, or rephrase and I'll have another go.",
+    ['Fast path → no match', 'Deferred to the conversation brain'],
   );
 }

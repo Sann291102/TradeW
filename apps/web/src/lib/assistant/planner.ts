@@ -136,6 +136,8 @@ export function describeAction(a: AssistantAction): string {
       return DETECTORS[a.detector].label;
     case 'chartClearDrawings':
       return `Clear the ${a.tag} drawings`;
+    case 'chartTimeframe':
+      return `Switch the chart to ${a.timeframe}`;
   }
 }
 

@@ -83,6 +83,8 @@ export function explainAction(a: AssistantAction): string | null {
       return 'I find these by arithmetic on the bars, not by opinion, so the same chart always gives the same zones — and I draw every one I find rather than picking out the ones that look best.';
     case 'chartClearDrawings':
       return 'Drawings are grouped by what produced them, so clearing one group leaves anything you drew yourself exactly where it was.';
+    case 'chartTimeframe':
+      return 'Each timeframe is a separate request for bars, so the chart reloads rather than resampling what it already had — which is why the zones I drew are cleared with it.';
   }
 }
 
