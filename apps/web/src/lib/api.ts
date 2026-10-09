@@ -2,6 +2,7 @@ import {
   clearSession,
   getAccessToken,
   getRefreshTokenValue,
+  hasStoredSession,
   writeSession,
 } from './session-storage';
 
@@ -75,6 +76,39 @@ export function clearToken() {
  */
 export function syncAuthHint() {
   if (getToken()) setAuthHint(true);
+}
+
+/**
+ * The other half of `syncAuthHint` — drop a routing cookie no session backs.
+ *
+ * ── THE BUG THIS FIXES ─────────────────────────────────────────────────────
+ *
+ * The cookie's max-age is 30 days; the access token it stands for lives 15
+ * minutes and its refresh token can be revoked or cleared at any point. So the
+ * marker routinely outlives the credential — a dev server restart, a cleared
+ * localStorage, or simply not returning for a month all leave `tw_auth=1`
+ * behind with nothing behind IT.
+ *
+ * The repair used to run in one direction only. `syncAuthHint` restores a
+ * cookie for a tab that still holds a token, and `session-redirect.ts` treats a
+ * token without a cookie as stale. Nobody handled cookie WITHOUT token, and
+ * that is the case the middleware trusts: it waves the request through to the
+ * workspace, `sessionStore.init` finds no token and reports `unauthenticated`,
+ * and the shell renders signed-out — the "Guest / Sign in →" sidebar — on a
+ * route that is supposed to be gated. Worse, it is sticky: nothing in that path
+ * cleared the cookie, so every subsequent visit repeated it for 30 days.
+ *
+ * The symptom is origin-scoped and therefore reads like an environment
+ * difference: whichever origin picked up the cookie (typically localhost during
+ * development) walks into the dashboard while a fresh origin correctly shows
+ * the landing page. It is the same build in both — only the cookie jar differs.
+ *
+ * Only ever called when NO credential exists device-wide (see `hasStoredSession`,
+ * which peeks rather than claiming). Clearing on this tab's token alone would
+ * revoke routing for a session another tab legitimately holds.
+ */
+export function clearStaleAuthHint() {
+  if (!hasStoredSession()) setAuthHint(false);
 }
 
 /**

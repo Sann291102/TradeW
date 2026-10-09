@@ -123,6 +123,23 @@ export function getAccessToken(): string | null {
   return read('session', ACCESS_KEY);
 }
 
+/**
+ * Is there a credential anywhere on this device — this tab's or the mirror?
+ *
+ * Deliberately PEEKS: unlike `getAccessToken` it does not call
+ * `claimDeviceSession`, so asking the question cannot change the answer for a
+ * tab that has not claimed yet. Callers use it to decide whether the routing
+ * cookie is orphaned, and an orphan check must not itself adopt a session.
+ *
+ * The mirror is included on purpose. A tab that claimed while empty returns
+ * null from `getAccessToken` forever, even after another tab signs in and
+ * fills the mirror — treating that as "no session on this device" would tear
+ * down the routing cookie out from under the tab that just signed in.
+ */
+export function hasStoredSession(): boolean {
+  return Boolean(read('session', ACCESS_KEY) || read('local', ACCESS_KEY));
+}
+
 export function getRefreshTokenValue(): string | null {
   const own = read('session', REFRESH_KEY);
   if (own) return own;

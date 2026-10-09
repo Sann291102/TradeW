@@ -1,5 +1,13 @@
 import { create } from 'zustand';
-import { api, ApiError, getToken, getRefreshToken, clearToken, syncAuthHint } from '../api';
+import {
+  api,
+  ApiError,
+  getToken,
+  getRefreshToken,
+  clearToken,
+  clearStaleAuthHint,
+  syncAuthHint,
+} from '../api';
 
 /**
  * Real authentication/entitlement session state (Phase 2, Milestone 4, Step 1).
@@ -89,6 +97,11 @@ export const useSessionStore = create<SessionState>()((set, get) => ({
 
   init: async () => {
     if (!getToken()) {
+      // No credential, so any `tw_auth` still sitting in the cookie jar is an
+      // orphan that outlived its token. Drop it, or middleware keeps waving
+      // this browser into gated routes to render a signed-out shell — for the
+      // cookie's full 30 days, since nothing else in this path clears it.
+      clearStaleAuthHint();
       set({ status: 'unauthenticated', user: null, capabilities: [], offline: false });
       return;
     }
