@@ -42,6 +42,64 @@ export async function fetchDhanQuotes(): Promise<DhanLiveSnapshot> {
   return res.json();
 }
 
+/**
+ * Does this quote carry a real price?
+ *
+ * ── THE ZERO GUARD (client half). READ BEFORE REMOVING. ───────────────────
+ *
+ * Nothing on this feed — index, stock, ETF, or commodity future — trades at 0.
+ * An LTP of 0, NaN, or a missing number means the bridge does not know the
+ * price, not that the price is zero.
+ *
+ * Every widget on the dashboard decides "is the feed real?" by asking whether
+ * the snapshot has any rows, then renders whatever rows it finds. So a single
+ * priceless row is not a harmless blank: it is a confident `0.00` under the
+ * word NIFTY, next to a green MARKET CLOSED badge, on a screen people trade
+ * from. That shipped on 2026-08-31, when the bridge began seeding a `ltp: 0`
+ * placeholder for every tracked instrument at boot.
+ *
+ * The bridge no longer sends those (see `isPriced` in live-feed-server.ts).
+ * This is the second lock: the browser does not trust the bridge to have got
+ * it right, because the failure is silent, plausible, and expensive.
+ */
+export function isPricedQuote(q: DhanLiveQuote): boolean {
+  return typeof q.ltp === 'number' && Number.isFinite(q.ltp) && q.ltp > 0;
+}
+
+/**
+ * The same snapshot with every priceless row dropped.
+ *
+ * Dropping rather than zeroing is the point: an absent symbol makes each
+ * widget take its own honest path (preview data, an empty state, a dash),
+ * whereas a present-but-zero row makes all of them draw a price.
+ */
+export function withPricedQuotes(snapshot: DhanLiveSnapshot): DhanLiveSnapshot {
+  return {
+    marketOpen: snapshot.marketOpen,
+    indices: (snapshot.indices ?? []).filter(isPricedQuote),
+    stocks: (snapshot.stocks ?? []).filter(isPricedQuote),
+    etfs: (snapshot.etfs ?? []).filter(isPricedQuote),
+    commodities: (snapshot.commodities ?? []).filter(isPricedQuote),
+  };
+}
+
+/**
+ * True when a snapshot carries no usable price at all — whether it arrived
+ * empty (bridge booting, nothing subscribed) or full of priceless rows (a
+ * refused Dhan credential, a closed market the pre-fetch could not cover).
+ * Both mean the same thing to the UI, so they are one predicate: show the
+ * labelled preview and say the feed is unreachable.
+ */
+export function hasNoPricedQuotes(snapshot: DhanLiveSnapshot): boolean {
+  const priced = withPricedQuotes(snapshot);
+  return (
+    priced.indices.length === 0 &&
+    priced.stocks.length === 0 &&
+    priced.etfs.length === 0 &&
+    priced.commodities.length === 0
+  );
+}
+
 /** One real OHLC candle from Dhan's Historical Data API (timestamp in ms). */
 export interface DhanCandle {
   timestamp: number;

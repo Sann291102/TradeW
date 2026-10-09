@@ -280,3 +280,64 @@ Dhan's own API examples.
 4. Data API pricing: fixed, per-instrument, or per-user?
 5. Is there a trading-holiday/session-calendar endpoint? Nothing in the docs covers it, and the ingestor needs one to avoid polling on closed days.
 6. Are WS connection limits per Dhan account or per API key?
+
+## 13. The zero-price invariant — an incident that has now happened twice
+
+**The invariant: a price of zero is never a price. It is the absence of one, and
+it must be represented by an absent row, never a row carrying `0`.**
+
+Every widget on the home screen — index cards, ticker, hero, movers, watchlist,
+sector heatmap — decides whether the feed is real by one question: *does the
+snapshot from `/quotes` have any rows?* If yes it renders them; if no it falls
+back to clearly-labelled preview data and the status pill says the bridge could
+not be read. A snapshot that is non-empty but priceless answers that question
+wrong, and the failure mode is the worst one a trading screen has: a dead feed
+rendered as a live market.
+
+### What it looks like from the outside
+
+`0.00` under NIFTY 50, BANK NIFTY, FIN NIFTY, BSE SENSEX and INDIA VIX, with a
+`MARKET CLOSED` badge beside them — not a `PREVIEW` badge, because as far as the
+browser could tell the bridge was healthy. The sector indices sitting next to
+them in the ticker still showed plausible numbers (they are `TICKER_EXTRA`
+preview constants and never came from Dhan at all), which makes the screen read
+as "most of the market is fine, five instruments are broken" rather than
+"nothing here is live".
+
+### Cause, second occurrence (2026-08-31, commit `ef33b43`)
+
+`live-feed-server.ts` gained a boot loop that seeded **every** tracked
+instrument into `byKey` with `ltp: 0`, commented "so `snapshot()` is never empty
+on boot". Empty *was the signal*. The seed converted the one honest thing the
+bridge could say — *I have nothing yet* — into a confident lie, and the zeros
+only cleared for instruments that later got a real tick or were covered by the
+index pre-fetch. With the market closed and Dhan's historical API declining the
+pre-fetch (an expired credential does this, and the `.catch` swallowed it
+silently), they never cleared at all.
+
+### The fix, in three places
+
+1. **No seeding.** An instrument with no known price has no row. `byKey` starts
+   empty and the bridge says so.
+2. **`isPriced` in `snapshot()`** (`live-feed-server.ts`) — the server-side
+   backstop. A quote whose `ltp` is not a finite number greater than zero is
+   excluded from `/quotes` and `/stream`, so a placeholder reintroduced anywhere
+   upstream still cannot reach a screen.
+3. **`isPricedQuote` / `hasNoPricedQuotes`** (`apps/web/src/lib/dhanLiveFeed.ts`,
+   applied in `useDhanLiveFeed`) — the browser does not trust the bridge to have
+   got it right. A snapshot of only priceless rows is treated as the outage it
+   is (after the usual `GRACE_MS`, so one unlucky poll still does not flip the
+   pill), and priceless rows are dropped from any snapshot that does publish.
+
+Regression cover: `apps/web/src/lib/dhanLiveFeed.test.ts`, written against the
+*shape* of the bad payload rather than against the commit, because the next
+reintroduction will not look like the last one.
+
+### Diagnosing it in one call
+
+`GET /status` on the bridge now reports `priced` — how many instruments it
+actually holds a price for — alongside `universe`, which only counts what the
+scrip master resolved at boot and is non-zero even when nothing has ever ticked.
+`priced: { indices: 0, stocks: 0, ... }` on a bridge that is otherwise up names
+the fault immediately; `credential` (§ the 2026-08-17 incident) usually explains
+why. The index pre-fetch also logs its failures now instead of swallowing them.
