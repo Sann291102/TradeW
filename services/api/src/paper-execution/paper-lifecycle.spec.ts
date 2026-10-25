@@ -6,6 +6,7 @@ import { MarketPriceService, type LivePrice } from '../sim/market-price.service'
 import { OrderService } from '../sim/order.service';
 import { ExecutionAccountService } from './execution-account.service';
 import { ExecutionCalibrationService } from './execution-calibration.service';
+import { ExecutionControlService } from './execution-control.service';
 import { ExecutionJournalService } from './execution-journal.service';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
 import { PaperExecutionService } from './paper-execution.service';
@@ -247,6 +248,10 @@ describe.skipIf(!hasDatabase)('the complete automated paper-trade lifecycle', ()
       accounts,
       manager,
       calibration,
+      // The real control service against the real database: these lifecycle
+      // scenarios must run through the kill-switch check exactly as production
+      // does, not around a stub of it.
+      new ExecutionControlService(prisma),
     );
 
     await cleanup();
@@ -588,6 +593,49 @@ describe.skipIf(!hasDatabase)('the complete automated paper-trade lifecycle', ()
     expect(trailed).toBeTruthy();
     expect(Array.isArray(trailed!.trailHistory)).toBe(true);
     expect((trailed!.trailHistory as unknown[]).length).toBeGreaterThan(0);
+
+    // ---- Post-trade analytics, end to end ------------------------------
+    //
+    // These are only knowable while the position is OPEN — the 2-second
+    // manager samples the high/low-water marks and nothing else stores an
+    // intraday series — so asserting them here is the only place that proves
+    // the sampling actually happened rather than that the arithmetic works.
+    for (const j of journals) {
+      expect(j.mfePrice, 'MFE was sampled').not.toBeNull();
+      expect(j.maePrice, 'MAE was sampled').not.toBeNull();
+      expect(j.mfeR, 'MFE in R').not.toBeNull();
+      expect(j.maeR, 'MAE in R').not.toBeNull();
+      // Excursions bracket the entry by construction: the marks are seeded to
+      // the entry price and can only ever move outward from it.
+      expect(j.mfePrice!).toBeGreaterThanOrEqual(j.entryPrice);
+      expect(j.maePrice!).toBeLessThanOrEqual(j.entryPrice);
+      // Never negative — both are clamped at zero.
+      expect(j.mfeR!).toBeGreaterThanOrEqual(0);
+      expect(j.maeR!).toBeGreaterThanOrEqual(0);
+      // The structured review exists and is shaped as the learning pipeline
+      // expects.
+      const analysis = j.postTradeAnalysis as {
+        expected?: unknown; actual?: unknown; difference?: unknown; why?: unknown; lesson?: unknown;
+      } | null;
+      expect(analysis, 'post-trade analysis was written').toBeTruthy();
+      expect(analysis!.expected).toBeTruthy();
+      expect(analysis!.actual).toBeTruthy();
+      expect(analysis!.difference).toBeTruthy();
+      expect(Array.isArray(analysis!.why)).toBe(true);
+      expect(typeof analysis!.lesson).toBe('string');
+      expect((analysis!.lesson as string).length).toBeGreaterThan(0);
+    }
+
+    // A trade that TRAILED necessarily ran in its favour first, so its
+    // favourable excursion must exceed its entry — the one case where a zero
+    // MFE would prove the sampling never ran.
+    expect(trailed!.mfePrice!).toBeGreaterThan(trailed!.entryPrice);
+    expect(trailed!.mfeR!).toBeGreaterThan(0);
+
+    // A stop-out's adverse excursion must have reached the stop.
+    const stopped = journals.find((j) => j.exitReason === 'STOP');
+    expect(stopped).toBeTruthy();
+    expect(stopped!.maePrice!).toBeLessThanOrEqual(stopped!.initialStop!);
   }, 30_000);
 
   it('24+25. a completed outcome reaches calibration, and the NEXT decision consumes it', async () => {

@@ -116,6 +116,33 @@ export const ADMIN_PROXY_ROUTES: RouteRule[] = [
   { method: 'GET', segments: ['execution', 'profiles', '*', 'authorization'] },
   { method: 'POST', segments: ['execution', 'accounts', '*', 'agent-trading'] },
   { method: 'POST', segments: ['execution', 'profiles'] },
+  // The kill switch. Listed as three individual routes, never a wildcard: two
+  // of them are the most consequential writes on this surface, and a wildcard
+  // over `execution/*` would silently admit whatever is added upstream next.
+  //
+  // `halt` stops new entries globally and durably; `flatten` closes open
+  // positions on instruction. They are deliberately separate upstream and stay
+  // separate here, so a console that can stop the loop is not automatically a
+  // console that can liquidate the book. Both are audited with the acting
+  // operator upstream. Neither places an opening order.
+  { method: 'GET', segments: ['execution', 'control'] },
+  { method: 'POST', segments: ['execution', 'halt'] },
+  { method: 'POST', segments: ['execution', 'flatten'] },
+  // The staged learning pipeline. The reads and the first three writes change
+  // no agent behaviour — they compute reviews, propose candidates and validate
+  // them. `promote` is the one route through which learned evidence can alter
+  // what an agent does, which is exactly why it is listed on its own rather
+  // than admitted by a wildcard, and why it is an operator act upstream.
+  // The evaluation ledger — every pass, including the quiet ones. Read-only,
+  // and the surface that makes "waiting" distinguishable from "broken".
+  { method: 'GET', segments: ['execution', 'evaluations'] },
+  { method: 'GET', segments: ['execution', 'evaluations', 'summary'] },
+  { method: 'GET', segments: ['execution', 'learning', 'cycles'] },
+  { method: 'GET', segments: ['execution', 'learning', 'improvements'] },
+  { method: 'POST', segments: ['execution', 'learning', 'run'] },
+  { method: 'POST', segments: ['execution', 'learning', 'validate'] },
+  { method: 'POST', segments: ['execution', 'learning', 'improvements', '*', 'promote'] },
+  { method: 'POST', segments: ['execution', 'learning', 'improvements', '*', 'reject'] },
 
   // --- System graph (read-only projection of the whole platform) ------------
   // Every rule here is a GET. There is deliberately no write on this surface:

@@ -293,6 +293,113 @@ export class ExecutionQueryService {
         : null,
     };
   }
+
+  /**
+   * The evaluation ledger — every pass, including the quiet ones.
+   *
+   * This is the surface that makes WAIT distinguishable from REJECTED and from
+   * "the loop is dead". Filterable by outcome so an operator can ask for only
+   * the refusals, and newest-first because the live question is always "what is
+   * it doing now".
+   */
+  async evaluations(params: { profileId?: string; outcome?: string; hours?: number; limit?: number } = {}) {
+    const hours = params.hours ?? 24;
+    const rows = await this.prisma.executionEvaluationLog.findMany({
+      where: {
+        ...(params.profileId ? { profileId: params.profileId } : {}),
+        ...(params.outcome ? { outcome: params.outcome as never } : {}),
+        at: { gte: new Date(Date.now() - hours * 3_600_000) },
+      },
+      orderBy: { at: 'desc' },
+      take: Math.min(Math.max(params.limit ?? 100, 1), 1000),
+      include: { profile: { select: { name: true } } },
+    });
+
+    return rows.map((r) => ({
+      id: r.id,
+      at: r.at.toISOString(),
+      profileId: r.profileId,
+      profileName: r.profile.name,
+      agent: r.agent,
+      symbol: r.symbol,
+      outcome: r.outcome,
+      verdict: r.verdict,
+      reason: r.reason,
+      checkId: r.checkId,
+      confidence: r.confidence == null ? null : Number(r.confidence),
+      spot: r.spot == null ? null : Number(r.spot),
+      regime: r.regime,
+      indexDirection: r.indexDirection,
+      // What the intelligence layer said, beside what the execution layer did.
+      executable: r.executable,
+      marketState: r.marketState,
+      strategyId: r.strategyId,
+      strategyName: r.strategyName,
+      gates: r.gates,
+      intentId: r.intentId,
+    }));
+  }
+
+  /**
+   * The session at a glance: how many passes, what they concluded, and — for a
+   * day that produced no trade — how close it actually got.
+   *
+   * `maxConfidence` is the number that answers "was it nearly there, or nowhere
+   * near?", and it is the first thing worth knowing about a quiet session.
+   */
+  async evaluationSummary(params: { hours?: number } = {}) {
+    const hours = params.hours ?? 24;
+    const since = new Date(Date.now() - hours * 3_600_000);
+
+    const [byOutcome, byCheck, agg, profiles, byState] = await Promise.all([
+      this.prisma.executionEvaluationLog.groupBy({
+        by: ['outcome'], where: { at: { gte: since } }, _count: { _all: true },
+      }),
+      this.prisma.executionEvaluationLog.groupBy({
+        by: ['checkId'], where: { at: { gte: since }, checkId: { not: null } }, _count: { _all: true },
+      }),
+      this.prisma.executionEvaluationLog.aggregate({
+        where: { at: { gte: since } },
+        _count: { _all: true },
+        _max: { confidence: true, at: true },
+        _avg: { confidence: true },
+        _min: { at: true },
+      }),
+      this.prisma.executionEvaluationLog.groupBy({
+        by: ['profileId'], where: { at: { gte: since } }, _count: { _all: true },
+      }),
+      // The session state machine's distribution. On a no-trade day this is the
+      // most informative single breakdown: it says whether the market never
+      // reached a guidance-permitting state at all.
+      this.prisma.executionEvaluationLog.groupBy({
+        by: ['marketState'], where: { at: { gte: since }, marketState: { not: null } }, _count: { _all: true },
+      }),
+    ]);
+
+    return {
+      windowHours: hours,
+      totalEvaluations: agg._count._all,
+      firstAt: agg._min.at?.toISOString() ?? null,
+      lastAt: agg._max.at?.toISOString() ?? null,
+      // The headline for a quiet day.
+      maxConfidence: agg._max.confidence == null ? null : Number(agg._max.confidence),
+      avgConfidence: agg._avg.confidence == null ? null : Number(agg._avg.confidence),
+      byOutcome: byOutcome.map((o) => ({ outcome: o.outcome, count: o._count._all })),
+      byReason: byCheck
+        .map((c) => ({ checkId: c.checkId, label: rejectCheckLabel(c.checkId), count: c._count._all }))
+        .sort((a, b) => b.count - a.count),
+      byProfile: profiles.map((p) => ({ profileId: p.profileId, count: p._count._all })),
+      byMarketState: byState
+        .map((s) => ({ marketState: s.marketState, count: s._count._all }))
+        .sort((a, b) => b.count - a.count),
+      // How many passes Sentinel itself declared tradable. Zero here with a
+      // non-zero total is the single clearest statement that the intelligence
+      // layer, not the execution layer, is what held.
+      executableCount: await this.prisma.executionEvaluationLog.count({
+        where: { at: { gte: since }, executable: true },
+      }),
+    };
+  }
 }
 
 function istMidnight(now: Date): Date {

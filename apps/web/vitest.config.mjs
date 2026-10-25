@@ -105,6 +105,14 @@ export default defineConfig({
       // and the failure modes (a gap mitigated by the candle that created it,
       // a bearish gap tested with the bullish rule) look correct on screen.
       'src/lib/charts/fvg.test.ts',
+      // The bot's reasoning, mapped onto bars. Same rule as the two specs
+      // above, with a sharper edge: lightweight-charts silently DROPS a marker
+      // whose time has no bar, so an unsnapped decision renders nothing — and
+      // a chart showing no decisions is indistinguishable from a bot that made
+      // none, which is the one conclusion this surface exists to make
+      // trustworthy. Also pins that an out-of-range decision is dropped rather
+      // than clamped onto the left edge as a flurry that never happened.
+      'src/lib/charts/strategyAnnotations.test.ts',
       // Vendor symbol -> TradingView symbol for the crypto/FX venues. Squarely
       // in this file's "a mistake is an exposure, not a rendering bug" rule: a
       // wrong prefix points the embedded chart at a different exchange from the

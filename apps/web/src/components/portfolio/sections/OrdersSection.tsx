@@ -6,15 +6,25 @@ import { fmt } from '@/lib/format';
 import { PRODUCT_TYPE_LABELS, type OrderDto, type OrderStatus, cancelOrder, modifyOrder } from '@/lib/oms';
 import { useInvalidateTradingData, useOrders, useSignedIn } from '@/lib/query/usePortfolio';
 
-type Tab = 'Open' | 'Pending' | 'Executed' | 'Cancelled' | 'Rejected';
-const TAB_STATUSES: Record<Tab, OrderStatus[]> = {
+type Tab = 'All' | 'Open' | 'Pending' | 'Executed' | 'Cancelled' | 'Rejected';
+
+/**
+ * `All` maps to `undefined`, not to every status spelled out.
+ *
+ * `fetchOrders` omits the query parameter entirely for undefined, so the server
+ * returns the whole book — which means a status added to the enum later cannot
+ * silently fall outside a hand-maintained list and vanish from the one tab
+ * whose entire job is to hide nothing.
+ */
+const TAB_STATUSES: Record<Tab, OrderStatus[] | undefined> = {
+  All: undefined,
   Open: ['OPEN', 'TRIGGER_PENDING', 'PARTIALLY_FILLED'],
   Pending: ['PENDING'],
   Executed: ['FILLED'],
   Cancelled: ['CANCELLED'],
   Rejected: ['REJECTED', 'EXPIRED'],
 };
-const TABS: Tab[] = ['Open', 'Pending', 'Executed', 'Cancelled', 'Rejected'];
+const TABS: Tab[] = ['All', 'Open', 'Pending', 'Executed', 'Cancelled', 'Rejected'];
 const MODIFIABLE: OrderStatus[] = ['OPEN', 'TRIGGER_PENDING', 'PENDING'];
 const CANCELLABLE: OrderStatus[] = ['OPEN', 'TRIGGER_PENDING', 'PENDING', 'PARTIALLY_FILLED'];
 
@@ -26,7 +36,17 @@ function statusTone(status: OrderStatus): 'positive' | 'negative' | 'warning' | 
 }
 
 export function OrdersSection() {
-  const [tab, setTab] = useState<Tab>('Open');
+  // ---- Opens on ALL, deliberately ----------------------------------------
+  //
+  // It used to open on 'Open', which excludes FILLED. An autonomous agent's
+  // entry is a MARKET order that fills instantly, so every trade a bot placed
+  // in this account arrived already FILLED and was invisible on the tab the
+  // page landed on — the order was in the book, in this user's own account,
+  // and the screen showed an empty list. "I can't see the bot's orders" was a
+  // default, not a missing row.
+  //
+  // 'Open' remains one click away for someone managing resting orders.
+  const [tab, setTab] = useState<Tab>('All');
   const [modifyTarget, setModifyTarget] = useState<OrderDto | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const signedIn = useSignedIn();
@@ -115,6 +135,15 @@ export function OrdersSection() {
                 <tr key={o.id}>
                   <td className="py-2.5 pr-3">
                     <span className="font-bold text-text">{o.instrument?.symbol ?? o.symbol}</span>
+                    {/* Placed by an autonomous agent, not by this person. The
+                        entry carries `executionIntentId`; the square-off that
+                        closes it carries `exitOfIntentId` and never the first,
+                        so both are checked or every bot EXIT reads as manual. */}
+                    {(o.executionIntentId || o.exitOfIntentId) && (
+                      <Badge tone="brand" className="ml-1.5 px-1.5 py-0 text-[9px]">
+                        AGENT
+                      </Badge>
+                    )}
                   </td>
                   <td className="py-2.5 pr-3">
                     {o.side} {o.type}

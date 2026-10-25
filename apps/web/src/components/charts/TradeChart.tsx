@@ -19,6 +19,31 @@ import { candleTime, type ChartDrawing } from '@/lib/charts/drawings';
 import { ChartDrawingsPrimitive } from './drawingPrimitive';
 import { useSettingsStore } from '@/lib/store/settingsStore';
 
+/**
+ * A pin on a bar — a strategy signal, an entry, an exit, a refusal.
+ *
+ * Mirrors lightweight-charts' own `SeriesMarker` rather than wrapping it in a
+ * richer type, for the same reason `ChartPriceLine` takes a `colorToken`: the
+ * chart resolves presentation from the live design tokens at draw time, and
+ * the caller decides meaning. `text` is what renders on the chart and must
+ * stay short; the full "why" belongs in the caller's own tooltip layer, which
+ * can be as long as it needs to be because it is ordinary DOM.
+ *
+ * `setMarkers` replaces the whole array on every call — there is no
+ * update-in-place — which is why this is a plain prop and not an imperative
+ * handle.
+ */
+export interface ChartMarker {
+  /** Bar time, seconds since epoch (the same space `candleTime` returns). */
+  time: number;
+  position: 'aboveBar' | 'belowBar' | 'inBar';
+  shape: 'circle' | 'square' | 'arrowUp' | 'arrowDown';
+  /** Design token name, resolved at draw time so markers re-theme. */
+  colorToken: string;
+  /** Short on-chart label. Long text makes the axis unreadable when zoomed out. */
+  text: string;
+}
+
 /** A horizontal marker drawn across the chart — used for strategy strikes. */
 export interface ChartPriceLine {
   price: number;
@@ -37,6 +62,15 @@ export interface TradeChartProps {
   'aria-label'?: string;
   /** Horizontal lines drawn over the series — strategy strikes, breakevens. */
   priceLines?: ChartPriceLine[];
+  /**
+   * Per-bar pins — the strategy's own decisions, drawn where they happened.
+   *
+   * This is what makes the chart answer "why did the bot trade here?" and
+   * "why did it NOT trade here?" without a second charting library: markers
+   * are native to lightweight-charts, so the same component serves NIFTY,
+   * BTCUSDT and GOLD with no per-market branching.
+   */
+  markers?: ChartMarker[];
   /** Candle duration in minutes. When given (intraday only), the crosshair
    *  label shows the bar's full span — "22 Jul 15:15–15:30" — instead of
    *  just its open time. Candles are open-stamped by convention, so the
@@ -127,6 +161,7 @@ export function TradeChart({
   liveLast,
   fitKey,
   priceLines,
+  markers,
   seriesType = 'candlestick',
   drawings,
   ...aria
@@ -341,6 +376,27 @@ export function TradeChart({
   useEffect(() => {
     chartRef.current?.applyOptions({ height });
   }, [height]);
+
+  // Strategy decision pins. Colours are resolved here rather than passed in as
+  // hex, matching how `priceLines` and the drawings primitive already work, so
+  // a theme change re-colours markers without the caller re-deriving them.
+  //
+  // `setMarkers([])` on an empty list rather than an early return: skipping the
+  // call would leave the PREVIOUS symbol's markers on the chart after switching
+  // to an instrument that has none — stale pins over a different market's bars.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    series.setMarkers(
+      (markers ?? []).map((m) => ({
+        time: m.time as UTCTimestamp,
+        position: m.position,
+        shape: m.shape,
+        color: readToken(m.colorToken) || readToken('--muted') || '#888',
+        text: m.text,
+      })),
+    );
+  }, [markers, seriesType]);
 
   // Drawings are pushed into the primitive rather than passed through a
   // render: the chart owns its own frame scheduling, so this asks for a

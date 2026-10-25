@@ -13,8 +13,10 @@ import {
   WebSocketLike,
   classifyDhanFault,
   isBrokerAddressable,
+  isVenueOpen,
   parseScripMaster,
   readEnvFile,
+  venueForExchangeSegment,
   type ResolvedCredential,
   type ScripMasterRow,
 } from '@tradew/market-data';
@@ -499,17 +501,47 @@ const sseClients = new Set<http.ServerResponse>();
  */
 const optionLtpBySecurityId = new Map<string, number>();
 
-/** NSE cash session: 09:15-15:30 IST, Mon-Fri. No holiday calendar available
- *  (DHAN-MARKET-DATA-INTEGRATION.md §12 open question 5) — a trading holiday
- *  will show OPEN here when the exchange is actually closed. MCX runs a
- *  separate, longer session (until ~23:30 IST); this flag is reported only
- *  for the NSE-listed indices/stocks/ETFs, not the commodities. */
+/**
+ * Is the NSE cash session trading right now.
+ *
+ * ── WHAT THIS USED TO BE, AND THE TWO BUGS IT CARRIED (fixed 2026-09-07) ───
+ *
+ * A local weekday-plus-time-window function, with its own docstring admitting
+ * both of its defects:
+ *
+ *   1. "No holiday calendar available … a trading holiday will show OPEN here
+ *      when the exchange is actually closed." That gap was closed for Sentinel
+ *      on 2026-08-16 by reading `@tradew/market-data`'s published list; this
+ *      bridge was never converted, so the two runtimes disagreed about whether
+ *      the market was open on Republic Day.
+ *   2. "MCX runs a separate, longer session (until ~23:30 IST); this flag is
+ *      reported only for the NSE-listed indices/stocks/ETFs, not the
+ *      commodities." That sentence described an INTENT the code did not honour
+ *      — `toLiveQuote` stamped this NSE flag onto every quote it built,
+ *      commodities included. MCX GOLD therefore reported `closed` from 15:30
+ *      while the exchange traded for another eight hours, and because
+ *      `execution-fill.ts` refuses a fill on `!marketOpen`, a commodity agent
+ *      silently lost two thirds of its session.
+ *
+ * Both are now one call into the shared venue-session module, which owns the
+ * window, the calendar binding and the day boundary for every venue — the same
+ * argument that moved the holiday list out of three runtimes and into one
+ * package. See `packages/market-data/src/calendar/venue-session.ts`.
+ */
 function isMarketOpen(now = new Date()): boolean {
-  const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-  const day = ist.getDay();
-  if (day === 0 || day === 6) return false;
-  const minutes = ist.getHours() * 60 + ist.getMinutes();
-  return minutes >= 9 * 60 + 15 && minutes <= 15 * 60 + 30;
+  return isVenueOpen('NSE', now);
+}
+
+/**
+ * Is the venue THIS instrument trades on open right now.
+ *
+ * The per-instrument answer, and the one that belongs on a quote. `getPrice` in
+ * services/api reads `quote.marketStatus === 'open'` straight through into the
+ * paper-fill path, so this function is what decides whether a gold order can
+ * fill at 18:00.
+ */
+function isInstrumentVenueOpen(meta: InstrumentMeta, now = new Date()): boolean {
+  return isVenueOpen(venueForExchangeSegment(meta.exchangeSegment), now);
 }
 
 function toLiveQuote(tick: MarketTick, meta: InstrumentMeta): LiveQuote {
@@ -530,7 +562,10 @@ function toLiveQuote(tick: MarketTick, meta: InstrumentMeta): LiveQuote {
     bid: tick.bid ?? 0,
     ask: tick.ask ?? 0,
     volume: tick.volume ?? 0,
-    marketStatus: isMarketOpen() ? 'open' : 'closed',
+    // THIS INSTRUMENT'S venue, not the NSE one. Was `isMarketOpen()` for every
+    // quote, which put MCX commodities on an equity session — see the note on
+    // `isMarketOpen` above.
+    marketStatus: isInstrumentVenueOpen(meta) ? 'open' : 'closed',
     updatedAt: tick.at.toISOString(),
     source: 'dhan',
   };
@@ -547,6 +582,13 @@ function snapshot() {
     else if (key.startsWith('etf:')) etfs.push(q);
     else commodities.push(q);
   }
+  // The top-level flag stays NSE, deliberately. Its two consumers in
+  // services/api are `getOptionPrice` (NSE/BSE index options, correct) and
+  // `feedFreshness` (which asks "should ticks be advancing", and the index feed
+  // is what that judges). Per-instrument callers must read the quote's own
+  // `marketStatus`, which is now venue-correct — a single scalar cannot answer
+  // "is the market open" once the snapshot spans two exchanges with different
+  // sessions, and pretending it can is the bug fixed above.
   return { marketOpen: isMarketOpen(), indices, stocks, etfs, commodities };
 }
 
@@ -594,7 +636,20 @@ async function startFeed(
   feed.onStatus((event) => {
     feedStatus = event.status;
     feedReason = event.reason;
-    console.log(`[dhan] ${event.status}${event.reason ? ' — ' + event.reason : ''}`);
+    // Timestamp, close code and attempt number are all printed.
+    //
+    // Their absence is why a reconnect storm went undiagnosed across sessions:
+    // the line used to read a bare "[dhan] reconnecting" with no clock, no
+    // code and no attempt count, so a flap every second and a healthy retry
+    // every thirty looked identical in the log, and a close that carried a
+    // code (which is most of them — `reason` is usually empty) printed
+    // nothing at all about why. A feed that cannot say why it dropped is a
+    // feed nobody can fix.
+    const parts = [`[${new Date().toISOString()}] [dhan] ${event.status}`];
+    if (event.code !== undefined) parts.push(`code=${event.code}`);
+    if (event.attempt) parts.push(`attempt=${event.attempt}`);
+    if (event.reason) parts.push(`— ${event.reason}`);
+    console.log(parts.join(' '));
   });
 
   // Keyed lookup instead of a linear scan. This runs on EVERY tick across the
@@ -1418,7 +1473,10 @@ async function main(): Promise<void> {
       bid: 0,
       ask: 0,
       volume: 0,
-      marketStatus: isMarketOpen() ? 'open' : 'closed',
+      // Venue-correct here too: this loop is over ALL_INSTRUMENTS, so it seeds
+      // the commodity placeholders as well, and a boot during the MCX evening
+      // session would otherwise publish GOLD as `closed` until its first tick.
+      marketStatus: isInstrumentVenueOpen(meta) ? 'open' : 'closed',
       updatedAt: new Date().toISOString(),
       source: 'dhan',
     });

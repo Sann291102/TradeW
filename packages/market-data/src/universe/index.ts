@@ -17,6 +17,11 @@
 
 export * from './universe.contracts';
 export * from './currency-policy';
+// The tradable market specs behind the multi-market experiment. Narrower than
+// the catalogue above and for a different purpose: the catalogue answers "what
+// exists", this answers "what the strategy engine is being run against, on
+// which venue, expressed as which kind of order".
+export * from './market-spec';
 export * from './normalise';
 export * from './sources/dhan.catalogue';
 export * from './sources/twelvedata.catalogue';

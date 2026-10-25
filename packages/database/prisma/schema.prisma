@@ -400,8 +400,8 @@ model Order {
   // that side is a true 1:1; but a position can be flattened in more than one
   // order (an exit that fails and is retried on a later reconcile tick), and a
   // unique constraint there would turn an ordinary retry into a crash.
-  exitOfIntentId    String?
-  exitOfIntent      ExecutionIntent? @relation("IntentExit", fields: [exitOfIntentId], references: [id])
+  exitOfIntentId String?
+  exitOfIntent   ExecutionIntent? @relation("IntentExit", fields: [exitOfIntentId], references: [id])
 
   user       User       @relation(fields: [userId], references: [id])
   instrument Instrument @relation(fields: [instrumentId], references: [id])
@@ -2185,10 +2185,31 @@ model ExecutionProfile {
   // Stop trading for the IST day once realized P&L on this account is below
   // -maxLossPerDay. Stored positive, compared against a negative.
   maxLossPerDay    Decimal @default(25000) @db.Decimal(14, 2)
+
+  // ---- Give-back and concentration bounds --------------------------------
+  //
+  // `maxDrawdownPct` answers a question `maxLossPerDay` structurally cannot.
+  // The daily loss floor is an ABSOLUTE bound on how far below zero the day may
+  // go; it says nothing about a day that ran +50,000 and handed back 45,000,
+  // because realized P&L never went negative and the floor never fired. This is
+  // the give-back bound: entries stop once the account has surrendered this
+  // percentage of its own intraday PEAK realized equity. Null disables it.
+  //
+  // Measured on the realized equity curve rebuilt from today's Trade rows, so
+  // it needs no stored high-water mark and cannot drift from the ledger — see
+  // `execution-drawdown.ts`.
+  maxDrawdownPct Decimal? @db.Decimal(6, 3)
+
+  // Ceiling on the COMBINED premium at risk across every position this profile
+  // holds at once, as a percentage of wallet equity. `capitalAllocationPct`
+  // bounds ONE position; with `maxOpenPositions > 1` nothing bounded their sum,
+  // so three positions at a 20% allocation each could commit 60% of the
+  // account. Null disables it (and it is inert at maxOpenPositions = 1).
+  maxPortfolioExposurePct Decimal? @db.Decimal(6, 3)
   // Flatten any position this profile owns at/after this IST minute-of-day
   // (910 = 15:10). Options carried past the close are not a paper engine's
   // strength, and a position that never closes never produces an outcome.
-  squareOffMinute  Int     @default(910)
+  squareOffMinute         Int      @default(910)
 
   // ---- Capital and risk model -------------------------------------------
   //
@@ -2212,8 +2233,28 @@ model ExecutionProfile {
   // Stored per profile so the NIFTY and SENSEX agents can differ, and so a
   // change is an audited operator act rather than a redeploy.
   capitalAllocationPct Decimal @default(20) @db.Decimal(6, 3)
-  riskPerTradePct      Decimal @default(3)  @db.Decimal(6, 3)
-  rewardPerTradePct    Decimal @default(9)  @db.Decimal(6, 3)
+  riskPerTradePct      Decimal @default(3) @db.Decimal(6, 3)
+  rewardPerTradePct    Decimal @default(9) @db.Decimal(6, 3)
+
+  // ---- Partial profit taking ---------------------------------------------
+  //
+  // Off by default, because taking half off at +1R is a genuine strategy
+  // choice and not a universally better one: it raises the hit rate and caps
+  // the right tail, and an agent whose edge is in the tail is made worse by it.
+  // So it is opted into per profile rather than applied to everyone.
+  //
+  // Risk-reducing by construction: it can only ever SELL part of a long
+  // position, never add. `partialExitPct` of the position is closed the first
+  // time unrealised R reaches `partialExitRMultiple`, once per position.
+  //
+  // The quantity is floored to whole LOTS (`placeOrder` rejects anything else)
+  // and is refused if it would close the whole position — that is an exit, and
+  // exits belong to `decidePosition`'s precedence order, not to this.
+  partialExitEnabled   Boolean  @default(false)
+  /// Unrealised R at which the partial is taken, e.g. 1.0 = at +1R.
+  partialExitRMultiple Decimal? @db.Decimal(6, 3)
+  /// Percentage of the position to close, 1–99.
+  partialExitPct       Int?
 
   // Favourable movement, in PREMIUM POINTS of the traded option contract, that
   // ratchets the trailing stop one step. Deliberately not index points: the
@@ -2245,13 +2286,316 @@ model ExecutionProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  intents   ExecutionIntent[]
-  labEvents ExperimentEvent[]
-  positions ExecutionPosition[]
-  journal   ExecutionJournal[]
+  intents        ExecutionIntent[]
+  labEvents      ExperimentEvent[]
+  positions      ExecutionPosition[]
+  journal        ExecutionJournal[]
+  learningCycles ExecutionLearningCycle[]
+  evaluationLog  ExecutionEvaluationLog[]
 
   @@index([enabled])
   @@index([symbol])
+}
+
+// One partial profit-take, for the audit trail.
+//
+// Separate rows rather than a JSON blob on the position, for the same reason
+// `ExecutionTrailAdjustment` is: an operator asking "when did it reduce, at
+// what price, and how much did that book?" is asking a question with a row
+// shape, and the daily cycle aggregates across positions.
+model ExecutionPartialExit {
+  id         String            @id @default(uuid())
+  positionId String
+  position   ExecutionPosition @relation(fields: [positionId], references: [id], onDelete: Cascade)
+
+  /// Lots-aligned quantity closed by this partial.
+  quantity     Int
+  /// Premium the partial was decided at (the exitable bid).
+  triggerPrice Decimal  @db.Decimal(12, 2)
+  /// Unrealised R at the moment it fired.
+  rMultiple    Decimal? @db.Decimal(10, 3)
+  /// What remained open afterwards.
+  remaining    Int
+  /// The OMS order that closed it, when one was created.
+  orderId      String?
+  reason       String
+  at           DateTime @default(now())
+
+  @@index([positionId, at])
+}
+
+// The operator kill switch for the autonomous paper-execution loop.
+//
+// ## Why a durable row rather than process state
+//
+// `ExecutionLoopStatus` is deliberately process-local — it describes what THIS
+// process's timers are doing, and a persisted copy would keep asserting
+// "running" after the process died. A HALT is the opposite kind of fact: it is
+// an operator instruction that must outlive a restart and be seen by every
+// replica, or a failover silently un-halts a loop an operator stopped for a
+// reason. So the halt lives in the database and is read in the execution path
+// on every entry pass.
+//
+// ## What it does and does not stop
+//
+//   entriesHalted = true   → NO new positions are opened, by any profile, on
+//                            the next pass. Checked inside `runProfile`, the
+//                            one place entries are decided — never in the
+//                            scheduler, because a kill switch that lives in the
+//                            orchestrator stops working exactly when the
+//                            orchestrator is what broke.
+//
+// It does NOT stop the position MANAGER. Open positions keep their stop, target
+// and trail while halted — abandoning a live position is the single most
+// dangerous thing a "stop everything" button could do, the same reasoning that
+// keeps a DISARMED profile's positions managed. Flattening is a SEPARATE,
+// explicit act (`PositionManagerService.flatten`), so "stop opening" and "close
+// what is open" are never conflated into one irreversible click.
+//
+// Single row, id = 'global'. Per-profile entry halting already exists as
+// `ExecutionProfile.enabled = false`; this is the one switch that stops them
+// all at once without disturbing each profile's own armed state.
+model ExecutionControl {
+  // Always 'global'. A fixed id makes the singleton an upsert target rather
+  // than a "find the one row" query that a second row could quietly break.
+  id            String    @id
+  entriesHalted Boolean   @default(false)
+  // Why the halt was set, for the audit trail and the console banner.
+  reason        String?
+  // The operator who last changed it (`AdminAccessGuard` puts them on
+  // `req.user.sub`), so a halt is attributable exactly like every other
+  // operator act on this surface.
+  haltedBy      String?
+  haltedAt      DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+/// What one evaluation pass concluded. The vocabulary the console filters on.
+///
+/// WAIT is the designed resting state and will be the overwhelming majority —
+/// on 2026-09-07 it was 1,616 of 1,616. That is not a fault, and the whole
+/// reason this enum exists is so that "waiting" and "broken" stop looking
+/// identical from the outside.
+enum ExecutionEvaluationOutcome {
+  /// Sentinel published no side. No setup existed. Nothing was refused.
+  WAIT
+  /// A gate refused a published side. `checkId` names which one.
+  REJECTED
+  /// Policy allowed it; an intent (the trade plan) was written.
+  PLANNED
+  /// The order was submitted to the paper OMS.
+  SUBMITTED
+  /// The order filled and a managed position exists.
+  FILLED
+  /// Idempotency collapsed a repeat of a decision already recorded.
+  DUPLICATE
+  /// Submission raised, or the OMS rejected it.
+  FAILED
+  /// The operator kill switch is halting entries.
+  HALTED
+  /// Outside the session, or not a trading day.
+  MARKET_CLOSED
+  /// The profile is disarmed.
+  DISABLED
+  /// The account may not be traded by this agent (scope or consent).
+  UNAUTHORIZED
+}
+
+/// How far a candidate improvement has got. The ONLY path to production is
+/// PROPOSED → VALIDATING → VALIDATED → PROMOTED, and the last step is an
+/// operator act that no automated process can perform.
+enum ExecutionImprovementStatus {
+  /// Derived from the day's evidence. Changes nothing.
+  PROPOSED
+  /// Being checked against history.
+  VALIDATING
+  /// Survived validation. STILL changes nothing until an operator promotes it.
+  VALIDATED
+  /// Validation refuted it, or it was refused. Kept, never deleted — a rejected
+  /// idea that keeps being re-proposed is itself a finding.
+  REJECTED
+  /// An operator applied it. The only status in which behaviour changes.
+  PROMOTED
+}
+
+// EVERY evaluation pass, including the ones that decided nothing.
+//
+// ## Why this exists beside `ExecutionIntent`
+//
+// `ExecutionIntent` is the record of DECISIONS, and it is deliberately not
+// written when Sentinel publishes no side — a row per quiet pass would bury the
+// real decisions in thousands of non-events, which is why the original design
+// kept the last outcome in memory instead.
+//
+// But in-memory state answers only "what was the last pass?", and it dies with
+// the process. On 2026-09-07 the loop evaluated the live market 1,616 times and
+// left NO queryable trace: the only evidence it had run at all was a text log
+// in another service. "The agent is waiting" and "the agent is dead" were still
+// indistinguishable to anyone reading the database.
+//
+// So this is the ledger: one row per pass, cheap, append-only, and SEPARATE
+// from the intent table so neither purpose corrupts the other. Intents remain
+// the decisions; this is the attendance record.
+//
+// ## It must never be able to break trading
+//
+// The write is fire-and-forget with its own catch. Observability that can fail
+// an execution decision is worse than no observability — see the write in
+// `PaperExecutionService.record`.
+//
+// Volume: three agents on a 30s tick over a 6.25h session is ~2,250 rows/day.
+model ExecutionEvaluationLog {
+  id String @id @default(uuid())
+
+  profileId String
+  profile   ExecutionProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  agent     String
+  symbol    String
+  at        DateTime         @default(now())
+
+  outcome ExecutionEvaluationOutcome
+  /// Sentinel's own verdict, when it was consulted (e.g. `no-side-in-focus`).
+  verdict String?
+  /// The sentence a human reads. Carries live numbers, so it is never groupable.
+  reason  String
+  /// The same refusal in a form that CAN be grouped — the console's
+  /// "why did nothing trade today?" breakdown counts this, exactly as
+  /// `ExecutionIntent.rejectCheckId` does for decisions that got that far.
+  checkId String?
+
+  /// What the market looked like at the moment of the decision.
+  confidence     Decimal? @db.Decimal(6, 2)
+  spot           Decimal? @db.Decimal(12, 2)
+  regime         String?
+  indexDirection String?
+
+  /// Sentinel's own answer, recorded verbatim rather than inferred.
+  ///
+  /// `outcome` is what the EXECUTION layer did; these are what the
+  /// INTELLIGENCE layer said. Keeping both is the difference between "the bot
+  /// waited" and "the bot waited because Sentinel was still in VALIDATION with
+  /// no strategy validated" — and on a session that produces no trade, the
+  /// second is the only one worth reading.
+  executable   Boolean?
+  /// MARKET_UNDERSTANDING | STRATEGY_DETECTION | VALIDATION | … — the session
+  /// state machine's position, which is what `blockedBy=state-permits-guidance`
+  /// is actually about.
+  marketState  String?
+  /// The strategy the agent validated for this pass, when one was.
+  strategyId   String?
+  strategyName String?
+
+  /// Every gate and its result, for the audit trail of a single pass.
+  gates Json?
+
+  /// Set when the pass produced a trade plan, so the ledger row joins to it.
+  intentId String?
+
+  @@index([profileId, at])
+  @@index([outcome, at])
+  @@index([checkId, at])
+  @@index([at])
+}
+
+// The end-of-session review for ONE agent, computed once, from what the day
+// actually recorded.
+//
+// ## Why it is stored rather than derived on demand
+//
+// Same reason as `ExecutionJournal`: it must say what was concluded on the
+// evidence available THAT DAY. A view would silently re-conclude every past
+// session against today's data and today's thresholds, which makes a learning
+// record that cannot be audited — and the whole point of staging learning is
+// that each step is auditable.
+model ExecutionLearningCycle {
+  id String @id @default(uuid())
+
+  /// IST session date, 'YYYY-MM-DD'. The natural key with the profile.
+  sessionDate String
+  profileId   String?
+  profile     ExecutionProfile? @relation(fields: [profileId], references: [id])
+  agent       String
+
+  /// Counts the report is built from, so the headline numbers need no re-join.
+  tradesAnalysed Int @default(0)
+  wins           Int @default(0)
+  losses         Int @default(0)
+  rejectedSetups Int @default(0)
+
+  /// The full aggregate: per-strategy, per-regime, execution quality, and the
+  /// rejection breakdown. Shaped by `learning-cycle.ts`.
+  metrics      Json
+  /// What the day supports believing, each with its own sample size. An
+  /// observation is NOT a change — nothing here reaches the execution path.
+  observations Json
+  /// The human-readable session report.
+  report       String
+
+  createdAt DateTime @default(now())
+
+  improvements ExecutionImprovement[]
+
+  @@unique([sessionDate, profileId])
+  @@index([agent, sessionDate])
+}
+
+// A proposed change, its evidence, its validation, and who promoted it.
+//
+// ## The safety property this table exists to enforce
+//
+// Learning must never rewrite production behaviour on its own. So a proposal is
+// an inert ROW: it carries what it would change and why, and it changes nothing
+// until an operator promotes it. There is deliberately no code path that
+// advances a row to PROMOTED automatically — see `ExecutionImprovementService`.
+//
+// ## And what it is not allowed to propose
+//
+// `kind` is a closed set (`learning-improvements.ts`), and every member is
+// either risk-NEUTRAL or risk-REDUCING. There is no member that can widen a
+// stop, increase position size, raise exposure, lift a loss limit or lower the
+// platform confidence floor. That is what makes "learning cannot bypass risk
+// controls" a structural fact rather than a policy: the change it would need to
+// express is not representable.
+model ExecutionImprovement {
+  id String @id @default(uuid())
+
+  cycleId String?
+  cycle   ExecutionLearningCycle? @relation(fields: [cycleId], references: [id])
+
+  profileId String?
+  agent     String
+  /// The calibration bucket this was learned from, when it came from one.
+  bucketKey String?
+
+  /// A member of the closed `IMPROVEMENT_KINDS` set.
+  kind          String
+  /// What the parameter is now, and what is proposed. JSON so a kind can carry
+  /// its own shape without a column per kind.
+  currentValue  Json
+  proposedValue Json
+  rationale     String
+  /// Sample size, average R, the trades behind it — everything needed to judge
+  /// the proposal without trusting its own summary.
+  evidence      Json
+
+  status ExecutionImprovementStatus @default(PROPOSED)
+
+  /// What historical validation found. Null until it has run.
+  validation     Json?
+  validatedAt    DateTime?
+  rejectedReason String?
+
+  /// Set ONLY by an operator acting through the console.
+  promotedAt DateTime?
+  promotedBy String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([agent, kind])
+  @@index([profileId, status])
 }
 
 // One decision, with the full provenance needed to answer "why did this order
@@ -2346,7 +2690,7 @@ model ExecutionIntent {
   // The evidence the STRATEGY declared material, not every signal that
   // existed. See `evidence.ts` — this is the "important information only"
   // record, each item carrying the knowledge-base concept it comes from.
-  evidence Json?
+  evidence      Json?
   // Which required confirmations passed, and which did not.
   confirmations Json?
 
@@ -2367,7 +2711,7 @@ model ExecutionIntent {
   // only if the levels' DIRECTION of travel was recorded at the time. It
   // cannot be reconstructed later: the previous close's OI is overwritten
   // every session.
-  positioning Json?
+  positioning          Json?
   // Whether that book agreed with the side in focus, with the weighted signals
   // behind the answer. The gate's own record: a refusal is auditable and a
   // pass is measurable against the outcome.
@@ -2388,11 +2732,11 @@ model ExecutionIntent {
   targetPrice       Decimal? @db.Decimal(12, 2)
   // The full arithmetic, including every intermediate the two above are
   // derived from, so the numbers are checkable rather than merely present.
-  riskPlan Json?
+  riskPlan          Json?
   // How the simulated entry price was arrived at: quoted bid/ask, the spread,
   // the slippage assumption applied and why. Stored because a paper fill with
   // no stated model is a number nobody can argue with.
-  fillModel Json?
+  fillModel         Json?
 
   // The calibration row consumed by this decision, by version. Null when no
   // calibrated bucket existed yet. This is what makes "trade #2 consumed what
@@ -2424,10 +2768,10 @@ model ExecutionIntent {
 
   // The order this intent produced. One intent, at most one order — enforced by
   // Order.executionIntentId being @unique on the other side.
-  order      Order?  @relation("IntentSubmission")
+  order      Order?                     @relation("IntentSubmission")
   // The order(s) that closed it. Plural because a retried square-off is
   // ordinary — see Order.exitOfIntentId.
-  exitOrders Order[] @relation("IntentExit")
+  exitOrders Order[]                    @relation("IntentExit")
   candidates ExecutionStrikeCandidate[]
   outcome    ExecutionOutcome?
   position   ExecutionPosition?
@@ -2559,11 +2903,11 @@ model ExecutionPosition {
   // manager runs every couple of seconds against every open position; a join
   // per tick per position is the difference between a cheap loop and a loop
   // that shows up in the database's slow log.
-  profileId String
-  profile   ExecutionProfile @relation(fields: [profileId], references: [id])
+  profileId      String
+  profile        ExecutionProfile @relation(fields: [profileId], references: [id])
   // The account the position lives on — the same `userId` the OMS rows carry.
-  userId       String
-  instrumentId String
+  userId         String
+  instrumentId   String
   // UNDERLYING:YYYYMMDD:STRIKE:CE|PE, for logs and the console.
   contractSymbol String
   productType    ProductType
@@ -2572,27 +2916,50 @@ model ExecutionPosition {
 
   state ExecutionPositionState @default(OPEN)
 
-  quantity   Int
-  entryPrice Decimal  @db.Decimal(12, 2)
-  entryAt    DateTime
+  // The quantity STILL OPEN. A partial exit decrements it, so the manager and
+  // the OMS position agree on what remains.
+  quantity        Int
+  // What was filled at entry, never decremented. `quantity` alone cannot say
+  // whether a position was reduced, and the journal needs both to report a
+  // partial exit as anything other than a smaller trade than actually happened.
+  initialQuantity Int?
+  entryPrice      Decimal  @db.Decimal(12, 2)
+  entryAt         DateTime
 
   // ---- The protection levels --------------------------------------------
   // All three are PREMIUM prices of the traded contract, never index levels.
   // `stopPrice` is the original, never rewritten — a trail moves `trailPrice`,
   // and keeping the initial stop lets the journal state what was risked at
   // entry rather than what was risked at the end.
-  stopPrice   Decimal @db.Decimal(12, 2)
-  targetPrice Decimal @db.Decimal(12, 2)
+  stopPrice          Decimal  @db.Decimal(12, 2)
+  targetPrice        Decimal  @db.Decimal(12, 2)
   // Null until the first ratchet. Once set it may only ever move in the
   // position's favour — enforced in `position-decision.ts` and asserted.
-  trailPrice  Decimal? @db.Decimal(12, 2)
+  trailPrice         Decimal? @db.Decimal(12, 2)
   // How many whole `trailStepPoints` of favourable movement have been booked
   // into `trailPrice`. Stored rather than recomputed so a change to the step
   // size cannot retroactively move an existing position's protection.
-  trailSteps  Int      @default(0)
+  trailSteps         Int      @default(0)
   // Best premium seen since entry. The trail is computed from this, not from
   // the current price, so a retrace can never loosen protection.
-  highWaterPrice Decimal @db.Decimal(12, 2)
+  highWaterPrice     Decimal  @db.Decimal(12, 2)
+  // How many partial exits have been taken, and what they realised. The count
+  // is what makes the partial fire ONCE: the decision checks it rather than
+  // trying to infer "have I already reduced?" from the quantity, which cannot
+  // distinguish a reduced position from a smaller one.
+  partialExitCount   Int      @default(0)
+  realizedPartialPnl Decimal  @default(0) @db.Decimal(14, 2)
+
+  // Worst premium seen since entry — the mirror of `highWaterPrice`, and the
+  // ONLY source of Maximum Adverse Excursion.
+  //
+  // It drives nothing: no exit, no trail, no sizing reads it. It exists purely
+  // so the journal can say how close the position came to its stop before it
+  // worked, which is not recoverable afterwards because no intraday price
+  // series is stored per position. Seeded to the entry price at creation so it
+  // is never null and never zero — a zero here would report a 100% adverse
+  // excursion on every position that had not yet ticked.
+  lowWaterPrice Decimal @db.Decimal(12, 2)
 
   // ---- Live state, refreshed by the manager ------------------------------
   lastPrice       Decimal?  @db.Decimal(12, 2)
@@ -2601,11 +2968,12 @@ model ExecutionPosition {
   unrealizedPnl   Decimal?  @db.Decimal(14, 2)
   // The exit the manager decided on, set at the moment it moved to EXITING:
   // 'EMERGENCY' | 'STOP' | 'TARGET' | 'TRAIL' | 'INVALIDATED' | 'REVERSAL' |
-  // 'SQUARE_OFF'. Written before the exit order is placed, so an exit order
+  // 'SQUARE_OFF' | 'KILL_SWITCH' (the last set by an operator flatten, not by
+  // `decidePosition`). Written before the exit order is placed, so an exit order
   // that fails still leaves the reason on the record.
-  exitReason     String?
-  exitDetail     String?
-  exitDecidedAt  DateTime?
+  exitReason      String?
+  exitDetail      String?
+  exitDecidedAt   DateTime?
 
   // Optimistic-concurrency guard. Every manager write bumps it and matches on
   // it, so two replicas that both somehow reach the same position cannot both
@@ -2617,6 +2985,7 @@ model ExecutionPosition {
   updatedAt DateTime @updatedAt
 
   trailAdjustments ExecutionTrailAdjustment[]
+  partialExits     ExecutionPartialExit[]
 
   // The manager's hot query: every position not yet CLOSED.
   @@index([state])
@@ -2636,17 +3005,17 @@ model ExecutionTrailAdjustment {
   position   ExecutionPosition @relation(fields: [positionId], references: [id], onDelete: Cascade)
 
   // Null on the first ratchet — there was no previous trail to move.
-  fromPrice Decimal? @db.Decimal(12, 2)
-  toPrice   Decimal  @db.Decimal(12, 2)
+  fromPrice      Decimal? @db.Decimal(12, 2)
+  toPrice        Decimal  @db.Decimal(12, 2)
   // The premium that triggered this ratchet, and the high-water mark it
   // established. Both stored so the arithmetic is checkable after the fact.
-  triggerPrice   Decimal @db.Decimal(12, 2)
-  highWaterPrice Decimal @db.Decimal(12, 2)
+  triggerPrice   Decimal  @db.Decimal(12, 2)
+  highWaterPrice Decimal  @db.Decimal(12, 2)
   // Steps advanced by THIS adjustment (a gap can advance several at once),
   // and the running total after it.
-  stepsAdvanced Int
-  totalSteps    Int
-  reason        String
+  stepsAdvanced  Int
+  totalSteps     Int
+  reason         String
 
   at DateTime @default(now())
 
@@ -2688,29 +3057,29 @@ model ExecutionJournal {
   // ---- The contract ------------------------------------------------------
   underlying     String
   expiry         DateTime
-  strike         Decimal @db.Decimal(12, 2)
+  strike         Decimal  @db.Decimal(12, 2)
   optionType     String
   contractSymbol String
   // Dhan's own token for the contract, from the scrip master. Recorded so a
   // journal entry names a contract the exchange would recognise rather than a
   // string this application composed.
-  securityId String?
-  lots       Int
-  quantity   Int
+  securityId     String?
+  lots           Int
+  quantity       Int
 
   // ---- The decision ------------------------------------------------------
-  indexDirection String?
-  indexStrength  Float?
-  confidence     Int
+  indexDirection       String?
+  indexStrength        Float?
+  confidence           Int
   // The strategy's own material evidence, its confirmations, and the
   // data-quality read — the three answers to "why did it enter?".
-  evidence      Json?
-  confirmations Json?
-  dataQuality   Json?
-  rationale     String[] @default([])
-  publication   Json?
-  optionContext Json?
-  policyChecks  Json?
+  evidence             Json?
+  confirmations        Json?
+  dataQuality          Json?
+  rationale            String[] @default([])
+  publication          Json?
+  optionContext        Json?
+  policyChecks         Json?
   // The option BOOK at decision time — defended levels, the previous close's
   // open interest beside today's, and whether that book agreed with the side
   // taken. Copied from the intent for the same reason everything else here is:
@@ -2735,25 +3104,77 @@ model ExecutionJournal {
   fillModel        Json?
 
   // ---- What happened -----------------------------------------------------
-  entryAt    DateTime
-  exitAt     DateTime?
-  entryPrice Decimal   @db.Decimal(12, 2)
-  exitPrice  Decimal?  @db.Decimal(12, 2)
+  entryAt      DateTime
+  exitAt       DateTime?
+  entryPrice   Decimal   @db.Decimal(12, 2)
+  exitPrice    Decimal?  @db.Decimal(12, 2)
   // Every ratchet, oldest first, as recorded on ExecutionTrailAdjustment.
   trailHistory Json?
-  finalTrail   Decimal? @db.Decimal(12, 2)
+  finalTrail   Decimal?  @db.Decimal(12, 2)
 
   exitReason         String
   exitDetail         String?
   invalidationReason String?
   holdingSeconds     Int?
 
-  realizedPnl Decimal @db.Decimal(14, 2)
-  charges     Decimal @default(0) @db.Decimal(14, 2)
+  realizedPnl Decimal  @db.Decimal(14, 2)
+  charges     Decimal  @default(0) @db.Decimal(14, 2)
   // realizedPnl / riskBudget — the trade in R. Null when the risk budget was
   // not recorded (a pre-2026-08-30 intent).
-  rMultiple Decimal? @db.Decimal(10, 3)
-  result    String
+  rMultiple   Decimal? @db.Decimal(10, 3)
+  result      String
+
+  // ---- How the trade actually travelled ----------------------------------
+  //
+  // Maximum Favourable / Adverse Excursion: the best and worst the position was
+  // ever worth while it was open, as opposed to where it happened to end.
+  //
+  // These are the two numbers that separate "the plan was wrong" from "the plan
+  // was right and the management was wrong", and neither is recoverable after
+  // the fact — nothing stores an intraday price series per position, so they
+  // are either sampled while the position lives or gone. `highWaterPrice`
+  // already existed (the trail is computed from it); `lowWaterPrice` is its
+  // mirror and exists solely so MAE is knowable.
+  //
+  // Read them together with `exitReason`:
+  //   big MFE + small P&L   → the exit gave it back; the trail is too loose
+  //   small MFE + STOP      → the entry was simply wrong
+  //   big MAE + TARGET      → right thesis, early entry; the stop nearly died
+  mfePrice  Decimal? @db.Decimal(12, 2)
+  maePrice  Decimal? @db.Decimal(12, 2)
+  // The same two excursions in money, at this position's quantity.
+  mfeAmount Decimal? @db.Decimal(14, 2)
+  maeAmount Decimal? @db.Decimal(14, 2)
+  // …and in R, the only unit comparable across differently-sized positions.
+  mfeR      Decimal? @db.Decimal(10, 3)
+  maeR      Decimal? @db.Decimal(10, 3)
+
+  // What the entry actually cost against what the fill model predicted, in
+  // premium points. Positive = worse than modelled (paid up). Recorded
+  // explicitly rather than left implicit inside `fillModel` JSON, because
+  // execution quality is a thing the daily cycle aggregates and a number nobody
+  // can GROUP BY is a number nobody reviews.
+  entrySlippage Decimal? @db.Decimal(12, 2)
+  exitSlippage  Decimal? @db.Decimal(12, 2)
+
+  // ---- EXPECTED → ACTUAL → DIFFERENCE → WHY → LESSON ---------------------
+  //
+  // The structured post-trade review, computed once at journal write from the
+  // plan and the outcome. JSON rather than columns because it is a NARRATIVE
+  // with a stable shape, read by humans and by the daily learning cycle, and
+  // its fields will grow — see `post-trade-analysis.ts` for the shape.
+  //
+  // It is deliberately DERIVED and stored, not computed on read: it must say
+  // what was expected at the time, and a later change to the plan's defaults
+  // would otherwise silently rewrite the history of every past trade.
+  postTradeAnalysis Json?
+  // Did the trade do what the thesis said it would, independent of P&L? A
+  // stopped-out trade whose thesis was sound is a different lesson from one
+  // that was wrong from the start, and averaging them teaches neither.
+  thesisCorrect     Boolean?
+  // Confidence at entry minus what the outcome justified, in points. The input
+  // to "is this agent's confidence calibrated, or is 80% its favourite number?"
+  confidenceError   Decimal? @db.Decimal(10, 3)
 
   // ---- What it taught ----------------------------------------------------
   // The calibration bucket this trade was folded into, and the version that
@@ -2817,12 +3238,12 @@ model StrategyCalibration {
   strategyVersion String
   regime          String
 
-  trades   Int @default(0)
-  wins     Int @default(0)
-  losses   Int @default(0)
+  trades    Int @default(0)
+  wins      Int @default(0)
+  losses    Int @default(0)
   scratches Int @default(0)
 
-  grossPnl Decimal @default(0) @db.Decimal(16, 2)
+  grossPnl     Decimal  @default(0) @db.Decimal(16, 2)
   // Mean R across completed trades in this bucket. The number the adjustment
   // is actually derived from — win rate alone rewards a strategy that wins
   // often and loses more than it makes.
@@ -4320,7 +4741,7 @@ model UniverseInstrument {
   /// Fully-qualified, globally unique address: `USA:NASDAQ:AAPL`. Denormalised
   /// so the API can hand the UI one opaque id and look a row up by it without
   /// the client having to reassemble three fields.
-  ref      String  @unique
+  ref      String         @unique
 
   displayName String
   assetClass  UniverseAssetClass
@@ -4454,4 +4875,398 @@ model UniverseSyncRun {
 
   @@index([source, startedAt])
   @@index([market, startedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE AUTONOMOUS BRAIN'S LEARNING DATASET
+//
+// Not a trade journal. A trade journal records what was done; this records what
+// was DECIDED, why, and what the market then did — including for the decisions
+// that produced no trade, which is where most of the learnable signal lives.
+//
+// The brain runs beside Sentinel on the same market data, decides independently,
+// and writes here. It executes nothing. That separation is the point: it can be
+// wrong ten thousand times at no cost while the dataset that would let it stop
+// being wrong accumulates.
+//
+// ## Three tables, and why not one
+//
+//   AutonomousScan       what the brain SAW      (one row per bar per symbol)
+//   AutonomousCandidate  what it DECIDED         (immutable, decision-time only)
+//   AutonomousOutcome    what actually HAPPENED  (written later, never merged up)
+//
+// The split is load-bearing. "Was the original reasoning correct?" is only
+// answerable if the original reasoning still says what it said BEFORE the answer
+// was known — so no column on `AutonomousCandidate` is ever updated once the
+// outcome resolves. A single wide table would make that a convention; two tables
+// make it a fact about the schema.
+//
+// ## Why rows are keyed per BAR, not per scan
+//
+// The observer polls far faster than the timeframe it decides on — thirty times
+// per 15-minute bar. Those thirty passes see the same closed bars and reach the
+// same decision, so storing each one would inflate the dataset thirtyfold with
+// exact duplicates and bias every aggregate toward whichever setups happened to
+// persist longest. The unique constraints below make the BAR the unit of record,
+// which is also the unit the decision is actually about.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Why a scan produced no candidates, or could not run.
+enum AutonomousScanStatus {
+  SCANNED
+  SKIPPED_CLOSED
+  SKIPPED_DISABLED
+  DATA_UNAVAILABLE
+  NOT_TRADABLE
+}
+
+/// How a shadow position resolved. `UNRESOLVED` is a real state, not a null.
+enum AutonomousOutcomeStatus {
+  TARGET_HIT
+  STOP_HIT
+  /// Neither level reached inside the evaluation horizon.
+  EXPIRED
+  /// Still open — the horizon has not elapsed and neither level is hit yet.
+  UNRESOLVED
+  /// The bars needed to judge it could not be obtained.
+  UNEVALUABLE
+}
+
+/// One look at one instrument, on one bar.
+model AutonomousScan {
+  id String @id @default(uuid())
+
+  market    String
+  symbol    String
+  venue     String
+  timeframe String
+
+  /// Wall clock of the pass that wrote this row.
+  scannedAt   DateTime  @default(now())
+  /// The bar the decision was made ON — market-event time, not poll time.
+  /// This is the deduplication key: thirty polls across one bar write one row.
+  signalBarAt DateTime?
+
+  status AutonomousScanStatus
+  /// Why, when the status is not SCANNED.
+  detail String?
+
+  /// Provenance and liveness of the data the decision was made on.
+  dataSource     String?
+  dataAgeSeconds Int?
+  lastPrice      Decimal? @db.Decimal(18, 8)
+  regime         String?
+
+  candidateCount Int @default(0)
+  acceptedCount  Int @default(0)
+
+  /// Which version of the brain decided. Bumped when the rule set or the level
+  /// logic changes, so a season of results is never averaged across two
+  /// different brains.
+  brainVersion String
+
+  /// ── SENTINEL AS BENCHMARK, NEVER AS AUTHORITY ───────────────────────────
+  ///
+  /// What the production brain said about the SAME market event, recorded so
+  /// the two can be compared over thousands of observations: where Sentinel is
+  /// early or late, which setups it misses, which the autonomous brain wrongly
+  /// accepts.
+  ///
+  /// Every field is nullable and READ-ONLY. Sentinel is never consulted to
+  /// decide anything here — if it is down, these stay null and the brain is
+  /// unaffected. A non-null value must never become an input to a decision.
+  sentinelVerdict     String?
+  sentinelExecutable  Boolean?
+  sentinelConfidence  Decimal? @db.Decimal(6, 2)
+  sentinelStrategyId  String?
+  sentinelMarketState String?
+  /// Both, neither, or one — the comparison, precomputed so it is groupable.
+  agreement           String?
+
+  candidates AutonomousCandidate[]
+
+  /// One row per bar per symbol. The observer is idempotent by construction:
+  /// a repeated poll updates counts, it does not append.
+  @@unique([symbol, timeframe, signalBarAt])
+  @@index([market, scannedAt])
+  @@index([status, scannedAt])
+  @@index([brainVersion, scannedAt])
+}
+
+/// What the brain decided about one setup, on one bar. NEVER UPDATED.
+model AutonomousCandidate {
+  id String @id @default(uuid())
+
+  scanId String
+  scan   AutonomousScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  market    String
+  symbol    String
+  venue     String
+  timeframe String
+
+  decidedAt   DateTime  @default(now())
+  signalBarAt DateTime?
+
+  setupId      String
+  setupName    String
+  setupVersion String
+  archetype    String
+  brainVersion String
+
+  bias      String
+  direction String?
+  /// 0-100, share of the setup's rules that confirmed.
+  quality   Int
+
+  accepted        Boolean
+  /// Closed-set reason, so the feedback layer can COUNT it. Free text cannot
+  /// be counted: "insufficient R:R" and "insufficient risk-reward" would
+  /// become two findings about one cause.
+  rejectionReason String?
+  /// The same refusal with its numbers in it, for a human.
+  rejectionDetail String?
+
+  /// ── THE PREDICTION ──────────────────────────────────────────────────────
+  /// Present whenever level derivation succeeded, INCLUDING for candidates
+  /// that were then refused — "the levels it would have used" is exactly the
+  /// counterfactual the learning loop needs.
+  entry         Decimal? @db.Decimal(18, 8)
+  stop          Decimal? @db.Decimal(18, 8)
+  target        Decimal? @db.Decimal(18, 8)
+  riskPerUnit   Decimal? @db.Decimal(18, 8)
+  rewardPerUnit Decimal? @db.Decimal(18, 8)
+  plannedRR     Decimal? @db.Decimal(6, 2)
+  /// Risk and reward as ATR multiples — how the thresholds were judged, and
+  /// the only form in which they are comparable across three markets.
+  riskAtr       Decimal? @db.Decimal(8, 3)
+  targetAtr     Decimal? @db.Decimal(8, 3)
+
+  /// Where the stop came from, structurally.
+  anchorArchetype String?
+  anchorLevel     Decimal? @db.Decimal(18, 8)
+  anchorNote      String?
+
+  regime String?
+
+  /// ── THE LEARNING PAYLOAD ────────────────────────────────────────────────
+  /// Indicator and context values AT DECISION TIME. The feature vector every
+  /// later question is asked of: which features predict a winner, which regime
+  /// favours which setup, whether a theoretical 3R becomes a realized one.
+  features Json
+
+  /// Which rules fired, which did not, and what each one cited — with its own
+  /// numbers, computed at decision time.
+  confirmed   Json
+  unmet       Json
+  invalidated Json
+
+  /// The prose answer to "why did the bot take (or refuse) this trade?",
+  /// generated from the rule notes above rather than written afterwards.
+  explanation String
+
+  outcome AutonomousOutcome?
+  trade   AutonomousTrade?
+
+  /// At most one REFUSAL and one ACCEPTANCE per setup per bar.
+  ///
+  /// `accepted` is in the key deliberately. Keying on the bar alone looked
+  /// right and lost information: the snapshot's `lastPrice` is the venue's live
+  /// ticker, so a rule reading it can genuinely flip inside one bar — and a
+  /// first poll that refused would then keep its row while the later poll that
+  /// ACCEPTED was silently dropped as a duplicate. Observed live on
+  /// 2026-09-09: BTCUSDT/agent-ema-cross accepted at 20:07 while the table
+  /// still held its 19:45 refusal.
+  ///
+  /// Two rows is the right cap. It captures the transition — which is itself a
+  /// finding, since a setup that only validates late in a bar is one whose
+  /// entry timing matters — while keeping the thirtyfold duplication that
+  /// per-poll writing would produce firmly out. Both rows stay immutable.
+  @@unique([symbol, setupId, timeframe, signalBarAt, accepted])
+  @@index([market, decidedAt])
+  @@index([setupId, accepted, decidedAt])
+  @@index([accepted, rejectionReason])
+  @@index([brainVersion, decidedAt])
+}
+
+/// What the market did afterwards. Written by the resolver, never by the scan.
+model AutonomousOutcome {
+  id String @id @default(uuid())
+
+  candidateId String              @unique
+  candidate   AutonomousCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  status AutonomousOutcomeStatus
+
+  /// When the resolver last advanced this row, and how far it has looked.
+  evaluatedAt        DateTime  @default(now())
+  evaluatedThroughAt DateTime?
+  resolvedAt         DateTime?
+
+  barsToOutcome    Int?
+  secondsToOutcome Int?
+
+  /// Where the shadow position would have closed, under the SAME pessimistic
+  /// rules the backtester uses: a bar spanning both levels is a stop, and a
+  /// gap through the stop fills at the open.
+  exitPrice Decimal? @db.Decimal(18, 8)
+  actualR   Decimal? @db.Decimal(10, 3)
+
+  /// The entry the shadow walk actually used — the OPEN of the bar after the
+  /// signal bar, which is the earliest price the decision could have been
+  /// acted on.
+  ///
+  /// Previously R was measured from the candidate's PLANNED entry (the signal
+  /// bar's close) while the walk started on the next bar, so any overnight or
+  /// news gap between the two was unmodelled and silently flattered the
+  /// result. Recording both ends that ambiguity: `plannedEntryPrice` is what
+  /// the brain intended, `entryPrice` is what it would have got.
+  entryPrice        Decimal? @db.Decimal(18, 8)
+  plannedEntryPrice Decimal? @db.Decimal(18, 8)
+
+  /// Excursions, in price and in R. The distinction between a thesis that was
+  /// right and badly managed and one that was simply wrong.
+  mfePrice Decimal? @db.Decimal(18, 8)
+  maePrice Decimal? @db.Decimal(18, 8)
+  mfeR     Decimal? @db.Decimal(10, 3)
+  maeR     Decimal? @db.Decimal(10, 3)
+
+  /// What happened AFTER the outcome — did a stopped trade go on to reach its
+  /// target, did a winner keep running. Answers "was the level wrong or was
+  /// the timing?", which neither the entry nor the exit alone can.
+  postExitHigh       Decimal? @db.Decimal(18, 8)
+  postExitLow        Decimal? @db.Decimal(18, 8)
+  /// True when a STOP_HIT would later have reached its original target.
+  wouldHaveHitTarget Boolean?
+
+  /// Why the resolver could not judge it, when it could not.
+  unevaluableReason String?
+
+  @@index([status, evaluatedAt])
+  @@index([resolvedAt])
+}
+
+/// The autonomous brain's PAPER execution lifecycle.
+///
+/// Sits between the immutable decision (`AutonomousCandidate`) and what the
+/// market did (`AutonomousOutcome`), holding everything that happened in
+/// between: which contract was chosen, what the order did, where the fill
+/// landed, how the stop ratcheted, and how it ended.
+///
+/// ## Paper money only, structurally
+///
+/// Every order this row references was placed through the application's own
+/// paper OMS against a `PaperWallet`. There is no real-money path in the
+/// autonomous engine — not a disabled one, not a flagged one, none.
+///
+/// ## `candidateId` is UNIQUE, and that is the idempotency guarantee
+///
+/// One accepted candidate may produce at most one execution lifecycle. The
+/// constraint is what makes it true under a repeated observer tick, a retry, a
+/// duplicate event, or a process that crashed between placing the order and
+/// recording it — the second attempt loses the insert rather than opening a
+/// second position. A caller-side check would race; this cannot.
+model AutonomousTrade {
+  id String @id @default(uuid())
+
+  candidateId String              @unique
+  candidate   AutonomousCandidate @relation(fields: [candidateId], references: [id], onDelete: Restrict)
+
+  market       String
+  /// The instrument the STRATEGY analysed — NIFTY, GOLD.
+  symbol       String
+  venue        String
+  direction    String
+  brainVersion String
+
+  /// ── THE CONTRACT ACTUALLY TRADED ────────────────────────────────────────
+  /// For an index this is an option contract selected by the autonomous
+  /// contract selector; for GOLD it is the future itself. Never resolved by
+  /// asking Sentinel.
+  tradedSymbol String
+  instrumentId String?
+  optionType   String?
+  strike       Decimal?  @db.Decimal(18, 4)
+  expiry       DateTime?
+  lotSize      Int
+  lots         Int
+  quantity     Int
+
+  /// ── THE INDEX-SPACE PLAN, as decided ────────────────────────────────────
+  /// Kept beside the tradable plan so the journal can SHOW the translation
+  /// rather than assert it.
+  indexEntry       Decimal? @db.Decimal(18, 8)
+  indexStop        Decimal? @db.Decimal(18, 8)
+  indexTarget      Decimal? @db.Decimal(18, 8)
+  indexFirstReward Decimal? @db.Decimal(18, 8)
+
+  /// ── THE TRADABLE PLAN — premium space for options, price for futures ────
+  /// This is what the 1:3 floor was actually applied to.
+  plannedEntry       Decimal @db.Decimal(18, 8)
+  initialStop        Decimal @db.Decimal(18, 8)
+  initialTarget      Decimal @db.Decimal(18, 8)
+  firstRewardPrice   Decimal @db.Decimal(18, 8)
+  initialRisk        Decimal @db.Decimal(18, 8)
+  initialReward      Decimal @db.Decimal(18, 8)
+  plannedRR          Decimal @db.Decimal(8, 3)
+  /// Greeks and projection inputs, when the tradable plan came from a
+  /// translation. Null for a directly-traded instrument.
+  premiumTranslation Json?
+
+  /// ── SIZING, showing its work ────────────────────────────────────────────
+  /// Persisted per §10 so a quantity can always be re-derived and audited:
+  /// account → allowed risk → stop distance → lot size → quantity.
+  walletEquity       Decimal @db.Decimal(18, 2)
+  riskBudget         Decimal @db.Decimal(18, 2)
+  stopDistance       Decimal @db.Decimal(18, 8)
+  calculatedQuantity Int
+  approvedQuantity   Int
+  sizingRationale    Json
+
+  /// ── ORDER AND FILL ──────────────────────────────────────────────────────
+  entryOrderId    String?
+  orderStatus     String
+  /// The price the paper OMS actually filled at. Distinct from `plannedEntry`
+  /// — the gap between them IS the slippage, and measuring R from the planned
+  /// price when a fill landed elsewhere is the modelling error this column
+  /// exists to end.
+  actualFillPrice Decimal?  @db.Decimal(18, 8)
+  filledQuantity  Int?
+  entryAt         DateTime?
+
+  /// ── MANAGEMENT STATE — survives a restart ───────────────────────────────
+  positionStatus String
+  currentStop    Decimal   @db.Decimal(18, 8)
+  highWaterPrice Decimal?  @db.Decimal(18, 8)
+  trailSteps     Int       @default(0)
+  trailActivated Boolean   @default(false)
+  lastManagedAt  DateTime?
+
+  /// ── EXIT ────────────────────────────────────────────────────────────────
+  exitOrderId String?
+  exitPrice   Decimal?  @db.Decimal(18, 8)
+  exitAt      DateTime?
+  exitReason  String?
+
+  /// ── REALISED RESULT ─────────────────────────────────────────────────────
+  realizedPnl    Decimal? @db.Decimal(18, 2)
+  charges        Decimal? @db.Decimal(18, 2)
+  /// Measured from `actualFillPrice`, never from `plannedEntry`.
+  realizedR      Decimal? @db.Decimal(10, 3)
+  mfePrice       Decimal? @db.Decimal(18, 8)
+  maePrice       Decimal? @db.Decimal(18, 8)
+  mfeR           Decimal? @db.Decimal(10, 3)
+  maeR           Decimal? @db.Decimal(10, 3)
+  holdingSeconds Int?
+
+  /// What the fill model assumed, so a result can be reproduced.
+  executionAssumptions Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([positionStatus, createdAt])
+  @@index([market, createdAt])
+  @@index([symbol, createdAt])
+  @@index([brainVersion, createdAt])
 }

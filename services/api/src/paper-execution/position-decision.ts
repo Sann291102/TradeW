@@ -54,9 +54,31 @@ import { computeTrail, effectiveStop } from './execution-risk';
 
 export type ExitReason = 'EMERGENCY' | 'STOP' | 'TARGET' | 'TRAIL' | 'INVALIDATED' | 'SQUARE_OFF';
 
+/**
+ * Every reason an exit may be RECORDED against, including ones this module
+ * cannot itself produce.
+ *
+ * `KILL_SWITCH` is deliberately NOT a member of `ExitReason`. It is an operator
+ * act — `PositionManagerService.flatten` — and keeping it out of the decision
+ * union means `decidePosition` structurally cannot emit it. The type is the
+ * guarantee: an exit attributed to the kill switch in the journal was ordered by
+ * a human, and no market condition can ever be mislabelled as one.
+ */
+export type RecordedExitReason = ExitReason | 'KILL_SWITCH';
+
 export type PositionAction =
   | { kind: 'hold'; trail: TrailUpdate | null; detail: string }
-  | { kind: 'exit'; reason: ExitReason; detail: string; trail: TrailUpdate | null };
+  | { kind: 'exit'; reason: ExitReason; detail: string; trail: TrailUpdate | null }
+  /**
+   * Close PART of the position and keep managing the rest.
+   *
+   * Ranked below every full-exit condition (see the precedence note above): a
+   * tick that has hit its stop, target, trail or invalidation takes that exit
+   * instead, because reducing a position that should be closed entirely leaves
+   * risk on the table for no reason. It is considered only on a tick that would
+   * otherwise HOLD.
+   */
+  | { kind: 'reduce'; quantity: number; rMultiple: number; detail: string; trail: TrailUpdate | null };
 
 export interface TrailUpdate {
   fromPrice: number | null;
@@ -101,6 +123,25 @@ export interface PositionFacts {
    * observation was available on this tick.
    */
   firedExitRules: { id: string; note: string }[];
+
+  // ---- Partial profit taking (optional, off unless configured) -----------
+  /** From the profile. When false, no `reduce` is ever produced. */
+  partialExitEnabled?: boolean;
+  /** Unrealised R at which to take the partial. */
+  partialExitRMultiple?: number | null;
+  /** Percentage of the position to close, 1–99. */
+  partialExitPct?: number | null;
+  /** How many partials this position has already taken. Fires only at 0. */
+  partialExitCount?: number;
+  /**
+   * The contract's lot size. `placeOrder` rejects a non-lot-aligned quantity.
+   *
+   * Nullable because the manager looks it up by id and an instrument row can be
+   * missing; a null lot size means no partial is taken, which is the safe
+   * direction — better to hold the whole position than to guess a size the OMS
+   * will reject.
+   */
+  lotSize?: number | null;
 }
 
 /**
@@ -245,6 +286,18 @@ export function decidePosition(facts: PositionFacts): PositionAction {
     };
   }
 
+  // ---- 7. PARTIAL PROFIT TAKE ---------------------------------------------
+  //
+  // Last, and deliberately so. Every condition above is a reason to be out of
+  // the position (or most of it) entirely; reducing a position that has hit its
+  // stop would leave the remainder exposed for no reason, and reducing one that
+  // has reached its target would book less of a completed plan.
+  //
+  // Risk direction: this can only ever SELL part of a long position, so it
+  // strictly reduces exposure. It cannot add, average down, or move a stop.
+  const partial = considerPartial(facts, price);
+  if (partial) return { ...partial, trail };
+
   // ---- Hold ---------------------------------------------------------------
   const unrealized = (price - facts.entryPrice) * facts.quantity;
   return {
@@ -253,6 +306,60 @@ export function decidePosition(facts: PositionFacts): PositionAction {
     detail:
       `Holding at ${price.toFixed(2)} (${unrealized >= 0 ? '+' : ''}${unrealized.toFixed(0)}); ` +
       `stop ${stop.toFixed(2)}${liveTrail != null && stop > facts.stopPrice ? ' (trailing)' : ''}, target ${facts.targetPrice.toFixed(2)}.`,
+  };
+}
+
+/**
+ * Should this tick take a partial profit, and of what size?
+ *
+ * Returns null — meaning "hold the whole position" — in every ambiguous case.
+ * Five things must all be true, and each refusal is a real failure mode:
+ *
+ *   · the profile opted in;
+ *   · nothing has been reduced yet (once per position, counted rather than
+ *     inferred from the quantity, which cannot tell a reduced position from a
+ *     smaller one);
+ *   · the stop is genuinely below the entry, so R is computable — a zero or
+ *     inverted risk distance would divide by zero or invert the trigger;
+ *   · unrealised R has reached the configured multiple;
+ *   · the resulting quantity is a whole number of lots, at least one lot, and
+ *     leaves at least one lot open. `placeOrder` REJECTS a non-lot-aligned
+ *     quantity, and a "partial" that closes everything is an exit wearing the
+ *     wrong name — it would bypass the precedence order above and record the
+ *     wrong reason in the journal.
+ */
+function considerPartial(
+  facts: PositionFacts,
+  price: number,
+): { kind: 'reduce'; quantity: number; rMultiple: number; detail: string } | null {
+  if (!facts.partialExitEnabled) return null;
+  if ((facts.partialExitCount ?? 0) > 0) return null;
+
+  const target = facts.partialExitRMultiple;
+  const pct = facts.partialExitPct;
+  const lotSize = facts.lotSize;
+  if (target == null || pct == null || lotSize == null) return null;
+  if (!(target > 0) || !(pct > 0) || pct >= 100 || !(lotSize > 0)) return null;
+
+  const riskPerUnit = facts.entryPrice - facts.stopPrice;
+  if (!(riskPerUnit > 0)) return null;
+
+  const rMultiple = (price - facts.entryPrice) / riskPerUnit;
+  if (rMultiple < target) return null;
+
+  // Floor to whole lots: anything else is rejected by the OMS.
+  const lots = Math.floor((facts.quantity * (pct / 100)) / lotSize);
+  const quantity = lots * lotSize;
+  if (quantity <= 0) return null;
+  if (quantity >= facts.quantity) return null;
+
+  return {
+    kind: 'reduce',
+    quantity,
+    rMultiple: Math.round(rMultiple * 1000) / 1000,
+    detail:
+      `Unrealised ${rMultiple.toFixed(2)}R reached the ${target}R partial-exit trigger; ` +
+      `closing ${quantity} of ${facts.quantity} (${pct}%, floored to ${lots} lot(s)) and continuing to manage the rest.`,
   };
 }
 

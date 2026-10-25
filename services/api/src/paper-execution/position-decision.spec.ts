@@ -257,3 +257,114 @@ describe('decidePosition — totality', () => {
     expect(count).toBe(prices.length * 2 * 2 * minutes.length * 2 * 2);
   });
 });
+
+describe('decidePosition — partial profit taking', () => {
+  // Entry 120, stop 78 → risk 42 points per unit. +1R is 162.
+  const PARTIAL: PositionFacts = {
+    ...BASE,
+    quantity: 300, // 4 lots of 75
+    lotSize: 75,
+    partialExitEnabled: true,
+    partialExitRMultiple: 1,
+    partialExitPct: 50,
+    partialExitCount: 0,
+  };
+
+  it('does nothing at all when the profile has not opted in', () => {
+    const action = decidePosition({ ...PARTIAL, partialExitEnabled: false, lastPrice: 200 });
+    expect(action.kind).toBe('hold');
+  });
+
+  it('reduces once unrealised R reaches the trigger', () => {
+    const action = decidePosition({ ...PARTIAL, lastPrice: 162 });
+    expect(action.kind).toBe('reduce');
+    if (action.kind !== 'reduce') throw new Error('unreachable');
+    expect(action.rMultiple).toBe(1);
+    expect(action.quantity).toBe(150); // 50% of 300, lot-aligned
+    expect(action.detail).toContain('continuing to manage the rest');
+  });
+
+  it('holds below the trigger', () => {
+    const action = decidePosition({ ...PARTIAL, lastPrice: 161 });
+    expect(action.kind).toBe('hold');
+  });
+
+  it('fires ONCE — a position that has already reduced holds', () => {
+    // Counted, not inferred from the quantity: a reduced position and a
+    // smaller position are indistinguishable by size alone.
+    // 200 is past the +1R trigger (162) but below the 246 target, so nothing
+    // else can fire and the count is the only thing holding the partial back.
+    const action = decidePosition({ ...PARTIAL, lastPrice: 200, partialExitCount: 1 });
+    expect(action.kind).toBe('hold');
+  });
+
+  it('FLOORS to whole lots, because the OMS rejects anything else', () => {
+    // 50% of 3 lots = 1.5 lots → 1 lot.
+    const action = decidePosition({ ...PARTIAL, quantity: 225, lastPrice: 162 });
+    expect(action.kind).toBe('reduce');
+    if (action.kind !== 'reduce') throw new Error('unreachable');
+    expect(action.quantity).toBe(75);
+    expect(action.quantity % 75).toBe(0);
+  });
+
+  it('refuses a partial that would close the WHOLE position', () => {
+    // One lot, 50% → floors to 0. And 100% would be an exit wearing the wrong
+    // name, bypassing the precedence order and mislabelling the journal.
+    expect(decidePosition({ ...PARTIAL, quantity: 75, lastPrice: 162 }).kind).toBe('hold');
+    expect(decidePosition({ ...PARTIAL, partialExitPct: 100, lastPrice: 162 }).kind).toBe('hold');
+  });
+
+  it('refuses when the lot size is unknown rather than guessing one', () => {
+    expect(decidePosition({ ...PARTIAL, lotSize: null, lastPrice: 162 }).kind).toBe('hold');
+  });
+
+  it('refuses when the risk distance is not positive, rather than dividing by zero', () => {
+    // 200 keeps us below the 246 target so no full exit competes; the only
+    // question is whether a zero/inverted risk distance is handled.
+    expect(decidePosition({ ...PARTIAL, stopPrice: 120, lastPrice: 200 }).kind).toBe('hold');
+    expect(decidePosition({ ...PARTIAL, stopPrice: 130, lastPrice: 200 }).kind).toBe('hold');
+  });
+
+  it('ranks BELOW every full-exit condition', () => {
+    // Each of these is simultaneously past the partial trigger AND past a
+    // full-exit condition. Reducing a position that should be closed entirely
+    // would leave the remainder exposed for no reason.
+    const past = { ...PARTIAL, lastPrice: 300 };
+
+    // TARGET (246) is below 300, so the target fires.
+    expect(decidePosition(past).kind).toBe('exit');
+    expect((decidePosition(past) as { reason: string }).reason).toBe('TARGET');
+
+    // Stop, with a price that is both past the stop and (trivially) not past
+    // the partial trigger — the stop must win regardless.
+    const stopped = decidePosition({ ...PARTIAL, lastPrice: 70 });
+    expect(stopped.kind).toBe('exit');
+    expect((stopped as { reason: string }).reason).toBe('STOP');
+
+    // Invalidation, at a price past the partial trigger but below target.
+    const invalidated = decidePosition({
+      ...PARTIAL, lastPrice: 162, firedExitRules: [{ id: 'r1', note: 'structure broke' }],
+    });
+    expect(invalidated.kind).toBe('exit');
+    expect((invalidated as { reason: string }).reason).toBe('INVALIDATED');
+
+    // Square-off.
+    const squared = decidePosition({ ...PARTIAL, lastPrice: 162, minuteOfDay: 911 });
+    expect(squared.kind).toBe('exit');
+    expect((squared as { reason: string }).reason).toBe('SQUARE_OFF');
+
+    // Emergency.
+    const emergency = decidePosition({ ...PARTIAL, lastPrice: 162, feedFresh: false });
+    expect(emergency.kind).toBe('exit');
+    expect((emergency as { reason: string }).reason).toBe('EMERGENCY');
+  });
+
+  it('still advances the trail on the tick it reduces', () => {
+    // The trail and the partial are independent; a tick that does both must
+    // record both, or the journal reports a level that never appears in its
+    // own trail history.
+    const action = decidePosition({ ...PARTIAL, lastPrice: 162, highWaterPrice: 162 });
+    expect(action.kind).toBe('reduce');
+    expect(action.trail).not.toBeNull();
+  });
+});

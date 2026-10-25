@@ -53,8 +53,48 @@ export interface DhanFeedOptions {
   /** Backoff ceiling. Reconnect delay doubles from 1s up to this. */
   maxReconnectDelayMs?: number;
   maxReconnectAttempts?: number;
+  /**
+   * How long a connection must survive before it counts as healthy and the
+   * backoff is allowed to reset. See `STABLE_CONNECTION_MS`.
+   */
+  stableConnectionMs?: number;
+  /**
+   * Backoff floor applied after the server rate-limits us (HTTP 429).
+   * See `RATE_LIMIT_COOLDOWN_MS`.
+   */
+  rateLimitCooldownMs?: number;
   now?: () => Date;
 }
+
+/**
+ * How long a socket must stay open before the backoff counter is cleared.
+ *
+ * ── THE BUG THIS CONSTANT FIXES ───────────────────────────────────────────
+ *
+ * `onopen` used to reset `reconnectAttempt` to 0 unconditionally. That is
+ * correct for a connection that then WORKS, and catastrophic for one that
+ * opens and dies immediately: every flap reset the backoff to its 1s floor, so
+ * the client never actually backed off. Measured on 2026-09-09 against Dhan:
+ * 125 opens and 399 reconnects in 13 minutes, roughly ten handshakes a minute,
+ * which Dhan answered with HTTP 429 — and the 429 closes fed straight back
+ * into the same 1s retry. The loop was self-sustaining: it kept the rate limit
+ * engaged, so a perfectly valid token refreshed mid-storm recovered nothing.
+ *
+ * Backoff must therefore be reset by EVIDENCE OF HEALTH, not by the mere fact
+ * of a handshake succeeding. Thirty seconds is comfortably longer than the
+ * flap interval being observed and far shorter than any real session.
+ */
+export const STABLE_CONNECTION_MS = 30_000;
+
+/**
+ * The minimum wait after the server says 429.
+ *
+ * A rate limit is not a transient network fault, and retrying it on the
+ * ordinary 1s→2s→4s ladder is what turns one refusal into a storm. It is the
+ * server telling us a rate — the only useful response is to stop asking for
+ * appreciably longer than the ordinary ladder would.
+ */
+export const RATE_LIMIT_COOLDOWN_MS = 60_000;
 
 export class DhanMarketFeed implements MarketFeed {
   readonly name = 'dhan';
@@ -65,6 +105,10 @@ export class DhanMarketFeed implements MarketFeed {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** Set when stop() was called, so an in-flight close does not reconnect. */
   private stopping = false;
+  /** When the current socket opened, for the stability test in `onclose`. */
+  private openedAt: number | null = null;
+  /** Set when the last close looked like a rate limit, to lengthen the wait. */
+  private rateLimited = false;
 
   private readonly subscriptions = new Map<string, { ref: InstrumentRef; mode: FeedMode }>();
   private readonly ticks = new TypedEmitter<MarketTick>();
@@ -171,7 +215,13 @@ export class DhanMarketFeed implements MarketFeed {
       this.socket = socket;
 
       socket.onopen = () => {
-        this.reconnectAttempt = 0;
+        // NOT `reconnectAttempt = 0`. A handshake succeeding proves the server
+        // accepted the connection, not that the connection is usable — and
+        // resetting here is precisely what let a flapping socket retry forever
+        // at the 1s floor. The counter is cleared in `onclose` instead, and
+        // only for a socket that survived `STABLE_CONNECTION_MS`.
+        this.openedAt = Date.now();
+        this.rateLimited = false;
         this.setStatus('connected');
         this.resubscribeAll();
       };
@@ -179,12 +229,26 @@ export class DhanMarketFeed implements MarketFeed {
       socket.onmessage = (event) => this.handleMessage(event.data);
 
       socket.onerror = (event) => {
-        this.setStatus('error', { reason: describeError(event) });
+        const reason = describeError(event);
+        // The handshake failure arrives here, not on `onclose` — `ws` reports
+        // a rejected upgrade as "Unexpected server response: 429" and then
+        // closes with 1006, which carries no code of its own. Remembering it
+        // is the only way the close below can tell a rate limit from an
+        // ordinary drop.
+        if (/\b429\b/.test(reason)) this.rateLimited = true;
+        this.setStatus('error', { reason });
       };
 
       socket.onclose = (event) => {
         this.socket = null;
+        const heldFor = this.openedAt === null ? 0 : Date.now() - this.openedAt;
+        this.openedAt = null;
         if (this.stopping) return;
+        // Health is measured by SURVIVAL, so only a connection that lasted
+        // clears the backoff. Anything shorter is a flap and must keep
+        // escalating.
+        const stable = this.options.stableConnectionMs ?? STABLE_CONNECTION_MS;
+        if (heldFor >= stable) this.reconnectAttempt = 0;
         // 805 means we opened a sixth connection and the server dropped the
         // oldest. Reconnecting immediately would fight whatever else is
         // connected, so it is surfaced distinctly rather than retried blindly.
@@ -208,9 +272,28 @@ export class DhanMarketFeed implements MarketFeed {
     // Exponential backoff with jitter — without jitter, several instruments or
     // instances recovering together would retry in lockstep.
     const base = Math.min(ceiling, 1000 * 2 ** (this.reconnectAttempt - 1));
-    const delay = Math.round(base * (0.5 + Math.random() * 0.5));
+    // A rate limit overrides the ladder rather than riding it. The server has
+    // stated a rate; continuing to probe every second or two is what keeps it
+    // engaged, so the cooldown is a FLOOR the ordinary delay cannot undercut.
+    const cooldown = this.options.rateLimitCooldownMs ?? RATE_LIMIT_COOLDOWN_MS;
+    const floor = this.rateLimited ? cooldown : 0;
+    const delay = Math.max(floor, Math.round(base * (0.5 + Math.random() * 0.5)));
 
-    this.setStatus('reconnecting', { reason, code, attempt: this.reconnectAttempt });
+    this.setStatus('reconnecting', {
+      // `||` not `??`: a close event carries an EMPTY-STRING reason far more
+      // often than an absent one, and `??` would let that through and print a
+      // dangling dash instead of saying what happened.
+      reason: this.rateLimited
+        ? `${reason || 'rate limited (HTTP 429)'} — cooling down ${Math.round(delay / 1000)}s`
+        : reason,
+      code,
+      attempt: this.reconnectAttempt,
+    });
+    // Clearing first is defensive but load-bearing: two closes arriving close
+    // together (an error close chased by a socket close) would otherwise leave
+    // two live timers, and from then on every cycle doubles the number of
+    // connection attempts.
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = setTimeout(() => void this.connect(), delay);
   }
 

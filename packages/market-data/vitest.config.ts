@@ -26,6 +26,10 @@ export default defineConfig({
       // classification, and the load bounding that stops one dead credential
       // becoming a metered-API retry storm.
       'src/providers/dhan/dhan-reliability.spec.ts',
+      // The 2026-09-09 reconnect storm: every index reading 0.00 through a
+      // live session because `onopen` reset the backoff, so a flapping socket
+      // retried at the 1s floor forever and kept Dhan's rate limit engaged.
+      'src/providers/dhan/dhan-reconnect.spec.ts',
       // The tradable universe. Two suites, both fixture-driven and offline:
       // the currency policy (every assertion is a wrong number that would
       // otherwise be shippable and plausible), and the three catalogue

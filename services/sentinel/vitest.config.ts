@@ -79,6 +79,13 @@ export default defineConfig({
       // with the autonomy pass, where the session timeline was found stamping
       // every setup with the time of the browser poll that noticed it.
       'src/intelligence/strategy-engine.spec.ts',
+      // The anti-drift check between these definitions and the autonomous
+      // engine's `AGENT_SETUPS` in `@tradew/strategy-core`. Four ids live in
+      // both lists; this fails if their rules, invalidations, bias source,
+      // regimes or session window ever stop agreeing — which would mean
+      // Sentinel explaining one setup while the engine trades another under
+      // the same name.
+      'src/intelligence/setup-conformance.spec.ts',
       // The autonomy wiring itself: `/observe` putting a symbol under watch,
       // and the deferred, idempotent corpus warm-up that lets the background
       // watch reason without a human calling `/intelligence/reason` first.

@@ -1,0 +1,25 @@
+{
+  "name": "@tradew/strategy-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The ONE decision framework. Feature/context building, setup detection, structural level derivation and the 1:3 risk validator — shared verbatim by the autonomous paper/live engine, the backtester and Sentinel. Pure functions over a MarketSnapshot: no I/O, no Nest, no venue knowledge.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "//build:if-stale": "Same outcome as `build`, but a no-op when src/ has not changed since the last build. Used by the predev hooks of every service that imports this package, so a service can never boot against a stale decision core. Conditional rather than unconditional because start:all boots several of them concurrently — see scripts/build-if-stale.mjs.",
+    "build:if-stale": "node scripts/build-if-stale.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@tradew/types": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "ts-node": "^10.9.2",
+    "vitest": "^2.1.9"
+  }
+}

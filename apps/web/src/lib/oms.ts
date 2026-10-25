@@ -54,6 +54,17 @@ export interface OrderDto {
   rejectReason: string | null;
   placedAt: string;
   instrument?: { symbol: string; displayName: string; lotSize: number };
+  /**
+   * Set when an autonomous agent produced this order, never when a person did.
+   *
+   * `/sim/orders` has always returned both (they are plain scalars on the row);
+   * they were simply absent from this type, so the app had the provenance on
+   * the wire and no way to render it. `executionIntentId` marks the ENTRY,
+   * `exitOfIntentId` the square-off that closed it — an agent exit carries only
+   * the second, so anything deciding "is this the bot's?" must check both.
+   */
+  executionIntentId?: string | null;
+  exitOfIntentId?: string | null;
 }
 
 export interface PositionDto {

@@ -34,6 +34,15 @@ const OK: PolicyInput = {
   riskPlanOk: true,
   riskPlanReason: null,
   riskPlanCheckId: null,
+  // ---- Give-back and concentration bounds (2026-09-07) ----
+  // Both bounds default to UNCONFIGURED here, so every pre-existing assertion
+  // keeps measuring exactly what it measured before. The bounds have their own
+  // tests; a shared fixture that quietly enabled them would make unrelated
+  // failures look like policy regressions.
+  drawdown: { peak: 0, current: 0, drawdown: 0, drawdownPct: 0 },
+  maxDrawdownPct: null,
+  exposure: { openExposure: 0, proposedExposure: 9_750, totalExposure: 9_750, exposurePct: 0.975 },
+  maxPortfolioExposurePct: null,
 };
 
 const fail = (over: Partial<PolicyInput>) => evaluatePolicy({ ...OK, ...over });
@@ -187,5 +196,76 @@ describe('the refusal is recorded in a countable form', () => {
     // dropping the bucket.
     expect(rejectCheckLabel('some-future-check')).toBe('some-future-check');
     expect(rejectCheckLabel(null)).toBe('Not recorded');
+  });
+});
+
+describe('evaluatePolicy — give-back and concentration bounds', () => {
+  it('refuses on drawdown while the DAILY LOSS FLOOR still passes', () => {
+    // The whole reason this bound exists. Realized P&L is +5,000 — comfortably
+    // inside any loss floor — but the account peaked at +50,000 and has handed
+    // back 45,000.
+    const decision = fail({
+      realizedPnlToday: 5_000,
+      drawdown: { peak: 50_000, current: 5_000, drawdown: 45_000, drawdownPct: 4.5 },
+      maxDrawdownPct: 3,
+    });
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.failedCheckId).toBe('daily-drawdown');
+    // The loss limit genuinely passed — proving the two bounds are independent.
+    expect(decision.checks.find((c) => c.id === 'daily-loss-limit')?.passed).toBe(true);
+  });
+
+  it('passes when the drawdown bound is not configured, however large the give-back', () => {
+    const decision = evaluatePolicy({
+      ...OK,
+      drawdown: { peak: 900_000, current: 0, drawdown: 900_000, drawdownPct: 90 },
+      maxDrawdownPct: null,
+    });
+    expect(decision.allowed).toBe(true);
+    expect(decision.checks.find((c) => c.id === 'daily-drawdown')?.detail).toContain('No drawdown limit');
+  });
+
+  it('does not stop trading when the drawdown could not be measured, and says so', () => {
+    const decision = evaluatePolicy({
+      ...OK,
+      drawdown: { peak: 0, current: -5_000, drawdown: 5_000, drawdownPct: null },
+      maxDrawdownPct: 2,
+    });
+    expect(decision.allowed).toBe(true);
+    expect(decision.checks.find((c) => c.id === 'daily-drawdown')?.detail).toContain('could not be measured');
+  });
+
+  it('refuses when the COMBINED exposure would breach, though this one position is inside its own allocation', () => {
+    const decision = fail({
+      exposure: { openExposure: 400_000, proposedExposure: 200_000, totalExposure: 600_000, exposurePct: 60 },
+      maxPortfolioExposurePct: 50,
+      // The per-position risk plan is perfectly happy.
+      riskPlanOk: true,
+    });
+    expect(decision.allowed).toBe(false);
+    expect(decision.failedCheckId).toBe('portfolio-exposure');
+    expect(decision.checks.find((c) => c.id === 'risk-plan')?.passed).toBe(true);
+  });
+
+  it('passes when the exposure bound is not configured', () => {
+    const decision = evaluatePolicy({
+      ...OK,
+      exposure: { openExposure: 900_000, proposedExposure: 90_000, totalExposure: 990_000, exposurePct: 99 },
+      maxPortfolioExposurePct: null,
+    });
+    expect(decision.allowed).toBe(true);
+  });
+
+  it('labels both new checks, so neither renders as a bare id in the console', () => {
+    const decision = evaluatePolicy(OK);
+    for (const id of ['daily-drawdown', 'portfolio-exposure']) {
+      const check = decision.checks.find((c) => c.id === id);
+      expect(check).toBeDefined();
+      expect(check!.label).toBe(REJECT_CHECK_LABELS[id]);
+    }
+    // The kill switch's id is emitted by the execution service rather than by
+    // this function, but it groups in the same breakdown and so must be labelled.
+    expect(REJECT_CHECK_LABELS['entries-halted']).toBeTruthy();
   });
 });

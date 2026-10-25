@@ -22,6 +22,46 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: [
+      // The autonomous scanner: the master switch defaulting OFF, the
+      // market-data port routing each market to its own source and its own
+      // venue clock, and the rule that a data fault is reported as our failure
+      // to find out rather than as a market with no setups. Also asserts
+      // structurally that nothing in the module imports Sentinel.
+      'src/autonomous/setup-scanner.spec.ts',
+      // The bridge source: quotes are bucketed by asset class, so every
+      // array is searched — reading only `indices` cost GOLD its entire
+      // freshness signal, and the miss looked exactly like a missing quote.
+      // Also pins fault-versus-absence on the bridge's HTTP-200 error body.
+      'src/autonomous/dhan-bridge.source.spec.ts',
+      // The shadow-outcome walk. Every case is a way of being wrong that
+      // would FLATTER the brain — a bar spanning both levels counted as a
+      // target, a gap through the stop filled at the stop, the signal bar
+      // itself traded on. An optimistic shadow book is worse than none,
+      // because it reads as evidence.
+      'src/autonomous/outcome-resolver.spec.ts',
+      // The journal's two guarantees: one row per BAR (not per poll, which
+      // would inflate the dataset thirtyfold with duplicates) and
+      // decision-time state that is never rewritten — asserted on which
+      // Prisma verb is used, because the verb IS the guarantee.
+      'src/autonomous/brain-journal.spec.ts',
+      // Sizing from the STOP DISTANCE. Distinct from `planRisk`, which risks
+      // the whole premium — sizing off the full premium when a stop exists
+      // systematically under-sizes and makes every realised R a fraction of
+      // what the plan said. Also pins that it refuses rather than tightening
+      // a stop to fit a budget.
+      'src/autonomous/autonomous-sizing.spec.ts',
+      // The execution gates. Every case is a way the brain could take a trade
+      // it should have refused: chasing a missed entry, trading stale data or
+      // a closed venue, double-executing one candidate, or entering on a
+      // contract that cannot pay 1:3. Also asserts structurally that this
+      // service reads nothing of Sentinel's.
+      'src/autonomous/autonomous-execution.spec.ts',
+      // Position management: the ratchet on the brief's own worked example,
+      // stops that never move backwards, realised R measured from the ACTUAL
+      // fill, square-off before the close, and restart recovery from the
+      // database rather than from memory. Also asserts structurally that the
+      // manager cannot re-derive a setup mid-trade.
+      'src/autonomous/autonomous-position-manager.spec.ts',
       // Backtesting. The money suite pins the identity that makes a result
       // trustworthy — gross - fees - slippage = net, on every trade — plus the
       // pessimistic fill rules (stop before target within a bar, a gap fills at
@@ -46,6 +86,12 @@ export default defineConfig({
       'src/backtest/backtest-config.spec.ts',
       'src/discipline/discipline-limits.spec.ts',
       'src/discipline/market-calendar.spec.ts',
+      // Venue sessions — WHEN each venue trades, as opposed to which days the
+      // calendar above allows. Every case is a silent failure: MCX stamped
+      // with the NSE 15:30 close (gold loses two thirds of its session and
+      // `execution-fill` refuses every fill after it), a 24/7 venue given a
+      // square-off, or a crypto day counter rolling at an Indian session edge.
+      'src/discipline/venue-session.spec.ts',
       // Broker OAuth: which callback may write a credential, and whose.
       'src/broker/oauth-state.spec.ts',
       // The single-use claim: conditional update, claimed before the exchange.
@@ -224,6 +270,48 @@ export default defineConfig({
       //    configured — entry through stop/target/trail/invalidation to a
       //    journal and a calibration the NEXT decision consumes.
       'src/paper-execution/paper-lifecycle.spec.ts',
+      // ---- Give-back and concentration bounds (2026-09-07) ---------------
+      //  · drawdown/exposure — the two bounds `maxLossPerDay` and
+      //    `capitalAllocationPct` structurally cannot express. A day that peaks
+      //    +50,000 and gives back 45,000 never breaches an absolute loss floor
+      //    (realized P&L stays positive), and three positions each inside a 20%
+      //    single-position allocation still commit 60% of the account. Both
+      //    failure modes are silent: every existing check passes.
+      'src/paper-execution/execution-drawdown.spec.ts',
+      //  · post-trade analysis — EXPECTED → ACTUAL → DIFFERENCE → WHY →
+      //    LESSON, and the three separations that decide whether the learning
+      //    loop is taught anything true: P&L is not thesis correctness (a
+      //    stopped trade that first ran +2R was RIGHT and badly managed), a
+      //    missing measurement is not a zero, and an operator flatten teaches
+      //    nothing about the strategy at all.
+      'src/paper-execution/post-trade-analysis.spec.ts',
+      //  · the staged learning pipeline — the two properties that decide
+      //    whether "it learns" is safe rather than merely true. A candidate can
+      //    never be generated from ONE session (the sample floor is checked
+      //    against accumulated history, so three catastrophic losses in a day
+      //    propose nothing), and every proposable kind is risk-neutral or
+      //    risk-reducing — a loosening change is unrepresentable, not merely
+      //    rejected. Also pins that validation is out-of-sample and that a
+      //    proposal the journal cannot settle is reported INCONCLUSIVE rather
+      //    than quietly validated.
+      'src/paper-execution/learning-cycle.spec.ts',
+      // ---- Multi-market experiment (2026-09-07) ---------------------------
+      //  · market isolation — "a BTC experiment must NEVER accidentally place
+      //    an Indian-market order". That held only because ONE adapter
+      //    existed; these assertions are what replaces safety-by-arity. Also
+      //    pins the two refusals that would otherwise be SILENT: a bearish
+      //    crypto signal dropped (making the win rate a filtered statistic
+      //    presented as a complete one) and a gold agent sized to zero lots
+      //    (indistinguishable from one that found no setup).
+      'src/paper-execution/markets/market-isolation.spec.ts',
+      //  · cross-market comparison — the rules that keep the experiment's own
+      //    output honest. Three failure modes, all of which render a perfectly
+      //    reasonable-looking table: a cross-currency P&L total (there is no FX
+      //    conversion in the wallet path, so it would be fabricated), a
+      //    two-trade fluke ranked above a two-hundred-trade record, and a
+      //    confound — spot crypto cannot short — left to be inferred from the
+      //    numbers rather than stated beside them.
+      'src/paper-execution/cross-market-performance.spec.ts',
     ],
     environment: 'node',
     // The suite is deterministic and clock-injected; a slow test means a real

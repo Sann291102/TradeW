@@ -1,8 +1,12 @@
 import { Module } from '@nestjs/common';
 import { SimModule } from '../sim/sim.module';
 import { ExecutionAccountService } from './execution-account.service';
+import { ChartAnnotationsService } from './chart-annotations.service';
+import { CrossMarketPerformanceService } from './cross-market-performance.service';
 import { ExecutionCalibrationService } from './execution-calibration.service';
+import { ExecutionControlService } from './execution-control.service';
 import { ExecutionJournalService } from './execution-journal.service';
+import { ExecutionLearningService } from './execution-learning.service';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
 import { ExecutionProfileService } from './execution-profile.service';
 import { ExecutionQueryService } from './execution-query.service';
@@ -53,6 +57,23 @@ import { SentinelExecutionClient } from './sentinel-execution.client';
     PositionManagerService,
     ExecutionCalibrationService,
     ExecutionJournalService,
+    // The operator kill switch. A provider of THIS module for the same reason
+    // as the three above — `PaperExecutionService` reads it in the execution
+    // path, and the arrow stays PaperExecutionModule → SimModule.
+    ExecutionControlService,
+    // The staged learning pipeline. A provider here rather than a module of its
+    // own: it reads the journal this module writes, and nothing outside the
+    // console needs it.
+    ExecutionLearningService,
+    // The chart's strategy-annotation reader. A pure read over the evaluation
+    // log, the intents and their outcomes — it writes nothing, and it is in
+    // THIS module rather than the console's because the records it reads are
+    // this module's own.
+    ChartAnnotationsService,
+    // The experiment's output — which strategies work in which markets. A pure
+    // read over `ExecutionJournal`; it computes nothing that is not already a
+    // closed trade.
+    CrossMarketPerformanceService,
   ],
   exports: [
     PaperExecutionService,
@@ -80,6 +101,19 @@ import { SentinelExecutionClient } from './sentinel-execution.client';
     PositionManagerService,
     ExecutionJournalService,
     ExecutionCalibrationService,
+    // Exported so the console can read the halt state and set it. This is the
+    // ONLY way `ExecutionControl` is written — nothing in the strategy,
+    // calibration or learning path can reach it, which is what makes it a kill
+    // switch rather than a suggestion.
+    ExecutionControlService,
+    // Exported for the console's learning pages and the promotion endpoint.
+    // `promote()` is the only writer of PROMOTED anywhere in the codebase.
+    ExecutionLearningService,
+    // Exported because `AdminController` injects it. See the ExecutionProfileService
+    // note above: a provider missing from this list is invisible to tsc and to
+    // every unit test, and only takes the API down at boot.
+    ChartAnnotationsService,
+    CrossMarketPerformanceService,
   ],
 })
 export class PaperExecutionModule {}

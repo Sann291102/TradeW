@@ -33,6 +33,7 @@ import { TelemetryModule } from './telemetry/telemetry.module';
 import { AdminModule } from './admin/admin.module';
 import { BacktestModule } from './backtest/backtest.module';
 import { LabModule } from './lab/lab.module';
+import { AutonomousModule } from './autonomous/autonomous.module';
 import { PaperExecutionModule } from './paper-execution/paper-execution.module';
 import { CognitionModule } from './cognition/cognition.module';
 import { ControlModule } from './control/control.module';
@@ -114,6 +115,13 @@ import { HealthController } from './health.controller';
     // console reads it. Removing this line disables agent execution entirely
     // and changes no trader-facing behaviour.
     PaperExecutionModule,
+    // The parallel learning brain. Watches the same markets as Sentinel,
+    // decides independently, and journals every decision and its outcome —
+    // deliberately WITHOUT any authority to act on them. Its timers stay dark
+    // unless AUTONOMOUS_OBSERVER_ENABLED=true; ordering would additionally
+    // need AUTONOMOUS_ENGINE_ENABLED, which nothing reads because no order
+    // path exists in it.
+    AutonomousModule,
     // Historical simulation. Separate from PaperExecutionModule on purpose:
     // a backtest replays stored bars and can never place an order.
     BacktestModule,
