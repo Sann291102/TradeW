@@ -11,6 +11,7 @@ import {
   useInvalidateTradingData,
 } from '@/lib/query/usePortfolio';
 import { PortfolioSubNav, type PortfolioSection } from '@/components/portfolio/PortfolioSubNav';
+import { ResetBalanceCard } from '@/components/portfolio/ResetBalanceCard';
 import { OverviewSection } from '@/components/portfolio/sections/OverviewSection';
 import { HoldingsSection } from '@/components/portfolio/sections/HoldingsSection';
 import { PositionsSection } from '@/components/portfolio/sections/PositionsSection';
@@ -115,6 +116,13 @@ export function PortfolioClient({ initialSection = 'overview' }: { initialSectio
           {section === 'trade-history' && <TradeHistorySection />}
           {section === 'performance' && <PerformanceSection />}
         </Card>
+
+        {/* Where the account is summarised is where people look for "start over". */}
+        {section === 'overview' && (
+          <div className="mt-4">
+            <ResetBalanceCard />
+          </div>
+        )}
       </div>
     </div>
   );
