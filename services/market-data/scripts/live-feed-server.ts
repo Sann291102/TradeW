@@ -3,18 +3,23 @@ import { resolve } from 'node:path';
 loadEnv({ path: resolve(__dirname, '../../../.env') }); // root .env — see .env.example
 import * as http from 'node:http';
 import WebSocket = require('ws');
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
+import { dirname } from 'node:path';
 import {
   DhanCredential,
   DhanMarketFeed,
   DhanUpstreamError,
+  LastPriceStore,
   MarketTick,
   UpstreamGuard,
   WebSocketLike,
   classifyDhanFault,
   isBrokerAddressable,
+  isValidPrice,
   parseScripMaster,
   readEnvFile,
+  toQuoteView,
+  type PriceSource,
   type ResolvedCredential,
   type ScripMasterRow,
 } from '@tradew/market-data';
@@ -465,23 +470,95 @@ interface LiveQuote {
   instrumentId: string;
   symbol: string;
   displayName: string;
-  ltp: number;
-  change: number;
-  changePct: number;
+  /**
+   * The last VALID price, of any age — never a placeholder zero.
+   *
+   * `null` means one thing only: no valid price has ever been observed for
+   * this instrument (a cold start with no recovery file and an upstream that
+   * has not answered yet). Clients render that as "—". They must never
+   * coalesce it to 0: that is the exact defect this contract exists to
+   * prevent, where a closed market reported "NIFTY 50 — 0.00" as though the
+   * index had fallen to nothing.
+   */
+  ltp: number | null;
+  /** The previous session's close, as the exchange reported it. */
+  previousClose: number | null;
+  /** Null — not 0 — when it cannot be computed. An unmoved market and an
+   *  unknown move are different facts and must look different. */
+  change: number | null;
+  changePct: number | null;
   open: number | null;
   high: number | null;
   low: number | null;
   close: number | null;
-  bid: number;
-  ask: number;
-  volume: number;
+  bid: number | null;
+  ask: number | null;
+  volume: number | null;
+  /** Provenance of `ltp` — 'live' during the session, 'previous-close' or
+   *  'last-session-bar' once it is a carried-forward last valid price. Lets a
+   *  surface label a frozen price honestly instead of implying a live tick. */
+  priceSource: PriceSource | null;
+  /** IST trading day (YYYY-MM-DD) `ltp` was observed in. */
+  session: string | null;
   marketStatus: 'open' | 'closed';
-  updatedAt: string;
+  updatedAt: string | null;
   source: 'dhan';
 }
 
-const byKey = new Map<string, LiveQuote>(); // key: `${kind}:${symbol}`
+/**
+ * THE source of truth for what every tracked instrument is worth.
+ *
+ * Replaces the `Map<string, LiveQuote>` this used to be. That map was
+ * overwritten wholesale on every tick, so an out-of-session packet — which
+ * Dhan fills with zeros because there is nothing live to report — erased the
+ * previous close that had arrived moments earlier on the subscribe-time
+ * PREV_CLOSE packet. Every write now goes through `LastPriceStore`, which
+ * cannot regress a valid price, and its contents survive a restart via
+ * `persistLastPrices` below.
+ */
+const lastPrices = new LastPriceStore();
+/** Display metadata per key, kept beside the prices so `snapshot()` can name an
+ *  instrument that has no price yet without inventing one for it. */
+const metaByKey = new Map<string, { meta: InstrumentMeta; kind: QuoteKind }>();
 const sseClients = new Set<http.ServerResponse>();
+
+type QuoteKind = 'index' | 'stock' | 'etf' | 'commodity';
+
+/**
+ * Where the last valid prices are kept between runs.
+ *
+ * Without this the bridge came up blank after every restart outside market
+ * hours — a deploy at 16:00, a crash overnight, a laptop resuming — and stayed
+ * blank until the next session opened, because a closed exchange sends nothing
+ * to repopulate it from. The file holds only public last-traded prices: no
+ * credentials, no user data.
+ */
+const LAST_PRICE_FILE =
+  process.env.DHAN_LIVE_LAST_PRICE_FILE || resolve(__dirname, '../.cache/last-prices.json');
+
+function restoreLastPrices(): void {
+  try {
+    const restored = lastPrices.hydrate(JSON.parse(readFileSync(LAST_PRICE_FILE, 'utf8')));
+    console.log(`[last-price] recovered ${restored} last valid prices from ${LAST_PRICE_FILE}`);
+  } catch (err) {
+    // Absent on a first run, and unreadable is not fatal — the feed refills it.
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== 'ENOENT') console.warn(`[last-price] could not read ${LAST_PRICE_FILE}: ${String(err)}`);
+  }
+}
+
+function persistLastPrices(): void {
+  try {
+    mkdirSync(dirname(LAST_PRICE_FILE), { recursive: true });
+    // Write-then-rename: a process killed mid-write leaves the previous good
+    // file intact rather than a truncated one that hydrates to nothing.
+    const tmp = `${LAST_PRICE_FILE}.tmp`;
+    writeFileSync(tmp, JSON.stringify(lastPrices.serialize()), 'utf8');
+    renameSync(tmp, LAST_PRICE_FILE);
+  } catch (err) {
+    console.warn(`[last-price] could not persist to ${LAST_PRICE_FILE}: ${String(err)}`);
+  }
+}
 
 /**
  * Live LTP for individual OPTION contracts, keyed by Dhan securityId.
@@ -512,28 +589,65 @@ function isMarketOpen(now = new Date()): boolean {
   return minutes >= 9 * 60 + 15 && minutes <= 15 * 60 + 30;
 }
 
-function toLiveQuote(tick: MarketTick, meta: InstrumentMeta): LiveQuote {
-  const prevClose = tick.previousClose ?? tick.open ?? tick.ltp ?? 0;
-  const ltp = tick.ltp ?? prevClose;
-  const change = ltp - prevClose;
+/**
+ * Project one instrument's remembered state into the wire shape.
+ *
+ * Deliberately a READ. It used to be a constructor taking a single tick, which
+ * is why one empty packet could define the whole quote: `previousClose ??
+ * open ?? ltp ?? 0` resolved to 0 the moment the exchange stopped sending
+ * values, and `?? 0` on bid/ask/volume dressed four more absences as
+ * observations. There is nothing to coalesce here — the store either knows a
+ * price or reports that it does not.
+ */
+function liveQuoteFor(key: string): LiveQuote | null {
+  const entry = metaByKey.get(key);
+  if (!entry) return null;
+  const { meta } = entry;
+  const quote = lastPrices.get(key);
+  const view = toQuoteView(quote);
   return {
     instrumentId: meta.securityId,
     symbol: meta.symbol,
     displayName: meta.displayName,
-    ltp,
-    change,
-    changePct: prevClose ? (change / prevClose) * 100 : 0,
-    open: tick.open ?? null,
-    high: tick.high ?? null,
-    low: tick.low ?? null,
-    close: tick.close ?? null,
-    bid: tick.bid ?? 0,
-    ask: tick.ask ?? 0,
-    volume: tick.volume ?? 0,
+    ltp: view.ltp,
+    previousClose: view.previousClose,
+    change: view.change,
+    changePct: view.changePct,
+    open: quote.open,
+    high: quote.high,
+    low: quote.low,
+    close: quote.close,
+    bid: quote.bid,
+    ask: quote.ask,
+    volume: quote.volume,
+    priceSource: view.source,
+    session: view.session,
     marketStatus: isMarketOpen() ? 'open' : 'closed',
-    updatedAt: tick.at.toISOString(),
+    updatedAt: view.at,
     source: 'dhan',
   };
+}
+
+/** Fold one tick into the last-price store. The tick's own fields are already
+ *  `undefined`-for-absent (the parser's `price()` rule), so this hands them
+ *  straight to the merge without a defaulting step of its own. */
+function observeTick(key: string, tick: MarketTick, source: PriceSource = 'live'): void {
+  lastPrices.observe(
+    key,
+    {
+      ltp: tick.ltp,
+      previousClose: tick.previousClose,
+      open: tick.open,
+      high: tick.high,
+      low: tick.low,
+      close: tick.close,
+      bid: tick.bid,
+      ask: tick.ask,
+      volume: tick.volume,
+      at: tick.at,
+    },
+    { source },
+  );
 }
 
 function snapshot() {
@@ -541,11 +655,13 @@ function snapshot() {
   const stocks: LiveQuote[] = [];
   const etfs: LiveQuote[] = [];
   const commodities: LiveQuote[] = [];
-  for (const [key, q] of byKey) {
-    if (key.startsWith('index:')) indices.push(q);
-    else if (key.startsWith('stock:')) stocks.push(q);
-    else if (key.startsWith('etf:')) etfs.push(q);
-    else commodities.push(q);
+  for (const [key, { kind }] of metaByKey) {
+    const quote = liveQuoteFor(key);
+    if (!quote) continue;
+    if (kind === 'index') indices.push(quote);
+    else if (kind === 'stock') stocks.push(quote);
+    else if (kind === 'etf') etfs.push(quote);
+    else commodities.push(quote);
   }
   return { marketOpen: isMarketOpen(), indices, stocks, etfs, commodities };
 }
@@ -622,7 +738,12 @@ async function startFeed(
     }
     const meta = metaByRef.get(`${tick.ref.exchangeSegment}:${tick.ref.securityId}`);
     if (!meta) return;
-    byKey.set(`${kindOf(meta)}:${meta.symbol}`, toLiveQuote(tick, meta));
+    // MERGE, never replace. The subscribe-time PREV_CLOSE packet carries only a
+    // previous close, a Ticker packet only an LTP, and an out-of-session Quote
+    // packet carries nothing at all — so each one has to add to what is known
+    // rather than define it. Replacing here is what let a single empty packet
+    // wipe a good price.
+    observeTick(`${kindOf(meta)}:${meta.symbol}`, tick);
     scheduleBroadcast();
   });
 
@@ -1106,9 +1227,16 @@ async function resolveRequestedExpiry(
 
 function toLegOut(raw: DhanOptionLegRaw | undefined): OptionLegOut | null {
   if (!raw) return null;
+  const previousClose = raw.previous_close_price ?? 0;
   return {
-    ltp: raw.last_price ?? 0,
-    previousClose: raw.previous_close_price ?? 0,
+    // Same invariant as every other instrument on this bridge: a contract that
+    // has not printed a trade in the current session has no live premium, and
+    // Dhan reports that as `last_price: 0`. Its last valid price is the
+    // previous close, which is what a trader looking at a closed chain needs to
+    // see. 0 survives only when the contract genuinely has no prior close
+    // either — a strike listed today that has never traded.
+    ltp: isValidPrice(raw.last_price) ? raw.last_price : previousClose,
+    previousClose,
     oi: raw.oi ?? 0,
     previousOi: raw.previous_oi ?? 0,
     volume: raw.volume ?? 0,
@@ -1135,7 +1263,11 @@ async function fetchOptionChain(u: OptionUnderlying, expiry: string): Promise<{ 
   const strikes = Object.entries(json.data?.oc ?? {})
     .map(([k, v]) => ({ strike: Number(k), ce: toLegOut(v.ce), pe: toLegOut(v.pe) }))
     .sort((a, b) => a.strike - b.strike);
-  return { spot: json.data?.last_price ?? null, strikes };
+  // `?? null` alone let Dhan's out-of-session `last_price: 0` through as a
+  // spot of zero, which is where every strike's moneyness and the ATM anchor
+  // were computed from. Absent is null here; the caller substitutes the
+  // underlying's own last valid price.
+  return { spot: isValidPrice(json.data?.last_price) ? (json.data?.last_price as number) : null, strikes };
 }
 
 /**
@@ -1387,8 +1519,15 @@ async function main(): Promise<void> {
     expiryIso: string,
     payload: { spot: number | null; strikes: OptionStrikeOut[] },
   ): { spot: number | null; strikes: OptionStrikeOut[] } {
+    // A closed market leaves the REST chain with no spot. The underlying is
+    // tracked on this very bridge, so its last valid price is already known —
+    // use it rather than serving a chain with no anchor (which the strike
+    // selector reads as "centre on the middle of the list").
+    const lastKnownSpot = toQuoteView(
+      lastPrices.get(indexBySymbol.has(underlying) ? `index:${underlying}` : `stock:${underlying}`),
+    ).ltp;
     return {
-      spot: payload.spot,
+      spot: payload.spot ?? lastKnownSpot,
       strikes: payload.strikes.map((s) => {
         const apply = (leg: OptionLegOut | null, type: 'CE' | 'PE') => {
           if (!leg) return leg;
@@ -1401,65 +1540,79 @@ async function main(): Promise<void> {
     };
   }
 
-  // Initialize baseline quotes for all tracked instruments so snapshot() is never empty on boot
+  // Register the tracked universe so `snapshot()` can name every instrument
+  // from the first request, whether or not a price is known for it yet.
+  //
+  // ── WHAT THIS REPLACED, AND WHY ───────────────────────────────────────────
+  //
+  // This loop used to write a full quote per instrument with `ltp: 0`,
+  // "so snapshot() is never empty on boot". It succeeded at that and created
+  // the defect it was papering over: 553 fabricated zero prices, published as
+  // real broker quotes, indistinguishable from an observation. With the market
+  // closed no tick ever arrived to correct them, so the dashboard rendered
+  // NIFTY 50, NIFTY BANK, FIN NIFTY, BSE SENSEX and INDIA VIX all at 0.00.
+  //
+  // Registration and observation are now separate things. The universe is
+  // known here; prices arrive from the store, which starts out honestly empty
+  // and is filled, in order of preference, by: the recovery file below, the
+  // subscribe-time PREV_CLOSE packet Dhan sends for every instrument, the
+  // historical-bar backfill, and then live ticks.
   for (const meta of ALL_INSTRUMENTS) {
-    const kind = kindOf(meta);
-    byKey.set(`${kind}:${meta.symbol}`, {
-      instrumentId: meta.securityId,
-      symbol: meta.symbol,
-      displayName: meta.displayName,
-      ltp: 0,
-      change: 0,
-      changePct: 0,
-      open: null,
-      high: null,
-      low: null,
-      close: null,
-      bid: 0,
-      ask: 0,
-      volume: 0,
-      marketStatus: isMarketOpen() ? 'open' : 'closed',
-      updatedAt: new Date().toISOString(),
-      source: 'dhan',
-    });
+    metaByKey.set(`${kindOf(meta)}:${meta.symbol}`, { meta, kind: kindOf(meta) });
   }
 
-  // Pre-fetch latest index close/LTP from Dhan historical API
+  // Recover the last valid price for every instrument observed before the last
+  // shutdown. This is what makes a restart after the close come up showing the
+  // previous session's prices instead of nothing.
+  restoreLastPrices();
+
+  // Backfill the indices from the last traded session's bars.
+  //
+  // Third in line behind the recovery file and the websocket's own PREV_CLOSE
+  // packet, and useful precisely when both are cold: a first-ever run, on a
+  // weekend, before any packet has arrived. Ten days back rather than one, so
+  // it still finds a session across a weekend or a run of exchange holidays —
+  // the old 1-day window returned nothing at all on a Sunday, which is one of
+  // the ways the zeros survived to reach the browser.
+  //
+  // Written as a BACKFILL, so it can only fill a gap. This is an async call
+  // that regularly lands after the feed has already delivered a real tick, and
+  // as a plain write it would have dragged a live price back to the last bar's
+  // close — the store refuses that.
   const toDate = new Date();
-  const fromDate = istMidnightDaysAgo(toDate, 1);
+  const fromDate = istMidnightDaysAgo(toDate, 10);
   for (const idx of INDEX_INSTRUMENTS) {
     fetchDhanCandles(idx, '5m', fromDate, toDate)
       .then((candles) => {
-        if (candles && candles.length > 0) {
-          const last = candles[candles.length - 1];
-          const prev = candles[0];
-          const prevClose = prev?.close ?? last.open ?? last.close;
-          const change = last.close - prevClose;
-          byKey.set(`index:${idx.symbol}`, {
-            instrumentId: idx.securityId,
-            symbol: idx.symbol,
-            displayName: idx.displayName,
-            ltp: last.close,
-            change: Number(change.toFixed(2)),
-            changePct: prevClose ? Number(((change / prevClose) * 100).toFixed(2)) : 0,
-            open: last.open,
-            high: last.high,
-            low: last.low,
-            close: last.close,
-            bid: last.close,
-            ask: last.close,
-            volume: last.volume,
-            marketStatus: isMarketOpen() ? 'open' : 'closed',
-            updatedAt: new Date(last.timestamp).toISOString(),
-            source: 'dhan',
-          });
-          scheduleBroadcast();
-        }
+        if (!candles || candles.length === 0) return;
+        const last = candles[candles.length - 1];
+        // The close of the bar before the final session's first bar is the
+        // previous close; when the window holds only one session, leave it
+        // unknown rather than deriving a change from an arbitrary earlier bar.
+        const lastDay = istYmd(new Date(last.timestamp));
+        const priorSession = candles.filter((c) => istYmd(new Date(c.timestamp)) < lastDay);
+        const previousClose = priorSession.length > 0 ? priorSession[priorSession.length - 1].close : undefined;
+        const sameDay = candles.filter((c) => istYmd(new Date(c.timestamp)) === lastDay);
+        lastPrices.backfill(`index:${idx.symbol}`, {
+          ltp: last.close,
+          previousClose,
+          open: sameDay[0]?.open,
+          high: Math.max(...sameDay.map((c) => c.high)),
+          low: Math.min(...sameDay.map((c) => c.low)),
+          close: last.close,
+          volume: sameDay.reduce((sum, c) => sum + c.volume, 0),
+          at: new Date(last.timestamp),
+        });
+        scheduleBroadcast();
       })
       .catch(() => {
         // non-blocking fallback
       });
   }
+
+  // Checkpoint the last valid prices so a restart recovers them. Every five
+  // minutes while running, and once on the way out.
+  setInterval(persistLastPrices, 5 * 60_000).unref();
 
   const feed = await startFeed(ALL_INSTRUMENTS, kindOf);
 
@@ -1527,6 +1680,17 @@ async function main(): Promise<void> {
           // "Sentinel has no market data" and the investigation started in the
           // wrong service.
           credential: dhanCredential.state(),
+          // Price coverage, so "the dashboard shows no price" is answerable
+          // without guessing. `known` counts instruments the bridge can quote
+          // from a last valid price; `unpriced` are the ones it would render as
+          // "—". Before the last-price store this was unanswerable — every
+          // instrument reported a price, and 0.00 was one of them.
+          lastPrices: {
+            tracked: metaByKey.size,
+            known: [...metaByKey.keys()].filter((k) => lastPrices.hasPrice(k)).length,
+            unpriced: [...metaByKey.keys()].filter((k) => !lastPrices.hasPrice(k)),
+            file: LAST_PRICE_FILE,
+          },
           upstream: { candles: candleGuard.stats(), expiries: expiryGuard.stats(), optionQueueDepth },
         }),
       );
@@ -1965,6 +2129,9 @@ async function main(): Promise<void> {
   });
 
   process.on('SIGINT', async () => {
+    // Checkpoint before dying: the whole point of the recovery file is that the
+    // prices observed in this run outlive it.
+    persistLastPrices();
     await feed.stop();
     server.close();
     process.exit(0);

@@ -98,8 +98,12 @@ export function TradeWorkspace({ strategies = [] }: { strategies?: Strategy[] })
   // readout — same shared singleton feed the rest of the app uses, so this
   // adds no extra network traffic.
   const { quotes, stocks, etfs, commodities } = useDhanLiveFeed();
+  // `?? undefined` and never `?? 0`: the panel treats an absent price as "no
+  // prefill", which is right, whereas a zero would prefill a limit order at
+  // zero and compute an order value of nothing.
   const underlyingPrice = symbol
-    ? [...(quotes ?? []), ...(stocks ?? []), ...(etfs ?? []), ...(commodities ?? [])].find((q) => q.symbol === symbol)?.ltp
+    ? ([...(quotes ?? []), ...(stocks ?? []), ...(etfs ?? []), ...(commodities ?? [])].find((q) => q.symbol === symbol)?.ltp ??
+      undefined)
     : undefined;
 
   // An option order is priced in PREMIUM, not in the underlying. Feeding the

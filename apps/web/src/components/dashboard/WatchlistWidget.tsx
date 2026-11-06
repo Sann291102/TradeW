@@ -13,7 +13,8 @@ import { useSignedIn } from '@/lib/query/usePortfolio';
  *  neighbors below it (see MarketWorkspace.tsx's balanced two-column row). */
 const DASHBOARD_ROWS = 5;
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
-import { fmt, pct } from '@/lib/format';
+import { fmtPrice, pctOrDash } from '@/lib/format';
+import { directionClass, directionOf } from '@/lib/markets/quoteDisplay';
 import { PlusIcon } from '@/components/shell/icons';
 
 /**
@@ -43,8 +44,13 @@ export function WatchlistWidget() {
       ? prefs.data.watchlist.slice(0, DASHBOARD_ROWS).map((entry) => ({
           symbol: entry.symbol,
           name: entry.name,
-          ltp: liveBySymbol?.get(entry.symbol)?.ltp ?? 0,
-          changePct: liveBySymbol?.get(entry.symbol)?.changePct ?? 0,
+          // `?? null`, never `?? 0`. This row already renders "—" for a
+          // falsy price, so the zero was invisible here — but it was a real
+          // price of nothing being carried in a field the rest of the app
+          // reads, and it is exactly the defaulting reflex that put 0.00 on
+          // the index cards. Absent is null.
+          ltp: liveBySymbol?.get(entry.symbol)?.ltp ?? null,
+          changePct: liveBySymbol?.get(entry.symbol)?.changePct ?? null,
           spark: [] as number[],
           href: `/research?symbol=${encodeURIComponent(entry.symbol)}`,
         }))
@@ -71,7 +77,7 @@ export function WatchlistWidget() {
           const liveMatch = liveBySymbol?.get(w.symbol);
           const ltp = liveMatch?.ltp ?? w.ltp;
           const changePct = liveMatch?.changePct ?? w.changePct;
-          const up = changePct >= 0;
+          const direction = directionOf(changePct);
           return (
             <li key={w.symbol}>
               <Link href={w.href} className="flex items-center gap-3 rounded py-1.5 transition-colors duration-micro hover:bg-hover">
@@ -85,9 +91,9 @@ export function WatchlistWidget() {
                   <div className="w-14 text-center text-[10px] text-faint">Research</div>
                 )}
                 <div className="w-20 text-right">
-                  <div className="font-mono text-sm tabular-nums text-text">{ltp ? fmt(ltp) : '—'}</div>
-                  <div className={cn('font-mono text-[11px] tabular-nums', up ? 'text-up' : 'text-down')}>
-                    {ltp ? pct(changePct) : 'saved'}
+                  <div className="font-mono text-sm tabular-nums text-text">{fmtPrice(ltp)}</div>
+                  <div className={cn('font-mono text-[11px] tabular-nums', directionClass(direction))}>
+                    {ltp == null ? 'saved' : pctOrDash(changePct)}
                   </div>
                 </div>
               </Link>

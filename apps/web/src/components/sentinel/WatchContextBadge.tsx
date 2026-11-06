@@ -83,8 +83,10 @@ export function WatchContextBadge() {
           <span className={cn('text-[11.5px] font-semibold', feed.tone)}>{feed.label}</span>
           <span className="text-[10.5px] text-faint">Dhan</span>
         </div>
-        {/* Omitted, not faked, when no quote for this symbol has arrived. */}
-        {quote && (
+        {/* Omitted, not faked, when no quote for this symbol has arrived — or
+            when one has but carries no observed price, so there is no tick time
+            to name. */}
+        {quote?.updatedAt && (
           <p className="mt-0.5 font-mono text-[10px] text-faint">
             tick{' '}
             {new Date(quote.updatedAt).toLocaleTimeString('en-GB', {

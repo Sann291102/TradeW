@@ -56,9 +56,15 @@ export const INTERVAL_MINUTES: Record<CandleInterval, number> = {
  * `open`/`high`/`low` are nullable because the bridge reports them that way for
  * an instrument whose session has not started — which is precisely a case that
  * must not produce a bar, so the nullability is load-bearing rather than noise.
+ *
+ * `ltp` is nullable for the same reason and is load-bearing in the same way:
+ * the bridge reports `null` for an instrument it has never observed a price
+ * for, and the guard below already refuses to form a bar from anything that is
+ * not a finite positive number. A forming bar from a placeholder zero would
+ * draw the chart's last-price line at the bottom of the pane.
  */
 export interface LiveQuoteLike {
-  ltp: number;
+  ltp: number | null;
   open?: number | null;
   high?: number | null;
   low?: number | null;
@@ -108,7 +114,7 @@ export function mergeLiveCandle(
   // No quote, an unusable price, or a shut market: the last closed bar is
   // already the right answer, and inventing a flat bar on top of it would be
   // exactly the fabrication this file promises not to do.
-  if (!quote || !Number.isFinite(quote.ltp) || quote.ltp <= 0) return candles;
+  if (!quote || typeof quote.ltp !== 'number' || !Number.isFinite(quote.ltp) || quote.ltp <= 0) return candles;
   if (quote.marketStatus && quote.marketStatus !== 'open') return candles;
 
   const intervalMinutes = INTERVAL_MINUTES[interval];

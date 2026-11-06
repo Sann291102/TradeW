@@ -7,7 +7,8 @@ import { INDEX_QUOTES } from '@/lib/mock/market';
 import { useDhanLiveFeed } from '@/lib/hooks/useDhanLiveFeed';
 import { useCandles } from '@/lib/hooks/useCandles';
 import { useSessionStore } from '@/lib/store/sessionStore';
-import { fmt, pct, sign } from '@/lib/format';
+import { toDisplayRow, directionClass } from '@/lib/markets/quoteDisplay';
+import { changeOrDash, fmtPrice, pctOrDash, NO_VALUE } from '@/lib/format';
 
 /** "Good morning/afternoon/evening" by IST clock — NSE's own timezone, matching
  *  every other timestamp in the app (see lib/news.ts `newsTime`). Computed
@@ -51,9 +52,22 @@ export function DashboardHero() {
 
   const { quotes, status } = useDhanLiveFeed();
   const live = (status === 'live' || status === 'closed') && quotes;
-  const nifty = live
-    ? quotes.find((q) => q.symbol === 'NIFTY')
-    : INDEX_QUOTES.find((q) => q.symbol === 'NIFTY');
+  const liveNifty = live ? quotes.find((q) => q.symbol === 'NIFTY') : undefined;
+  const mockNifty = INDEX_QUOTES.find((q) => q.symbol === 'NIFTY');
+  // One row shape whether the source is the bridge or the preview data, so the
+  // markup below has no branch that could default a price differently.
+  const nifty = liveNifty
+    ? toDisplayRow(liveNifty)
+    : !live && mockNifty
+      ? {
+          ltp: mockNifty.ltp,
+          price: fmtPrice(mockNifty.ltp),
+          changeText: changeOrDash(mockNifty.change),
+          changePctText: pctOrDash(mockNifty.changePct),
+          direction: mockNifty.change >= 0 ? ('up' as const) : ('down' as const),
+          atPreviousClose: false,
+        }
+      : null;
 
   // The live snapshot itself carries no history (LTP only) — the same real
   // intraday candles MarketOverview charts (Dhan bridge `/candles`) back this
@@ -87,11 +101,21 @@ export function DashboardHero() {
         {nifty ? (
           <div className="flex items-center gap-3">
             <div className="shrink-0">
-              <AnimatedNumber value={nifty.ltp} format={fmt} className="block px-0 text-2xl font-bold text-text" />
-              <span className={cn('font-mono text-xs tabular-nums', nifty.change >= 0 ? 'text-up' : 'text-down')}>
-                {sign(nifty.change)}
-                {fmt(Math.abs(nifty.change))} ({pct(nifty.changePct)})
+              {/* Unknown price renders as "—", never animated up from 0.00. */}
+              {nifty.ltp === null ? (
+                <span className="block text-2xl font-bold text-muted">{NO_VALUE}</span>
+              ) : (
+                <AnimatedNumber value={nifty.ltp} format={fmtPrice} className="block px-0 text-2xl font-bold text-text" />
+              )}
+              <span className={cn('font-mono text-xs tabular-nums', directionClass(nifty.direction))}>
+                {nifty.changeText} ({nifty.changePctText})
               </span>
+              {nifty.atPreviousClose && (
+                // The pill above says "Market closed"; without this the number
+                // beside it read as a live quote. Naming the price's vintage is
+                // the difference between a frozen price and a wrong one.
+                <span className="mt-0.5 block text-[10px] uppercase tracking-wide text-faint">At previous close</span>
+              )}
             </div>
             <Sparkline data={niftySpark} width={160} height={56} className="w-full flex-1" aria-label="NIFTY 50 trend" />
           </div>

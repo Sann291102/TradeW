@@ -52,6 +52,12 @@ tradew-demo.*.ts.net.key
 # state rather than source, so it stays untracked too.
 services/sentinel/data/
 
+# Live-feed bridge last-valid-price recovery file. Public last-traded prices
+# only — no credentials — but it is per-install runtime state rebuilt from the
+# feed, not source. It is what lets a restart after the market closes come up
+# showing the previous session's prices instead of nothing.
+services/market-data/.cache/
+
 .claude/Settings.local.json
 
 

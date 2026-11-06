@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { fetchDhanQuotes, type DhanLiveQuote, type DhanLiveSnapshot } from '../dhanLiveFeed';
+import { hasAnyPricedQuote } from '../markets/quoteDisplay';
 
 export type DhanFeedStatus = 'loading' | 'live' | 'closed' | 'unreachable';
 
@@ -71,7 +72,10 @@ function apply(data: DhanLiveSnapshot) {
     data.stocks.length === 0 &&
     data.etfs.length === 0 &&
     data.commodities.length === 0;
-  if (empty) {
+  // Rows without a single price are an outage, not a market — see
+  // hasAnyPricedQuote. The bridge lists its whole universe with `ltp: null`
+  // until something is priced, so "non-empty" alone no longer means healthy.
+  if (empty || !hasAnyPricedQuote(data)) {
     scheduleUnreachable();
     return;
   }
