@@ -7,6 +7,7 @@ import { DisciplineService } from '../discipline/discipline.service';
 import { nextTradingDay } from '../discipline/market-calendar';
 import { MarketPriceService } from './market-price.service';
 import { istDayKey, todayIstSessionEnd } from './ist-time.util';
+import { ATTRIBUTION_INCLUDE, attributionOf } from './order-attribution';
 
 export interface PlaceOrderInput {
   symbol: string;
@@ -37,7 +38,8 @@ export interface ModifyOrderInput {
 
 type Tx = Prisma.TransactionClient;
 
-const STARTING_BALANCE = 1_000_000; // ₹10L paper capital, matches PaperWallet's schema default
+/** ₹10L paper capital, matches PaperWallet's schema default. Also what a wallet reset restores. */
+export const STARTING_BALANCE = 1_000_000;
 // 3bps of gross trade value — same convention as the original market-only engine.
 // Exported so HoldingsService.sell can charge a holdings sale identically
 // instead of re-declaring the rate.
@@ -611,21 +613,89 @@ export class OrderService {
     return results;
   }
 
-  async orderBook(userId: string, statusFilter?: OrderStatus[]): Promise<Prisma.OrderGetPayload<{ include: { instrument: true } }>[]> {
-    return this.prisma.order.findMany({
+  /**
+   * The order book, each row labelled MANUAL or AGENT. The label is derived from
+   * the intent links already on the row (see order-attribution.ts) — an agent's
+   * entry AND its exits are both marked, so a position the agent opened and then
+   * squared off reads as two agent orders rather than one agent order and one
+   * unexplained sell.
+   */
+  async orderBook(userId: string, statusFilter?: OrderStatus[]) {
+    const orders = await this.prisma.order.findMany({
       where: { userId, ...(statusFilter ? { status: { in: statusFilter } } : {}) },
-      include: { instrument: true },
+      include: { instrument: true, ...ATTRIBUTION_INCLUDE },
       orderBy: { placedAt: 'desc' },
       take: 200,
     });
+    return orders.map(({ executionIntent, exitOfIntent, ...order }) => ({
+      ...order,
+      ...attributionOf({ ...order, executionIntent, exitOfIntent }),
+    }));
   }
 
-  async tradeBook(userId: string): Promise<Prisma.TradeGetPayload<{ include: { instrument: true } }>[]> {
-    return this.prisma.trade.findMany({
+  /** The trade book. A trade inherits its attribution from the order that
+   *  produced it. */
+  async tradeBook(userId: string) {
+    const trades = await this.prisma.trade.findMany({
       where: { userId },
-      include: { instrument: true },
+      include: { instrument: true, order: { select: { executionIntentId: true, exitOfIntentId: true, ...ATTRIBUTION_INCLUDE } } },
       orderBy: { executedAt: 'desc' },
       take: 200,
+    });
+    return trades.map(({ order, ...trade }) => ({
+      ...trade,
+      ...attributionOf({
+        executionIntentId: order.executionIntentId,
+        exitOfIntentId: order.exitOfIntentId,
+        executionIntent: order.executionIntent,
+        exitOfIntent: order.exitOfIntent,
+      }),
+    }));
+  }
+
+  /**
+   * Closes an expired option position at its cash-settlement value.
+   *
+   * An expired contract has no market: `MarketPriceService.getOptionPrice`
+   * throws once the exchange drops the chain, so `exitPosition` can never
+   * succeed and the position — and the margin it blocks — would be stranded
+   * forever. Exchanges cash-settle index options at intrinsic value against the
+   * underlying's expiry-day close, and this does the same through the one fill
+   * path (`executeFill`), so P&L, margin release and the wallet all move exactly
+   * as they do for any other close.
+   *
+   * `settlementPrice` is supplied by the caller (`SquareOffService`) from real
+   * data. It is never invented here.
+   */
+  async settleExpiredPosition(
+    userId: string,
+    instrumentId: string,
+    productType: ProductType,
+    settlementPrice: number,
+  ): Promise<Order> {
+    if (!(settlementPrice >= 0) || !Number.isFinite(settlementPrice)) {
+      throw new BadRequestException('Settlement price must be a non-negative number');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const position = await tx.position.findUnique({
+        where: { userId_instrumentId_productType: { userId, instrumentId, productType } },
+        include: { instrument: true },
+      });
+      if (!position || position.quantity === 0) throw new NotFoundException('No open position to settle');
+      const qty = Math.abs(position.quantity);
+      const order = await tx.order.create({
+        data: {
+          userId,
+          instrumentId,
+          side: position.quantity > 0 ? 'SELL' : 'BUY',
+          type: 'MARKET',
+          validity: 'IOC',
+          productType,
+          status: 'PENDING',
+          quantity: qty,
+        },
+      });
+      return this.executeFill(tx, order, position.instrument, settlementPrice, qty);
     });
   }
 }

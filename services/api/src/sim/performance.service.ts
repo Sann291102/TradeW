@@ -204,13 +204,27 @@ export class PerformanceService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * The account's reset epoch (see PaperWallet.resetAt) and the IST day it falls
+   * on, or nulls if it has never been reset. Everything below counts from here:
+   * a reset restores the capital but keeps the trade rows, so without this
+   * boundary the pre-reset losses would still be subtracted from the new balance.
+   */
+  private async epochOf(userId: string): Promise<{ at: Date | null; dayKey: string | null }> {
+    const wallet = await this.prisma.paperWallet.findUnique({ where: { userId }, select: { resetAt: true } });
+    const at = wallet?.resetAt ?? null;
+    return { at, dayKey: at ? istDateKey(at) : null };
+  }
+
   /** The previous trading day's captured closingValue, or — if none exists
    *  yet (first-ever snapshot) — netWorth minus today's own dailyPnl, i.e.
    *  today's opening mark. Best-effort by construction: there is nothing
    *  more authoritative to open a brand-new account's history from. */
   private async openingValueFor(userId: string, dateKey: string, fallback: number): Promise<number> {
+    const { dayKey: epochDay } = await this.epochOf(userId);
     const prior = await this.prisma.portfolioSnapshot.findFirst({
-      where: { userId, dateKey: { lt: dateKey } },
+      // Snapshots on or before the reset day describe the old account.
+      where: { userId, dateKey: { lt: dateKey, ...(epochDay ? { gt: epochDay } : {}) } },
       orderBy: { dateKey: 'desc' },
     });
     return prior ? Number(prior.closingValue) : round2(fallback);
@@ -221,7 +235,9 @@ export class PerformanceService implements OnModuleInit, OnModuleDestroy {
     dateKey: string,
   ): Promise<{ realizedPnl: number; charges: number; tradesCount: number; winCount: number; lossCount: number }> {
     const { start, end } = dayBoundsUtc(dateKey);
-    const trades = await this.prisma.trade.findMany({ where: { userId, executedAt: { gte: start, lt: end } } });
+    const { at: epoch } = await this.epochOf(userId);
+    const from = epoch && epoch > start ? epoch : start;
+    const trades = await this.prisma.trade.findMany({ where: { userId, executedAt: { gte: from, lt: end } } });
     const closing = trades.filter((t) => t.realizedPnl != null);
     return {
       realizedPnl: round2(closing.reduce((a, t) => a + Number(t.realizedPnl), 0)),
@@ -239,7 +255,10 @@ export class PerformanceService implements OnModuleInit, OnModuleDestroy {
    *  this is realized-P&L-only, unrealizedPnl always 0). */
   private async derivedDay(userId: string, dateKey: string, startingBalance: number): Promise<DiaryEntry> {
     const { end } = dayBoundsUtc(dateKey);
-    const upToTrades = await this.prisma.trade.findMany({ where: { userId, executedAt: { lt: end } } });
+    const { at: epoch } = await this.epochOf(userId);
+    const upToTrades = await this.prisma.trade.findMany({
+      where: { userId, executedAt: { lt: end, ...(epoch ? { gte: epoch } : {}) } },
+    });
     const upToClosing = upToTrades.filter((t) => t.realizedPnl != null);
     const cumulativeRealized = round2(upToClosing.reduce((a, t) => a + Number(t.realizedPnl), 0));
     const cumulativeCharges = round2(upToTrades.reduce((a, t) => a + Number(t.charges), 0));
@@ -272,8 +291,10 @@ export class PerformanceService implements OnModuleInit, OnModuleDestroy {
     dateKey: string,
   ): Promise<{ best: DiaryEntry['bestPerformer']; worst: DiaryEntry['worstPerformer'] }> {
     const { start, end } = dayBoundsUtc(dateKey);
+    const { at: epoch } = await this.epochOf(userId);
+    const from = epoch && epoch > start ? epoch : start;
     const closing = await this.prisma.trade.findMany({
-      where: { userId, executedAt: { gte: start, lt: end }, realizedPnl: { not: null } },
+      where: { userId, executedAt: { gte: from, lt: end }, realizedPnl: { not: null } },
       include: { instrument: true },
     });
     if (closing.length === 0) return { best: null, worst: null };
@@ -288,9 +309,13 @@ export class PerformanceService implements OnModuleInit, OnModuleDestroy {
   }
 
   async overview(userId: string): Promise<PerformanceOverview> {
+    const { dayKey: epochDay } = await this.epochOf(userId);
     const [summary, prevSnapshot, lifetime] = await Promise.all([
       this.portfolio.summary(userId),
-      this.prisma.portfolioSnapshot.findFirst({ where: { userId, dateKey: { lt: istDateKey() } }, orderBy: { dateKey: 'desc' } }),
+      this.prisma.portfolioSnapshot.findFirst({
+        where: { userId, dateKey: { lt: istDateKey(), ...(epochDay ? { gt: epochDay } : {}) } },
+        orderBy: { dateKey: 'desc' },
+      }),
       this.lifetimeTradeStats(userId),
     ]);
     const prevClose = prevSnapshot ? Number(prevSnapshot.closingValue) : summary.startingBalance;
@@ -317,10 +342,12 @@ export class PerformanceService implements OnModuleInit, OnModuleDestroy {
    *  realizedPnl set — same "closing trade" convention TradeHistoryService
    *  uses) and the win/loss split among them. */
   private async lifetimeTradeStats(userId: string): Promise<{ totalTrades: number; winCount: number; lossCount: number }> {
+    const { at: epoch } = await this.epochOf(userId);
+    const since = epoch ? { executedAt: { gte: epoch } } : {};
     const [totalTrades, winCount, lossCount] = await Promise.all([
-      this.prisma.trade.count({ where: { userId, realizedPnl: { not: null } } }),
-      this.prisma.trade.count({ where: { userId, realizedPnl: { gt: 0 } } }),
-      this.prisma.trade.count({ where: { userId, realizedPnl: { lt: 0 } } }),
+      this.prisma.trade.count({ where: { userId, ...since, realizedPnl: { not: null } } }),
+      this.prisma.trade.count({ where: { userId, ...since, realizedPnl: { gt: 0 } } }),
+      this.prisma.trade.count({ where: { userId, ...since, realizedPnl: { lt: 0 } } }),
     ]);
     return { totalTrades, winCount, lossCount };
   }
@@ -364,13 +391,25 @@ export class PerformanceService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async earliestDateKey(userId: string): Promise<string> {
-    const firstTrade = await this.prisma.trade.findFirst({ where: { userId }, orderBy: { executedAt: 'asc' } });
-    return firstTrade ? istDateKey(firstTrade.executedAt) : istDateKey();
+    const { at: epoch, dayKey: epochDay } = await this.epochOf(userId);
+    const firstTrade = await this.prisma.trade.findFirst({
+      where: { userId, ...(epoch ? { executedAt: { gte: epoch } } : {}) },
+      orderBy: { executedAt: 'asc' },
+    });
+    const firstDay = firstTrade ? istDateKey(firstTrade.executedAt) : null;
+    // After a reset the history starts at the reset day even before the first
+    // new trade, so charts begin at the restored balance, not the old account.
+    if (epochDay) return firstDay && firstDay > epochDay ? firstDay : epochDay;
+    return firstDay ?? istDateKey();
   }
 
   private async dayEntry(userId: string, dateKey: string, startingBalance: number): Promise<DiaryEntry> {
+    const { dayKey: epochDay } = await this.epochOf(userId);
     const snapshot = await this.prisma.portfolioSnapshot.findUnique({ where: { userId_dateKey: { userId, dateKey } } });
-    if (!snapshot) return this.derivedDay(userId, dateKey, startingBalance);
+    // A snapshot on or before the reset day was taken against the old account
+    // (its opening value is create-only and survives a mid-day reset), so that
+    // day is rebuilt from the post-reset trades instead.
+    if (!snapshot || (epochDay != null && dateKey <= epochDay)) return this.derivedDay(userId, dateKey, startingBalance);
 
     const movers = await this.dayMovers(userId, dateKey);
     return {

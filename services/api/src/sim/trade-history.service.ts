@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { OrderSide, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ATTRIBUTION_INCLUDE, attributionOf, type OrderRole, type OrderSource } from './order-attribution';
 
 const MAX_PAGE_SIZE = 200;
 const DEFAULT_PAGE_SIZE = 50;
@@ -34,9 +35,31 @@ export interface TradeHistoryRow {
   netPnl: number;
   charges: number;
   executedAt: string;
+  /** Whether a person or a Sentinel agent closed this trade. */
+  source: OrderSource;
+  agent: string | null;
+  role: OrderRole | null;
+  exitReason: string | null;
 }
 
-type ClosingTrade = Prisma.TradeGetPayload<{ include: { instrument: true; order: { select: { productType: true } } } }>;
+const TRADE_INCLUDE = {
+  instrument: true,
+  order: {
+    select: { productType: true, executionIntentId: true, exitOfIntentId: true, ...ATTRIBUTION_INCLUDE },
+  },
+} satisfies Prisma.TradeInclude;
+
+type ClosingTrade = Prisma.TradeGetPayload<{ include: typeof TRADE_INCLUDE }>;
+
+function pickAttribution(t: ClosingTrade) {
+  const a = attributionOf({
+    executionIntentId: t.order.executionIntentId,
+    exitOfIntentId: t.order.exitOfIntentId,
+    executionIntent: t.order.executionIntent,
+    exitOfIntent: t.order.exitOfIntent,
+  });
+  return { source: a.source, agent: a.agent, role: a.role, exitReason: a.exitReason };
+}
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -118,6 +141,7 @@ export class TradeHistoryService {
       netPnl: round2(realizedPnl),
       charges: round2(Number(t.charges)),
       executedAt: t.executedAt.toISOString(),
+      ...pickAttribution(t),
     };
   }
 
@@ -129,7 +153,7 @@ export class TradeHistoryService {
     const [trades, total] = await Promise.all([
       this.prisma.trade.findMany({
         where,
-        include: { instrument: true, order: { select: { productType: true } } },
+        include: TRADE_INCLUDE,
         orderBy: { executedAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -144,7 +168,7 @@ export class TradeHistoryService {
     const where = this.buildWhere(userId, filters);
     const trades = await this.prisma.trade.findMany({
       where,
-      include: { instrument: true, order: { select: { productType: true } } },
+      include: TRADE_INCLUDE,
       orderBy: { executedAt: 'desc' },
       take: CSV_ROW_LIMIT,
     });
@@ -161,9 +185,9 @@ function csvCell(value: string | number): string {
 }
 
 function toCsv(rows: TradeHistoryRow[]): string {
-  const header = ['Date & Time', 'Symbol', 'Side', 'Product', 'Quantity', 'Entry Price', 'Exit Price', 'Net P&L', 'Charges'];
+  const header = ['Date & Time', 'Symbol', 'Side', 'Product', 'Quantity', 'Entry Price', 'Exit Price', 'Net P&L', 'Charges', 'Source'];
   const lines = rows.map((r) =>
-    [r.executedAt, r.symbol, r.side, r.productType, r.quantity, r.entryPrice, r.exitPrice, r.netPnl, r.charges].map(csvCell).join(','),
+    [r.executedAt, r.symbol, r.side, r.productType, r.quantity, r.entryPrice, r.exitPrice, r.netPnl, r.charges, r.source === 'AGENT' ? `Agent${r.exitReason ? ` (${r.exitReason})` : ''}` : 'Manual'].map(csvCell).join(','),
   );
   return [header.join(','), ...lines].join('\r\n');
 }

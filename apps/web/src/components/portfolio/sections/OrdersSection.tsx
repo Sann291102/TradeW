@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { Badge, EmptyState, Skeleton, buttonClasses, cn } from '@tradew/ui';
-import { fmt } from '@/lib/format';
+import { fmt, inr } from '@/lib/format';
+import { OrderSourceBadge } from '../OrderSourceBadge';
 import { PRODUCT_TYPE_LABELS, type OrderDto, type OrderStatus, cancelOrder, modifyOrder } from '@/lib/oms';
 import { useInvalidateTradingData, useOrders, useSignedIn } from '@/lib/query/usePortfolio';
 
@@ -96,15 +97,17 @@ export function OrdersSection() {
         </div>
       ) : orders && orders.length > 0 ? (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-left text-xs">
+          <table className="w-full min-w-[1000px] text-left text-xs">
             <thead>
               <tr className="text-[10px] uppercase tracking-wide text-faint">
                 <th className="py-2 pr-3">Symbol</th>
                 <th className="py-2 pr-3">Type</th>
+                <th className="py-2 pr-3">Placed by</th>
                 <th className="py-2 pr-3">Product</th>
                 <th className="py-2 pr-3 text-right">Qty</th>
                 <th className="py-2 pr-3 text-right">Filled</th>
                 <th className="py-2 pr-3 text-right">Price</th>
+                <th className="py-2 pr-3 text-right" title="Simulated charges on this order">Charges</th>
                 <th className="py-2 pr-3">Status</th>
                 <th className="py-2 pr-3">Time</th>
                 <th className="py-2 pl-3 text-right">Actions</th>
@@ -119,11 +122,17 @@ export function OrdersSection() {
                   <td className="py-2.5 pr-3">
                     {o.side} {o.type}
                   </td>
+                  <td className="py-2.5 pr-3">
+                    <OrderSourceBadge order={o} />
+                  </td>
                   <td className="py-2.5 pr-3">{PRODUCT_TYPE_LABELS[o.productType]}</td>
                   <td className="py-2.5 pr-3 text-right font-mono tabular-nums">{o.quantity}</td>
                   <td className="py-2.5 pr-3 text-right font-mono tabular-nums">{o.filledQuantity}</td>
                   <td className="py-2.5 pr-3 text-right font-mono tabular-nums">
                     {o.avgFillPrice ? fmt(Number(o.avgFillPrice)) : o.price ? fmt(Number(o.price)) : 'Market'}
+                  </td>
+                  <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-muted">
+                    {o.status === 'FILLED' ? inr(Number(o.charges), 2) : '—'}
                   </td>
                   <td className="py-2.5 pr-3">
                     <Badge tone={statusTone(o.status)} className="px-1.5 py-0 text-[9px]">

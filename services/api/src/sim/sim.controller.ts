@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiProperty, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { IsEnum, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { OrderSide, OrderStatus, OrderType, OrderValidity, ProductType } from '@prisma/client';
@@ -7,6 +7,7 @@ import { SECURITY } from '../swagger/swagger.setup';
 import { OrderService } from './order.service';
 import { PositionService } from './position.service';
 import { PortfolioService } from './portfolio.service';
+import { WalletResetService } from './wallet-reset.service';
 
 /**
  * The `@ApiProperty` decorators below are written by hand rather than inferred.
@@ -135,6 +136,7 @@ export class SimController {
     private readonly orderService: OrderService,
     private readonly positionService: PositionService,
     private readonly portfolioService: PortfolioService,
+    private readonly walletReset: WalletResetService,
   ) {}
 
   @Post('orders')
@@ -168,6 +170,19 @@ export class SimController {
   @Delete('orders/:id')
   cancel(@Req() req: any, @Param('id') id: string) {
     return this.orderService.cancelOrder(req.user.sub, id);
+  }
+
+  /**
+   * Resets the paper account to ₹10,00,000 with nothing open. Destructive to the
+   * live book (positions closed, resting orders cancelled), so the body must say
+   * `{ "confirm": true }` — an accidental bare POST does nothing.
+   */
+  @Post('wallet/reset')
+  resetWallet(@Req() req: any, @Body() body: { confirm?: boolean }) {
+    if (body?.confirm !== true) {
+      throw new BadRequestException('Send { "confirm": true } to reset your balance to ₹10,00,000.');
+    }
+    return this.walletReset.reset(req.user.sub);
   }
 
   @Get('trades')

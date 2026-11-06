@@ -5,6 +5,7 @@ import { Card } from '@tradew/ui';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { useSettingsStore } from '@/lib/store/settingsStore';
 import { SettingsSection } from '@/components/settings/SettingsSection';
+import { ResetBalanceCard } from './ResetBalanceCard';
 import { SaveStatus, Select, SettingRow, SignInRequired, Toggle } from '@/components/settings/controls';
 
 /**
@@ -147,6 +148,7 @@ export function TradingSection() {
           </li>
         </ul>
       </Card>
+      <ResetBalanceCard />
     </SettingsSection>
   );
 }

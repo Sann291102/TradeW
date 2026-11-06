@@ -11,6 +11,8 @@ import { MatchingEngineService } from './matching-engine.service';
 import { PositionService } from './position.service';
 import { PortfolioService } from './portfolio.service';
 import { SettlementService } from './settlement.service';
+import { SquareOffService } from './square-off.service';
+import { WalletResetService } from './wallet-reset.service';
 import { HoldingsService } from './holdings.service';
 import { TradeHistoryService } from './trade-history.service';
 import { PerformanceService } from './performance.service';
@@ -36,6 +38,8 @@ import { EodSummaryService } from './eod-summary.service';
     PositionService,
     PortfolioService,
     SettlementService,
+    SquareOffService,
+    WalletResetService,
     HoldingsService,
     TradeHistoryService,
     PerformanceService,

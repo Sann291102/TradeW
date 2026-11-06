@@ -18,6 +18,7 @@ import {
   useSignedIn,
   useTrades,
 } from '@/lib/query/usePortfolio';
+import { OrderSourceBadge } from '@/components/portfolio/OrderSourceBadge';
 import type { DockPanelContentProps } from './types';
 
 /**
@@ -257,6 +258,7 @@ function Orders({ rows, onCancel }: { rows: OrderDto[] | null; onCancel: (id: st
                 <Badge tone={o.status === 'REJECTED' ? 'warning' : live ? 'brand' : 'neutral'} className="px-1 py-0 text-[8px]">
                   {o.status.replace('_', ' ')}
                 </Badge>
+                <OrderSourceBadge order={o} compact />
               </div>
               <div className="font-mono text-[10px] tabular-nums text-faint">
                 {o.filledQuantity}/{o.quantity} · {o.type}
@@ -295,6 +297,7 @@ function Trades({ rows }: { rows: TradeDto[] | null }) {
                 <span className="truncate text-[11px] font-semibold text-text">
                   {t.instrument?.displayName ?? t.instrument?.symbol ?? t.instrumentId}
                 </span>
+                <OrderSourceBadge order={t} compact />
               </div>
               <div className="font-mono text-[10px] tabular-nums text-faint">
                 {t.quantity} @ {fmt(Number(t.fillPrice))} · {timeLabel(t.executedAt)} · charges {inr(Number(t.charges), 2)}

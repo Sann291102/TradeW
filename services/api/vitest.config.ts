@@ -91,6 +91,9 @@ export default defineConfig({
       'src/sim/trade-history.spec.ts',
       // Performance's percent-return arithmetic.
       'src/sim/performance.spec.ts',
+      'src/sim/order-attribution.spec.ts',
+      'src/sim/square-off-policy.spec.ts',
+      'src/sim/wallet-reset.spec.ts',
       // Position Management "Convert product type" merge math.
       'src/sim/position-convert.spec.ts',
       // Sentinel paper execution. Two pure modules, both load-bearing:

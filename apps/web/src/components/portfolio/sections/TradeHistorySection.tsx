@@ -8,6 +8,7 @@ import { type TradeHistoryFilters, downloadTradeHistoryCsv, fetchTradeHistory } 
 import { qk } from '@/lib/query/keys';
 import { useSignedIn } from '@/lib/query/usePortfolio';
 import { Pagination } from '../Pagination';
+import { OrderSourceBadge } from '../OrderSourceBadge';
 
 const PAGE_SIZE = 25;
 
@@ -152,11 +153,12 @@ export function TradeHistorySection() {
                   <th className="py-2 pr-3">Date &amp; Time</th>
                   <th className="py-2 pr-3">Symbol</th>
                   <th className="py-2 pr-3">Side</th>
+                  <th className="py-2 pr-3">Closed by</th>
                   <th className="py-2 pr-3 text-right">Qty</th>
                   <th className="py-2 pr-3 text-right">Entry Price</th>
                   <th className="py-2 pr-3 text-right">Exit Price</th>
                   <th className="py-2 pr-3 text-right">Net P&L</th>
-                  <th className="py-2 pl-3 text-right">Charges</th>
+                  <th className="py-2 pl-3 text-right" title="Simulated charges">Charges</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -168,6 +170,9 @@ export function TradeHistorySection() {
                       <Badge tone={r.side === 'BUY' ? 'positive' : 'negative'} className="px-1.5 py-0 text-[9px]">
                         {r.side}
                       </Badge>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <OrderSourceBadge order={r} />
                     </td>
                     <td className="py-2 pr-3 text-right font-mono tabular-nums">{r.quantity}</td>
                     <td className="py-2 pr-3 text-right font-mono tabular-nums">{fmt(r.entryPrice)}</td>

@@ -25,6 +25,33 @@ export type OrderStatus =
   | 'REJECTED'
   | 'EXPIRED';
 
+/**
+ * Who produced an order, derived server-side from the intent links on the row
+ * (services/api/src/sim/order-attribution.ts). An agent's position is two orders
+ * — the entry and the exit — and both are labelled AGENT so neither is mistaken
+ * for a manual trade.
+ */
+export interface OrderAttribution {
+  source: 'AGENT' | 'MANUAL';
+  /** Sentinel agent identity, e.g. `sentinel-alpha`. Null for a manual order. */
+  agent?: string | null;
+  role?: 'ENTRY' | 'EXIT' | null;
+  /** Why the agent exited (STOP, TARGET, TRAIL, SQUARE_OFF, EXPIRY…). Null for an entry. */
+  exitReason?: string | null;
+}
+
+/** Wording for `exitReason`; unknown values are shown as sent, never hidden. */
+export const AGENT_EXIT_REASON_LABELS: Record<string, string> = {
+  STOP: 'Stop-loss',
+  TARGET: 'Target hit',
+  TRAIL: 'Trailing stop',
+  INVALIDATED: 'Setup invalidated',
+  SQUARE_OFF: 'Square-off',
+  EMERGENCY: 'Emergency exit',
+  EXPIRY: 'Expiry',
+  MANUAL: 'Closed manually',
+};
+
 export interface PlaceOrderRequest {
   symbol: string;
   side: OrderSide;
@@ -36,7 +63,7 @@ export interface PlaceOrderRequest {
   triggerPrice?: number;
 }
 
-export interface OrderDto {
+export interface OrderDto extends OrderAttribution {
   id: string;
   symbol?: string;
   instrumentId: string;
@@ -80,7 +107,7 @@ export interface PositionDto {
  * over the wire (Prisma serialises Decimal that way) — callers must Number()
  * them rather than assuming a numeric type.
  */
-export interface TradeDto {
+export interface TradeDto extends OrderAttribution {
   id: string;
   orderId: string;
   instrumentId: string;
@@ -130,7 +157,7 @@ export interface HoldingDto {
   priceStatus: 'live' | 'stale';
 }
 
-export interface TradeHistoryRow {
+export interface TradeHistoryRow extends OrderAttribution {
   id: string;
   instrumentId: string;
   symbol: string;
@@ -275,6 +302,19 @@ export interface ModifyOrderRequest {
 
 export function modifyOrder(orderId: string, patch: ModifyOrderRequest): Promise<OrderDto> {
   return api(`/sim/orders/${orderId}`, { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
+export interface WalletResetResult {
+  balance: number;
+  cancelledOrders: number;
+  closedPositions: number;
+  clearedHoldings: number;
+}
+
+/** Puts the paper account back to ₹10,00,000 with nothing open. The server
+ *  refuses without `confirm: true`, so a stray call cannot wipe a book. */
+export function resetWallet(): Promise<WalletResetResult> {
+  return api('/sim/wallet/reset', { method: 'POST', body: JSON.stringify({ confirm: true }) });
 }
 
 export function fetchTrades(): Promise<TradeDto[]> {
