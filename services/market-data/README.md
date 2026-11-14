@@ -2,7 +2,7 @@
 
 The market data **ingestion runtime**. Owns the feed connection, writes `Quote`,
 and syncs the instrument master. Implemented in Phase 1 of
-[`DHAN-MARKET-DATA-INTEGRATION.md`](../../docs/product-architecture/DHAN-MARKET-DATA-INTEGRATION.md).
+`DHAN-MARKET-DATA-INTEGRATION.md`.
 
 **It writes; it does not serve.** `services/api` remains the sole public ingress
 (`ARCHITECTURE.md` §1) and reads what this service persists. The only HTTP
@@ -31,7 +31,7 @@ Scale `services/api` instead — it is stateless and reads what this writes.
 ```
 
 Coalescing loses nothing: `Quote` is a latest-value snapshot
-([`MARKET-DATA-BASELINE.md`](../../docs/product-architecture/MARKET-DATA-BASELINE.md) §1),
+(`MARKET-DATA-BASELINE.md` §1),
 so intermediate ticks are not history. Per-minute aggregation into `Candle` is
 Migration 2.
 

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { parseFrontmatter, splitFrontmatter, type ParsedValue } from './frontmatter';
 import type { LegAction, LegExpiry, LegKind, Lesson, NetFlow, Strategy, StrategyLeg, Tier } from './types';
@@ -98,6 +98,14 @@ function parseGreeks(value: ParsedValue | undefined, file: string): Record<strin
 
 function markdownFilesIn(dir: string): string[] {
   const out: string[] = [];
+  // `docs/` is private company content kept out of the public repository, so a
+  // fresh clone has no `docs/learning`. That is an empty catalog, not a broken
+  // build: the learning and trade routes render with no strategies until the
+  // content is copied back in. Malformed lessons still fail the build below.
+  if (dir === LEARNING_ROOT && !existsSync(dir)) {
+    console.warn(`Learning catalog: ${LEARNING_ROOT} not found — building with no lessons or strategies.`);
+    return out;
+  }
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) out.push(...markdownFilesIn(full));

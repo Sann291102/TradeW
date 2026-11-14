@@ -7,11 +7,10 @@ create, overwrite, or migrate the existing PostgreSQL server.
 
 ## What is already known
 
-- PostgreSQL host: `tradew.postgres.database.azure.com`
-- Database: `postgres`
-- App Service hostname: `tradew-dscvgqe3dwhkgqax.eastus2-01.azurewebsites.net`
+- PostgreSQL: an existing Azure Database for PostgreSQL Flexible Server (host name kept in the private deployment notes, not in Git)
+- App Service: an existing Azure Web App in East US 2 (host name kept privately)
 
-Those values are identifiers, not deployment configuration. Store the complete
+Keep real host names out of this repository. Store the complete
 PostgreSQL connection string in Key Vault as `database-url`; never add a real
 password to Git, a Bicep parameter file, terminal history, or CI logs.
 
@@ -21,7 +20,7 @@ password to Git, a Bicep parameter file, terminal history, or CI logs.
    production region. The supplied App Service is in East US 2, while the
    proposed design is Central India; this is a latency and data-movement
    decision that must be explicit.
-2. Confirm that `tradew.postgres.database.azure.com` is the intended Flexible
+2. Confirm that the existing PostgreSQL host is the intended Flexible
    Server and that its network policy permits the new Container Apps VNet. Do
    not disable public access or change firewall rules until the private path has
    been tested.

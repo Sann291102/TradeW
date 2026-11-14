@@ -2,7 +2,7 @@
 
 `@tradew/market-data` — the shared **market-data engine**: one place for provider/feed contracts, the single simulated market, the Dhan adapter (including the hand-written WebSocket binary parser), and the ingestion primitives.
 
-Exists to resolve the duplicate-simulator debt in [`docs/product-architecture/MARKET-DATA-BASELINE.md`](../../docs/product-architecture/MARKET-DATA-BASELINE.md) §7 without duplicating business logic across three services, per [`ARCHITECTURE.md`](../../ARCHITECTURE.md) §6 (shared libraries live in `packages/`, runtimes in `services/`). Pure TypeScript library — consumed by its built `dist/` entrypoint.
+Exists to resolve the duplicate-simulator debt in `docs/product-architecture/MARKET-DATA-BASELINE.md` §7 without duplicating business logic across three services, per `ARCHITECTURE.md` §6 (shared libraries live in `packages/`, runtimes in `services/`). Pure TypeScript library — consumed by its built `dist/` entrypoint.
 
 Consumed by:
 - **`services/market-data`** — the ingestion runtime (writes) + the standalone live Dhan feed bridge scripts
@@ -24,7 +24,7 @@ Consumed by:
 
 ## The Dhan binary parser
 
-`providers/dhan/dhan-binary-parser.ts` decodes Dhan's live WebSocket binary frames into ticks by hand. It is verified by `scripts/verify-parser.ts` (`npm run verify`), which doubled as the repo's earliest real test-like artifact. See the [Dhan token architecture](../../docs/product-architecture/DHAN-MARKET-DATA-INTEGRATION.md) for how the 24h feed token is minted.
+`providers/dhan/dhan-binary-parser.ts` decodes Dhan's live WebSocket binary frames into ticks by hand. It is verified by `scripts/verify-parser.ts` (`npm run verify`), which doubled as the repo's earliest real test-like artifact. See the Dhan token architecture for how the 24h feed token is minted.
 
 ## Build / test
 

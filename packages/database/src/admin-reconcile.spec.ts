@@ -32,7 +32,7 @@ describe('planReconcile', () => {
   it('matches the keep list case-insensitively', () => {
     // The bulk grant upserted raw strings, so a database written by it can
     // hold mixed case that signup would have lower-cased.
-    const plan = planReconcile([row('Vivek.Sannidhi29@Gmail.com')], ['vivek.sannidhi29@gmail.com']);
+    const plan = planReconcile([row('Trader.One@Example.com')], ['trader.one@example.com']);
     expect(plan.revoke).toEqual([]);
     expect(plan.keep).toHaveLength(1);
   });

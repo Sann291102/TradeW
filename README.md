@@ -36,7 +36,7 @@ _Last updated 2026-11-14._
 | **Core platform** | Markets, charts, option chains, watchlists, a full paper OMS (orders, positions, holdings, P&L, margin), portfolio and reports | `apps/web` + `services/api` |
 | **Market data** | Live Dhan feed bridge, last-valid-price recovery when the market is closed, a multi-market tradable universe | `services/market-data` + `packages/market-data` |
 | **Sentinel** | Observation-only intelligence: market/technical intelligence, trap and behaviour detection, timeline, backtests. It never gates or delays a person's order | `services/sentinel` (TS) + `services/sentinel-py` (Python strategy watcher) |
-| **Autonomous paper agents** | A mandated loop that turns a Sentinel observation into a *paper* order and manages it to exit — off unless two separate switches are on ([ADR-046](docs/AUTONOMOUS-TRADING.md)) | `services/api/src/paper-execution` |
+| **Autonomous paper agents** | A mandated loop that turns a Sentinel observation into a *paper* order and manages it to exit — off unless two separate switches are on (ADR-046) | `services/api/src/paper-execution` |
 | **TradeW AI assistant** | A natural-language copilot that drives the app (navigate, open contracts, chart control) and verifies its own actions. It has no order tool | `services/tradew-ai` + `apps/web/src/lib/assistant` |
 | **Discipline** | Per-session trade/loss limits, cooldowns, a friction prompt with a signed override | `services/api/src/discipline` |
 | **Learning** | Courses, concepts, strategy library | `apps/web/(workspace)/learning` + `services/api/src/learning` |
@@ -98,7 +98,7 @@ Product principles that the code enforces (not just documents): no surface tells
 | Market-data bridge | `@tradew/market-data-service` | 4600 | `npm run dev:market-data` | Needs Dhan credentials for live prices |
 | Postgres (dev) | `infra/docker/docker-compose.yml` | 5433 | `docker compose up -d` | `pgvector/pgvector:pg16`, pgAdmin on 5050 |
 
-All of these are also defined in [`.claude/launch.json`](.claude/launch.json) with pinned ports, plus `personas-api` (4100) and `personas-web` (3100) for the isolated test stack.
+For an isolated test stack (see §10) use API port 4100, web port 3100 and Postgres on 5435.
 
 ### Design rules
 
@@ -107,7 +107,7 @@ All of these are also defined in [`.claude/launch.json`](.claude/launch.json) wi
 - **Leader-gated background jobs.** Every timer in the API registers with `LeaderElectionService`, so two API replicas never run the same sweep twice.
 - **Shared packages are consumed built.** `@tradew/types`, `@tradew/database`, `@tradew/ai-core` and `@tradew/market-data` are built by `postinstall` in dependency order; their `dist/` is gitignored.
 
-The full target architecture, service boundaries and open questions are in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+The full target architecture, service boundaries and open questions are in the private architecture document (§3.1).
 
 ---
 
@@ -117,7 +117,6 @@ The full target architecture, service boundaries and open questions are in [`ARC
 apps/
   web/              Next.js 14 trader workspace (the product)
   admin/            Next.js operator console
-  mobile/           placeholder (README only)
 services/
   api/              NestJS — the API and everything that owns money
   sentinel/         NestJS — observation-only intelligence desk
@@ -125,27 +124,31 @@ services/
   tradew-ai/        NestJS — assistant runtime
   market-data/      live Dhan feed bridge + ingestion runtime
   company-data/     company-filings ingestion runtime
-  trading-engine/   README only (the OMS lives in services/api/src/sim)
-  analytics/ auth/ notification/   contract boundaries / placeholders (README only)
 packages/
   database/         Prisma schema (83 models), 45 migrations, seed
   market-data/      provider/feed contracts, Dhan adapter, simulated market
   ai-core/          providers, memory, RAG, research foundation
   types/            shared TypeScript contracts
   ui/               design-system tokens and primitives
-  sdk/ shared/      placeholders (README only)
-agents/             declarative agent definitions (tradew-ai is loaded; sentinel is inert — see agents/README.md)
-workflows/          n8n workflow exports (empty — see §11.4)
 infra/              docker (dev + prod compose, Caddy), azure (Bicep), terraform (AWS), oci, k8s notes
-scripts/            preflight, dev-reset, start-all-with-tunnels, load test, ad/explainer render harness
+scripts/            preflight, dev-reset, start-all-with-tunnels, load test
 tests/personas/     virtual customers: Playwright personas against an isolated stack
-docs/               handbook, product architecture, ADRs, runbooks, audits, security
-knowledge/          Obsidian vault — decisions, patterns, gotchas, research
-knowledge-base/     learning content
-archive/            superseded code, kept for reference (never imported)
 ```
 
-Root documents: [`ARCHITECTURE.md`](ARCHITECTURE.md) (target architecture), [`REPOSITORY_INVENTORY.md`](REPOSITORY_INVENTORY.md) (A–Z file inventory), [`SENTINEL_MASTER_PLAN.md`](SENTINEL_MASTER_PLAN.md) (Sentinel blueprint, cited by code comments), [`SENTINEL_ROOT_CAUSE_AND_PERMANENT_FIX.md`](SENTINEL_ROOT_CAUSE_AND_PERMANENT_FIX.md) (feed-reliability audit, cited by tests). One-off audit reports live under [`docs/audits/`](docs/audits/).
+### 3.1 Private content (not in this repository)
+
+Company documents and content are kept out of this public repository. They live with the owner and are git-ignored, so they can never be committed by accident:
+
+| Path | What it is | What reads it |
+|---|---|---|
+| `docs/` | Handbook, product architecture, ADRs, runbooks, audits, security, learning lessons, trading books | Web learning catalog (`docs/learning`, at build time); Sentinel's citation corpus (`docs/handbook`, `docs/product-architecture`, `docs/Trading Books`) |
+| `knowledge/` | Engineering vault — decisions, patterns, gotchas, research | Admin **Knowledge** workspace; Sentinel's corpus |
+| `knowledge-base/` | Market-concept ontology | Sentinel's ontology and corpus |
+| `agents/` | Agent definitions | `services/tradew-ai` (assistant planner); admin agent graph |
+| `archive/`, `ARCHITECTURE.md`, `REPOSITORY_INVENTORY.md`, `SENTINEL_*.md` | Superseded code, plans and audits | Nothing (code comments only) |
+| `scripts/cutting-room/`, `scripts/explainer/`, `workflows/`, placeholder service/package folders, `.claude/launch.json`, `.codex/` | Marketing render tools, n8n exports, plans, local tool config | Nothing |
+
+**Without it the app still builds and runs**, but with these features empty: the Learning strategy pages and the strategy list on Trade, Sentinel's citations and ontology, the admin Knowledge workspace and agent graph, and the AI assistant's planner (it falls back to its deterministic commands). **To restore them**, copy the private content back into the checkout at the same paths before starting or building (Docker images are built from the local checkout, so a Sentinel image built after restoring includes its corpus).
 
 ---
 
@@ -180,7 +183,7 @@ The in-app **assistant** is available on every workspace page and can navigate, 
 
 ### Autonomous paper agents (`services/api/src/paper-execution`)
 
-Execution profiles bind an agent to a consenting account, symbol and risk budget. The loop evaluates Sentinel observations, enforces policy, freshness and risk gates, places paper orders, manages exits, journals every decision and calibrates from outcomes. It runs only when `PAPER_EXECUTION_ENABLED=true` **and** a profile is armed in the admin console. Diagnosis guide: [`docs/AUTONOMOUS-TRADING.md`](docs/AUTONOMOUS-TRADING.md).
+Execution profiles bind an agent to a consenting account, symbol and risk budget. The loop evaluates Sentinel observations, enforces policy, freshness and risk gates, places paper orders, manages exits, journals every decision and calibrates from outcomes. It runs only when `PAPER_EXECUTION_ENABLED=true` **and** a profile is armed in the admin console. Diagnosis guide: `docs/AUTONOMOUS-TRADING.md`.
 
 ### Sentinel (`services/sentinel`, `services/sentinel-py`)
 
@@ -209,11 +212,11 @@ The full, always-current route list is the OpenAPI reference the API serves at *
 
 ### AI architecture
 
-Two separate systems with separate runtimes. **TradeW AI** (`services/tradew-ai`, foundation in `packages/ai-core`: providers, memory, RAG, research) powers the conversational assistant and has no order path. **Sentinel** is observation-only and deterministic: no LLM runs on its decision path. The only AI-initiated orders are the mandated *paper* agents in `services/api`. Full design: [`docs/handbook/18-ai-architecture.md`](docs/handbook/18-ai-architecture.md), [`docs/product-architecture/AGENT-LAYERS.md`](docs/product-architecture/AGENT-LAYERS.md) and [`docs/product-architecture/TRADEW-AI.md`](docs/product-architecture/TRADEW-AI.md).
+Two separate systems with separate runtimes. **TradeW AI** (`services/tradew-ai`, foundation in `packages/ai-core`: providers, memory, RAG, research) powers the conversational assistant and has no order path. **Sentinel** is observation-only and deterministic: no LLM runs on its decision path. The only AI-initiated orders are the mandated *paper* agents in `services/api`. Full design: `docs/handbook/18-ai-architecture.md`, `docs/product-architecture/AGENT-LAYERS.md` and `docs/product-architecture/TRADEW-AI.md`.
 
 ### Status and roadmap
 
-What is built, what works and what is left is tracked in [`docs/APPLICATION-STATUS.md`](docs/APPLICATION-STATUS.md) and [`docs/PROJECT-STATUS.md`](docs/PROJECT-STATUS.md); the long-range plan is [`docs/handbook/27-future-vision.md`](docs/handbook/27-future-vision.md). Not built yet: the mobile app, `services/analytics`, `services/notification` as its own service, `packages/sdk`, the Python `services/trading-engine`, and any n8n workflow.
+What is built, what works and what is left is tracked in `docs/APPLICATION-STATUS.md` and `docs/PROJECT-STATUS.md`; the long-range plan is `docs/handbook/27-future-vision.md`. Not built yet: the mobile app, `services/analytics`, `services/notification` as its own service, `packages/sdk`, the Python `services/trading-engine`, and any n8n workflow.
 
 ---
 
@@ -317,7 +320,6 @@ Web-only settings go in `apps/web/.env.local` (`NEXT_PUBLIC_API_URL`, `API_PROXY
 | `npm test` | Run every workspace's test suite |
 | `npm run db:generate` / `db:migrate` | Prisma client generation / new dev migration |
 | `npm run ontology:validate` / `ontology:seed` | Sentinel ontology checks and seeding |
-| `npm run reel:build` / `reel:render` | Render the Cutting Room ad reel to MP4 (needs Playwright + ffmpeg; see `scripts/cutting-room/README.md`) |
 
 ---
 
@@ -341,9 +343,9 @@ Web-only settings go in `apps/web/.env.local` (`NEXT_PUBLIC_API_URL`, `API_PROXY
 | Sentinel-py | `cd services/sentinel-py && python -m pytest -q` | |
 | Type checks | `npx tsc --noEmit -p <workspace>/tsconfig.json` | what CI runs |
 | Virtual customers | `cd tests/personas && npm install && node src/run.mjs` | Playwright personas using the real app in a browser; see below |
-| Load | `node scripts/loadtest/run.mjs` | see `docs/LOAD-TEST-REPORT.md` |
+| Load | `node scripts/loadtest/run.mjs` | results are kept in the private docs |
 
-**Virtual customers** ([`tests/personas`](tests/personas/README.md)) sign up through the real form and click the real buttons — `new-trader`, `options-trader`, `housekeeping` (the balance reset, cancel and confirm paths) and `agent-watcher`. They write `out/latest/report.md` and `findings.json`. Run them **only** against the isolated stack (Postgres on `127.0.0.1:5435`, API 4100, web 3100 — `personas-api` / `personas-web` in `launch.json`), with `PAPER_EXECUTION_ENABLED=false` and `SQUARE_OFF_SWEEP_ENABLED=false`. Never point them at a database with real users. Journeys that need live prices report "blocked: environment" when the Dhan bridge is not running; that is not a pass and not a product bug.
+**Virtual customers** ([`tests/personas`](tests/personas/README.md)) sign up through the real form and click the real buttons — `new-trader`, `options-trader`, `housekeeping` (the balance reset, cancel and confirm paths) and `agent-watcher`. They write `out/latest/report.md` and `findings.json`. Run them **only** against the isolated stack (Postgres on `127.0.0.1:5435`, API 4100 via `npm run dev:api` with `API_PORT=4100`, web 3100 via `npm run dev -w @tradew/web -- -p 3100`), with `PAPER_EXECUTION_ENABLED=false` and `SQUARE_OFF_SWEEP_ENABLED=false`. Never point them at a database with real users. Journeys that need live prices report "blocked: environment" when the Dhan bridge is not running; that is not a pass and not a product bug.
 
 New screens are tested for real (personas or Playwright against the running app and a real database), not through a faked API.
 
@@ -384,13 +386,13 @@ All are leader-gated, so only one API replica runs each.
 | EOD summary | End-of-day email (needs SMTP) |
 | Telemetry retention, backtest run queue | Housekeeping |
 
-### 11.4 n8n workflows (`workflows/`)
+### 11.4 n8n workflows
 
-Reserved for version-controlled n8n exports (alert fanout, KYC processing, EOD reports, on-call paging). **It is empty today**: no orchestration passes through n8n; background sequencing runs in-process (§11.3). See [`workflows/README.md`](workflows/README.md).
+None exist. No orchestration passes through n8n; background sequencing runs in-process (§11.3).
 
-### 11.5 Agent definitions (`agents/`)
+### 11.5 Agent definitions
 
-`agents/tradew-ai/definitions.json` is loaded by `services/tradew-ai` (its one agent, `assistant-planner`, serves `POST /assistant/interpret`). `agents/sentinel/definitions.json` is read by no code — Sentinel's reasoning is deterministic TypeScript. Details in [`agents/README.md`](agents/README.md) and [`docs/product-architecture/AGENT-LAYERS.md`](docs/product-architecture/AGENT-LAYERS.md).
+The declarative agent definitions live in the private `agents/` folder (§3.1). `services/tradew-ai` loads `agents/tradew-ai/definitions.json` for its one agent, `assistant-planner` (`POST /assistant/interpret`); without the file the assistant runs its deterministic commands only. Point `TRADEW_AI_DEFINITIONS` at the file to load it from elsewhere.
 
 ---
 
@@ -399,12 +401,12 @@ Reserved for version-controlled n8n exports (alert fanout, KYC processing, EOD r
 | Target | Where | Status |
 |---|---|---|
 | Docker Compose + Caddy | [`infra/docker/docker-compose.prod.yml`](infra/docker/docker-compose.prod.yml) — web, api, sentinel, sentinel-py, market-data, live-feed, migrate, postgres, redis, caddy | Used by the OCI deploy workflow |
-| Azure Container Apps | [`infra/azure`](infra/azure/README.md) (Bicep) — [ADR-001](docs/adr/ADR-001-azure-container-apps-foundation.md) | Validated in CI; deploy is manual |
+| Azure Container Apps | [`infra/azure`](infra/azure/README.md) (Bicep) — ADR-001 | Validated in CI; deploy is manual |
 | Oracle Cloud | [`infra/oci`](infra/oci/README.md) | Manual workflow |
 | AWS | [`infra/terraform`](infra/terraform/README.md) | Validated in CI |
 | Kubernetes | [`infra/k8s`](infra/k8s) | Notes only |
 
-Production readiness checklist: [`docs/PRODUCTION-READINESS.md`](docs/PRODUCTION-READINESS.md). Cloud design: [`docs/CLOUD-ARCHITECTURE.md`](docs/CLOUD-ARCHITECTURE.md).
+Production readiness checklist: `docs/PRODUCTION-READINESS.md`. Cloud design: `docs/CLOUD-ARCHITECTURE.md`.
 
 ---
 
@@ -412,7 +414,7 @@ Production readiness checklist: [`docs/PRODUCTION-READINESS.md`](docs/PRODUCTION
 
 - Access tokens are short-lived JWTs; refresh tokens are hashed and revocable. The `tw_auth` cookie is a valueless routing hint, cleared when no credential backs it.
 - Internal runtimes bind to localhost and require service tokens; the admin API requires `ADMIN_API_TOKEN`.
-- Broker credentials are encrypted at rest (`packages/database/src/credential-crypto.ts`); see [`docs/security`](docs/security/README.md).
+- Broker credentials are encrypted at rest (`packages/database/src/credential-crypto.ts`); see `docs/security`.
 - Explicit `select` lists keep password hashes and Google ids out of every response.
 - Secrets live only in untracked `.env` files; `.gitignore` also blocks Terraform state/vars and Azure local parameter files.
 
@@ -427,24 +429,25 @@ Production readiness checklist: [`docs/PRODUCTION-READINESS.md`](docs/PRODUCTION
 | Prices show "—" or "Market data is temporarily unavailable" | The Dhan bridge (`:4600`) is not running or has no credentials; it logs a "NO PRICES HELD" block with the cause |
 | `Module '@prisma/client' has no exported member …` | Run `npm run db:generate` |
 | Reset or performance endpoints fail after pulling | Apply migrations (`migrate:deploy`) — `PaperWallet.resetAt` is new |
-| Agents are not trading | Follow [`docs/AUTONOMOUS-TRADING.md`](docs/AUTONOMOUS-TRADING.md) §3 in order |
+| Agents are not trading | Follow `docs/AUTONOMOUS-TRADING.md` §3 in order |
 | A clean checkout fails with `Cannot find module @tradew/types` | Re-run `npm install` (the `postinstall` builds the shared packages) |
 
 ---
 
 ## 15. Documentation map
 
+The documents below are private company material (§3.1): they are on the owner's machine, not in this repository.
+
 | Need | Read |
 |---|---|
-| Current state of the app | [`docs/APPLICATION-STATUS.md`](docs/APPLICATION-STATUS.md), [`docs/PROJECT-STATUS.md`](docs/PROJECT-STATUS.md) |
-| Target architecture | [`ARCHITECTURE.md`](ARCHITECTURE.md), [`docs/handbook/`](docs/handbook) (chapters 00–27) |
-| Product specs | [`docs/product-architecture/`](docs/product-architecture/README.md) |
-| Autonomous paper agents | [`docs/AUTONOMOUS-TRADING.md`](docs/AUTONOMOUS-TRADING.md), [`docs/product-architecture/AUTONOMOUS-PAPER-AGENTS.md`](docs/product-architecture/AUTONOMOUS-PAPER-AGENTS.md) |
-| Market data | [`docs/product-architecture/DHAN-MARKET-DATA-INTEGRATION.md`](docs/product-architecture/DHAN-MARKET-DATA-INTEGRATION.md) |
-| Sentinel | [`SENTINEL_MASTER_PLAN.md`](SENTINEL_MASTER_PLAN.md), [`docs/product-architecture/SENTINEL.md`](docs/product-architecture/SENTINEL.md), [`docs/SENTINEL-LIVE-VALIDATION-RUNBOOK.md`](docs/SENTINEL-LIVE-VALIDATION-RUNBOOK.md) |
-| Audits | [`docs/audits/`](docs/audits) |
-| Engineering memory | [`knowledge/_INDEX.md`](knowledge/_INDEX.md) |
-| Every file in the repo | [`REPOSITORY_INVENTORY.md`](REPOSITORY_INVENTORY.md) |
+| Current state of the app | `docs/APPLICATION-STATUS.md`, `docs/PROJECT-STATUS.md` |
+| Target architecture | `ARCHITECTURE.md`, `docs/handbook/` (chapters 00–27) |
+| Product specs | `docs/product-architecture/` |
+| Autonomous paper agents | `docs/AUTONOMOUS-TRADING.md`, `docs/product-architecture/AUTONOMOUS-PAPER-AGENTS.md` |
+| Market data | `docs/product-architecture/DHAN-MARKET-DATA-INTEGRATION.md` |
+| Sentinel | `SENTINEL_MASTER_PLAN.md`, `docs/product-architecture/SENTINEL.md`, `docs/SENTINEL-LIVE-VALIDATION-RUNBOOK.md` |
+| Audits | `docs/audits/` |
+| Engineering memory | `knowledge/_INDEX.md` |
 
 ---
 

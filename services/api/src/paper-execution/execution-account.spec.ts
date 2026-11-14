@@ -29,7 +29,7 @@ const SYSTEM_ACCOUNT = {
 /** A real TradeW user who has granted agent paper trading. */
 const USER_ACCOUNT = {
   id: 'user-1',
-  email: 'vivek.sannidhi29@gmail.com',
+  email: 'trader.one@example.com',
   hasPasswordCredential: true,
   hasGoogleIdentity: false,
   agentPaperTradingEnabledAt: GRANTED,

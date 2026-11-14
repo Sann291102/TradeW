@@ -49,7 +49,7 @@ docker run -d --name tradew-personas-pg -p 127.0.0.1:5435:5432 \
 # apps/web/.env.local: NEXT_PUBLIC_API_URL=http://localhost:4100  API_PROXY_TARGET=http://127.0.0.1:4100
 cd packages/database && npx prisma migrate deploy --schema prisma/schema.prisma && npx ts-node prisma/seed.ts
 
-# 2. the app on ports 4100 / 3100 (see .claude/launch.json: personas-api, personas-web)
+# 2. the app on ports 4100 / 3100:  npm run dev:api   and   npm run dev -w @tradew/web -- -p 3100
 
 # 3. run
 cd tests/personas

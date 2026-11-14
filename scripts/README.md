@@ -3,16 +3,10 @@
 Repo-wide tooling that doesn't belong inside any single app/service/package.
 
 **Written:**
-- `dhan_algo_strategies.py` — reference implementation of Dhan's algo-strategy API surface: the Conditional Trigger rule engine (`/alerts/orders`), the execution primitives (`/orders`, `/super/orders`, `/forever/orders`), the broker-side risk layer (`/killswitch`, `/pnlExit`), candle fetch, and a 14-entry catalog of every strategy Dhan's fixed indicator vocabulary can express. Stdlib only — the pinned `dhanhq` 2.3.0rc1 SDK predates Conditional Triggers (API v2.5) and does not cover them. **Dry-run by default**; placing a real order needs both `dry_run=False` *and* `DHAN_ALLOW_LIVE_ORDERS=1`. Verification/discovery tooling like the rest of this directory — not the trading-engine's code, and per CLAUDE.md Rule 2 never importable by Sentinel or TradeW-AI. Companion note: `knowledge/API/2026-08-11 - Dhan Algo Strategies.md`.
+- `dhan_algo_strategies.py` — reference implementation of Dhan's algo-strategy API surface: the Conditional Trigger rule engine (`/alerts/orders`), the execution primitives (`/orders`, `/super/orders`, `/forever/orders`), the broker-side risk layer (`/killswitch`, `/pnlExit`), candle fetch, and a 14-entry catalog of every strategy Dhan's fixed indicator vocabulary can express. Stdlib only — the pinned `dhanhq` 2.3.0rc1 SDK predates Conditional Triggers (API v2.5) and does not cover them. **Dry-run by default**; placing a real order needs both `dry_run=False` *and* `DHAN_ALLOW_LIVE_ORDERS=1`. Verification/discovery tooling like the rest of this directory — not the trading-engine's code, and per CLAUDE.md Rule 2 never importable by Sentinel or TradeW-AI.
 
   ```bash
   python scripts/dhan_algo_strategies.py list-strategies
-  ```
-
-- `cutting-room/` — renders the TradeW Cutting Room ad reel (four cuts, four aspect ratios) into uploadable H.264 MP4s. Every scene in that reel is a pure function of its timeline clock, so the cuts are rendered frame-exactly — set the clock, paint, capture, encode — rather than screen-recorded, which is what its old Capture note asked for. Needs `playwright` and an ffmpeg built with `libx264`. See `scripts/cutting-room/README.md`.
-
-  ```bash
-  npm run reel:build && npm run reel:render
   ```
 
 **Planned (not yet written):**

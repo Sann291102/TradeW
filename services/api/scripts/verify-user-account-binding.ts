@@ -66,7 +66,11 @@ function arg(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
-const TARGET_EMAIL = arg('email', 'vivek.sannidhi29@gmail.com');
+const TARGET_EMAIL = arg('email', process.env.VERIFY_ACCOUNT_EMAIL ?? '');
+if (!TARGET_EMAIL) {
+  console.error('Pass the account to verify: --email <address> (or set VERIFY_ACCOUNT_EMAIL).');
+  process.exit(2);
+}
 const PROFILE_NAME = arg('profile', 'sentinel-alpha-nifty-user-verify');
 
 let pass = 0;

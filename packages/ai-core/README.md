@@ -2,7 +2,7 @@
 
 `@tradew/ai-core` — the shared **AI foundation** for the whole platform. Every TradeW AI product (Sentinel, TradeW AI Research, Portfolio Intelligence, Education AI, future agents) composes these primitives; **no product implements its own provider calls, memory, retrieval, or agent runtime.**
 
-Consumed by `services/api`, `services/sentinel`, and `services/tradew-ai` (see [`ARCHITECTURE.md`](../../ARCHITECTURE.md) §6). Pure TypeScript library — built to `dist/` (`npm run build`) and consumed by its built entrypoint, not its source.
+Consumed by `services/api`, `services/sentinel`, and `services/tradew-ai` (see `ARCHITECTURE.md` §6). Pure TypeScript library — built to `dist/` (`npm run build`) and consumed by its built entrypoint, not its source.
 
 ## Layer map (`src/`)
 

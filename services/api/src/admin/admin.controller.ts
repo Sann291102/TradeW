@@ -83,7 +83,7 @@ class SetAgentPaperTradingDto {
  * the account is identified by `accountUserId`, an internal id.
  */
 class UpsertExecutionProfileDto {
-  @ApiProperty({ description: 'Unique profile name, e.g. sentinel-alpha-nifty-vivek.' })
+  @ApiProperty({ description: 'Unique profile name, e.g. sentinel-alpha-nifty-trader1.' })
   @IsString()
   name!: string;
 
