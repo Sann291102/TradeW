@@ -1,0 +1,14 @@
+{
+  "name": "tradew-virtual-customers",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Virtual customers: scripted personas that use the real TradeW app in a browser and write findings for Claude to act on. Deliberately NOT an npm workspace member, so it adds nothing to the app's lockfile.",
+  "type": "module",
+  "scripts": {
+    "personas": "node src/run.mjs",
+    "seed": "node src/seed.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.56.1"
+  }
+}

@@ -87,6 +87,31 @@
       ],
       "port": 4020,
       "autoPort": false
+    },
+    {
+      "name": "personas-api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:api"
+      ],
+      "port": 4100,
+      "autoPort": false
+    },
+    {
+      "name": "personas-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "-w",
+        "@tradew/web",
+        "--",
+        "-p",
+        "3100"
+      ],
+      "port": 3100,
+      "autoPort": false
     }
   ]
 }
