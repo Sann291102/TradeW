@@ -1584,7 +1584,12 @@ async function main(): Promise<void> {
   for (const idx of INDEX_INSTRUMENTS) {
     fetchDhanCandles(idx, '5m', fromDate, toDate)
       .then((candles) => {
-        if (!candles || candles.length === 0) return;
+        if (!candles || candles.length === 0) {
+          console.warn(
+            `[bootstrap] Dhan returned no candles for ${idx.symbol}; it stays unpriced until the recovery file, a PREV_CLOSE packet or a live tick supplies one`,
+          );
+          return;
+        }
         const last = candles[candles.length - 1];
         // The close of the bar before the final session's first bar is the
         // previous close; when the window holds only one session, leave it
@@ -1605,8 +1610,16 @@ async function main(): Promise<void> {
         });
         scheduleBroadcast();
       })
-      .catch(() => {
-        // non-blocking fallback
+      .catch((err) => {
+        // Non-blocking: the bridge still starts and streams. But it is NOT
+        // silent — this is the failure that leaves the index cards with
+        // nothing to show on a closed market, and swallowing it is how the
+        // cause ends up being looked for in the browser. `/status` carries the
+        // credential state that usually explains it.
+        console.error(
+          `[bootstrap] index pre-fetch failed for ${idx.symbol}:`,
+          err instanceof Error ? err.message : err,
+        );
       });
   }
 
@@ -1615,6 +1628,66 @@ async function main(): Promise<void> {
   setInterval(persistLastPrices, 5 * 60_000).unref();
 
   const feed = await startFeed(ALL_INSTRUMENTS, kindOf);
+
+  // ── "UP, SUBSCRIBED, AND HOLDING NOTHING" — SAY SO, LOUDLY ────────────
+  //
+  // The bridge can be perfectly healthy by every measure it prints at boot —
+  // scrip master resolved, hundreds of instruments subscribed, HTTP server
+  // listening — and still hold not one price, because the websocket handshake
+  // was refused for a dead token and `feed.start()`'s rejection scrolled past
+  // twenty lines ago. Nothing after that says anything, and the operator's
+  // first evidence is a dashboard — the worst place to learn it.
+  //
+  // So the process states it about itself, on a timer, in the terminal already
+  // being watched. Silence here means at least one price is held.
+  //
+  // "Holds nothing" is asked of the last-price store, not of `snapshot()`:
+  // the snapshot lists the whole tracked universe (unpriced rows carry
+  // `ltp: null`), so it is never empty and its length says nothing about health.
+  const NO_PRICE_FIRST_CHECK_MS = 45_000;
+  const NO_PRICE_REPEAT_MS = 300_000;
+  function reportIfHoldingNoPrices() {
+    const held = [...metaByKey.keys()].filter((k) => lastPrices.hasPrice(k)).length;
+    if (held > 0) return;
+    const cred = dhanCredential.state();
+    const open = isMarketOpen();
+    console.error(
+      [
+        '',
+        '  ┌─────────────────────────────────────────────────────────────────┐',
+        '  │  NO PRICES HELD. The bridge is up and every quote is unpriced.  │',
+        '  └─────────────────────────────────────────────────────────────────┘',
+        `  subscribed ....... ${ALL_INSTRUMENTS.length} instruments`,
+        `  market ........... ${open ? 'OPEN (ticks should be arriving)' : 'closed (ticks resume next session)'}`,
+        `  feed status ...... ${feedStatus}${feedReason ? ` — ${feedReason}` : ''}`,
+        `  credential ....... source=${cred.source} healthy=${cred.healthy}` +
+          `${cred.lastFault ? ` lastFault=${cred.lastFault}` : ''}`,
+        `  recovery file .... ${LAST_PRICE_FILE}`,
+        '',
+        open
+          ? '  The market is OPEN and nothing is ticking. That is almost always a'
+          : '  The market is closed, and neither the recovery file nor the historical',
+        open
+          ? '  refused websocket handshake — an expired Dhan access token (they last'
+          : '  pre-fetch that backfills the index cards supplied a price — usually an',
+        open ? '  one trading day). Renew it:' : '  expired token. Renew it:',
+        '',
+        '      npm run dhan:status      -w @tradew/market-data-service',
+        '      npm run dhan:consent     -w @tradew/market-data-service   # open the printed URL',
+        '      npm run dhan:token -- <tokenId|url> -w @tradew/market-data-service',
+        '',
+        '  Then restart this process. Until a real price arrives, /quotes lists',
+        '  every instrument with `ltp: null` ON PURPOSE — the dashboard reads a',
+        '  snapshot with no priced row as "feed unavailable" and shows its labelled',
+        '  preview. It will never print 0.00 as a price.',
+        '',
+      ].join('\n'),
+    );
+  }
+  setTimeout(() => {
+    reportIfHoldingNoPrices();
+    setInterval(reportIfHoldingNoPrices, NO_PRICE_REPEAT_MS).unref();
+  }, NO_PRICE_FIRST_CHECK_MS).unref();
 
   // Market can flip open/closed with no tick in between (e.g. right at 15:30);
   // re-broadcast on a timer too so the badge in the browser stays honest.

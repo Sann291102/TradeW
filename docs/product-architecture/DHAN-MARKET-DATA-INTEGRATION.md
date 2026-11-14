@@ -280,3 +280,52 @@ Dhan's own API examples.
 4. Data API pricing: fixed, per-instrument, or per-user?
 5. Is there a trading-holiday/session-calendar endpoint? Nothing in the docs covers it, and the ingestor needs one to avoid polling on closed days.
 6. Are WS connection limits per Dhan account or per API key?
+
+## 13. The zero-price invariant — an incident that has now happened more than once
+
+**The invariant: a price of zero is never a price.** A closed market shows the
+last valid price; an instrument that has never had one shows an em-dash; and a
+bridge that holds *no* price at all is shown as an outage, not as a healthy
+market of dashes.
+
+### What it looked like
+
+`0.00` under NIFTY 50, BANK NIFTY, FIN NIFTY, BSE SENSEX and INDIA VIX beside a
+`MARKET CLOSED` badge — a dead or idle feed rendered as a live market.
+
+### Causes (all independent, all fixed)
+
+1. `live-feed-server.ts` seeded every tracked instrument with `ltp: 0` at boot
+   "so `snapshot()` is never empty". The seed is gone.
+2. Dhan keeps pushing QUOTE/FULL packets after the close with zero-filled price
+   slots. The binary parser's `price()` turns every non-positive price into
+   `undefined` ("absent"); counts (volume, OI, quantity) are not touched.
+3. A tick is a packet, not a quote. Packets that carry no price used to replace
+   a good quote wholesale. Every write now goes through `LastPriceStore`
+   (`packages/market-data/src/quotes`), which merges per field and cannot
+   regress a valid price; its contents survive a restart via the recovery file
+   (`DHAN_LIVE_LAST_PRICE_FILE`).
+
+### The contract on the wire and on the screen
+
+- `/quotes` and `/stream` list the whole tracked universe. `ltp` is `number |
+  null`; `null` means *never observed* and nothing else. `priceSource` /
+  `session` say whether a price is live or carried forward.
+- The browser formats through `fmtPrice` / `pctOrDash` and
+  `apps/web/src/lib/markets/quoteDisplay.ts`; `null` renders as "—".
+- Because every instrument now has a row, *rows present* no longer means
+  *feed healthy*. `useDhanLiveFeed` asks `hasAnyPricedQuote`: a snapshot with no
+  priced row is treated as the outage it is (after `GRACE_MS`), so the status
+  pill and the labelled preview take over.
+
+### Diagnosing it
+
+- `GET /status` → `lastPrices: { tracked, known, unpriced[] }` says how many
+  instruments the bridge can quote from a last valid price; `credential`
+  usually explains why not.
+- The index pre-fetch now logs its failures (and an empty bar response) instead
+  of swallowing them.
+- 45s after boot, and every 5 minutes while it still holds no price at all, the
+  bridge prints a boxed "NO PRICES HELD" block (market state, feed status,
+  credential state, recovery file, and the three commands that renew the
+  token). Silence means at least one price is held.
