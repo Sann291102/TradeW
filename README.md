@@ -128,7 +128,7 @@ services/
   trading-engine/   README only (the OMS lives in services/api/src/sim)
   analytics/ auth/ notification/   contract boundaries / placeholders (README only)
 packages/
-  database/         Prisma schema (83 models), 46 migrations, seed
+  database/         Prisma schema (83 models), 45 migrations, seed
   market-data/      provider/feed contracts, Dhan adapter, simulated market
   ai-core/          providers, memory, RAG, research foundation
   types/            shared TypeScript contracts
@@ -193,6 +193,27 @@ Email/password and Google sign-in with hashed, revocable refresh tokens; OTP ove
 ### Operator console (`apps/admin`)
 
 `/agents` `/ai` `/audit` `/cognition` `/health` `/knowledge` `/lab` `/learning-platform` `/observability` `/orders` `/reasoning` `/rules` `/system`.
+
+### HTTP API
+
+The full, always-current route list is the OpenAPI reference the API serves at **`/docs`** (<http://localhost:4000/docs> in development; set up in `services/api/src/swagger`). The paper-trading routes most screens use:
+
+| Route | Does |
+|---|---|
+| `POST /sim/orders` · `GET /sim/orders?status=` · `DELETE /sim/orders/:id` | Place, list, cancel orders |
+| `GET /sim/trades` · `GET /sim/positions` · `GET /sim/positions/closed` | Trade book and positions |
+| `POST /sim/positions/:instrumentId/exit` · `POST /sim/positions/exit-all` | Exit one or all positions |
+| `GET /sim/positions/:instrumentId/convert-preview` · `POST …/convert` | Product conversion (MIS ⇄ NRML/CNC) |
+| `GET /sim/portfolio` · `GET /sim/holdings` | Wallet, margin, holdings |
+| `POST /sim/wallet/reset` with `{ "confirm": true }` | Reset the paper balance to ₹10,00,000 |
+
+### AI architecture
+
+Two separate systems with separate runtimes. **TradeW AI** (`services/tradew-ai`, foundation in `packages/ai-core`: providers, memory, RAG, research) powers the conversational assistant and has no order path. **Sentinel** is observation-only and deterministic: no LLM runs on its decision path. The only AI-initiated orders are the mandated *paper* agents in `services/api`. Full design: [`docs/handbook/18-ai-architecture.md`](docs/handbook/18-ai-architecture.md), [`docs/product-architecture/AGENT-LAYERS.md`](docs/product-architecture/AGENT-LAYERS.md) and [`docs/product-architecture/TRADEW-AI.md`](docs/product-architecture/TRADEW-AI.md).
+
+### Status and roadmap
+
+What is built, what works and what is left is tracked in [`docs/APPLICATION-STATUS.md`](docs/APPLICATION-STATUS.md) and [`docs/PROJECT-STATUS.md`](docs/PROJECT-STATUS.md); the long-range plan is [`docs/handbook/27-future-vision.md`](docs/handbook/27-future-vision.md). Not built yet: the mobile app, `services/analytics`, `services/notification` as its own service, `packages/sdk`, the Python `services/trading-engine`, and any n8n workflow.
 
 ---
 
@@ -303,7 +324,7 @@ Web-only settings go in `apps/web/.env.local` (`NEXT_PUBLIC_API_URL`, `API_PROXY
 ## 9. Database
 
 - **Schema:** [`packages/database/prisma/schema.prisma`](packages/database/prisma/schema.prisma) — 83 models covering users and auth, entitlements and payments, the paper OMS (`PaperWallet`, `Order`, `Trade`, `Position`, `Holding`), paper execution (`ExecutionProfile`, `ExecutionIntent`, `ExecutionPosition`, journal), Sentinel, learning, knowledge and telemetry.
-- **Migrations:** 46 under `packages/database/prisma/migrations`. Apply with `npm run migrate:deploy -w @tradew/database`; create with `npm run db:migrate`. Migrations are additive — a deployed migration is never edited. CI applies all of them to an empty database and fails on any drift from the schema.
+- **Migrations:** 45 under `packages/database/prisma/migrations`. Apply with `npm run migrate:deploy -w @tradew/database`; create with `npm run db:migrate`. Migrations are additive — a deployed migration is never edited. CI applies all of them to an empty database and fails on any drift from the schema.
 - **Seed:** `npm run seed -w @tradew/database` loads prototype instruments and quotes, subscription plans and a demo account.
 - **Admin access:** `npm run admin:grant -w @tradew/database` (grant) and `admin:reconcile` (audit/withdraw).
 
