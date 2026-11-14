@@ -152,7 +152,7 @@ export function resolveUtterance(text: string, today = new Date()): AssistantPla
       'Classified → concept question',
       concept.unsourced.length
         ? `Not in the knowledge base: ${concept.unsourced.join(', ')}`
-        : 'Analysis agents not yet connected',
+        : 'No sourced explanation in the knowledge base',
     ], true);
   }
 
