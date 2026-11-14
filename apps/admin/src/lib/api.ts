@@ -183,7 +183,17 @@ export interface ExecutionIntentRow { id: string; decidedAt: string; status: str
  * process, so an armed profile reads identically whether the loop evaluates it
  * every minute or has never started. This is the process's own live state.
  */
-export interface ExecutionLoopStatus { enabled: boolean; intervalMs: number | null; reconcileMs: number | null; manageMs: number | null; isEvaluateLeader: boolean; isReconcileLeader: boolean; isManageLeader: boolean; evaluating: boolean; reconciling: boolean; managing: boolean; startedAt: string | null; lastEvaluateAt: string | null; lastReconcileAt: string | null; lastManageAt: string | null; lastManage: { evaluated: number; held: number; trailed: number; exited: number; errors: number } | null; }
+export interface ExecutionLoopStatus { enabled: boolean; intervalMs: number | null; reconcileMs: number | null; manageMs: number | null; isEvaluateLeader: boolean; isReconcileLeader: boolean; isManageLeader: boolean; evaluating: boolean; reconciling: boolean; managing: boolean; startedAt: string | null; lastEvaluateAt: string | null; lastReconcileAt: string | null; lastManageAt: string | null; lastManage: { evaluated: number; held: number; trailed: number; exited: number; errors: number } | null; session?: MarketSession; }
+/** The shared NSE session classifier's reading, as the loop sees it. */
+export interface MarketSession { phase: 'weekend' | 'holiday' | 'pre-market' | 'active' | 'post-market'; isOpen: boolean; isTradingDay: boolean; minuteOfDay: number; dayKey: string; reason: string; }
+/** The global paper-execution kill switch. */
+export type SystemExecutionMode = 'ON' | 'OFF' | 'EMERGENCY_STOP';
+export interface SystemExecutionControl { mode: SystemExecutionMode; reason: string | null; updatedBy: string | null; updatedAt: string | null; isDefault: boolean; }
+export interface ExecutionLatest { id: string; decidedAt: string; status: string; symbol: string; contractSymbol: string; confidence: number; profileName: string; rejectReason: string | null; rejectCheckId: string | null; }
+/** One "is the loop alive" payload; every field is derived from real process/DB state. */
+export interface ExecutionHealth { generatedAt: string; status: 'RUNNING' | 'HALTED' | 'PAUSED' | 'IDLE' | 'DISABLED'; loop: ExecutionLoopStatus; control: SystemExecutionControl; marketData: { quotedAt: string | null; ageMs: number | null; marketOpen: boolean; instruments: number }; openPositions: number; today: { armedProfiles: number; intentsByStatus: Array<{ status: string; count: number }>; orders: number; fills: number; rejections: number; realizedPnl: number; closedOutcomes: number }; latest: { execution: ExecutionLatest | null; rejection: ExecutionLatest | null; failure: ExecutionLatest | null }; }
+export interface GroupPerformance { key: string; count: number; wins: number; losses: number; scratches: number; winRate: number | null; netPnl: number; avgPnl: number; expectancy: number; }
+export interface ExecutionAnalytics { hours: number; generatedAt: string; summary: { count: number; wins: number; losses: number; scratches: number; winRate: number | null; netPnl: number; grossProfit: number; grossLoss: number; avgWin: number | null; avgLoss: number | null; expectancy: number | null; profitFactor: number | null; avgHoldingSeconds: number | null; largestWin: number; largestLoss: number; maxDrawdown: number }; byStrategy: GroupPerformance[]; byConfidenceBand: GroupPerformance[]; byInstrument: GroupPerformance[]; byStrikeRole: GroupPerformance[]; byRegime: GroupPerformance[]; byHourOfDay: GroupPerformance[]; byExitReason: GroupPerformance[]; bySide: GroupPerformance[]; }
 
 // ---- Watching the agents work (2026-08-30) --------------------------------
 
@@ -337,6 +347,12 @@ export const admin = {
     agents: () => adminApi<AgentRow[]>('/execution/agents'),
     journal: (q: Record<string, string | number | undefined> = {}) => adminApi<JournalRow[]>(`/execution/journal?${qs(q)}`),
     calibration: () => adminApi<CalibrationRow[]>('/execution/calibration'),
+    // ---- "Is the loop alive" health, performance analytics, and the kill switch.
+    health: () => adminApi<ExecutionHealth>('/execution/health'),
+    analytics: (hours = 24 * 30) => adminApi<ExecutionAnalytics>(`/execution/analytics?hours=${hours}`),
+    control: () => adminApi<SystemExecutionControl>('/execution/control'),
+    setControl: (mode: SystemExecutionMode, reason?: string) =>
+      adminApi<SystemExecutionControl>('/execution/control', { method: 'POST', body: JSON.stringify({ mode, reason }) }),
   },
   cognition: {
     overview: () => adminApi<CognitionOverview>('/cognition/overview'),

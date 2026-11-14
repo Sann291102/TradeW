@@ -5,7 +5,9 @@ import { AdminAccessGuard } from './admin-access.guard';
 import { AdminService } from './admin.service';
 import { CognitionService } from '../cognition/cognition.service';
 import { ExecutionAccountService } from '../paper-execution/execution-account.service';
+import { ExecutionAnalyticsService } from '../paper-execution/execution-analytics.service';
 import { ExecutionCalibrationService } from '../paper-execution/execution-calibration.service';
+import { ExecutionHealthService } from '../paper-execution/execution-health.service';
 import { ExecutionJournalService } from '../paper-execution/execution-journal.service';
 import { ExecutionProfileService } from '../paper-execution/execution-profile.service';
 import { ExecutionQueryService } from '../paper-execution/execution-query.service';
@@ -13,6 +15,7 @@ import { ExecutionSchedulerService } from '../paper-execution/execution-schedule
 import { ExecutionTraceService } from '../paper-execution/execution-trace.service';
 import { PaperExecutionService } from '../paper-execution/paper-execution.service';
 import { PositionManagerService } from '../paper-execution/position-manager.service';
+import { SystemExecutionControlService } from '../paper-execution/system-execution-control.service';
 import { SECURITY } from '../swagger/swagger.setup';
 import { TelemetryService } from '../telemetry/telemetry.service';
 
@@ -62,6 +65,23 @@ class SetProfileEnabledDto {
   @ApiProperty({ description: 'True lets this execution profile trade on the next pass, false stops it.' })
   @IsBoolean()
   enabled!: boolean;
+}
+
+class SetSystemExecutionModeDto {
+  @ApiProperty({
+    enum: ['ON', 'OFF', 'EMERGENCY_STOP'],
+    description:
+      'ON = new agent entries permitted. OFF = paused (no new entries; open positions keep their stops, targets and square-off). ' +
+      'EMERGENCY_STOP = no new entries AND every open agent position is exited on the position manager’s next pass. ' +
+      'A runtime kill switch for the paper-execution loop only — takes effect on the loop’s next pass, no redeploy.',
+  })
+  @IsIn(['ON', 'OFF', 'EMERGENCY_STOP'])
+  mode!: 'ON' | 'OFF' | 'EMERGENCY_STOP';
+
+  @ApiPropertyOptional({ description: 'Free-text note recorded with the change and shown on the console (e.g. why the halt).' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }
 
 class SetAgentPaperTradingDto {
@@ -285,6 +305,9 @@ export class AdminController {
     private readonly positions: PositionManagerService,
     private readonly journal: ExecutionJournalService,
     private readonly calibration: ExecutionCalibrationService,
+    private readonly systemControl: SystemExecutionControlService,
+    private readonly executionHealth: ExecutionHealthService,
+    private readonly executionAnalytics: ExecutionAnalyticsService,
   ) {}
 
   // -------------------------------------------------------------- overview
@@ -514,6 +537,57 @@ export class AdminController {
   @Get('execution/status')
   executionStatus() {
     return this.executionScheduler.status();
+  }
+
+  /**
+   * "Is Sentinel paper trading actually alive?" — one payload the console's
+   * status header can read. Every field is derived from real state: the loop's
+   * own timers/leases, the shared NSE session, the feed's newest index tick,
+   * the kill-switch mode, live ExecutionPosition rows, today's counts, and the
+   * latest execution/refusal/failure. Read-only.
+   */
+  @Get('execution/health')
+  executionHealthRead() {
+    return this.executionHealth.health();
+  }
+
+  /**
+   * Performance over closed outcomes — win rate, expectancy, profit factor,
+   * drawdown, and breakdowns by strategy / confidence band / instrument /
+   * strike role / regime / time of day / exit reason / side. Read-only; it is
+   * not the calibration store the policy reads. Defaults to 30 days.
+   */
+  @Get('execution/analytics')
+  executionAnalyticsRead(@Query('hours') hours?: string) {
+    return this.executionAnalytics.analytics(Number(hours) || 24 * 30);
+  }
+
+  // ---- Global kill switch -------------------------------------------------
+  //
+  // The one control that stops (or resumes) ALL automatic agent entries at
+  // once, without a redeploy and without disarming each profile by hand. It
+  // governs the paper-execution loop only — a person's own orders are not
+  // touched. The write is audited with the acting operator, exactly like the
+  // agent-trading consent grant.
+
+  /** The current global execution mode (ON / OFF / EMERGENCY_STOP). */
+  @Get('execution/control')
+  executionControl() {
+    return this.systemControl.current();
+  }
+
+  /**
+   * Set the global execution mode — the runtime kill switch.
+   *
+   * EMERGENCY_STOP blocks new entries and the two-second position manager
+   * exits every open agent position on its next pass (reason EMERGENCY). OFF
+   * pauses new entries but leaves open positions to their own stops, targets
+   * and square-off. Audited with the operator on `req.user.sub`, in the same
+   * transaction as the flag.
+   */
+  @Post('execution/control')
+  setExecutionControl(@Body() body: SetSystemExecutionModeDto, @Req() req: { user?: { sub?: string } }) {
+    return this.systemControl.setMode(body.mode, req.user?.sub ?? 'unknown', body.reason ?? null);
   }
 
   /** Today's refusals grouped by the gate that produced them. */

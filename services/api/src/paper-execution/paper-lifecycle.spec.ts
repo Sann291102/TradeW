@@ -11,6 +11,7 @@ import { ExecutionLifecycleService } from './execution-lifecycle.service';
 import { PaperExecutionService } from './paper-execution.service';
 import { PositionManagerService } from './position-manager.service';
 import { SentinelExecutionClient, type ExecutionEvaluationDto } from './sentinel-execution.client';
+import { SystemExecutionControlService, type SystemControlState } from './system-execution-control.service';
 
 /**
  * The complete automated paper-trade lifecycle, end to end, against a REAL
@@ -196,6 +197,9 @@ describe.skipIf(!hasDatabase)('the complete automated paper-trade lifecycle', ()
   let journal: ExecutionJournalService;
   let calibration: ExecutionCalibrationService;
   let orders: OrderService;
+  let systemControl: SystemExecutionControlService;
+  /** The kill-switch state before the suite touched it, restored afterwards. */
+  let controlBefore: SystemControlState | null = null;
   let sentinelStub: { evaluate: () => Promise<ExecutionEvaluationDto> };
 
   const NIFTY_AGENT = 'lifecycle-nifty';
@@ -237,6 +241,8 @@ describe.skipIf(!hasDatabase)('the complete automated paper-trade lifecycle', ()
     journal = new ExecutionJournalService(prisma, calibration);
     lifecycle = new ExecutionLifecycleService(prisma, orders, journal);
     manager = new PositionManagerService(prisma, orders, marketPrice);
+    systemControl = new SystemExecutionControlService(prisma);
+    controlBefore = await systemControl.current();
 
     sentinelStub = { evaluate: async () => evaluation() };
     execution = new PaperExecutionService(
@@ -247,6 +253,7 @@ describe.skipIf(!hasDatabase)('the complete automated paper-trade lifecycle', ()
       accounts,
       manager,
       calibration,
+      systemControl,
     );
 
     await cleanup();
@@ -293,6 +300,15 @@ describe.skipIf(!hasDatabase)('the complete automated paper-trade lifecycle', ()
 
   afterAll(async () => {
     await cleanup();
+    // Put the global kill switch back exactly as the suite found it.
+    if (controlBefore?.isDefault) {
+      await prisma.systemExecutionControl.deleteMany({});
+    } else if (controlBefore) {
+      await systemControl.setMode(controlBefore.mode, controlBefore.updatedBy ?? 'unknown', controlBefore.reason);
+    }
+    await prisma.auditEvent.deleteMany({
+      where: { eventType: 'execution.system-control.set', metadata: { path: ['operator'], equals: 'lifecycle-spec' } },
+    });
     await prisma?.$disconnect();
   });
 
@@ -700,6 +716,127 @@ describe.skipIf(!hasDatabase)('the complete automated paper-trade lifecycle', ()
     const agents = new Set(buckets.map((b) => b.agent));
     expect(agents.has('sentinel-alpha')).toBe(true);
     expect(agents.has('sentinel-beta')).toBe(true);
+  }, 40_000);
+
+  it('K1. the kill switch: OFF halts new entries, EMERGENCY_STOP flattens what is open', async () => {
+    const { result, position } = await enterOnce(niftyProfileId, marketHours(14 * 60 + 40));
+
+    // ---- OFF: no new entry, and the open position is left to its own levels.
+    await systemControl.setMode('OFF', 'lifecycle-spec', 'pausing for the lifecycle test');
+    const intentsBefore = await prisma.executionIntent.count({ where: { profileId: niftyProfileId } });
+    simulatedNow = marketHours(14 * 60 + 41);
+    const halted = await execution.runProfile(niftyProfileId, marketHours(14 * 60 + 41));
+    expect(halted.outcome).toBe('skipped-halted');
+    expect(halted.reason).toContain('OFF');
+    // Halted before Sentinel and before any write.
+    expect(await prisma.executionIntent.count({ where: { profileId: niftyProfileId } })).toBe(intentsBefore);
+    // The console's per-agent state says why.
+    expect(execution.agentState(niftyProfileId)?.outcome).toBe('skipped-halted');
+
+    let gate = await systemControl.gate();
+    expect(gate.forceSquareOff).toBe(false);
+    simulatedNow = marketHours(14 * 60 + 42);
+    priceScript = [Number(position.entryPrice) / 0.998];
+    priceCursor = 0;
+    await manager.manageAll(marketHours(14 * 60 + 42), { forceExit: gate.forceSquareOff });
+    const stillOpen = await prisma.executionPosition.findUnique({ where: { id: position.id } });
+    expect(stillOpen!.state).toBe('OPEN');
+
+    // ---- EMERGENCY_STOP: the next management pass exits it, reason EMERGENCY.
+    await systemControl.setMode('EMERGENCY_STOP', 'lifecycle-spec', 'flatten everything');
+    gate = await systemControl.gate();
+    expect(gate).toMatchObject({ allowNewEntries: false, forceSquareOff: true });
+    simulatedNow = marketHours(14 * 60 + 43);
+    priceScript = [Number(position.entryPrice) / 0.998];
+    priceCursor = 0;
+    await manager.manageAll(marketHours(14 * 60 + 43), { forceExit: gate.forceSquareOff });
+    const flattened = await prisma.executionPosition.findUnique({ where: { id: position.id } });
+    expect(flattened!.state).toBe('EXITING');
+    expect(flattened!.exitReason).toBe('EMERGENCY');
+    expect(flattened!.exitDetail).toContain('EMERGENCY_STOP');
+
+    await lifecycle.reconcile();
+    const outcome = await prisma.executionOutcome.findUnique({ where: { intentId: result.intentId! } });
+    expect(outcome!.exitReason).toBe('EMERGENCY');
+    // The exit order is the agent's, linked back to the decision it closes.
+    const exitOrders = await prisma.order.count({ where: { exitOfIntentId: result.intentId! } });
+    expect(exitOrders).toBe(1);
+
+    // Every change is audited with the operator, in the same transaction.
+    const audits = await prisma.auditEvent.findMany({
+      where: { eventType: 'execution.system-control.set', metadata: { path: ['operator'], equals: 'lifecycle-spec' } },
+    });
+    expect(audits.length).toBeGreaterThanOrEqual(2);
+
+    await systemControl.setMode('ON', 'lifecycle-spec', 'resume');
+    simulatedNow = marketHours(14 * 60 + 44);
+    expect((await systemControl.gate()).allowNewEntries).toBe(true);
+  }, 40_000);
+
+  it('R1. restart recovery fails an orphaned PROPOSED intent, but never one with an unlinked order', async () => {
+    // Two decisions refused by policy (confidence below the floor) give two
+    // real intents with no order. Each is then put back into the state a crash
+    // between "claim the key" and "place the order" leaves behind: PROPOSED,
+    // no order, decided minutes ago. They select DIFFERENT strikes, because the
+    // unlinked-order guard is per contract.
+    const refuse = async (at: Date, strike: number) => {
+      const base = evaluation();
+      const selected = { ...base.strikes.selected!, strike };
+      sentinelStub.evaluate = async () =>
+        evaluation({
+          confidence: 69,
+          sideInFocus: { ...base.sideInFocus!, confidence: 69, strike },
+          strikes: { ...base.strikes, candidates: [selected], selected, atmStrike: strike },
+        });
+      simulatedNow = at;
+      priceScript = [ENTRY_PREMIUM];
+      priceCursor = 0;
+      const r = await execution.runProfile(niftyProfileId, at);
+      expect(r.outcome, `${r.outcome}: ${r.reason}`).toBe('rejected');
+      return r.intentId!;
+    };
+    const cleanId = await refuse(marketHours(14 * 60 + 50), 24_500);
+    const placedId = await refuse(marketHours(15 * 60 + 2), 24_550);
+    sentinelStub.evaluate = async () => evaluation();
+
+    const decidedAt = new Date(Date.now() - 5 * 60_000);
+    await prisma.executionIntent.updateMany({
+      where: { id: { in: [cleanId, placedId] } },
+      data: { status: 'PROPOSED', rejectReason: null, rejectCheckId: null, decidedAt },
+    });
+
+    // The second one crashed AFTER placeOrder returned: a real order exists on
+    // the account for its contract, but nothing links it to the intent.
+    const placedIntent = await prisma.executionIntent.findUniqueOrThrow({ where: { id: placedId } });
+    const cleanIntent = await prisma.executionIntent.findUniqueOrThrow({ where: { id: cleanId } });
+    expect(placedIntent.contractSymbol).not.toBe(cleanIntent.contractSymbol);
+    priceScript = [ENTRY_PREMIUM];
+    priceCursor = 0;
+    const stray = await orders.placeOrder(accountId, {
+      symbol: placedIntent.contractSymbol,
+      side: 'BUY',
+      type: 'MARKET',
+      quantity: LOT_SIZE,
+      productType: placedIntent.productType,
+    });
+    expect(stray.executionIntentId ?? null).toBeNull();
+
+    const result = await lifecycle.reconcile();
+    expect(result.recovered).toBe(1);
+
+    const clean = await prisma.executionIntent.findUniqueOrThrow({ where: { id: cleanId } });
+    expect(clean.status).toBe('FAILED');
+    expect(clean.rejectCheckId).toBe('recovery-orphaned');
+
+    // Left PROPOSED: failing it would make it re-claimable into a second order.
+    const placed = await prisma.executionIntent.findUniqueOrThrow({ where: { id: placedId } });
+    expect(placed.status).toBe('PROPOSED');
+
+    // A second reconcile is a no-op — the transition is guarded on status.
+    expect((await lifecycle.reconcile()).recovered).toBe(0);
+
+    // Leave nothing open for the remaining tests.
+    await orders.exitPosition(accountId, stray.instrumentId, placedIntent.productType);
   }, 40_000);
 
   it('6. stale data is refused (and the OMS never sees an order)', async () => {

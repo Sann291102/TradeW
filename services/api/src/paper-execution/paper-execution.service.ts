@@ -1,7 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ExecutionIntentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { isTradingDay } from '../discipline/market-calendar';
 import { MarketPriceService, type LivePrice } from '../sim/market-price.service';
 import { OrderService } from '../sim/order.service';
 import { ExecutionAccountService } from './execution-account.service';
@@ -12,15 +11,16 @@ import { contractSymbol, deriveIdempotencyKey, istParts } from './execution-iden
 import { countProfileOpenPositions } from './execution-open-positions';
 import {
   OMS_REJECTED,
-  SESSION_OPEN_MINUTE,
   SUBMISSION_RAISED,
   type PolicyCheck,
   type PolicyDecision,
   evaluatePolicy,
 } from './execution-policy';
 import { planRisk, type RiskPlan } from './execution-risk';
+import { classifyMarketSession } from './market-session';
 import { PositionManagerService } from './position-manager.service';
 import { SentinelExecutionClient, type ExecutionEvaluationDto } from './sentinel-execution.client';
+import { SystemExecutionControlService, type SystemControlGate } from './system-execution-control.service';
 
 /**
  * The Sentinel paper-execution loop.
@@ -66,6 +66,7 @@ export type RunOutcome =
   | 'rejected'
   | 'failed'
   | 'skipped-disabled'
+  | 'skipped-halted'
   | 'skipped-market-closed'
   | 'skipped-no-signal';
 
@@ -81,9 +82,6 @@ export interface ExecutionRunResult {
   checks: PolicyCheck[];
 }
 
-/** IST minute-of-day the Indian equity session closes (15:30). */
-const SESSION_CLOSE_MINUTE = 15 * 60 + 30;
-
 @Injectable()
 export class PaperExecutionService {
   private readonly logger = new Logger(PaperExecutionService.name);
@@ -96,6 +94,7 @@ export class PaperExecutionService {
     private readonly accounts: ExecutionAccountService,
     private readonly positions: PositionManagerService,
     private readonly calibration: ExecutionCalibrationService,
+    private readonly systemControl: SystemExecutionControlService,
   ) {}
 
   /**
@@ -120,7 +119,15 @@ export class PaperExecutionService {
    * be asserted deterministically — a loop whose correctness depends on the
    * clock must not be testable only during market hours.
    */
-  async runProfile(profileId: string, now: Date = new Date()): Promise<ExecutionRunResult> {
+  async runProfile(
+    profileId: string,
+    now: Date = new Date(),
+    // The batch caller reads the global kill switch ONCE per tick and threads it
+    // down, so N profiles do not each re-read the same singleton. A direct
+    // caller (the console's "run once" route) passes nothing and this reads it
+    // itself — a manual fire must honour the halt exactly as a scheduled one does.
+    opts: { control?: SystemControlGate } = {},
+  ): Promise<ExecutionRunResult> {
     const profile = await this.prisma.executionProfile.findUnique({
       where: { id: profileId },
       include: { account: { select: { id: true, email: true } } },
@@ -153,6 +160,30 @@ export class PaperExecutionService {
       });
     }
 
+    // ---- 1a. THE GLOBAL KILL SWITCH ---------------------------------------
+    //
+    // Checked before the account read and before Sentinel, because "the whole
+    // system is halted" is the most fundamental answer there is — more so than
+    // "the market is shut" or "you may not trade this account". A halted loop
+    // spends nothing: no account read, no Sentinel evaluation, no market data.
+    //
+    // Read once by the batch caller and threaded in; a direct call reads it here.
+    // Either way it is read FRESH, never cached — a kill switch with a TTL is a
+    // kill switch with a delay. Recorded like every other outcome so the
+    // console's per-agent state says WHY nothing is trading.
+    const control = opts.control ?? (await this.systemControl.gate());
+    if (!control.allowNewEntries) {
+      return record({
+        ...base,
+        outcome: 'skipped-halted',
+        verdict: null,
+        reason:
+          control.mode === 'EMERGENCY_STOP'
+            ? 'System paper execution is under EMERGENCY_STOP — no new entries; open positions are being squared off.'
+            : 'System paper execution is OFF — no new entries are being opened.',
+      });
+    }
+
     // ---- 1b. WHOSE account may this profile trade? -------------------------
     //
     // Before the session check and before Sentinel, because an unauthorized
@@ -180,18 +211,16 @@ export class PaperExecutionService {
       });
     }
 
-    const { minuteOfDay } = istParts(now);
-    const sessionOpen =
-      isTradingDay(now) && minuteOfDay >= SESSION_OPEN_MINUTE && minuteOfDay < SESSION_CLOSE_MINUTE;
-    if (!sessionOpen) {
-      return record({
-        ...base,
-        outcome: 'skipped-market-closed',
-        verdict: null,
-        reason: isTradingDay(now)
-          ? 'Outside the 09:15–15:30 IST session.'
-          : 'Not an NSE trading day.',
-      });
+    // One authoritative session read (`market-session.ts`): which DAY the
+    // exchange trades (shared NSE calendar — weekend/holiday aware) and which
+    // WINDOW of it is the session. A new entry may only open in the `active`
+    // phase; every other phase carries its own reason, so a skip is
+    // attributable to pre-market / post-market / weekend / holiday rather than
+    // a bare "market closed".
+    const session = classifyMarketSession(now);
+    const minuteOfDay = session.minuteOfDay;
+    if (!session.isOpen) {
+      return record({ ...base, outcome: 'skipped-market-closed', verdict: null, reason: session.reason });
     }
 
     // ---- 2. Ask the one canonical Sentinel ---------------------------------
@@ -564,6 +593,11 @@ export class PaperExecutionService {
 
   /** Every enabled profile, one pass each. One profile's failure never stops the rest. */
   async runAllEnabled(now: Date = new Date()): Promise<ExecutionRunResult[]> {
+    // Read the kill switch ONCE for the whole batch. When it forbids new entries
+    // the pass is still walked so every profile reports `skipped-halted` (the
+    // console must see WHY nothing traded), but not one account read or Sentinel
+    // evaluation is spent — `runProfile` short-circuits on the threaded gate.
+    const control = await this.systemControl.gate();
     const profiles = await this.prisma.executionProfile.findMany({
       where: { enabled: true, environment: 'PAPER' },
       select: { id: true, name: true },
@@ -571,7 +605,7 @@ export class PaperExecutionService {
     const results: ExecutionRunResult[] = [];
     for (const profile of profiles) {
       try {
-        results.push(await this.runProfile(profile.id, now));
+        results.push(await this.runProfile(profile.id, now, { control }));
       } catch (err) {
         this.logger.error(`profile ${profile.name} raised during its pass`, err as Error);
         results.push({

@@ -2,7 +2,9 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { LeaderElectionService } from '../common/leader-election';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
 import { PaperExecutionService } from './paper-execution.service';
+import { classifyMarketSession, type MarketSession } from './market-session';
 import { PositionManagerService } from './position-manager.service';
+import { SystemExecutionControlService, type SystemControlGate } from './system-execution-control.service';
 
 /**
  * The clock behind the paper-execution loop.
@@ -60,6 +62,16 @@ const RECONCILE_JOB = 'paper-execution-reconcile';
 const MANAGE_JOB = 'paper-execution-manage';
 
 /**
+ * Delay before the one-off startup recovery pass. Leadership is acquired
+ * asynchronously at boot (a DB round trip), so firing recovery synchronously in
+ * `onModuleInit` would usually no-op on `isLeader === false`. A short beat lets
+ * the lease settle so the leader recovers immediately rather than waiting a full
+ * reconcile interval. It is only a FAST PATH — the continuous reconcile tick
+ * runs the same recovery every interval, so nothing depends on this firing.
+ */
+const STARTUP_RECOVERY_DELAY_MS = 3_000;
+
+/**
  * What the admin console reads to tell an ARMED profile from a TICKING loop.
  *
  * Every field is this process's own live state. Nothing is persisted: a status
@@ -88,6 +100,11 @@ export interface ExecutionLoopStatus {
   lastManageAt: string | null;
   /** What the last management pass did — the "is it cooking" signal. */
   lastManage: { evaluated: number; held: number; trailed: number; exited: number; errors: number } | null;
+  /**
+   * The current NSE session, so the console can tell "alive but the market is
+   * shut" from "not ticking". Computed fresh, from the shared calendar.
+   */
+  session: MarketSession;
 }
 
 @Injectable()
@@ -96,6 +113,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
   private evaluateTimer: ReturnType<typeof setInterval> | null = null;
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private manageTimer: ReturnType<typeof setInterval> | null = null;
+  private startupTimer: ReturnType<typeof setTimeout> | null = null;
   private evaluating = false;
   private reconciling = false;
   private managing = false;
@@ -110,6 +128,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     private readonly lifecycle: ExecutionLifecycleService,
     private readonly positions: PositionManagerService,
     private readonly leader: LeaderElectionService,
+    private readonly systemControl: SystemExecutionControlService,
   ) {}
 
   private get enabled(): boolean {
@@ -135,12 +154,24 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     this.logger.log(
       `paper execution loop started — evaluate every ${evaluateMs}ms, manage every ${manageMs}ms, reconcile every ${reconcileMs}ms.`,
     );
+
+    // RESTART RECOVERY. A reconcile pass reconciles the database against reality
+    // (SUBMITTED→FILLED, FILLED→CLOSED), squares off anything past its window,
+    // and fails intents orphaned by a crash mid-submit — so a process that
+    // restarted holding open positions resumes from the database rather than
+    // assuming its in-memory state was authoritative. Fired once, shortly after
+    // boot, so the leader does this at startup instead of waiting a full
+    // reconcile interval; the recurring tick is the guarantee, this is only the
+    // fast path.
+    this.startupTimer = setTimeout(() => void this.reconcileTick(), STARTUP_RECOVERY_DELAY_MS);
+    this.startupTimer.unref?.();
   }
 
   onModuleDestroy(): void {
     if (this.evaluateTimer) clearInterval(this.evaluateTimer);
     if (this.reconcileTimer) clearInterval(this.reconcileTimer);
     if (this.manageTimer) clearInterval(this.manageTimer);
+    if (this.startupTimer) clearTimeout(this.startupTimer);
   }
 
   private async evaluateTick(): Promise<void> {
@@ -173,13 +204,20 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     this.reconciling = true;
     this.lastReconcileAt = new Date();
     try {
+      // The kill switch reaches the backstop too: under EMERGENCY_STOP the gate
+      // reports `forceSquareOff`, and the backstop flattens what the position
+      // manager cannot see (a FILLED intent with no live ExecutionPosition row)
+      // without waiting for the profile's square-off minute.
+      const control = await this.systemControl.gate();
       // Square-off runs FIRST. Both passes read the same positions, and running
       // reconcile first would see a position still open, skip it, and leave the
       // outcome unrecorded for a whole extra tick after the exit filled.
-      await this.lifecycle.squareOff();
+      await this.lifecycle.squareOff(new Date(), { forceAll: control.forceSquareOff });
       const result = await this.lifecycle.reconcile();
-      if (result.filled || result.failed || result.closed) {
-        this.logger.log(`reconcile: ${result.filled} filled, ${result.closed} closed, ${result.failed} failed.`);
+      if (result.filled || result.failed || result.closed || result.recovered) {
+        this.logger.log(
+          `reconcile: ${result.filled} filled, ${result.closed} closed, ${result.failed} failed, ${result.recovered} recovered.`,
+        );
       }
     } catch (err) {
       this.logger.error('reconcile tick failed', err as Error);
@@ -206,7 +244,13 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     this.managing = true;
     this.lastManageAt = new Date();
     try {
-      const summary = await this.positions.manageAll();
+      // The global kill switch, read fresh every pass. EMERGENCY_STOP is the
+      // "flatten everything now" state, and this two-second loop is the primary
+      // exit path, so it is the loop that carries it out — every OPEN position
+      // goes through the manager's own atomic exit claim with reason EMERGENCY.
+      // OFF changes nothing here: open positions keep their stops and targets.
+      const control: SystemControlGate = await this.systemControl.gate();
+      const summary = await this.positions.manageAll(new Date(), { forceExit: control.forceSquareOff });
       this.lastManage = {
         evaluated: summary.evaluated,
         held: summary.held,
@@ -266,6 +310,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
       lastReconcileAt: this.lastReconcileAt?.toISOString() ?? null,
       lastManageAt: this.lastManageAt?.toISOString() ?? null,
       lastManage: this.lastManage,
+      session: classifyMarketSession(),
     };
   }
 }

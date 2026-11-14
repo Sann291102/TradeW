@@ -116,6 +116,16 @@ export const ADMIN_PROXY_ROUTES: RouteRule[] = [
   { method: 'GET', segments: ['execution', 'profiles', '*', 'authorization'] },
   { method: 'POST', segments: ['execution', 'accounts', '*', 'agent-trading'] },
   { method: 'POST', segments: ['execution', 'profiles'] },
+  // Consolidated "is the loop actually alive" health, and the closed-outcome
+  // performance breakdowns — both reads, derived from real rows and this
+  // process's own state.
+  { method: 'GET', segments: ['execution', 'health'] },
+  { method: 'GET', segments: ['execution', 'analytics'] },
+  // The global kill switch. The read shows the current mode; the write is the
+  // one control that halts (or resumes) ALL automatic agent entries at once,
+  // audited upstream with the acting operator (`execution.system-control.set`).
+  { method: 'GET', segments: ['execution', 'control'] },
+  { method: 'POST', segments: ['execution', 'control'] },
 
   // --- System graph (read-only projection of the whole platform) ------------
   // Every rule here is a GET. There is deliberately no write on this surface:

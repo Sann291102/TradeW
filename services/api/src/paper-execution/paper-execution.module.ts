@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { SimModule } from '../sim/sim.module';
 import { ExecutionAccountService } from './execution-account.service';
+import { ExecutionAnalyticsService } from './execution-analytics.service';
 import { ExecutionCalibrationService } from './execution-calibration.service';
+import { ExecutionHealthService } from './execution-health.service';
 import { ExecutionJournalService } from './execution-journal.service';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
 import { ExecutionProfileService } from './execution-profile.service';
@@ -11,6 +13,7 @@ import { ExecutionTraceService } from './execution-trace.service';
 import { PaperExecutionService } from './paper-execution.service';
 import { PositionManagerService } from './position-manager.service';
 import { SentinelExecutionClient } from './sentinel-execution.client';
+import { SystemExecutionControlService } from './system-execution-control.service';
 
 /**
  * The Sentinel paper-execution capability.
@@ -53,6 +56,11 @@ import { SentinelExecutionClient } from './sentinel-execution.client';
     PositionManagerService,
     ExecutionCalibrationService,
     ExecutionJournalService,
+    // The global kill switch (ON / OFF / EMERGENCY_STOP), the consolidated
+    // liveness read, and the closed-outcome performance breakdowns.
+    SystemExecutionControlService,
+    ExecutionHealthService,
+    ExecutionAnalyticsService,
   ],
   exports: [
     PaperExecutionService,
@@ -80,6 +88,13 @@ import { SentinelExecutionClient } from './sentinel-execution.client';
     PositionManagerService,
     ExecutionJournalService,
     ExecutionCalibrationService,
+    // All three are injected by `AdminController` — see the 2026-08-18 note
+    // above for what omitting an export here does at boot. The kill switch is
+    // the only way to set `SystemExecutionControl.mode`, and it audits every
+    // change; health and analytics are read-only.
+    SystemExecutionControlService,
+    ExecutionHealthService,
+    ExecutionAnalyticsService,
   ],
 })
 export class PaperExecutionModule {}

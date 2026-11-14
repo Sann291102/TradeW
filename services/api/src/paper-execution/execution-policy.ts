@@ -80,6 +80,7 @@ export const REJECT_CHECK_LABELS: Record<string, string> = {
   affordable: 'Sufficient paper capital',
   'submission-raised': 'Submission raised',
   'oms-rejected': 'Rejected by the OMS',
+  'recovery-orphaned': 'Recovered — orphaned by a restart',
   // ---- Autonomous agents (2026-08-30) ----
   'quote-freshness': 'Live quote is current',
   'index-direction': 'Index direction agrees',
@@ -95,9 +96,16 @@ export const REJECT_CHECK_LABELS: Record<string, string> = {
   'sentinel-evidence-conflict': 'Sentinel: strategy evidence did not support',
 };
 
-/** The two non-policy stops, named so a caller cannot misspell one. */
+/** The non-policy stops, named so a caller cannot misspell one. */
 export const SUBMISSION_RAISED = 'submission-raised';
 export const OMS_REJECTED = 'oms-rejected';
+/**
+ * A PROPOSED intent that never became an order — the process died between
+ * claiming the decision and submitting it. Recovery fails it under this id so
+ * it is counted as its own bucket, distinct from a policy refusal or an OMS
+ * rejection: it is neither, it is a crash the loop cleaned up after.
+ */
+export const RECOVERY_ORPHANED = 'recovery-orphaned';
 
 /** How to say a check id to a person; the id itself if it is not a known one. */
 export function rejectCheckLabel(id: string | null): string {

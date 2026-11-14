@@ -46,6 +46,11 @@ const REQUIRED = [
   'GET /admin/execution/profiles/:id/authorization',
   'POST /admin/execution/accounts/:userId/agent-trading',
   'POST /admin/execution/profiles',
+  // Added by the paper-execution safety port (kill switch, health, analytics).
+  'GET /admin/execution/control',
+  'POST /admin/execution/control',
+  'GET /admin/execution/health',
+  'GET /admin/execution/analytics',
 ];
 
 function main() {

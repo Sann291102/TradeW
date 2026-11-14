@@ -133,7 +133,15 @@ export class PositionManagerService {
    * `OrderService.exitAll` follows, and for the same reason: an unpriceable
    * contract in one profile must not leave another profile's stop unchecked.
    */
-  async manageAll(now: Date = new Date()): Promise<ManageSummary> {
+  async manageAll(
+    now: Date = new Date(),
+    // Under the global EMERGENCY_STOP the scheduler passes `forceExit`, and every
+    // OPEN position is exited on this pass with reason EMERGENCY — no stop,
+    // target or square-off minute is consulted. It goes through the same atomic
+    // OPEN→EXITING claim as every other exit, so it cannot race a normal exit
+    // into a second order. See SystemExecutionControlService.
+    opts: { forceExit?: boolean } = {},
+  ): Promise<ManageSummary> {
     const positions = await this.prisma.executionPosition.findMany({
       // OPEN only. An EXITING position has already had its order placed and is
       // waiting for the fill; deciding again would place a second one.
@@ -165,7 +173,16 @@ export class PositionManagerService {
       summary.evaluated++;
       try {
         const lastPrice = await this.readPremium(position.instrumentId);
-        const action = decidePosition({
+        const action: PositionAction = opts.forceExit
+          ? {
+              kind: 'exit',
+              reason: 'EMERGENCY',
+              trail: null,
+              detail:
+                'System paper execution is under EMERGENCY_STOP — every open agent position is flattened now, ' +
+                'regardless of its stop, target or square-off minute.',
+            }
+          : decidePosition({
           entryPrice: Number(position.entryPrice),
           stopPrice: Number(position.stopPrice),
           targetPrice: Number(position.targetPrice),
