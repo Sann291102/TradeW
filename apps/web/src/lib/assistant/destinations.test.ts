@@ -50,6 +50,13 @@ describe('the destination registry covers everything the app declares', () => {
 });
 
 describe('resolveUtterance — the failing utterances from the bug report', () => {
+  it('opens Sentinel by the name the refusal copy tells users to say', () => {
+    // The sidebar label is "AI Sentinel"; the Sentinel boundary's refusal says
+    // 'Say "open Sentinel"'. The registry has to honour its own instruction.
+    expect(matchDestination('open sentinel')?.dest.href).toBe('/sentinel');
+    expect(resolveUtterance('open Sentinel').actions).toEqual([{ type: 'navigate', href: '/sentinel' }]);
+  });
+
   it('opens the crypto board instead of claiming the analysis engine is missing', () => {
     const plan = resolveUtterance('Open crypto');
     expect(plan.intent).toBe('command');

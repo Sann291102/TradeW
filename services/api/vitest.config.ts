@@ -84,6 +84,10 @@ export default defineConfig({
       'src/backtest/execution-simulator.spec.ts',
       'src/backtest/backtest-metrics.spec.ts',
       'src/backtest/backtest-config.spec.ts',
+      // Canonical market analysis: which symbols have an NSE analysis path,
+      // that a crypto request makes NO outbound call to the NSE engine at all,
+      // and that Sentinel's premium verdict cannot cross this route.
+      'src/market-analysis/market-analysis.spec.ts',
       'src/discipline/discipline-limits.spec.ts',
       'src/discipline/market-calendar.spec.ts',
       // Venue sessions — WHEN each venue trades, as opposed to which days the

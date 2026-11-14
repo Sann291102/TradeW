@@ -23,6 +23,7 @@ import { MailModule } from './mail/mail.module';
 import { SmsModule } from './sms/sms.module';
 import { SentinelModule } from './sentinel/sentinel.module';
 import { AssistantModule } from './assistant/assistant.module';
+import { MarketAnalysisModule } from './market-analysis/market-analysis.module';
 import { PricingModule } from './pricing/pricing.module';
 import { BillingModule } from './billing/billing.module';
 import { SentinelIntelligenceModule } from './sentinel-intelligence/sentinel-intelligence.module';
@@ -95,6 +96,7 @@ import { HealthController } from './health.controller';
     SimModule,
     SentinelModule,
     AssistantModule,
+    MarketAnalysisModule,
     PricingModule,
     BillingModule,
     SentinelIntelligenceModule,

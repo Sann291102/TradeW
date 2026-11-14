@@ -144,6 +144,14 @@ export default defineConfig({
       // declares and nothing else, and a stance is always relative to the
       // direction asked about.
       'src/execution/evidence.spec.ts',
+      // The observation projection Tara reads: every number lifted from the
+      // canonical MarketSnapshot rather than recomputed, missing measurements
+      // reported rather than defaulted, and — the property the free/premium
+      // boundary rests on — no verdict field anywhere in the payload.
+      'src/intelligence/market-observation.spec.ts',
+      // `snapshot(symbol, interval)` judges the forming bar on the interval it
+      // read, and `contracts()` reads the CE/PE legs on that same clock.
+      'src/intelligence/market-observation-interval.spec.ts',
       // The agent-facing evaluation as a whole, including the refusal when the
       // index direction and the published option side disagree.
       'src/execution/execution-evaluation.spec.ts',
