@@ -9,6 +9,12 @@ Repo-wide tooling that doesn't belong inside any single app/service/package.
   python scripts/dhan_algo_strategies.py list-strategies
   ```
 
+- `cutting-room/` — renders the TradeW Cutting Room ad reel (four cuts, four aspect ratios) into uploadable H.264 MP4s. Every scene in that reel is a pure function of its timeline clock, so the cuts are rendered frame-exactly — set the clock, paint, capture, encode — rather than screen-recorded, which is what its old Capture note asked for. Needs `playwright` and an ffmpeg built with `libx264`. See `scripts/cutting-room/README.md`.
+
+  ```bash
+  npm run reel:build && npm run reel:render
+  ```
+
 **Planned (not yet written):**
 - `bootstrap` — one-command local dev setup (installs deps across `apps/`, `services/`, `packages/`; copies the root `.env.example` → `.env` and `apps/web/.env.local.example` → `.env.local` — updated 2026-08-04, env config is now consolidated at the repo root, not per service)
 - `codegen` — regenerates `packages/sdk` from `services/api`'s OpenAPI spec
