@@ -7,7 +7,7 @@ tags: [audit, reliability, llm, ml, telemetry, market-data, observability]
 # 2026-08-17 — API / LLM / ML / workflow reliability audit
 
 Full forensic audit executed against `APIcallandrealiabilty.md`. Deliverables at
-the repo root: `APIcallandrealiabilty-AUDITED.md` (main),
+`docs/audits/2026-08-17-api-reliability/`: `APIcallandrealiabilty-AUDITED.md` (main),
 `api-call-inventory.json`, `api-call-graph.md`, `api-runtime-measurement.md`,
 `api-reliability-findings.md`. **Read those for evidence; this note records only
 what is durable and non-obvious.**
