@@ -96,6 +96,12 @@ export function resolveCommand(text: string, today = new Date()): AssistantPlan 
 
   return (
     matchContract(t, today) ??
+    // Above matchTimeframe: "analyse the current chart on 5m" names a timeframe
+    // and the word "chart", which matchTimeframe would take as "switch the
+    // chart to 5m" and report done — an answer replaced by a control action.
+    // Above matchTheme/matchPanel/matchSymbol for the same reason (see its
+    // docblock). A detector phrasing is handed back to matchDetect inside it.
+    matchAnalyze(t) ??
     matchTimeframe(t) ??
     matchDetect(t) ??
     matchTheme(lower) ??
@@ -179,6 +185,15 @@ const TIMEFRAME_INTENT_RE =
  * timeframe phrase is short and collides with almost every other matcher —
  * "1D" is inside plenty of strings and `matchNav` would happily see "chart".
  */
+/** First `TIMEFRAME_ALIASES` phrase named in `text`, or null. */
+function parseTimeframe(text: string): ChartTimeframe | null {
+  const lower = text.toLowerCase();
+  for (const [phrase, tf] of TIMEFRAME_ALIASES) {
+    if (new RegExp(`\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(lower)) return tf;
+  }
+  return null;
+}
+
 function matchTimeframe(text: string): AssistantPlan | null {
   if (!TIMEFRAME_INTENT_RE.test(text)) return null;
 
@@ -268,6 +283,83 @@ function matchDetect(text: string): AssistantPlan | null {
       { type: 'chartDetect', detector: 'fvg' },
     ],
     ['Classified → chart detection', 'Detector → fair value gaps'],
+  );
+}
+
+// --- market analysis -------------------------------------------------------
+
+/**
+ * Verbs that mean "measure this market for me".
+ *
+ * Deliberately narrower than `EXPLAIN_RE` above: that one exists to spot the
+ * analysis HALF of a compound navigation command, and matching "insights" or
+ * "tell me about" here would turn "tell me about the Research page" into a
+ * market read.
+ */
+const ANALYSE_VERB_RE =
+  /\b(analys[ei]|analyz[ei]|analysis of|read (?:the )?(?:market|chart)|market read|how (?:is|does) .{1,30} (?:look|doing)|what (?:is|'s) .{1,30} doing)\b/i;
+
+/** Phrasings that mean "the thing I am looking at" rather than a named symbol. */
+const CURRENT_CHART_RE =
+  /\b(this|the current|current|my|the active|active|on screen|on the screen)\s+(chart|market|symbol|instrument|timeframe)\b|\bthis\b\s*$/i;
+
+/**
+ * "Analyse NIFTY", "analyse NIFTY 15m", "analyse the current chart".
+ *
+ * ── WHY THIS SITS ABOVE `matchSymbol` AND `matchPanel` ─────────────────────
+ *
+ * Both would swallow it. `matchSymbol` resolves a bare "NIFTY" to *select the
+ * NIFTY symbol*, so "analyse NIFTY" would silently become a symbol switch and
+ * report success; `matchPanel` claims the word "chart", so "analyse the current
+ * chart" would open the chart panel. Either outcome is the failure mode
+ * `concepts.ts` was written about — an answer replaced by a plausible-looking
+ * navigation.
+ *
+ * ── WHY IT EMITS NULLS INSTEAD OF DEFAULTS ─────────────────────────────────
+ *
+ * A missing symbol becomes `null`, not `'NIFTY'`. Defaulting would mean
+ * "analyse this" silently measures an index the user may not be looking at and
+ * presents the result as their chart. The executor resolves nulls against the
+ * live workspace and says so plainly when it cannot.
+ *
+ * ── WHY IT DOES NOT NAVIGATE ───────────────────────────────────────────────
+ *
+ * Unlike `matchDetect`, this needs no chart on screen — the measurements come
+ * from the engine, not from the bars in the browser. Navigating would move the
+ * user somewhere they did not ask to go in order to answer a question.
+ */
+function matchAnalyze(text: string): AssistantPlan | null {
+  if (!ANALYSE_VERB_RE.test(text)) return null;
+  // "find the FVGs and analyse them" is a detection request that happens to
+  // use the word; it belongs to `matchDetect`.
+  if (FVG_RE.test(text)) return null;
+
+  // "what is NIFTY doing" is an analysis ask; "what is a fair value gap" is a
+  // concept question and must reach `concepts.ts` untouched. The verb regex
+  // above cannot separate them, so a concept-explain phrasing with no symbol in
+  // it is handed back.
+  const found = findSymbol(text);
+  const wantsCurrent = CURRENT_CHART_RE.test(text);
+  if (!found && !wantsCurrent) return null;
+
+  // The same alias table `matchTimeframe` uses, so "analyse NIFTY hourly" and
+  // "make it hourly" can never disagree about what "hourly" is — and the
+  // result is always a `ChartTimeframe` the panel has a button for. A
+  // timeframe the chart does not offer is not invented here.
+  const timeframe = parseTimeframe(text);
+
+  const symbol = found?.symbol ?? null;
+  const target = symbol ?? 'the chart you have open';
+  const on = timeframe ? ` on ${timeframe}` : '';
+
+  return commandPlan(
+    `Reading ${target}${on}…`,
+    [{ type: 'analyzeMarket', symbol, timeframe }],
+    [
+      'Classified → market analysis',
+      symbol ? `Symbol → ${symbol}` : 'Symbol → the active chart',
+      timeframe ? `Timeframe → ${timeframe}` : 'Timeframe → the active chart’s',
+    ],
   );
 }
 
@@ -407,14 +499,16 @@ function matchNav(lower: string): AssistantPlan | null {
   ];
 
   // Compound command: "open research and explain". The navigation half runs
-  // now; the narration half is the analysis agent (Phase 2), so say that
-  // plainly instead of implying an explanation is coming.
+  // now. Reading a PAGE back is still not a capability — what exists is a
+  // market read against a named symbol (`matchAnalyze`), which is a different
+  // thing — so say what is actually available rather than implying a
+  // narration of this screen is coming.
   if (EXPLAIN_RE.test(lower)) {
     return {
       intent: 'command',
-      reply: `Opened ${dest.label}. Reading the page and explaining it is the analysis half of the assistant — that lands in the next phase, so for now I've just taken you there.`,
+      reply: `Opened ${dest.label}. I can't narrate a page back to you — what I can do is measure a market: say "analyse NIFTY" (or any symbol, on any timeframe) and I'll read you the real numbers.`,
       actions,
-      steps: [...steps, 'Analysis requested → not yet available (Phase 2)'],
+      steps: [...steps, 'Page narration → not a capability; market analysis is per-symbol'],
     };
   }
 

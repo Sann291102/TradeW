@@ -92,6 +92,18 @@ const VENUES: Destination[] = [
   },
 ];
 
+/**
+ * What people actually call a page whose sidebar LABEL is something longer.
+ *
+ * The Sentinel item is labelled "AI Sentinel", so "open Sentinel" named no
+ * destination — while the Sentinel boundary's own refusal copy tells the user
+ * to say exactly that phrase. Keyed by href rather than by label so renaming a
+ * sidebar entry cannot silently orphan its short name.
+ */
+const PAGE_SHORT_NAMES: Record<string, readonly string[]> = {
+  '/sentinel': ['sentinel'],
+};
+
 /** Pages, derived from the sidebar exactly as before — one contributor now. */
 function pageDestinations(): Destination[] {
   return NAV_ITEMS.map((item) => ({
@@ -99,7 +111,7 @@ function pageDestinations(): Destination[] {
     kind: 'page' as const,
     label: item.label,
     href: item.href,
-    aliases: [item.label.toLowerCase()],
+    aliases: [item.label.toLowerCase(), ...(PAGE_SHORT_NAMES[item.href] ?? [])],
   }));
 }
 

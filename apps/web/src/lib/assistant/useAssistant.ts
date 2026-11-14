@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useWorkspaceStore } from '../store/workspaceStore';
+import { useWorkspaceStore, type ChartTimeframe } from '../store/workspaceStore';
 import { DETECTORS } from '../charts/detectors';
 import { fetchQuotes, type LiveQuote } from '../marketData';
 import { fetchDhanQuotes } from '../dhanLiveFeed';
@@ -14,6 +14,7 @@ import { askBrain, type BrainPlan } from './brain';
 import { traceLine, verifyAction, type WorkspaceSnapshot } from './verify';
 import type { QuoteAsk } from './quotes';
 import { formatBreadth, formatCashFlow, formatPositioning } from './flows';
+import { fetchMarketAnalysis, formatObservation, observationSteps } from './analysis';
 import { fetchBreadth, fetchFiiDii, fetchParticipantOi } from '../sentinel/nse';
 import type { AssistantAction, AssistantIntent, RefusalReason } from './types';
 
@@ -50,6 +51,15 @@ export interface AssistantTurn {
   /** Per-step outcome, shown after a multi-step plan runs. */
   planSteps?: PlanStep[];
 }
+
+/**
+ * Used only when the user named no timeframe AND there is no active workspace
+ * tab to read one from (every tab carries a `chartTimeframe`). It matches the engine's
+ * own `SNAPSHOT_INTERVAL`, so the assistant's fallback and Sentinel's own
+ * observation describe the same bars, and the reply always states which
+ * interval was actually measured.
+ */
+const DEFAULT_ANALYSIS_TIMEFRAME: ChartTimeframe = '15m';
 
 let turnSeq = 0;
 function turnId(): string {
@@ -195,6 +205,12 @@ function contextSnapshot(): Record<string, unknown> {
   return {
     route: typeof window !== 'undefined' ? window.location.pathname : null,
     selectedSymbol: activeTab?.selectedSymbol ?? null,
+    // The interval the active tab's chart is on, so "analyse this chart" has an
+    // antecedent the model can resolve. Read from the tab's own field, never
+    // parsed out of `chartSeries.seriesKey` — that string's format belongs to
+    // the drawing-staleness invariant and is `SYMBOL|contract|timeframe` for an
+    // option chart, where the naive split returns the contract.
+    chartTimeframe: activeTab?.chartTimeframe ?? null,
     theme: s.theme,
   };
 }
@@ -483,6 +499,106 @@ export function useAssistant() {
           // nothing on screen.
           setChartTimeframe(action.timeframe);
           break;
+        case 'analyzeMarket': {
+          /**
+           * The canonical market read.
+           *
+           * ── NULLS ARE RESOLVED HERE, NOT GUESSED IN THE GRAMMAR ──────────
+           *
+           * The resolver is pure and cannot see the workspace, so "analyse the
+           * current chart" arrives with both fields null. This is the first
+           * point that knows which symbol is selected and which interval the
+           * chart is on, so this is where they are filled — and where the
+           * failure to fill them is reported rather than papered over with a
+           * default. Defaulting to NIFTY/15m would answer a question about a
+           * chart the user is not looking at, which is worse than not
+           * answering.
+           *
+           * ── NO NUMBER IN THE REPLY COMES FROM THIS FILE ──────────────────
+           *
+           * `formatObservation` renders the API payload and nothing else. There
+           * is deliberately no arithmetic here and no model in the path: if RSI
+           * is 63.4 in the response, 63.4 is what the user is told, and if it is
+           * null they are told why.
+           */
+          const state = useWorkspaceStore.getState();
+          const activeTab = state.workspaceTabs.find((t) => t.id === state.activeTabId);
+          const symbol = action.symbol ?? activeTab?.selectedSymbol ?? null;
+          const timeframe = action.timeframe ?? activeTab?.chartTimeframe ?? DEFAULT_ANALYSIS_TIMEFRAME;
+
+          if (!symbol) {
+            setTurns((prev) => [
+              ...prev,
+              {
+                id: turnId(),
+                role: 'assistant',
+                intent: 'analysis',
+                text: "I don't know which market you mean — nothing is selected on this screen. Name the symbol (\"analyse NIFTY on 15m\") and I'll read it.",
+                steps: ['No symbol in the request and none selected in the workspace'],
+              },
+            ]);
+            break;
+          }
+
+          // Fire-and-forget with its own turn on settle, the same shape as
+          // `quote` and for the same reason: the acknowledgement must land
+          // before the fetch does or the dock looks frozen.
+          void (async () => {
+            try {
+              const result = await fetchMarketAnalysis(symbol, timeframe, true);
+
+              if (!result.ok || !result.observation) {
+                // A coverage refusal is an ANSWER, not an error. It names the
+                // data path the symbol actually belongs to, which is the whole
+                // point: BTC is charted from Binance and the canonical engine
+                // reads NSE/Dhan, so measuring one with the other would be a
+                // fabrication dressed as analysis.
+                setTurns((prev) => [
+                  ...prev,
+                  {
+                    id: turnId(),
+                    role: 'assistant',
+                    intent: 'analysis',
+                    disclaimer: true,
+                    text: result.reason ?? `I have no canonical analysis path for ${symbol}.`,
+                    steps: [
+                      `Coverage → ${result.coverage?.kind ?? 'unknown'}`,
+                      `Data source → ${result.coverage?.dataSource ?? 'unknown'}`,
+                      'No measurements were fetched',
+                    ],
+                  },
+                ]);
+                return;
+              }
+
+              setTurns((prev) => [
+                ...prev,
+                {
+                  id: turnId(),
+                  role: 'assistant',
+                  intent: 'analysis',
+                  disclaimer: true,
+                  text: formatObservation(result.observation!),
+                  steps: observationSteps(result.observation!, result.coverage),
+                },
+              ]);
+            } catch (err) {
+              setTurns((prev) => [
+                ...prev,
+                {
+                  id: turnId(),
+                  role: 'assistant',
+                  intent: 'analysis',
+                  text: `I couldn't read ${symbol} just now — the analysis engine didn't answer. I won't estimate the numbers instead.${
+                    err instanceof Error && err.message ? `\n\n_${err.message}_` : ''
+                  }`,
+                  steps: [`POST /market-analysis (${symbol} ${timeframe}) failed`],
+                },
+              ]);
+            }
+          })();
+          break;
+        }
       }
     },
     [

@@ -31,6 +31,15 @@
  * extensible study framework, where the plan is to keep both validators and
  * GENERATE them from one registry so the closed-union guarantee survives
  * without being retyped per capability.
+ *
+ * ── `analyzeMarket` IS IN THE VOCABULARY; `chartDetect` IS NOT ─────────────
+ *
+ * Not an inconsistency. `analyzeMarket` names a symbol and a timeframe and
+ * nothing else — every number in the resulting answer is fetched from the
+ * canonical analysis route and rendered by deterministic client code, so a
+ * hallucinated plan can pick the wrong market but cannot invent a price.
+ * `chartDetect` runs a detector against the bars in the browser and is left to
+ * the deterministic grammar, which already handles it without a round trip.
  */
 
 /** Routes the brain may navigate to. Anything else is dropped. */
@@ -140,6 +149,29 @@ export function validateAction(a: unknown): Record<string, unknown> | null {
       return { type: 'toggleSidebar' };
     case 'newWorkspaceTab':
       return { type: 'newWorkspaceTab' };
+    case 'analyzeMarket': {
+      /**
+       * Canonical market MEASUREMENTS for one symbol on one timeframe.
+       *
+       * Safe to admit to the model's vocabulary because it carries no numbers:
+       * `services/api` fetches the measurements from Sentinel's projection of
+       * the canonical `MarketSnapshot`, and `apps/web` renders that payload
+       * verbatim. The model chooses WHAT to measure and never WHAT IT READS.
+       *
+       * Both fields are optional — a null means "resolve it from the chart the
+       * user is looking at", which only the client can do. Neither is trusted:
+       * the symbol is shape-checked and the timeframe must be one of the
+       * chart's own pill labels, so nothing arbitrary reaches the wire.
+       */
+      const symbol =
+        isStr(act.symbol) && /^[A-Z0-9&_-]{1,24}$/i.test(act.symbol)
+          ? act.symbol.toUpperCase()
+          : null;
+      // The same set `chartTimeframe` checks against, case-sensitive: one
+      // definition of "a timeframe the chart has", not two that can drift.
+      const timeframe = isStr(act.timeframe) && TIMEFRAMES.has(act.timeframe) ? act.timeframe : null;
+      return { type: 'analyzeMarket', symbol, timeframe };
+    }
     case 'quote': {
       if (!Array.isArray(act.symbols)) return null;
       const symbols = act.symbols

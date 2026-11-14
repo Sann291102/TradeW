@@ -112,6 +112,30 @@ export function splitClosedAndForming(
     : { closed: candles, forming: null };
 }
 
+/**
+ * How far back to reach for each interval the engine can be asked for.
+ *
+ * ── WHY THIS EXISTS, AND WHAT IT IS NOT ────────────────────────────────────
+ *
+ * `SNAPSHOT_INTERVAL` remains the interval Sentinel's OWN observation runs on,
+ * and nothing about `/observe` or the execution path changes: they call
+ * `snapshot(symbol)` and get 15m bars exactly as before. This map exists only
+ * so the observation projection (`market-observation.ts`) can honour a caller
+ * that names a timeframe — "analyse NIFTY on 5m" has to read 5m bars or the
+ * answer describes a chart the user is not looking at.
+ *
+ * Each window is sized to comfortably clear `composeSnapshot`'s deepest input
+ * (a 50-period EMA), with slack for weekends and holidays. Bigger would be a
+ * slower request for bars no indicator here reads.
+ */
+const INTERVAL_LOOKBACK_MS: Record<CandleInterval, number> = {
+  '1m': 3 * 86_400_000,
+  '5m': 5 * 86_400_000,
+  '15m': SNAPSHOT_LOOKBACK_MS,
+  '1h': 30 * 86_400_000,
+  '1d': 200 * 86_400_000,
+};
+
 export interface MarketSnapshot {
   symbol: string;
   /**
@@ -288,9 +312,16 @@ export interface OptionChainRead {
 export class MarketIntelligenceService {
   constructor(@Inject(MARKET_DATA) private readonly marketData: MarketDataProvider) {}
 
-  async snapshot(symbol: string): Promise<MarketSnapshot> {
+  /**
+   * `interval` defaults to `SNAPSHOT_INTERVAL`, so every existing caller —
+   * `/observe`, the execution evaluation, the watch sweep, the market-close
+   * review — reads exactly the bars it always did. It is a parameter only so
+   * the observation projection can answer "analyse this on 5m" from the SAME
+   * composition rather than from a second engine.
+   */
+  async snapshot(symbol: string, interval: CandleInterval = SNAPSHOT_INTERVAL): Promise<MarketSnapshot> {
     const to = new Date();
-    const from = new Date(to.getTime() - SNAPSHOT_LOOKBACK_MS);
+    const from = new Date(to.getTime() - (INTERVAL_LOOKBACK_MS[interval] ?? SNAPSHOT_LOOKBACK_MS));
 
     // ── FOUR INDEPENDENT READS, CONCURRENTLY ──────────────────────────────
     //
@@ -315,7 +346,7 @@ export class MarketIntelligenceService {
     // when these were sequential. Breadth and the chain degrade to "no data" as
     // they always did.
     const [intraday, breadthResult, daily, chainResult] = await Promise.allSettled([
-      this.marketData.getCandles(symbol, SNAPSHOT_INTERVAL, from, to),
+      this.marketData.getCandles(symbol, interval, from, to),
       this.marketData.getMarketBreadth(),
       this.marketData.getCandles(symbol, '1d', new Date(to.getTime() - 10 * 86_400_000), to),
       this.marketData.getOptionChain(symbol),
@@ -352,7 +383,7 @@ export class MarketIntelligenceService {
         breadthRatio: breadth.declines > 0 ? breadth.advances / breadth.declines : null,
         optionChain: readOptionChain(chain, last?.close ?? 0),
       },
-      { interval: SNAPSHOT_INTERVAL, now: to },
+      { interval, now: to },
     );
   }
 
@@ -378,7 +409,14 @@ export class MarketIntelligenceService {
    * observation is unaffected — this is additional evidence, never a gate on
    * the read the workspace already produced.
    */
-  async contracts(snapshot: MarketSnapshot): Promise<ContractAlignment> {
+  async contracts(
+    snapshot: MarketSnapshot,
+    // The interval the snapshot was composed on. Defaults to the engine's own,
+    // so `/observe` is unchanged; the observation projection passes the
+    // timeframe it read the index on, because comparing a 5m index against
+    // 15m premiums is the cross-clock comparison this method exists to avoid.
+    interval: CandleInterval = SNAPSHOT_INTERVAL,
+  ): Promise<ContractAlignment> {
     // ── THE ONE PLACE THAT PUTS THE FORMING BAR BACK ──────────────────────
     // `readSeries` measures each series from its first open to its last close,
     // and the CE/PE legs below are fetched raw — so they carry their own
@@ -397,7 +435,7 @@ export class MarketIntelligenceService {
     const bars = session.length ? session : live;
     const base = {
       underlying: snapshot.symbol,
-      interval: SNAPSHOT_INTERVAL,
+      interval,
       indexCandles: bars,
     };
 
@@ -468,8 +506,8 @@ export class MarketIntelligenceService {
     const to = new Date();
 
     const [ce, pe] = await Promise.all([
-      this.readLegCandles(snapshot.symbol, expiry, strike, 'CE', from, to),
-      this.readLegCandles(snapshot.symbol, expiry, strike, 'PE', from, to),
+      this.readLegCandles(snapshot.symbol, expiry, strike, 'CE', interval, from, to),
+      this.readLegCandles(snapshot.symbol, expiry, strike, 'PE', interval, from, to),
     ]);
 
     return alignContracts({ ...base, expiry, strike, ce, pe, contractsReadable: true });
@@ -481,11 +519,12 @@ export class MarketIntelligenceService {
     expiry: string,
     strike: number,
     side: 'CE' | 'PE',
+    interval: CandleInterval,
     from: Date,
     to: Date,
   ): Promise<LegRead> {
     try {
-      const candles = await this.marketData.getOptionCandles!({ symbol, expiry, strike, side }, SNAPSHOT_INTERVAL, from, to);
+      const candles = await this.marketData.getOptionCandles!({ symbol, expiry, strike, side }, interval, from, to);
       return readLeg(side, strike, candles);
     } catch (err) {
       // One leg failing must not take the other down with it: an illiquid put

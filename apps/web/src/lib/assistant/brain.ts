@@ -142,6 +142,26 @@ export function validateAction(raw: unknown): AssistantAction | null {
       return { type: 'toggleSidebar' };
     case 'newWorkspaceTab':
       return { type: 'newWorkspaceTab' };
+    case 'analyzeMarket': {
+      /**
+       * Admitted to the model's vocabulary, unlike `chartDetect`, because it
+       * cannot fabricate anything: the action carries only a symbol and a
+       * timeframe, and every number in the answer comes from the API response
+       * that follows. The worst a bad plan can do is measure the wrong symbol,
+       * which the reply names explicitly.
+       *
+       * Both fields are optional and are narrowed here rather than trusted —
+       * the timeframe is bounded and the symbol is shape-checked, so neither
+       * can become an arbitrary string on the wire.
+       */
+      const symbol =
+        str(a.symbol) && SYMBOL_RE.test(a.symbol.toUpperCase()) ? a.symbol.toUpperCase() : null;
+      // Exactly as `chartTimeframe` validates: the chart's own pill labels,
+      // case-sensitive, and nothing the panel has no button for.
+      const timeframe =
+        str(a.timeframe) && TIMEFRAMES_SET.has(a.timeframe) ? (a.timeframe as ChartTimeframe) : null;
+      return { type: 'analyzeMarket', symbol, timeframe };
+    }
     case 'quote': {
       if (!Array.isArray(a.symbols)) return null;
       const symbols = a.symbols

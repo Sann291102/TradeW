@@ -85,6 +85,12 @@ export function explainAction(a: AssistantAction): string | null {
       return 'Drawings are grouped by what produced them, so clearing one group leaves anything you drew yourself exactly where it was.';
     case 'chartTimeframe':
       return 'Each timeframe is a separate request for bars, so the chart reloads rather than resampling what it already had — which is why the zones I drew are cleared with it.';
+    case 'analyzeMarket':
+      // Platform mechanics, per the docblock: where the numbers come from and
+      // why they can be trusted. Deliberately says nothing about what any of
+      // them MEANS — that would be the market commentary this mode must not
+      // become a side door to.
+      return 'Every number in that read comes from the same engine our autonomous paper agents decide on, measured off real bars — so the assistant and the agents can never describe two different markets. Anything that could not be measured is listed as unavailable rather than filled in with an estimate.';
   }
 }
 

@@ -32,6 +32,18 @@
  * When the Learning AI phase lands (book ingestion + retrieval + provenance),
  * this module is where those questions get routed to real, cited answers.
  * Until then it is where they get an honest no.
+ *
+ * ── WHAT CHANGED, AND WHAT DID NOT (2026-08-31) ────────────────────────────
+ *
+ * Tara can now MEASURE a market (`analysis.ts` → the canonical observation
+ * route): structure, levels, indicators, option context, all real. That does
+ * not move this boundary an inch. "Where is the break of structure on NIFTY"
+ * is a measurement and is answered; "what IS a break of structure" is trading
+ * education and still is not, because the `knowledge-base/` corpus carries no
+ * FVG, BOS or CHoCH concept to cite — even though the ENGINE detects all three
+ * (`market-structure.ts`, `charts/fvg.ts`). Detecting a thing and being able to
+ * teach it from a sourced definition are different capabilities, and conflating
+ * them is how unsourced trading education ships.
  */
 
 /**
@@ -108,13 +120,13 @@ export function conceptReply(q: ConceptQuestion): string {
       '',
       "Those concepts aren't in my knowledge base, and I won't improvise trading education I can't source. Everything I teach is meant to trace back to a curated concept or a book, and these don't yet.",
       '',
-      "What I do have today: prices, the day's range and volume, and control of the app. Chart reading and concept teaching are the next phase.",
+      "What I do have today: prices, the day's range and volume, control of the app, and a full measured read of any supported market — say \"analyse NIFTY\" and I'll give you indicators, structure, levels and option context off the canonical engine. Teaching a concept from a sourced knowledge base is the part that is still missing.",
     ].join('\n');
   }
 
   return [
-    "That's a concept question, and my analysis agents aren't connected yet — that's the next phase.",
+    "That's a concept question, and I can't source an answer to it yet — the knowledge base doesn't cover it.",
     '',
-    "I won't guess at an explanation: an unsourced answer about market structure is exactly what this platform promises not to give. Ask me a price or tell me where to go and I'm on solid ground.",
+    "I won't guess at an explanation: an unsourced answer about market structure is exactly what this platform promises not to give. What I can do instead is MEASURE it — \"analyse NIFTY on 15m\" gets you the real structure, levels and indicators rather than a definition.",
   ].join('\n');
 }

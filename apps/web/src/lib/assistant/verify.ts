@@ -145,6 +145,9 @@ export function verifyAction(action: AssistantAction, snap: WorkspaceSnapshot): 
     // Nothing observable, or observable only as its own turn.
     case 'quote':
     case 'marketFlow':
+    // Read-only: its result is its own turn, carrying the measurements and
+    // their provenance. There is no workspace post-condition to read back.
+    case 'analyzeMarket':
     case 'openOverlay':
     case 'toggleSidebar':
     case 'newWorkspaceTab':

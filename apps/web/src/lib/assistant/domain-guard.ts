@@ -43,6 +43,63 @@ const SENTINEL_RE = /\bsentinel\b/i;
 const SENTINEL_EXPLAIN_RE =
   /\b(explain|why|what'?s|whats|what is|what are|tell me|summari[sz]e|interpret|break down|reasoning|thinking|doing|flagged|detected|observing|observation|observations|insight|insights)\b/i;
 
+/**
+ * The line the Sentinel boundary actually protects — and what it must stop
+ * blocking.
+ *
+ * ── THE CONFLICT THIS RESOLVES ─────────────────────────────────────────────
+ *
+ * The boundary above was written when the assistant had no market data at all,
+ * so "anything with the word Sentinel in it" was a safe over-approximation of
+ * "Sentinel's premium reasoning". It is no longer safe in the other direction:
+ * Tara now reads canonical MEASUREMENTS (`analysis.ts`), and a blanket refusal
+ * means "what does Sentinel say the RSI is" gets declined while the identical
+ * question without the word "Sentinel" is answered. That teaches users the
+ * refusal is about a magic word rather than about a real boundary.
+ *
+ * So the boundary is narrowed to what it was always for. What users pay for is
+ * Sentinel's VERDICT: the synthesised message, whether it published, which side
+ * is in focus, what strategy it advises, how confident it is. What they do not
+ * pay for is arithmetic their own chart performs — VWAP, RSI, a swing high.
+ *
+ * A request that names Sentinel AND asks only for measurements is redirected to
+ * the observation path (it resolves as an analysis command upstream of this
+ * guard) rather than refused. A request that names Sentinel and reaches for its
+ * conclusion is refused exactly as before.
+ *
+ * Widening this list is a product decision, not a cleanup. Every term here is a
+ * conclusion, never a measurement.
+ */
+const SENTINEL_VERDICT_RE =
+  /\b(synthesis|synthesi[sz]ed?|verdict|conclusion|advice|advise|recommend\w*|signal|signals|setup|setups|side in focus|sideinfocus|publish\w*|publication|confidence|conviction|call|calls|thesis|strategy|strategies|entry|target|stop|trade idea|what should)\b/i;
+
+/**
+ * Purely factual asks that must survive the Sentinel boundary.
+ *
+ * These are measurements, and every one of them is served by the canonical
+ * observation route with no premium field attached. Listing them explicitly —
+ * rather than inverting `SENTINEL_VERDICT_RE` — keeps the allowance auditable:
+ * a reviewer can read this line and see exactly what a free user may ask for
+ * even when they phrase it as a question about Sentinel.
+ */
+const MEASUREMENT_RE =
+  /\b(rsi|ema|sma|vwap|macd|atr|cpr|pivot|price|ltp|ohlc|open interest|oi\b|pcr|max pain|iv\b|volume|volatility|breadth|vix|support|resistance|swing|structure|liquidity|sweep|range|trend|momentum|regime|profile|indicator|indicators|measurement|measurements|timeframe|candles?|bars?|freshness|stale)\b/i;
+
+/**
+ * A plainly navigational phrasing — "open Sentinel", "take me to Sentinel".
+ *
+ * Same shape, and the same reasoning, as the command-verb check in
+ * `concepts.ts`: a command verb wins, because navigating to Sentinel is just a
+ * route and always has been. Needed here because the verdict vocabulary below
+ * legitimately appears in navigation ("open Sentinel strategies"), and this
+ * guard runs ABOVE command resolution, so without it a widened boundary would
+ * start refusing a page the user is entitled to open.
+ *
+ * It does NOT rescue an explain-phrasing: "open Sentinel and explain what it
+ * found" still refuses, because the second clause is the request.
+ */
+const SENTINEL_NAV_RE = /\b(open|show(?:\s+me)?|go\s+to|take\s+me\s+to|navigate\s+to|launch|switch\s+to)\b/i;
+
 /** Asking the assistant to transact. Never available, not even gated. */
 const ORDER_INTENT_RE =
   /\b(place|execute|submit|punch|fire|modify|cancel|square[\s-]?off|exit)\b[^.?!]*\b(order|orders|position|positions|trade|trades)\b/i;
@@ -180,9 +237,47 @@ export function guardHardBoundaries(text: string): AssistantPlan | null {
     );
   }
 
-  if (SENTINEL_RE.test(lower) && SENTINEL_EXPLAIN_RE.test(lower)) {
+  /**
+   * ── WHY THE ENTRY CONDITION IS TWO ALTERNATIVES, NOT ONE ─────────────────
+   *
+   * `SENTINEL_EXPLAIN_RE` alone left a hole that predates this change and was
+   * found while narrowing the boundary: it requires an explain PHRASING, so
+   * "what strategy is Sentinel using" and "sentinel setups today" — both plain
+   * requests for the premium verdict — matched nothing and were never refused.
+   * "What is Sentinel recommending" was, purely because it happens to contain
+   * the words "what is".
+   *
+   * So naming Sentinel beside a VERDICT word is now sufficient on its own,
+   * with the navigational escape hatch above keeping "open Sentinel
+   * strategies" a route rather than a refusal. Net effect: the boundary is
+   * narrower on measurements and wider on verdicts, which is the shape it was
+   * always meant to have.
+   */
+  const asksSentinelVerdict =
+    SENTINEL_VERDICT_RE.test(lower) && !SENTINEL_NAV_RE.test(lower);
+
+  if (SENTINEL_RE.test(lower) && (SENTINEL_EXPLAIN_RE.test(lower) || asksSentinelVerdict)) {
+    /**
+     * Measurements are not the premium product.
+     *
+     * "What is Sentinel seeing on NIFTY's VWAP" asks for a number anyone can
+     * read off a chart; "what is Sentinel's call on NIFTY" asks for the verdict
+     * users pay for. Both match the two regexes above, so the pair alone cannot
+     * separate them, and refusing both was the conflict recorded in
+     * `TRADEW-ASSISTANT.md` §6.
+     *
+     * A request that reaches for a measurement and NOT for a conclusion falls
+     * through to the ordinary resolvers, where the analysis grammar serves it
+     * from the canonical observation route — a route that structurally cannot
+     * return a verdict. Anything naming a conclusion is still refused here, and
+     * an ask that names both is refused, because the conclusion is the part
+     * that would leak.
+     */
+    if (MEASUREMENT_RE.test(lower) && !SENTINEL_VERDICT_RE.test(lower)) {
+      return null;
+    }
     return refusalPlan(
-      "Sentinel's analysis is the premium product, so I don't relay or explain what it's doing — that's for you to read there directly. Say \"open Sentinel\" and I'll take you to it.",
+      "Sentinel's conclusions — what it has published, which side it has in focus, what it advises — are the premium product, so I don't relay or explain those. Say \"open Sentinel\" and I'll take you to it. I can still read you the underlying measurements myself: ask me to analyse the symbol and you'll get the price, indicators, structure and option context off the same engine.",
       'sentinel-boundary',
     );
   }
