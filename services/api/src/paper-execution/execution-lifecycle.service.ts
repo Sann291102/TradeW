@@ -47,6 +47,13 @@ export const STALE_PROPOSED_MS = 2 * 60_000;
 @Injectable()
 export class ExecutionLifecycleService {
   private readonly logger = new Logger(ExecutionLifecycleService.name);
+  /**
+   * Orphans already reported as held back by an unlinked order. Reconcile runs
+   * every 15 s, and the condition persists until an operator acts, so the
+   * ERROR is written once per intent per process rather than four times a
+   * minute forever.
+   */
+  private readonly heldOrphansReported = new Set<string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -261,7 +268,11 @@ export class ExecutionLifecycleService {
    * no linked order — and the next pass in the same window could place a SECOND
    * order. So when the account holds an unlinked order for this contract placed
    * at or after the decision, the intent is left PROPOSED (which `createIntent`
-   * treats as a genuine duplicate) and the case is logged for an operator.
+   * treats as a genuine duplicate) and the case is logged once for an
+   * operator. On a USER_PAPER account the same guard also holds back an orphan
+   * when the PERSON bought that contract themselves after the decision — the
+   * conservative side to err on, since the cost is a stuck PROPOSED row, not a
+   * second position.
    */
   async recoverStuckIntents(now: Date = new Date()): Promise<number> {
     const threshold = new Date(now.getTime() - STALE_PROPOSED_MS);
@@ -289,6 +300,8 @@ export class ExecutionLifecycleService {
         select: { id: true },
       });
       if (unlinked) {
+        if (this.heldOrphansReported.has(orphan.id)) continue;
+        this.heldOrphansReported.add(orphan.id);
         this.logger.error(
           `${orphan.profile.name}: intent ${orphan.id} is PROPOSED with no linked order, but order ${unlinked.id} ` +
             `for ${orphan.contractSymbol} was placed after the decision — left PROPOSED for an operator rather than ` +

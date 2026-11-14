@@ -98,4 +98,15 @@ describe('ExecutionLifecycleService.recoverStuckIntents', () => {
     expect(where).toMatchObject({ userId: 'acct-1', executionIntentId: null, exitOfIntentId: null });
     expect(where.placedAt.gte).toEqual(decidedAt);
   });
+
+  it('reports a held-back orphan once, not on every reconcile', async () => {
+    const orphans = [orphan('placed', 'NIFTY:20260129:23800:CE')];
+    const { svc, updateMany } = makeService(orphans, () => 1, () => ({ id: 'order-unlinked' }));
+    const error = vi.spyOn((svc as unknown as { logger: { error: (m: string) => void } }).logger, 'error').mockImplementation(() => {});
+    expect(await svc.recoverStuckIntents(now)).toBe(0);
+    expect(await svc.recoverStuckIntents(now)).toBe(0);
+    expect(await svc.recoverStuckIntents(now)).toBe(0);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
 });
