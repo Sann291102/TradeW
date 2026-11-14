@@ -125,7 +125,7 @@ services/
   market-data/      live Dhan feed bridge + ingestion runtime
   company-data/     company-filings ingestion runtime
 packages/
-  database/         Prisma schema (83 models), 45 migrations, seed
+  database/         Prisma schema (84 models), 47 migrations, seed
   market-data/      provider/feed contracts, Dhan adapter, simulated market
   ai-core/          providers, memory, RAG, research foundation
   types/            shared TypeScript contracts
@@ -326,7 +326,7 @@ Web-only settings go in `apps/web/.env.local` (`NEXT_PUBLIC_API_URL`, `API_PROXY
 ## 9. Database
 
 - **Schema:** [`packages/database/prisma/schema.prisma`](packages/database/prisma/schema.prisma) — 83 models covering users and auth, entitlements and payments, the paper OMS (`PaperWallet`, `Order`, `Trade`, `Position`, `Holding`), paper execution (`ExecutionProfile`, `ExecutionIntent`, `ExecutionPosition`, journal), Sentinel, learning, knowledge and telemetry.
-- **Migrations:** 45 under `packages/database/prisma/migrations`. Apply with `npm run migrate:deploy -w @tradew/database`; create with `npm run db:migrate`. Migrations are additive — a deployed migration is never edited. CI applies all of them to an empty database and fails on any drift from the schema.
+- **Migrations:** 47 under `packages/database/prisma/migrations`. Apply with `npm run migrate:deploy -w @tradew/database`; create with `npm run db:migrate`. Migrations are additive — a deployed migration is never edited. CI applies all of them to an empty database and fails on any drift from the schema.
 - **Seed:** `npm run seed -w @tradew/database` loads prototype instruments and quotes, subscription plans and a demo account.
 - **Admin access:** `npm run admin:grant -w @tradew/database` (grant) and `admin:reconcile` (audit/withdraw).
 
