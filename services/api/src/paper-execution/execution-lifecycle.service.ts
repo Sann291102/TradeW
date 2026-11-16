@@ -4,6 +4,19 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OrderService } from '../sim/order.service';
 import { ExecutionJournalService } from './execution-journal.service';
 import { istParts } from './execution-identity';
+import { RECOVERY_ORPHANED } from './execution-policy';
+
+/**
+ * How long a PROPOSED intent may sit with no order before recovery fails it.
+ *
+ * Long enough that a normal in-flight submission — createIntent → placeOrder,
+ * a few seconds at most — is never mistaken for an orphan and failed out from
+ * under the leader that is actively submitting it. Anything older than this
+ * that is still PROPOSED-with-no-order is a decision whose process died between
+ * claiming the key and placing the order.
+ */
+export const STALE_PROPOSED_MS = 2 * 60_000;
+
 
 /**
  * Carries an execution past the order and through to a recorded outcome.
@@ -35,6 +48,12 @@ import { istParts } from './execution-identity';
 @Injectable()
 export class ExecutionLifecycleService {
   private readonly logger = new Logger(ExecutionLifecycleService.name);
+  /**
+   * Orphans already reported as held back by an unlinked order. Reconcile runs
+   * every 15 s and the condition persists until an operator acts, so the ERROR
+   * is written once per intent per process, not four times a minute forever.
+   */
+  private readonly heldOrphansReported = new Set<string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -48,7 +67,13 @@ export class ExecutionLifecycleService {
    * Idempotent by construction: each transition is guarded by the status it
    * moves FROM, so running this twice in a row is a no-op the second time.
    */
-  async reconcile(): Promise<{ filled: number; failed: number; closed: number }> {
+  async reconcile(): Promise<{ filled: number; failed: number; closed: number; recovered: number }> {
+    // ---- RESTART RECOVERY: orphaned PROPOSED intents ----------------------
+    // Run first, every reconcile, so a crash between claiming a decision and
+    // submitting it self-heals on the next tick. The database is the
+    // authority here, never in-memory scheduler state.
+    const recovered = await this.recoverStuckIntents();
+
     let filled = 0;
     let failed = 0;
     let closed = 0;
@@ -217,7 +242,92 @@ export class ExecutionLifecycleService {
       }
     }
 
-    return { filled, failed, closed };
+    return { filled, failed, closed, recovered };
+  }
+
+  /**
+   * Fail any PROPOSED intent that never became an order and is older than the
+   * staleness window — the classic "process restarted mid-submit" orphan.
+   *
+   * ## Why this is safe against a live submission
+   *
+   * A PROPOSED intent that a leader is submitting RIGHT NOW is seconds old; the
+   * `STALE_PROPOSED_MS` floor excludes it, so recovery never fails an intent out
+   * from under an in-flight `placeOrder`. The update is also conditional on
+   * `status: PROPOSED` in the WHERE clause, so an intent that became an order
+   * between the read and the write matches zero rows.
+   *
+   * ## Why an UNLINKED order on the same contract stops recovery
+   *
+   * `runProfile` links the order to its intent in a transaction AFTER
+   * `placeOrder` returns. A crash in that gap leaves a real order (and a real
+   * position) with no link, and the intent still PROPOSED. Failing that intent
+   * would make it re-claimable — `createIntent` re-claims a FAILED intent with
+   * no linked order — and the next pass in the same window could place a SECOND
+   * order. So when the account holds an unlinked order for this contract placed
+   * at or after the decision, the intent is left PROPOSED (which `createIntent`
+   * treats as a genuine duplicate) and the case is logged once for an
+   * operator. On a USER_PAPER account the same guard also holds back an orphan
+   * when the PERSON bought that contract themselves after the decision — the
+   * conservative side to err on, since the cost is a stuck PROPOSED row, not a
+   * second position.
+   */
+  async recoverStuckIntents(now: Date = new Date()): Promise<number> {
+    const threshold = new Date(now.getTime() - STALE_PROPOSED_MS);
+    const orphans = await this.prisma.executionIntent.findMany({
+      where: { status: ExecutionIntentStatus.PROPOSED, order: { is: null }, decidedAt: { lt: threshold } },
+      select: {
+        id: true,
+        decidedAt: true,
+        contractSymbol: true,
+        profile: { select: { accountUserId: true, name: true } },
+      },
+    });
+    if (orphans.length === 0) return 0;
+
+    let recovered = 0;
+    for (const orphan of orphans) {
+      const unlinked = await this.prisma.order.findFirst({
+        where: {
+          userId: orphan.profile.accountUserId,
+          executionIntentId: null,
+          exitOfIntentId: null,
+          instrument: { symbol: orphan.contractSymbol },
+          placedAt: { gte: orphan.decidedAt },
+        },
+        select: { id: true },
+      });
+      if (unlinked) {
+        if (this.heldOrphansReported.has(orphan.id)) continue;
+        this.heldOrphansReported.add(orphan.id);
+        this.logger.error(
+          `${orphan.profile.name}: intent ${orphan.id} is PROPOSED with no linked order, but order ${unlinked.id} ` +
+            `for ${orphan.contractSymbol} was placed after the decision — left PROPOSED for an operator rather than ` +
+            'failed, because a FAILED intent can be re-claimed into a second order.',
+        );
+        continue;
+      }
+      const res = await this.prisma.executionIntent.updateMany({
+        // Status in the WHERE clause is the guard: a concurrent submission that
+        // moved this to SUBMITTED between the read above and here matches zero
+        // rows, so recovery can never clobber an intent that became an order.
+        where: { id: orphan.id, status: ExecutionIntentStatus.PROPOSED },
+        data: {
+          status: ExecutionIntentStatus.FAILED,
+          rejectReason:
+            'Recovered on reconcile: the decision was proposed but no order was ever submitted — ' +
+            'the process most likely restarted between claiming the decision and placing the order.',
+          rejectCheckId: RECOVERY_ORPHANED,
+        },
+      });
+      if (res.count === 1) {
+        recovered++;
+        this.logger.warn(
+          `recovered orphaned intent ${orphan.id} (${orphan.contractSymbol}) — proposed but never submitted; marked FAILED.`,
+        );
+      }
+    }
+    return recovered;
   }
 
   /**

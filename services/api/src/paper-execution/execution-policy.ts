@@ -106,11 +106,19 @@ export const REJECT_CHECK_LABELS: Record<string, string> = {
   'sentinel-no-agent-strategy': 'Sentinel: no agent strategy validated',
   'sentinel-index-direction-conflict': 'Sentinel: index disagreed with the side',
   'sentinel-evidence-conflict': 'Sentinel: strategy evidence did not support',
+  'recovery-orphaned': 'Recovered — orphaned by a restart',
 };
 
-/** The two non-policy stops, named so a caller cannot misspell one. */
+/** The non-policy stops, named so a caller cannot misspell one. */
 export const SUBMISSION_RAISED = 'submission-raised';
 export const OMS_REJECTED = 'oms-rejected';
+/**
+ * A PROPOSED intent that never became an order: the process died between
+ * claiming the decision and submitting it. Recovery fails it under this id so
+ * it is counted as its own bucket, distinct from a policy refusal or an OMS
+ * rejection. (Ported from PR #24, 2026-11-16.)
+ */
+export const RECOVERY_ORPHANED = 'recovery-orphaned';
 
 /** How to say a check id to a person; the id itself if it is not a known one. */
 export function rejectCheckLabel(id: string | null): string {
