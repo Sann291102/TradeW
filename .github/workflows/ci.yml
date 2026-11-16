@@ -159,13 +159,22 @@ jobs:
         # An empty diff is the pass condition. `--exit-code` makes a non-empty
         # diff a non-zero exit, so this fails loudly rather than printing SQL
         # into a log nobody reads.
+        # One known false positive is filtered: UniverseInstrument_symbol_idx is
+        # declared with ops: raw("text_pattern_ops"), which Prisma cannot read
+        # back from the database, so it always proposes to drop and recreate an
+        # index that already matches. Any other statement still fails the job.
         run: |
-          npx prisma migrate diff \
+          diff_sql=$(npx prisma migrate diff \
             --from-url "$DATABASE_URL" \
             --to-schema-datamodel packages/database/prisma/schema.prisma \
-            --exit-code \
-          && echo "no drift" \
-          || (echo "::error::schema.prisma has changes with no migration. Generate one with 'prisma migrate diff --script' and commit it."; exit 1)
+            --script)
+          remaining=$(printf '%s\n' "$diff_sql" | grep -vE '^\s*(--.*)?$' | grep -vF '"UniverseInstrument_symbol_idx"' || true)
+          if [ -n "$remaining" ]; then
+            printf '%s\n' "$diff_sql"
+            echo "::error::schema.prisma has changes with no migration. Generate one with 'prisma migrate diff --script' and commit it."
+            exit 1
+          fi
+          echo "no drift"
 
   docker:
     name: Docker images build

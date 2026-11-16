@@ -2532,6 +2532,9 @@ model ExecutionEvaluationLog {
   @@index([outcome, at])
   @@index([checkId, at])
   @@index([at])
+  // Created by migration 20260907006000_evaluation_log_intelligence_fields;
+  // declared here so the schema and the migrations agree (CI drift check).
+  @@index([marketState, at])
 }
 
 // The end-of-session review for ONE agent, computed once, from what the day
