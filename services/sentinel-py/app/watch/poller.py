@@ -17,6 +17,7 @@ from app.market.feed import MarketDataUnavailableError, fetch_index_candles, fet
 from app.intrade.monitor import Direction, evaluate_position
 from app.notify.dispatcher import notify, notify_intrade
 from app.watch import store
+from app.watch.direction import market_context
 from app.watch.evaluator import evaluate, measure_flag, measure_zone, measure_liquidity, measure_flip, measure_pullback, measure_vwap
 from app.watch.state_machine import Transition, WatchState, advance
 
@@ -62,17 +63,57 @@ async def _candles_for(watch: dict, timeframe: str):
     the index. Watching the index while claiming to watch a 24300 CE would
     misreport every level, so the two are never interchangeable.
 
-    ⚠️ This is one of two reads now. `_read_pair` below reads the opposite leg
-    as well, because Sentinel's job is to compare the two candidate expressions
-    of the underlying's move — it just does not evaluate the user's rule set
-    twice. Which leg is the stronger setup is decided from the pair in the
-    observation, never by this choice of evaluation series.
+    ⚠️ This is one of THREE reads. `_read_index` reads the underlying — the
+    market instrument, and the only series the directional context is taken
+    from — and `_read_pair` reads both legs, because Sentinel's job is to
+    compare the two candidate expressions of the underlying's move. This
+    function chooses only which series the user's rule set is evaluated on; it
+    does not decide, and has never decided, which way the market is going.
     """
     ce, pe, focused_side = store._legs_of(watch)
     focused = ce if focused_side == "CE" else pe if focused_side == "PE" else (ce or pe)
     if focused is not None and watch.get("expiry"):
         return await _leg_candles(watch, focused, timeframe)
     return await fetch_index_candles(symbol=watch["symbol"], interval=timeframe)
+
+
+async def _read_index(watch: dict, timeframe: str, evaluation_candles):
+    """The INDEX series — the market instrument of every watch, option or not.
+
+    ── WHAT THIS CLOSED ───────────────────────────────────────────────────────
+
+    Before 2026-08-29 `fetch_index_candles` was reached ONLY by a watch with no
+    legs. An option watch read its focused leg and its pair and never once
+    looked at the underlying, so "watching NIFTY 24200 CE" watched two option
+    contracts and an index that existed on screen and nowhere else. Every
+    directional sense the engine had came out of a premium series, which is the
+    one series that cannot answer which way the market is going (see
+    `app/watch/direction.py`).
+
+    An UNDERLYING watch already evaluates on the index, so its candles are
+    handed in and reused: this must not double the bridge call for the watches
+    that were reading the index correctly all along.
+
+    Failures are swallowed and NAMED. The index is context, and a bridge that
+    cannot serve the index must not stop a sweep whose option legs read fine —
+    the same rule `_read_pair` follows for a dead leg.
+    """
+    ce, pe, focused_side = store._legs_of(watch)
+    focused = ce if focused_side == "CE" else pe if focused_side == "PE" else (ce or pe)
+    # Mirrors `_candles_for`'s own index branch, condition for condition. When
+    # that function fell back to the index — no legs, or legs with no expiry to
+    # address them by — the evaluation series ALREADY is the index, and fetching
+    # it a second time would double the bridge call for exactly the watches that
+    # were reading it correctly all along.
+    if focused is None or not watch.get("expiry"):
+        return evaluation_candles, None
+    try:
+        return await fetch_index_candles(symbol=watch["symbol"], interval=timeframe), None
+    except MarketDataUnavailableError as exc:
+        return None, str(exc)
+    except Exception as exc:  # noqa: BLE001 - context must never fail a sweep
+        logger.warning("watch=%s index read failed: %s", watch["id"], exc)
+        return None, str(exc)
 
 
 def _leg_summary(leg: dict | None, candles, error: str | None) -> dict | None:
@@ -237,9 +278,21 @@ async def sweep_once() -> int:
             rules_json = watch.get("strategyRules") or {}
             timeframe = _timeframe_of(rules_json)
             candles = await _candles_for(watch, timeframe)
-            # Both legs, for the record. Read AFTER the evaluation series so a
-            # dead pair leg cannot pre-empt the skip the focused leg would
-            # otherwise raise — the skip is the more precise statement.
+            # THE INDEX — the market instrument. Read on every watch, not only
+            # on the legless ones, because the directional context comes from
+            # here and from nowhere else (app/watch/direction.py). Read AFTER
+            # the evaluation series so a dead index cannot pre-empt the skip the
+            # focused leg would otherwise raise — the skip is the more precise
+            # statement.
+            index_candles, index_error = await _read_index(watch, timeframe, candles)
+            market = market_context(
+                symbol=watch["symbol"],
+                candles=index_candles,
+                unreadable=index_error,
+                timeframe=timeframe,
+                focused_side=watch.get("focusedSide"),
+            )
+            # Both legs, for the record.
             pair = await _read_pair(watch, timeframe)
 
             # A position that is open is no longer a setup being watched for:
@@ -316,12 +369,35 @@ async def sweep_once() -> int:
                     # underlying's move — the question a single-leg watch
                     # could not be asked at all.
                     #
-                    # ⚠️ Recorded, not ranked. Nothing here scores the legs or
-                    # names a preferred side; that judgement belongs to the
-                    # agents evaluating live structure, momentum, volatility,
-                    # premium behaviour and liquidity, and a stored ranking
-                    # would be a recommendation by another name (Rule 2).
+                    # ⚠️ Recorded, not ranked. Nothing here scores the legs
+                    # against each other or names a preferred side; that
+                    # judgement belongs to the agents evaluating live structure,
+                    # momentum, volatility, premium behaviour and liquidity, and
+                    # a stored ranking would be a recommendation by another name
+                    # (Rule 2).
+                    #
+                    # `marketContext.alignedSide` below is not that. Preferred
+                    # and ALIGNED are different claims: one says a leg is the
+                    # better trade, the other says its direction agrees with the
+                    # index's. Only the second is arithmetic, and only the
+                    # second is made.
                     "optionPair": pair,
+                    # THE DIRECTIONAL CONTEXT, and the instrument it came from.
+                    #
+                    # `basis: "index"` is the load-bearing field. It states that
+                    # the direction was read from the UNDERLYING rather than
+                    # from whichever premium series `_candles_for` happened to
+                    # evaluate — the ambiguity that made every pre-2026-08-29
+                    # observation unable to say which way the market was going.
+                    #
+                    # `alignedSide` is which leg the index's move points at
+                    # (rising → CE, falling → PE, flat → neither). It is a
+                    # description of the tape, not a ranking of the two
+                    # contracts and not a preference between strikes: nothing
+                    # here reads premium, liquidity or volatility, and none of
+                    # it reaches a notification, where `compliance.py` rejects a
+                    # `side`/`bias` key outright (Rule 2).
+                    "marketContext": market,
                 },
             )
 
