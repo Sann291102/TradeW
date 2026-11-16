@@ -198,7 +198,9 @@ var acrPullRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/ro
 var keyVaultSecretsUserRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
 
 resource acrPullRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(containerRegistry.id, containerAppsIdentity.properties.principalId, acrPullRoleDefinitionId)
+  // The name must be computable when the deployment starts (BCP120), so it is
+  // derived from the identity's resource id, not its runtime principalId.
+  name: guid(containerRegistry.id, containerAppsIdentity.id, acrPullRoleDefinitionId)
   scope: containerRegistry
   properties: {
     roleDefinitionId: acrPullRoleDefinitionId
@@ -208,7 +210,9 @@ resource acrPullRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-
 }
 
 resource keyVaultSecretsUserRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, containerAppsIdentity.properties.principalId, keyVaultSecretsUserRoleDefinitionId)
+  // The name must be computable when the deployment starts (BCP120), so it is
+  // derived from the identity's resource id, not its runtime principalId.
+  name: guid(keyVault.id, containerAppsIdentity.id, keyVaultSecretsUserRoleDefinitionId)
   scope: keyVault
   properties: {
     roleDefinitionId: keyVaultSecretsUserRoleDefinitionId

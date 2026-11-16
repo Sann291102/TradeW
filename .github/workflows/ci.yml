@@ -213,6 +213,10 @@ jobs:
     # that a compose file will otherwise report at 2am on the VM.
     steps:
       - uses: actions/checkout@v4
+      # Every prod service loads `env_file: ../../.env.prod`, which holds real
+      # secrets and is git-ignored, so it never exists in CI. Validate against
+      # the committed placeholder file instead; nothing here is deployed.
+      - run: cp infra/docker/.env.prod.example .env.prod
       - run: docker compose -f infra/docker/docker-compose.prod.yml --env-file infra/docker/.env.prod.example config >/dev/null
       - run: docker compose -f infra/docker/docker-compose.yml config >/dev/null
 

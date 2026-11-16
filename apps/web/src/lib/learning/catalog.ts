@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { parseFrontmatter, splitFrontmatter, type ParsedValue } from './frontmatter';
 import type { LegAction, LegExpiry, LegKind, Lesson, NetFlow, Strategy, StrategyLeg, Tier } from './types';
@@ -22,7 +22,9 @@ import type { LegAction, LegExpiry, LegKind, Lesson, NetFlow, Strategy, Strategy
  */
 
 /** `docs/learning`, resolved from the Next.js app root (`apps/web`). */
-const LEARNING_ROOT = join(process.cwd(), '..', '..', 'docs', 'learning');
+// LEARNING_DOCS_DIR points at the lessons when they are kept outside the repo
+// (private content, e.g. D:\TradeW Private Content\docs\learning).
+const LEARNING_ROOT = process.env.LEARNING_DOCS_DIR || join(process.cwd(), '..', '..', 'docs', 'learning');
 
 /** Index/meta documents that carry no frontmatter and are not lessons. */
 const NON_LESSON = new Set(['README.md', 'TAXONOMY.md']);
@@ -98,6 +100,14 @@ function parseGreeks(value: ParsedValue | undefined, file: string): Record<strin
 
 function markdownFilesIn(dir: string): string[] {
   const out: string[] = [];
+  // `docs/` is private content kept out of the public repository, so a fresh
+  // clone has no `docs/learning`. That is an empty catalog, not a broken build:
+  // learning and trade render with no strategies until LEARNING_DOCS_DIR (or a
+  // local docs/ copy) provides them. Malformed lessons still fail the build.
+  if (dir === LEARNING_ROOT && !existsSync(dir)) {
+    console.warn(`Learning catalog: ${LEARNING_ROOT} not found — building with no lessons or strategies.`);
+    return out;
+  }
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) out.push(...markdownFilesIn(full));

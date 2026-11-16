@@ -9,6 +9,12 @@ FROM node:20-bookworm-slim AS build
 WORKDIR /repo
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY . .
+# The corpus folders copied into the runtime stage below are private content,
+# kept out of the public repository. A build from a plain clone has none of
+# them, so create them empty: the image still builds and Sentinel runs, but it
+# cites nothing until the content is mounted (KNOWLEDGE_BASE_DIR etc.) or the
+# image is built from a checkout with the private folders copied in.
+RUN mkdir -p "docs/Trading Books" docs/product-architecture docs/handbook knowledge knowledge-base agents
 RUN npm ci
 RUN npx prisma generate --schema packages/database/prisma/schema.prisma
 RUN npm run build -w @tradew/types -w @tradew/ai-core -w @tradew/sentinel

@@ -57,6 +57,16 @@ const engine = new StrategyEngineService();
 const agentStrategies = engine.agentStrategies();
 const conceptIds = loadConceptIds();
 
+/**
+ * `knowledge-base/` is private content kept out of the public repository, so a
+ * fresh clone (and CI) has none. The provenance checks below compare against
+ * it and can only run where it exists: on the owner's machine, or anywhere
+ * KNOWLEDGE_BASE_DIR points at a copy. Everything else in this file runs
+ * everywhere.
+ */
+const hasKnowledgeBase = conceptIds.size > 0;
+const KB_SKIP = 'knowledge-base/ is private content and absent from this checkout';
+
 describe('agent strategy roster', () => {
   it('exposes exactly four agent-tradable strategies', () => {
     expect(agentStrategies.map((s) => s.id).sort()).toEqual([
@@ -79,7 +89,7 @@ describe('agent strategy roster', () => {
     }
   });
 
-  it('finds the knowledge base on disk', () => {
+  it.skipIf(!hasKnowledgeBase)(`finds the knowledge base on disk (skipped when ${KB_SKIP})`, () => {
     // Guards the tests below: an empty concept set would make every provenance
     // assertion vacuously pass.
     expect(conceptIds.size).toBeGreaterThan(50);
@@ -103,7 +113,7 @@ describe.each(agentStrategies)('$id', (strategy) => {
     expect(strategy.exitRules?.length ?? 0).toBeGreaterThan(0);
   });
 
-  it('cites only knowledge-base concepts that exist', () => {
+  it.skipIf(!hasKnowledgeBase)('cites only knowledge-base concepts that exist', () => {
     expect(strategy.knowledgeConcepts?.length ?? 0).toBeGreaterThan(0);
     for (const concept of strategy.knowledgeConcepts ?? []) {
       expect(conceptIds.has(concept), `${strategy.id} cites unknown concept "${concept}"`).toBe(true);
@@ -125,7 +135,7 @@ describe.each(agentStrategies)('$id', (strategy) => {
 });
 
 describe('evidence readers', () => {
-  it('every reader cites a concept the knowledge base defines', () => {
+  it.skipIf(!hasKnowledgeBase)('every reader cites a concept the knowledge base defines', () => {
     for (const [key, reader] of Object.entries(EVIDENCE_READERS)) {
       expect(conceptIds.has(reader.concept), `evidence "${key}" cites unknown concept "${reader.concept}"`).toBe(true);
     }
