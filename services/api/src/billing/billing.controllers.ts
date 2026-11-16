@@ -239,7 +239,9 @@ export class StripeWebhookController {
   constructor(private readonly webhooks: StripeWebhookService) {}
 
   @ApiExcludeEndpoint()
-  @SkipThrottle()
+  // Named throttlers (`global`, `route`) are skipped by name; a bare
+  // @SkipThrottle() would only skip one called `default`, which does not exist.
+  @SkipThrottle({ global: true, route: true })
   @Post('webhook')
   @HttpCode(200)
   webhook(@Req() req: { rawBody?: Buffer; headers: Record<string, string | undefined> }) {

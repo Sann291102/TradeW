@@ -21,9 +21,17 @@ export class VerifiedEmailGuard implements CanActivate {
     const req = context.switchToHttp().getRequest();
     const userId: string | undefined = req.user?.sub;
     if (!userId) throw new UnauthorizedException('Missing bearer token');
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { emailVerifiedAt: true } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { emailVerifiedAt: true, email: true, phoneVerifiedAt: true },
+    });
     if (!user) throw new UnauthorizedException('User not found');
-    if (!user.emailVerifiedAt) {
+    // Phone-signup accounts carry a synthetic `…@phone.tradew.local` address
+    // that can never receive a link. Their proven factor is the phone number
+    // (verified by SMS code), which is accepted here so they keep the access to
+    // billing they had before email verification existed.
+    const phoneOnly = user.email.endsWith('@phone.tradew.local') && Boolean(user.phoneVerifiedAt);
+    if (!user.emailVerifiedAt && !phoneOnly) {
       throw new ForbiddenException({
         statusCode: 403,
         code: 'EMAIL_NOT_VERIFIED',

@@ -80,12 +80,14 @@ function AddCardInner({ billing, email, onDone, onCancel }: { billing: Address |
             ? {
                 name: billing.name,
                 email,
-                phone: billing.phone || undefined,
+                // With these fields hidden ('never'), Stripe.js requires every
+                // one to be supplied; an absent value must be '' not undefined.
+                phone: billing.phone || '',
                 address: {
                   line1: billing.line1,
-                  line2: billing.line2 || undefined,
+                  line2: billing.line2 || '',
                   city: billing.city,
-                  state: billing.state || undefined,
+                  state: billing.state || '',
                   postal_code: billing.postalCode,
                   country: billing.country,
                 },

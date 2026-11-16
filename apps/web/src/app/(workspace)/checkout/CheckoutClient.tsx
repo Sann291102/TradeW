@@ -439,8 +439,9 @@ function PayWithNewCard({ session, profile, email }: { session: CheckoutSession;
           billing_details: {
             name: b.name,
             email,
-            phone: b.phone || undefined,
-            address: { line1: b.line1, line2: b.line2 || undefined, city: b.city, state: b.state || undefined, postal_code: b.postalCode, country: b.country },
+            // Hidden fields ('never') must all be supplied: '' rather than undefined.
+            phone: b.phone || '',
+            address: { line1: b.line1, line2: b.line2 || '', city: b.city, state: b.state || '', postal_code: b.postalCode, country: b.country },
           },
         },
       },

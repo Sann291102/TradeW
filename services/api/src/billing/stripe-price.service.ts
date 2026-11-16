@@ -36,7 +36,8 @@ export class StripePriceService {
 
   constructor(private readonly gateway: StripeGateway) {}
 
-  private matches(price: Stripe.Price, item: BillingItem): boolean {
+  /** Amount, currency and interval agree with the catalog (tax behaviour checked separately). */
+  private sameTerms(price: Stripe.Price, item: BillingItem): boolean {
     return (
       price.active &&
       price.unit_amount === item.amountMinor &&
@@ -44,6 +45,15 @@ export class StripePriceService {
       price.recurring?.interval === 'month' &&
       price.recurring.interval_count === item.intervalCount
     );
+  }
+
+  /**
+   * Usable for billing: same terms AND tax added on top (`exclusive`). An
+   * `inclusive` Price would bury tax inside the amount while every screen says
+   * "+ tax". `unspecified` is fixable in place (sync sets it to exclusive).
+   */
+  private matches(price: Stripe.Price, item: BillingItem): boolean {
+    return this.sameTerms(price, item) && price.tax_behavior === 'exclusive';
   }
 
   /** The Stripe Price to bill `item` with. Fails closed on any mismatch. */
@@ -116,13 +126,14 @@ export class StripePriceService {
     for (const item of RECURRING_ITEMS) {
       const product = products.get(item.product)!;
       const byKey = (await stripe.prices.list({ lookup_keys: [item.lookupKey!], active: true, limit: 1 })).data[0];
-      if (byKey && this.matches(byKey, item)) {
+      if (byKey && this.sameTerms(byKey, item) && byKey.tax_behavior !== 'inclusive') {
         await this.ensureTaxBehavior(byKey);
         report.prices.push({ itemId: item.id, id: byKey.id, lookupKey: item.lookupKey!, action: 'found' });
         continue;
       }
       const onProduct = await stripe.prices.list({ product: product.id, active: true, type: 'recurring', limit: 100 });
-      const reusable = onProduct.data.find((p) => this.matches(p, item) && !p.lookup_key);
+      // An `inclusive` Price cannot be switched; a new exclusive one is created instead.
+      const reusable = onProduct.data.find((p) => this.sameTerms(p, item) && p.tax_behavior !== 'inclusive' && !p.lookup_key);
       if (reusable && !byKey) {
         await stripe.prices.update(reusable.id, {
           lookup_key: item.lookupKey!,

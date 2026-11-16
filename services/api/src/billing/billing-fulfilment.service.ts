@@ -228,9 +228,20 @@ export class BillingFulfilmentService {
     return idOf(invoice.parent?.subscription_details?.subscription ?? null);
   }
 
-  async onInvoicePaid(invoice: Stripe.Invoice) {
-    const subId = this.subscriptionIdOf(invoice);
-    if (!subId || !invoice.id) return;
+  /**
+   * Webhook payloads do not include `invoice.payments` (it is an expandable
+   * list), so the PaymentIntent behind the invoice is read from a fresh,
+   * expanded retrieve rather than from the event body.
+   */
+  private async expandedInvoice(invoice: Stripe.Invoice): Promise<Stripe.Invoice> {
+    if (!invoice.id) return invoice;
+    return this.gateway.stripe.invoices.retrieve(invoice.id, { expand: ['payments'] });
+  }
+
+  async onInvoicePaid(eventInvoice: Stripe.Invoice) {
+    const subId = this.subscriptionIdOf(eventInvoice);
+    if (!subId || !eventInvoice.id) return;
+    const invoice = await this.expandedInvoice(eventInvoice);
     const stripeSub = await this.gateway.stripe.subscriptions.retrieve(subId);
     const userId =
       stripeSub.metadata?.userId || (await this.customers.userIdForCustomer(idOf(stripeSub.customer)));
@@ -315,9 +326,10 @@ export class BillingFulfilmentService {
     await this.sendPaidEmails(fresh, item, periodEnd, piId, !isFirst);
   }
 
-  async onInvoicePaymentFailed(invoice: Stripe.Invoice) {
-    const subId = this.subscriptionIdOf(invoice);
-    if (!subId || !invoice.id) return;
+  async onInvoicePaymentFailed(eventInvoice: Stripe.Invoice) {
+    const subId = this.subscriptionIdOf(eventInvoice);
+    if (!subId || !eventInvoice.id) return;
+    const invoice = await this.expandedInvoice(eventInvoice);
     const stripeSub = await this.gateway.stripe.subscriptions.retrieve(subId);
     const item = billingItem(stripeSub.metadata?.itemId ?? '');
     const userId = stripeSub.metadata?.userId || (await this.customers.userIdForCustomer(idOf(stripeSub.customer)));

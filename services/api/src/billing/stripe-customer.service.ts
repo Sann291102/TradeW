@@ -1,12 +1,14 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional, ServiceUnavailableException } from '@nestjs/common';
 import Stripe = require('stripe');
 import { PrismaService } from '../prisma/prisma.service';
 import { StripeGateway } from './stripe.gateway';
 import { describeStripeError } from './stripe-errors';
 import { billingAudit } from './billing-audit';
+import { LeaderElectionService } from '../common/leader-election';
 
 const SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 const SWEEP_BATCH = 20;
+const SWEEP_JOB = 'stripe-customer-retry-sweep';
 
 type AddressRow = {
   kind: 'billing' | 'shipping';
@@ -56,11 +58,18 @@ export class StripeCustomerService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: StripeGateway,
+    // Optional so scripts and tests can construct the service directly. In the
+    // app it is always present, and the sweep runs on the lease holder only, so
+    // N replicas do not retry the same customers N times.
+    @Optional() private readonly leader?: LeaderElectionService,
   ) {}
 
   onModuleInit() {
-    if (!this.gateway.enabled || process.env.NODE_ENV === 'test' || process.env.STRIPE_RETRY_SWEEP === 'false') return;
-    this.sweepTimer = setInterval(() => void this.sweep().catch(() => undefined), SWEEP_INTERVAL_MS);
+    if (!this.gateway.enabled || !this.leader || process.env.NODE_ENV === 'test' || process.env.STRIPE_RETRY_SWEEP === 'false') return;
+    this.leader.register(SWEEP_JOB);
+    this.sweepTimer = setInterval(() => {
+      if (this.leader?.isLeader(SWEEP_JOB)) void this.sweep().catch(() => undefined);
+    }, SWEEP_INTERVAL_MS);
     this.sweepTimer.unref?.();
   }
 
