@@ -81,3 +81,25 @@ crash.log
 # to hundreds of MB (past GitHub's 100MB hard limit), so it can never be
 # committed; regenerate it from the build rather than tracking it.
 tradew-azure-*.zip
+
+# ── Private content: never on GitHub (owner decision 2026-11-14, extended 2026-11-16)
+# The repository holds the program only. Documentation, notes, plans, reports
+# and agent definitions live on the owner's machine in "D:\TradeW Private
+# Content" at these same paths. Copy them back into a checkout to restore the
+# features that read them (Learning lessons, Sentinel's corpus and ontology, the
+# admin Knowledge workspace, TradeW AI agent definitions). The code runs without
+# them. Every Markdown file is local-only.
+*.md
+*.MD
+/docs/
+/knowledge/
+/knowledge-base/
+/agents/
+/archive/
+/workflows/
+/.audit-tmp/
+/.codex/
+/.claude/
+/api-call-inventory.json
+/scripts/cutting-room/
+/scripts/explainer/
