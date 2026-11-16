@@ -46,6 +46,16 @@ export function toClientError(err: unknown, context: string): HttpException {
         message: 'We could not work out sales tax for your billing address. Check the address and try again.',
       });
     }
+    if (/head office address|tax settings|Stripe Tax/i.test(err.message ?? '')) {
+      // Account configuration, not the customer's fault: Stripe Tax needs the
+      // business's head office address (Dashboard → Settings → Tax) before it
+      // will calculate anything. Nothing can be charged until it is set.
+      return new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'tax_not_configured',
+        message: 'Checkout is temporarily unavailable while sales tax is being set up. Nothing was charged.',
+      });
+    }
     if (err.code === 'resource_missing') {
       return new BadRequestException({ statusCode: 400, code: 'not_found', message: 'That payment item no longer exists.' });
     }

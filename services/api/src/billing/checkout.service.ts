@@ -210,8 +210,9 @@ export class CheckoutService {
   private async calculateOneTimeTax(customerId: string, item: BillingItem): Promise<Stripe.Tax.Calculation> {
     return this.gateway.stripe.tax.calculations.create({
       currency: item.currency,
+      // The customer's address (synced from the billing address) is the tax
+      // location. Stripe takes `customer` OR `customer_details`, never both.
       customer: customerId,
-      customer_details: { address_source: 'billing' },
       line_items: [
         { amount: item.amountMinor, quantity: 1, reference: item.id, tax_code: this.prices.taxCodeFor(item), tax_behavior: 'exclusive' },
       ],
