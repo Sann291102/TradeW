@@ -12,7 +12,7 @@
  *
  * ── WHY THE GUARDS EXIST ──────────────────────────────────────────────────
  *
- * `middleware.ts` gates the workspace on the `tw_auth` cookie. This script used
+ * `proxy.ts` gates the workspace on the `tw_auth` cookie. This script used
  * to gate on the `tradew_token` in localStorage. Those two disagree whenever
  * the cookie is dropped and localStorage survives — which is exactly what a
  * browser or dev-server restart does — and the disagreement was an infinite

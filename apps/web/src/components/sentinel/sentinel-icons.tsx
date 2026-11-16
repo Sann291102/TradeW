@@ -150,7 +150,7 @@ export const InstitutionIcon = (p: SentinelIconProps) => (
  * structure glyph rather than rendering an empty slot, so adding a dimension
  * server-side degrades gracefully instead of breaking the tile grid.
  */
-export const DIMENSION_ICONS: Record<string, (p: SentinelIconProps) => JSX.Element> = {
+export const DIMENSION_ICONS: Record<string, (p: SentinelIconProps) => React.JSX.Element> = {
   Volatility: VolatilityIcon,
   Momentum: MomentumIcon,
   'Market structure': StructureIcon,

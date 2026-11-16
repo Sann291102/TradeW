@@ -18,7 +18,9 @@ export function generateStaticParams() {
   return LEGAL_DOCUMENTS.map((doc) => ({ slug: doc.slug }));
 }
 
-export function generateMetadata({ params }: { params: { slug: string } }) {
+export async function generateMetadata({ params: paramsPromise }: { params: Promise<{ slug: string }> }) {
+  // Next 15+ passes route params as a Promise.
+  const params = await paramsPromise;
   const doc = getLegalDocument(params.slug);
   if (!doc) return {};
   return {
@@ -32,7 +34,9 @@ export function generateMetadata({ params }: { params: { slug: string } }) {
   };
 }
 
-export default function LegalPage({ params }: { params: { slug: string } }) {
+export default async function LegalPage({ params: paramsPromise }: { params: Promise<{ slug: string }> }) {
+  // Next 15+ passes route params as a Promise.
+  const params = await paramsPromise;
   const doc = getLegalDocument(params.slug);
   if (!doc) notFound();
   return <LegalDocumentView doc={doc} />;

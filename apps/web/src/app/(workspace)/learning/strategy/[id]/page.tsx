@@ -18,7 +18,9 @@ export function generateStaticParams() {
   return getAllIds().map((id) => ({ id }));
 }
 
-export function generateMetadata({ params }: { params: { id: string } }) {
+export async function generateMetadata({ params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  // Next 15+ passes route params as a Promise.
+  const params = await paramsPromise;
   const entry = getEntry(params.id);
   return { title: entry ? `${entry.name} — TradeW Learning` : 'Learning — TradeW' };
 }
@@ -27,7 +29,9 @@ function isStrategy(entry: NonNullable<ReturnType<typeof getEntry>>): entry is S
   return 'legs' in entry;
 }
 
-export default function LessonPage({ params }: { params: { id: string } }) {
+export default async function LessonPage({ params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  // Next 15+ passes route params as a Promise.
+  const params = await paramsPromise;
   const entry = getEntry(params.id);
   if (!entry) notFound();
 

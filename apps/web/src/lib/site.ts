@@ -45,7 +45,7 @@ export const PUBLIC_CRAWLABLE_PATHS = ['/'];
 /**
  * Everything a crawler must be kept out of.
  *
- * `middleware.ts` already redirects all of these to `/` for a signed-out
+ * `proxy.ts` already redirects all of these to `/` for a signed-out
  * request, so this list is not the only defence — it states the intent, which
  * matters because "the auth wall happens to hide it" is a property that could
  * change without anyone thinking about search engines.

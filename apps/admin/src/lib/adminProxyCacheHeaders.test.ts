@@ -39,7 +39,8 @@ async function callProxy(
   const { NextRequest } = await import('next/server');
 
   const request = new NextRequest(`http://admin.local/api/proxy/${path}?hours=24&limit=200`);
-  return GET(request, { params: { path: path.split('/') } });
+  // Next 15+ hands route handlers their params as a Promise.
+  return GET(request, { params: Promise.resolve({ path: path.split('/') }) });
 }
 
 describe('admin proxy — cache directives reaching the browser', () => {

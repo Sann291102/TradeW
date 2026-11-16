@@ -97,9 +97,13 @@ async function proxy(request: NextRequest, path: string[]): Promise<NextResponse
 // Only GET and POST are exported: the admin surface has no DELETE/PATCH routes,
 // so handlers for those methods would be dead weight that the allowlist would
 // reject anyway. A method the console does not use is simply not implemented.
-export async function GET(request: NextRequest, { params }: { params: { path: string[] } }) {
+export async function GET(request: NextRequest, { params: paramsPromise }: { params: Promise<{ path: string[] }> }) {
+  // Next 15+ passes route params as a Promise.
+  const params = await paramsPromise;
   return proxy(request, params.path);
 }
-export async function POST(request: NextRequest, { params }: { params: { path: string[] } }) {
+export async function POST(request: NextRequest, { params: paramsPromise }: { params: Promise<{ path: string[] }> }) {
+  // Next 15+ passes route params as a Promise.
+  const params = await paramsPromise;
   return proxy(request, params.path);
 }
