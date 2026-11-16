@@ -181,7 +181,7 @@ async function seedDemoAccount() {
   const passwordHash = await bcrypt.hash('sentinel-demo', 10);
   const user = await prisma.user.upsert({
     where: { email },
-    update: {},
+    update: { passwordHash },
     create: { email, passwordHash },
   });
 

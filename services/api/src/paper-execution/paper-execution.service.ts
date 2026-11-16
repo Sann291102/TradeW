@@ -1,11 +1,13 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { ExecutionIntentStatus, Prisma } from '@prisma/client';
+import { ExecutionEvaluationOutcome, ExecutionIntentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { isTradingDay } from '../discipline/market-calendar';
 import { MarketPriceService, type LivePrice } from '../sim/market-price.service';
 import { OrderService } from '../sim/order.service';
 import { ExecutionAccountService } from './execution-account.service';
 import { ExecutionCalibrationService } from './execution-calibration.service';
+import { ExecutionControlService } from './execution-control.service';
+import { computeDailyDrawdown, computeExposure } from './execution-drawdown';
 import { modelPaperFill, reconcileFill, type PaperFillModel } from './execution-fill';
 import { assessFreshness } from './execution-freshness';
 import { contractSymbol, deriveIdempotencyKey, istParts } from './execution-identity';
@@ -67,7 +69,9 @@ export type RunOutcome =
   | 'failed'
   | 'skipped-disabled'
   | 'skipped-market-closed'
-  | 'skipped-no-signal';
+  | 'skipped-no-signal'
+  /** An operator has halted new entries globally. See ExecutionControlService. */
+  | 'skipped-halted';
 
 export interface ExecutionRunResult {
   outcome: RunOutcome;
@@ -96,6 +100,7 @@ export class PaperExecutionService {
     private readonly accounts: ExecutionAccountService,
     private readonly positions: PositionManagerService,
     private readonly calibration: ExecutionCalibrationService,
+    private readonly control: ExecutionControlService,
   ) {}
 
   /**
@@ -128,6 +133,11 @@ export class PaperExecutionService {
     if (!profile) throw new NotFoundException(`No execution profile ${profileId}`);
 
     const base = { profileId: profile.id, profileName: profile.name, intentId: null, orderId: null, checks: [] };
+    /** Live market context for the ledger, filled in as the pass learns it. */
+    const context: {
+      confidence?: number; spot?: number; regime?: string; indexDirection?: string;
+      executable?: boolean; marketState?: string; strategyId?: string; strategyName?: string;
+    } = {};
     const record = (result: ExecutionRunResult): ExecutionRunResult => {
       // Every pass's outcome is kept in memory for the console, whether or not
       // it produced a row. Most passes correctly produce nothing — Sentinel
@@ -136,8 +146,83 @@ export class PaperExecutionService {
       // watching and finding nothing" from "the agent is dead". That gap is
       // what this closes; see `agentState()`.
       this.lastDecision.set(profile.id, { at: now, result });
+
+      // ---- The ledger: one row per pass, including the quiet ones ---------
+      //
+      // Fire-and-forget, with its own catch. Observability that can fail an
+      // execution decision is worse than no observability — a ledger write
+      // that threw here would turn a database hiccup into a missed trade, so
+      // the failure is logged and the pass continues exactly as it would have.
+      //
+      // `void` is deliberate: `record()` is called from every early return and
+      // awaiting it would add a write to the latency of every gate.
+      void this.prisma.executionEvaluationLog
+        .create({
+          data: {
+            profileId: profile.id,
+            agent: profile.agent,
+            symbol: profile.symbol,
+            at: now,
+            outcome: ledgerOutcome(result),
+            verdict: result.verdict ?? null,
+            reason: result.reason,
+            // The groupable form of the refusal. For a policy rejection it is
+            // the failing check; for a Sentinel refusal it is the verdict.
+            checkId: ledgerCheckId(result),
+            confidence: context.confidence ?? null,
+            spot: context.spot ?? null,
+            regime: context.regime ?? null,
+            indexDirection: context.indexDirection ?? null,
+            executable: context.executable ?? null,
+            marketState: context.marketState ?? null,
+            strategyId: context.strategyId ?? null,
+            strategyName: context.strategyName ?? null,
+            gates: (result.checks.length ? result.checks : undefined) as unknown as Prisma.InputJsonValue | undefined,
+            intentId: result.intentId,
+          },
+        })
+        .catch((err: Error) => this.logger.warn(`evaluation ledger write failed (non-fatal): ${err.message}`));
+
       return result;
     };
+
+    // ---- 0. THE KILL SWITCH ------------------------------------------------
+    //
+    // First, above every other check, including `enabled` — a global halt is
+    // the most authoritative statement an operator can make about this loop,
+    // and the console should report every profile as HALTED rather than as
+    // variously disabled, out-of-session or unauthorized.
+    //
+    // Checked HERE, in the execution path, and never in the scheduler. A kill
+    // switch that lives in the orchestrator stops working at exactly the moment
+    // the orchestrator is what broke, and `runProfile` is the single place an
+    // entry is decided — the operator hand-run route reaches it too, so a halt
+    // cannot be stepped around by forcing a pass from the console.
+    //
+    // Re-read every pass, deliberately. Caching it would let a halt take an
+    // unbounded time to arrive, which is the one property a stop button must
+    // not have. It is one indexed point lookup per profile per 30s tick.
+    const control = await this.control.state();
+    if (control.entriesHalted) {
+      return record({
+        ...base,
+        outcome: 'skipped-halted',
+        verdict: null,
+        reason:
+          `Execution is halted by ${control.haltedBy ?? 'an operator'}` +
+          (control.haltedAt ? ` since ${control.haltedAt}` : '') +
+          (control.reason ? `: ${control.reason}` : '.') +
+          ' No new entries; open positions remain managed.',
+        checks: [
+          {
+            id: 'entries-halted',
+            label: 'Execution halted by operator',
+            passed: false,
+            detail: control.reason ?? 'A global halt is in force.',
+          },
+        ],
+      });
+    }
 
     if (!profile.enabled) {
       return record({ ...base, outcome: 'skipped-disabled', verdict: null, reason: 'Profile is disabled.' });
@@ -216,6 +301,27 @@ export class PaperExecutionService {
     // Hand the thesis read to the fast loop BEFORE any early return. A pass
     // that finds no entry still refreshed what the open positions need.
     this.positions.recordThesis(profile.symbol, evaluation.exitRuleEvaluations ?? []);
+
+    // Stamp what the market looked like onto the ledger context, BEFORE the
+    // no-signal return below. A WAIT row that carried no confidence or spot
+    // would record that the agent looked without recording what it saw — and
+    // "how close did it get all day?" is the first question anyone asks of a
+    // session that produced no trades.
+    context.confidence = evaluation.confidence;
+    context.spot = evaluation.spot ?? undefined;
+    context.regime = evaluation.agentStrategy?.regime ?? undefined;
+    context.indexDirection = evaluation.indexDirection?.direction ?? undefined;
+    context.executable = evaluation.executable;
+    // Sentinel's session state lives inside the snapshot rather than at the top
+    // level of the DTO. It is the field `blockedBy=state-permits-guidance` is
+    // actually about, so a ledger without it cannot explain the commonest
+    // refusal in the system.
+    context.marketState =
+      typeof (evaluation.marketSnapshot as Record<string, unknown> | undefined)?.marketState === 'string'
+        ? ((evaluation.marketSnapshot as Record<string, unknown>).marketState as string)
+        : undefined;
+    context.strategyId = evaluation.agentStrategy?.strategyId ?? evaluation.strategyId ?? undefined;
+    context.strategyName = evaluation.strategyName ?? undefined;
 
     if (!evaluation.executable || !evaluation.strikes.selected || !evaluation.expiry) {
       // Nothing is written to the intent table. Sentinel declining to publish
@@ -341,6 +447,20 @@ export class PaperExecutionService {
       decidedAt: now,
     });
 
+    // ---- The two portfolio-level bounds ------------------------------------
+    //
+    // Both are computed here, from facts already gathered, so the policy layer
+    // stays pure. The drawdown base is the equity the day OPENED with —
+    // `walletEquity` already reflects today's P&L, so measuring the give-back
+    // against it would shrink the denominator on exactly the days the bound
+    // matters most.
+    const drawdown = computeDailyDrawdown(facts.tradesToday, facts.walletEquity - facts.realizedPnlToday);
+    const exposure = computeExposure({
+      openPremiumAtRisk: facts.openPremiumAtRisk,
+      proposedCost: estimatedCost,
+      walletEquity: facts.walletEquity,
+    });
+
     const policy = evaluatePolicy({
       enabled: profile.enabled,
       environment: profile.environment,
@@ -366,6 +486,11 @@ export class PaperExecutionService {
       riskPlanOk: plan.ok,
       riskPlanReason: plan.reason,
       riskPlanCheckId: plan.failedCheckId,
+      drawdown,
+      maxDrawdownPct: profile.maxDrawdownPct == null ? null : Number(profile.maxDrawdownPct),
+      exposure,
+      maxPortfolioExposurePct:
+        profile.maxPortfolioExposurePct == null ? null : Number(profile.maxPortfolioExposurePct),
     });
 
     const created = await this.createIntent({
@@ -507,11 +632,19 @@ export class PaperExecutionService {
               optionType: selected.optionType,
               state: 'OPEN',
               quantity: order.filledQuantity,
+              // Never decremented. `quantity` alone cannot distinguish a
+              // position that was reduced from one that was always this size,
+              // and the journal needs both to report a partial exit honestly.
+              initialQuantity: order.filledQuantity,
               entryPrice,
               entryAt: new Date(),
               stopPrice: Math.max(0.05, round2(entryPrice - stopDistance)),
               targetPrice: round2(entryPrice + targetDistance),
               highWaterPrice: entryPrice,
+              // Seeded to the entry, not to zero: before the first tick the
+              // worst price seen IS the entry, and a zero here would report a
+              // 100% adverse excursion on a position that has not yet moved.
+              lowWaterPrice: entryPrice,
               lastPrice: entryPrice,
               lastPriceAt: new Date(),
               unrealizedPnl: 0,
@@ -598,7 +731,7 @@ export class PaperExecutionService {
    */
   private async gatherFacts(userId: string, profileId: string, now: Date) {
     const dayStart = istMidnightFor(now);
-    const [profileOpenPositions, ordersToday, realized, wallet] = await Promise.all([
+    const [profileOpenPositions, ordersToday, realized, wallet, openPositionRows] = await Promise.all([
       // ---- POSITIONS THIS PROFILE OPENED, not every position on the account.
       //
       // This distinction did not matter while every profile traded a dedicated
@@ -632,22 +765,51 @@ export class PaperExecutionService {
       // holder is doing themselves. An agent that keeps adding risk to an
       // account already down its daily limit is the exact behaviour this bound
       // exists to prevent — so here, a human's losses correctly stop the agent.
-      this.prisma.trade.aggregate({
+      // The day's trades as a LIST, not an aggregate.
+      //
+      // The sum alone answers `maxLossPerDay`, but the drawdown bound needs the
+      // ORDER too — "how far has this account fallen from its own intraday
+      // peak" is a property of the curve, not of its total. One query yields
+      // both; keeping the aggregate and adding a second read would give two
+      // numbers that could disagree about the same day.
+      this.prisma.trade.findMany({
         where: { userId, executedAt: { gte: dayStart } },
-        _sum: { realizedPnl: true },
+        select: { executedAt: true, realizedPnl: true },
+        orderBy: { executedAt: 'asc' },
       }),
       // `marginUsed` as well as cash: the risk model sizes against the
       // account's whole EQUITY, and cash alone shrinks every time a position
       // is open — which would make an agent's allocation depend on what the
       // account holder happens to be holding.
       this.prisma.paperWallet.findUnique({ where: { userId }, select: { cashBalance: true, marginUsed: true } }),
+      // THIS PROFILE's own open positions, for the aggregate-exposure bound.
+      //
+      // Read from `ExecutionPosition` rather than the OMS `Position` table on
+      // purpose: the bound is on what the AGENT has committed, and on a
+      // USER_PAPER account the OMS table also holds whatever the human is
+      // trading. Charging an agent for its account holder's positions would
+      // deadlock it exactly as the `maxOpenPositions` bug did.
+      this.prisma.executionPosition.findMany({
+        where: { profileId, state: { in: ['OPEN', 'EXITING'] } },
+        select: { entryPrice: true, quantity: true },
+      }),
     ]);
     const positions = profileOpenPositions;
+    const realizedPnlToday = realized.reduce((sum, t) => sum + Number(t.realizedPnl), 0);
+    // Premium actually paid for what is still open — the money at risk right
+    // now. A long option's cost IS its maximum loss, so this is both the
+    // exposure and the worst case.
+    const openPremiumAtRisk = openPositionRows.reduce(
+      (sum, p) => sum + Number(p.entryPrice) * p.quantity,
+      0,
+    );
 
     return {
       openPositions: positions,
       ordersToday,
-      realizedPnlToday: Number(realized._sum.realizedPnl ?? 0),
+      realizedPnlToday,
+      tradesToday: realized.map((t) => ({ executedAt: t.executedAt, realizedPnl: Number(t.realizedPnl) })),
+      openPremiumAtRisk,
       // A wallet that does not exist yet is not zero capital — `ensureWallet`
       // creates it with the full starting balance on the first order. Reporting
       // 0 here would fail the affordability check on the very first trade.
@@ -902,6 +1064,54 @@ export class PaperExecutionService {
       throw err;
     }
   }
+}
+
+/**
+ * A run outcome as the ledger's vocabulary.
+ *
+ * `executed` splits in two: an order that came back FILLED means a managed
+ * position exists, which is a materially different state from one still
+ * resting, and a console that showed both as "executed" could not tell an agent
+ * holding risk from one waiting on a fill.
+ */
+function ledgerOutcome(result: ExecutionRunResult): ExecutionEvaluationOutcome {
+  switch (result.outcome) {
+    case 'skipped-halted':
+      return ExecutionEvaluationOutcome.HALTED;
+    case 'skipped-disabled':
+      return ExecutionEvaluationOutcome.DISABLED;
+    case 'skipped-market-closed':
+      return ExecutionEvaluationOutcome.MARKET_CLOSED;
+    case 'skipped-no-signal':
+      return ExecutionEvaluationOutcome.WAIT;
+    case 'duplicate':
+      return ExecutionEvaluationOutcome.DUPLICATE;
+    case 'failed':
+      return ExecutionEvaluationOutcome.FAILED;
+    case 'rejected':
+      // An account-scope or consent refusal is not a market decision, and
+      // grouping it with policy rejections would hide a misconfigured mandate
+      // among ordinary "the setup did not qualify" rows.
+      return result.checks.some((c) => !c.passed && c.id.startsWith('account'))
+        ? ExecutionEvaluationOutcome.UNAUTHORIZED
+        : ExecutionEvaluationOutcome.REJECTED;
+    case 'executed':
+      return result.reason.startsWith('FILLED')
+        ? ExecutionEvaluationOutcome.FILLED
+        : ExecutionEvaluationOutcome.SUBMITTED;
+    default:
+      return ExecutionEvaluationOutcome.WAIT;
+  }
+}
+
+/** The groupable reason: the failing gate, or Sentinel's own verdict. */
+function ledgerCheckId(result: ExecutionRunResult): string | null {
+  const failed = result.checks.find((c) => !c.passed);
+  if (failed) return failed.id;
+  // No gate of ours refused, so the refusal (if any) was Sentinel's. Prefixed
+  // so the console's breakdown can tell the two layers apart at a glance.
+  if (result.outcome === 'skipped-no-signal' && result.verdict) return `sentinel-${result.verdict}`;
+  return null;
 }
 
 /** Midnight IST for the day containing `now`, as a UTC instant. */

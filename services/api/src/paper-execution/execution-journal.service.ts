@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExecutionCalibrationService } from './execution-calibration.service';
+import { analysePostTrade, computeExcursions } from './post-trade-analysis';
 
 /**
  * One row per completed automated paper trade, written once, at the close.
@@ -111,6 +112,57 @@ export class ExecutionJournalService {
 
     const marketSnapshot = (intent.marketSnapshot ?? {}) as Record<string, unknown>;
 
+    // ---- How the trade actually travelled, and what that says -------------
+    //
+    // The excursions come from the POSITION's high/low-water marks, which the
+    // 2-second manager sampled while it was open. They cannot be recovered from
+    // anywhere else: no intraday price series is stored per position, so a
+    // position that closed without a position row (a pre-2026-09-07 trade, or
+    // an intent that filled and was flattened before any manage tick) has null
+    // excursions — and null is reported rather than a fabricated zero.
+    const excursions = computeExcursions({
+      entryPrice: Number(outcome.entryPrice),
+      quantity: outcome.quantity,
+      mfePrice: position == null ? null : Number(position.highWaterPrice),
+      maePrice: position == null ? null : Number(position.lowWaterPrice),
+      riskBudget,
+      realizedPnl,
+    });
+
+    // The fill model recorded what the entry was PREDICTED to cost; the OMS is
+    // the authority on what it did cost. Their difference is the slippage.
+    const fillModel = (intent.fillModel ?? {}) as { fillPrice?: number };
+    const modelledEntry = typeof fillModel.fillPrice === 'number' ? fillModel.fillPrice : null;
+
+    const analysis = analysePostTrade({
+      expected: {
+        // The modelled fill, not the raw LTP: it is the price the plan was
+        // actually built on, so it is the only honest thing to call "expected".
+        plannedEntryPrice: modelledEntry ?? (intent.plannedEntryPrice == null ? null : Number(intent.plannedEntryPrice)),
+        stopPrice: position?.stopPrice != null ? Number(position.stopPrice) : intent.stopPrice == null ? null : Number(intent.stopPrice),
+        targetPrice: position?.targetPrice != null ? Number(position.targetPrice) : intent.targetPrice == null ? null : Number(intent.targetPrice),
+        riskBudget,
+        rewardTarget: intent.rewardTarget == null ? null : Number(intent.rewardTarget),
+        confidence: intent.confidence,
+        strategyName: intent.strategyName,
+        regime: intent.regime,
+        bias: intent.bias,
+      },
+      actual: {
+        entryPrice: Number(outcome.entryPrice),
+        exitPrice: outcome.exitPrice == null ? null : Number(outcome.exitPrice),
+        quantity: outcome.quantity,
+        realizedPnl,
+        rMultiple,
+        exitReason: outcome.exitReason,
+        holdingSeconds: outcome.holdingSeconds,
+        result: outcome.result,
+        mfePrice: excursions.mfePrice,
+        maePrice: excursions.maePrice,
+      },
+      excursions,
+    });
+
     const journal = await this.prisma.executionJournal.create({
       data: {
         intentId: intent.id,
@@ -173,6 +225,22 @@ export class ExecutionJournalService {
         rMultiple,
         result: outcome.result,
 
+        // ---- How it travelled, and the structured review ------------------
+        mfePrice: excursions.mfePrice,
+        maePrice: excursions.maePrice,
+        mfeAmount: excursions.mfeAmount,
+        maeAmount: excursions.maeAmount,
+        mfeR: excursions.mfeR,
+        maeR: excursions.maeR,
+        entrySlippage: analysis.difference.entrySlippage,
+        // The exit's slippage is not modelled — `exitPosition` goes straight to
+        // the OMS with no predicted price to compare against — so it is null
+        // rather than a zero that would claim a perfect exit fill.
+        exitSlippage: null,
+        postTradeAnalysis: analysis as unknown as Prisma.InputJsonValue,
+        thesisCorrect: analysis.thesisCorrect,
+        confidenceError: analysis.confidenceError,
+
         calibrationKey,
         calibrationVersion,
       },
@@ -233,6 +301,18 @@ export class ExecutionJournalService {
       charges: Number(r.charges),
       rMultiple: r.rMultiple == null ? null : Number(r.rMultiple),
       result: r.result,
+      // ---- How it travelled, for the console's learning panel -------------
+      mfePrice: r.mfePrice == null ? null : Number(r.mfePrice),
+      maePrice: r.maePrice == null ? null : Number(r.maePrice),
+      mfeAmount: r.mfeAmount == null ? null : Number(r.mfeAmount),
+      maeAmount: r.maeAmount == null ? null : Number(r.maeAmount),
+      mfeR: r.mfeR == null ? null : Number(r.mfeR),
+      maeR: r.maeR == null ? null : Number(r.maeR),
+      entrySlippage: r.entrySlippage == null ? null : Number(r.entrySlippage),
+      exitSlippage: r.exitSlippage == null ? null : Number(r.exitSlippage),
+      postTradeAnalysis: r.postTradeAnalysis,
+      thesisCorrect: r.thesisCorrect,
+      confidenceError: r.confidenceError == null ? null : Number(r.confidenceError),
       riskBudget: r.riskBudget == null ? null : Number(r.riskBudget),
       allocatedCapital: r.allocatedCapital == null ? null : Number(r.allocatedCapital),
       calibrationKey: r.calibrationKey,

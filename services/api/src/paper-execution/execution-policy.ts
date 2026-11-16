@@ -24,6 +24,12 @@
  */
 
 import { PLATFORM_CONFIDENCE_FLOOR, applyCalibration } from './execution-calibration';
+import {
+  breachesDrawdown,
+  breachesExposure,
+  type DrawdownRead,
+  type ExposureRead,
+} from './execution-drawdown';
 
 export interface PolicyCheck {
   id: string;
@@ -86,6 +92,13 @@ export const REJECT_CHECK_LABELS: Record<string, string> = {
   'risk-plan': 'Risk plan is sizeable',
   'allocation-ceiling': 'Capital allocation',
   'risk-budget': 'Risk budget',
+  // ---- Give-back and concentration bounds (2026-09-07) ----
+  'daily-drawdown': 'Daily drawdown limit',
+  'portfolio-exposure': 'Portfolio exposure limit',
+  // The operator kill switch. Not a policy failure in the usual sense — a
+  // human stopped the loop — but it lands in the same breakdown because the
+  // question "why did nothing trade?" does not distinguish them.
+  'entries-halted': 'Execution halted by operator',
   // Every refusal Sentinel itself produced, so the console's "why did nothing
   // trade today?" breakdown can group them beside this layer's own. Without
   // these the largest bar on that chart is an unlabelled id.
@@ -164,6 +177,23 @@ export interface PolicyInput {
   riskPlanOk: boolean;
   riskPlanReason: string | null;
   riskPlanCheckId: string | null;
+
+  // ---- Give-back and concentration bounds (2026-09-07) -------------------
+  /**
+   * Today's realized equity curve, from `computeDailyDrawdown`.
+   *
+   * Measures what `maxLossPerDay` structurally cannot: a day that ran +50,000
+   * and handed back 45,000 never goes below an absolute floor, so the loss
+   * limit passes on every pass while the account bleeds out.
+   */
+  drawdown: DrawdownRead;
+  /** Null disables the bound. */
+  maxDrawdownPct: number | null;
+
+  /** Combined premium at risk if this pass fills, from `computeExposure`. */
+  exposure: ExposureRead;
+  /** Null disables the bound. Inert at `maxOpenPositions: 1`. */
+  maxPortfolioExposurePct: number | null;
 }
 
 /** IST minute-of-day the Indian equity session opens (09:15). */
@@ -278,6 +308,25 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
       : `Realized ${formatInr(input.realizedPnlToday)} today, at or past the ${formatInr(-Math.abs(input.maxLossPerDay))} floor. Trading is stopped for the day.`,
   );
 
+  // ---- The day's GIVE-BACK, which the loss floor cannot see ---------------
+  //
+  // Sits immediately after the loss limit because operators read them as one
+  // idea and they are not: the floor is absolute ("never below -25,000"), this
+  // is relative ("never hand back 30% of the best the day has been"). A session
+  // that peaked at +50,000 and is now +5,000 has lost 45,000 of real money with
+  // realized P&L still positive, so `daily-loss-limit` passed on every pass.
+  const drawdownBreached = breachesDrawdown(input.drawdown, input.maxDrawdownPct);
+  push(
+    'daily-drawdown',
+    !drawdownBreached,
+    input.maxDrawdownPct == null
+      ? 'No drawdown limit is configured for this profile.'
+      : input.drawdown.drawdownPct == null
+        ? `Drawdown could not be measured (no usable opening equity); the ${input.maxDrawdownPct}% limit was not applied.`
+        : `${formatInr(input.drawdown.drawdown)} given back from a ${formatInr(input.drawdown.peak)} peak ` +
+          `(${input.drawdown.drawdownPct.toFixed(2)}% of opening equity) against a ${input.maxDrawdownPct}% limit.`,
+  );
+
   // ---- A sizeable position could actually be planned ---------------------
   //
   // `planRisk` refuses when one lot does not fit inside the allocation ceiling
@@ -301,6 +350,26 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
     'affordable',
     affordable,
     `Estimated ${formatInr(input.estimatedCost)} against ${formatInr(input.availableCash)} available.`,
+  );
+
+  // ---- The COMBINED commitment, not just this one position ---------------
+  //
+  // `capitalAllocationPct` bounds one position and is checked inside
+  // `planRisk`. Nothing bounded their sum once `maxOpenPositions` rose above 1
+  // — three positions at a 20% allocation each commit 60% of the account while
+  // every individual check passes. Includes the proposed position, because the
+  // question is whether the account would be over-committed after this fill.
+  const exposureBreached = breachesExposure(input.exposure, input.maxPortfolioExposurePct);
+  push(
+    'portfolio-exposure',
+    !exposureBreached,
+    input.maxPortfolioExposurePct == null
+      ? 'No portfolio exposure limit is configured for this profile.'
+      : input.exposure.exposurePct == null
+        ? `Exposure could not be measured (no usable wallet equity); the ${input.maxPortfolioExposurePct}% limit was not applied.`
+        : `${formatInr(input.exposure.totalExposure)} committed after this fill ` +
+          `(${formatInr(input.exposure.openExposure)} already open + ${formatInr(input.exposure.proposedExposure)} proposed) ` +
+          `= ${input.exposure.exposurePct.toFixed(2)}% of equity, against a ${input.maxPortfolioExposurePct}% limit.`,
   );
 
   const failed = checks.find((c) => !c.passed);

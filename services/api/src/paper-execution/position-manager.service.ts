@@ -5,7 +5,12 @@ import { MarketPriceService } from '../sim/market-price.service';
 import { OrderService } from '../sim/order.service';
 import { DEFAULT_MAX_QUOTE_AGE_MS, assessFreshness } from './execution-freshness';
 import { istParts } from './execution-identity';
-import { decidePosition, type ExitReason, type PositionAction } from './position-decision';
+import {
+  decidePosition,
+  type ExitReason,
+  type PositionAction,
+  type RecordedExitReason,
+} from './position-decision';
 
 /**
  * The fast loop. Every open paper position, every couple of seconds.
@@ -139,14 +144,31 @@ export class PositionManagerService {
       // waiting for the fill; deciding again would place a second one.
       where: { state: ExecutionPositionState.OPEN },
       include: {
-        profile: { select: { squareOffMinute: true, name: true, trailStepPoints: true } },
+        profile: {
+          select: {
+            squareOffMinute: true, name: true, trailStepPoints: true,
+            partialExitEnabled: true, partialExitRMultiple: true, partialExitPct: true,
+          },
+        },
         intent: { select: { strategyId: true } },
       },
       orderBy: { entryAt: 'asc' },
     });
 
-    const summary: ManageSummary = { evaluated: 0, held: 0, trailed: 0, exited: 0, errors: 0, exits: [] };
+    const summary: ManageSummary = { evaluated: 0, held: 0, trailed: 0, exited: 0, reduced: 0, errors: 0, exits: [] };
     if (positions.length === 0) return summary;
+
+    // Lot sizes for the whole pass in ONE query. `ExecutionPosition` has no
+    // `instrument` relation (only the id), and a partial exit quantity must be
+    // lot-aligned or `placeOrder` rejects it — so the sizes are needed, but a
+    // lookup per position per two-second tick is a query the loop does not have
+    // to make.
+    const lotSizes = new Map<string, number>();
+    const instruments = await this.prisma.instrument.findMany({
+      where: { id: { in: [...new Set(positions.map((p) => p.instrumentId))] } },
+      select: { id: true, lotSize: true },
+    });
+    for (const i of instruments) lotSizes.set(i.id, i.lotSize);
 
     // ONE feed read for the whole pass, not one per position. The bridge's
     // 2-second quote cache would collapse them anyway, but reading once also
@@ -170,6 +192,13 @@ export class PositionManagerService {
           stopPrice: Number(position.stopPrice),
           targetPrice: Number(position.targetPrice),
           quantity: position.quantity,
+          // Partial profit taking, off unless the profile opted in.
+          partialExitEnabled: position.profile.partialExitEnabled,
+          partialExitRMultiple:
+            position.profile.partialExitRMultiple == null ? null : Number(position.profile.partialExitRMultiple),
+          partialExitPct: position.profile.partialExitPct,
+          partialExitCount: position.partialExitCount,
+          lotSize: lotSizes.get(position.instrumentId) ?? null,
           trailStepPoints: Number(position.profile.trailStepPoints),
           trailPrice: position.trailPrice == null ? null : Number(position.trailPrice),
           trailSteps: position.trailSteps,
@@ -196,6 +225,101 @@ export class PositionManagerService {
     }
 
     return summary;
+  }
+
+  /**
+   * Flatten open positions on an operator's instruction — the kill switch's
+   * second half.
+   *
+   * ## Why this is a separate act from halting
+   *
+   * `ExecutionControlService` stops new entries. This closes what is already
+   * open. They are deliberately two endpoints and two decisions, because a
+   * single button that did both would be the most destructive control in the
+   * console while looking like the safe one. A panic stop is halt, then this.
+   *
+   * ## It reuses `exit()` rather than reimplementing it
+   *
+   * Every guarantee the managed exit path has — the atomic `state: OPEN` claim
+   * that makes a double exit impossible, stamping the outcome's reason BEFORE
+   * the order so a failed exit is still attributable, reverting to OPEN for a
+   * retry when the order throws — is a guarantee this needs too. A second
+   * closing path would drift from the first, and it would drift in the code
+   * that runs when an operator has already decided something is wrong.
+   *
+   * ## It does not consult price, freshness or the market clock
+   *
+   * `decidePosition` is not called at all. An operator flatten is not a decision
+   * to be re-derived from market facts; the market's opinion is exactly what is
+   * being overridden. A premium is read only so the recorded row carries the
+   * price at the moment of the flatten, and a contract that cannot be priced is
+   * still flattened — `exit()` handles a null `lastPrice` already.
+   *
+   * `profileId` scopes it to one agent; omitted, it flattens every open position
+   * of every profile.
+   */
+  async flatten(args: { profileId?: string; reason?: string | null; operator: string; now?: Date }): Promise<FlattenResult> {
+    const now = args.now ?? new Date();
+    const positions = await this.prisma.executionPosition.findMany({
+      // OPEN only, exactly as `manageAll` selects: an EXITING position already
+      // has an order in flight and flattening it again would place a second.
+      where: {
+        state: ExecutionPositionState.OPEN,
+        ...(args.profileId ? { profileId: args.profileId } : {}),
+      },
+      include: {
+        profile: {
+          select: {
+            squareOffMinute: true, name: true, trailStepPoints: true,
+            partialExitEnabled: true, partialExitRMultiple: true, partialExitPct: true,
+          },
+        },
+        intent: { select: { strategyId: true } },
+      },
+      orderBy: { entryAt: 'asc' },
+    });
+
+    const result: FlattenResult = { requested: positions.length, flattened: 0, errors: 0, positions: [] };
+    if (positions.length === 0) return result;
+
+    const trimmed = args.reason?.trim();
+    const detail =
+      `Operator flatten by ${args.operator}` +
+      (trimmed ? `: ${trimmed}` : '.') +
+      ' Closed on instruction, not on a market condition.';
+
+    this.logger.warn(
+      `KILL SWITCH: flattening ${positions.length} open position(s)` +
+        (args.profileId ? ` for profile ${args.profileId}` : ' across every profile') +
+        ` on ${args.operator}'s instruction.`,
+    );
+
+    for (const position of positions) {
+      // A summary per position, so one position's failure is attributable and
+      // never stops the rest — the same rule `manageAll` follows.
+      const summary: ManageSummary = { evaluated: 0, held: 0, trailed: 0, exited: 0, reduced: 0, errors: 0, exits: [] };
+      const lastPrice = await this.readPremium(position.instrumentId);
+      const highWaterPrice =
+        lastPrice != null ? Math.max(Number(position.highWaterPrice), lastPrice) : Number(position.highWaterPrice);
+      const lowWaterPrice =
+        lastPrice != null ? Math.min(Number(position.lowWaterPrice), lastPrice) : Number(position.lowWaterPrice);
+      const unrealizedPnl =
+        lastPrice != null ? (lastPrice - Number(position.entryPrice)) * position.quantity : null;
+
+      await this.exit(position, 'KILL_SWITCH', detail, lastPrice, highWaterPrice, unrealizedPnl, now, summary, lowWaterPrice);
+
+      const flattened = summary.exited === 1;
+      result.flattened += flattened ? 1 : 0;
+      result.errors += summary.errors;
+      result.positions.push({
+        positionId: position.id,
+        contract: position.contractSymbol,
+        profileName: position.profile.name,
+        outcome: flattened ? 'flattened' : 'failed',
+      });
+    }
+
+    return result;
   }
 
   /**
@@ -248,6 +372,13 @@ export class PositionManagerService {
     summary: ManageSummary,
   ): Promise<void> {
     const highWaterPrice = lastPrice != null ? Math.max(Number(position.highWaterPrice), lastPrice) : Number(position.highWaterPrice);
+    // The mirror of the high-water mark, and the only source of MAE. It drives
+    // nothing — no exit, no trail, no sizing reads it — but it is not
+    // recoverable after the position closes, so it has to be sampled here on
+    // every tick or the journal simply cannot report how close the trade came
+    // to its stop.
+    const lowWaterPrice =
+      lastPrice != null ? Math.min(Number(position.lowWaterPrice), lastPrice) : Number(position.lowWaterPrice);
     const unrealizedPnl =
       lastPrice != null ? (lastPrice - Number(position.entryPrice)) * position.quantity : null;
 
@@ -261,6 +392,7 @@ export class PositionManagerService {
           trailPrice: action.trail.toPrice,
           trailSteps: action.trail.totalSteps,
           highWaterPrice,
+          lowWaterPrice,
           version: { increment: 1 },
         },
       });
@@ -283,6 +415,11 @@ export class PositionManagerService {
       }
     }
 
+    if (action.kind === 'reduce') {
+      await this.reduce(position, action, lastPrice, highWaterPrice, lowWaterPrice, unrealizedPnl, now, summary);
+      return;
+    }
+
     if (action.kind === 'hold') {
       await this.prisma.executionPosition.updateMany({
         where: { id: position.id, state: ExecutionPositionState.OPEN },
@@ -291,6 +428,7 @@ export class PositionManagerService {
           lastPriceAt: lastPrice != null ? now : undefined,
           lastEvaluatedAt: now,
           highWaterPrice,
+          lowWaterPrice,
           unrealizedPnl: unrealizedPnl ?? undefined,
         },
       });
@@ -298,7 +436,110 @@ export class PositionManagerService {
       return;
     }
 
-    await this.exit(position, action.reason, action.detail, lastPrice, highWaterPrice, unrealizedPnl, now, summary);
+    await this.exit(position, action.reason, action.detail, lastPrice, highWaterPrice, unrealizedPnl, now, summary, lowWaterPrice);
+  }
+
+  /**
+   * Take a partial profit: close part of the position, keep managing the rest.
+   *
+   * ## The claim is on the partial COUNT, not on the state
+   *
+   * A full exit claims by moving `state` OPEN → EXITING, which is what makes a
+   * double exit impossible. A partial cannot do that — the position stays OPEN
+   * by definition — so the atomic claim is on `partialExitCount` instead:
+   * `updateMany` with the current count in the WHERE clause means exactly one
+   * caller sees `count === 1`, and a second concurrent pass finds the count
+   * already advanced and does nothing. Without it, two passes two seconds apart
+   * could each sell half.
+   *
+   * ## The count advances BEFORE the order
+   *
+   * Same ordering as `exit()`, for the same reason: if the order then fails, the
+   * position has been marked as having taken its partial and simply will not try
+   * again. That is the safe direction — a partial not taken is a missed
+   * optimisation, while a partial taken twice is an unintended position change.
+   */
+  private async reduce(
+    position: PositionRow,
+    action: Extract<PositionAction, { kind: 'reduce' }>,
+    lastPrice: number | null,
+    highWaterPrice: number,
+    lowWaterPrice: number,
+    unrealizedPnl: number | null,
+    now: Date,
+    summary: ManageSummary,
+  ): Promise<void> {
+    const remaining = position.quantity - action.quantity;
+    if (remaining <= 0) {
+      // `considerPartial` already refuses this; belt and braces, because a
+      // partial that closes everything would leave the position row OPEN with
+      // zero quantity and nothing to manage.
+      this.logger.warn(
+        `${position.profile.name}: refusing a partial that would close the whole position (${action.quantity}/${position.quantity}).`,
+      );
+      return;
+    }
+
+    const claimed = await this.prisma.executionPosition.updateMany({
+      where: { id: position.id, state: ExecutionPositionState.OPEN, partialExitCount: position.partialExitCount },
+      data: {
+        quantity: remaining,
+        partialExitCount: { increment: 1 },
+        lastPrice: lastPrice ?? undefined,
+        lastPriceAt: lastPrice != null ? now : undefined,
+        lastEvaluatedAt: now,
+        highWaterPrice,
+        lowWaterPrice,
+        unrealizedPnl: unrealizedPnl ?? undefined,
+        version: { increment: 1 },
+      },
+    });
+    if (claimed.count !== 1) return; // someone else took it — the mechanism working
+
+    let orderId: string | null = null;
+    try {
+      const order = await this.orders.placeOrder(position.userId, {
+        // The same `UNDERLYING:YYYYMMDD:STRIKE:CE|PE` string the entry used —
+        // `placeOrder` resolves it through the scrip master exactly as it did
+        // on the way in.
+        symbol: position.contractSymbol,
+        side: 'SELL',
+        type: 'MARKET',
+        quantity: action.quantity,
+        productType: position.productType,
+      });
+      orderId = order.id;
+      summary.reduced++;
+      this.logger.log(
+        `${position.profile.name}: ${position.contractSymbol} PARTIAL EXIT ${action.quantity} @ ${order.avgFillPrice ?? 'resting'} — ${action.detail}`,
+      );
+    } catch (err) {
+      const message = (err as Error).message;
+      summary.errors++;
+      // The count stays advanced on purpose — see the note above. The position
+      // keeps its full stop and target and is managed normally from here.
+      this.logger.error(
+        `${position.profile.name}: partial exit order failed for ${position.contractSymbol} — ${message}. ` +
+          'The position keeps its stop and target; no further partial will be attempted.',
+      );
+      await this.prisma.executionPosition.updateMany({
+        where: { id: position.id },
+        data: { quantity: position.quantity, exitDetail: `partial exit failed: ${message}` },
+      });
+      return;
+    }
+
+    await this.prisma.executionPartialExit.create({
+      data: {
+        positionId: position.id,
+        quantity: action.quantity,
+        triggerPrice: lastPrice ?? Number(position.entryPrice),
+        rMultiple: action.rMultiple,
+        remaining,
+        orderId,
+        reason: action.detail,
+      },
+    });
   }
 
   /**
@@ -315,13 +556,15 @@ export class PositionManagerService {
    */
   private async exit(
     position: PositionRow,
-    reason: ExitReason,
+    reason: RecordedExitReason,
     detail: string,
     lastPrice: number | null,
     highWaterPrice: number,
     unrealizedPnl: number | null,
     now: Date,
     summary: ManageSummary,
+    /** Optional so the flatten path, which computes it too, can pass it through. */
+    lowWaterPrice?: number,
   ): Promise<void> {
     const claimed = await this.prisma.executionPosition.updateMany({
       where: { id: position.id, state: ExecutionPositionState.OPEN },
@@ -334,6 +577,9 @@ export class PositionManagerService {
         lastPriceAt: lastPrice != null ? now : undefined,
         lastEvaluatedAt: now,
         highWaterPrice,
+        // The final sample. Written on the exit write so the closing tick's
+        // price is inside the excursion the journal will read a moment later.
+        lowWaterPrice,
         unrealizedPnl: unrealizedPnl ?? undefined,
         version: { increment: 1 },
       },
@@ -464,13 +710,32 @@ export interface ManageSummary {
   held: number;
   trailed: number;
   exited: number;
+  /** Partial profit-takes performed this pass. */
+  reduced: number;
   errors: number;
-  exits: { positionId: string; contract: string; reason: ExitReason; detail: string }[];
+  exits: { positionId: string; contract: string; reason: RecordedExitReason; detail: string }[];
+}
+
+/** What one operator flatten did, per position it touched. */
+export interface FlattenResult {
+  requested: number;
+  flattened: number;
+  errors: number;
+  positions: { positionId: string; contract: string; profileName: string; outcome: 'flattened' | 'failed' }[];
 }
 
 type PositionRow = Prisma.ExecutionPositionGetPayload<{
   include: {
-    profile: { select: { squareOffMinute: true; name: true; trailStepPoints: true } };
+    profile: {
+      select: {
+        squareOffMinute: true;
+        name: true;
+        trailStepPoints: true;
+        partialExitEnabled: true;
+        partialExitRMultiple: true;
+        partialExitPct: true;
+      };
+    };
     intent: { select: { strategyId: true } };
   };
 }>;

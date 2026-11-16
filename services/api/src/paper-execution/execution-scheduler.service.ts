@@ -1,6 +1,9 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { LeaderElectionService } from '../common/leader-election';
+import { isTradingDay } from '../discipline/market-calendar';
+import { ExecutionLearningService } from './execution-learning.service';
 import { ExecutionLifecycleService } from './execution-lifecycle.service';
+import { istParts } from './execution-identity';
 import { PaperExecutionService } from './paper-execution.service';
 import { PositionManagerService } from './position-manager.service';
 
@@ -58,6 +61,16 @@ import { PositionManagerService } from './position-manager.service';
 const EVALUATE_JOB = 'paper-execution-evaluate';
 const RECONCILE_JOB = 'paper-execution-reconcile';
 const MANAGE_JOB = 'paper-execution-manage';
+const LEARN_JOB = 'paper-execution-learn';
+
+/**
+ * IST minute-of-day after which the daily learning cycle may run.
+ *
+ * 15:45 — a quarter-hour past the close, so every square-off has filled and
+ * every outcome has been reconciled into a journal entry. Running it at 15:30
+ * would analyse a day whose last trades had not finished closing.
+ */
+const LEARN_AFTER_MINUTE = 15 * 60 + 45;
 
 /**
  * What the admin console reads to tell an ARMED profile from a TICKING loop.
@@ -87,7 +100,9 @@ export interface ExecutionLoopStatus {
   lastReconcileAt: string | null;
   lastManageAt: string | null;
   /** What the last management pass did — the "is it cooking" signal. */
-  lastManage: { evaluated: number; held: number; trailed: number; exited: number; errors: number } | null;
+  lastManage: { evaluated: number; held: number; trailed: number; exited: number; reduced: number; errors: number } | null;
+  /** The IST date the daily learning cycle last completed for. */
+  lastLearnedDate: string | null;
 }
 
 @Injectable()
@@ -96,6 +111,10 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
   private evaluateTimer: ReturnType<typeof setInterval> | null = null;
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private manageTimer: ReturnType<typeof setInterval> | null = null;
+  private learnTimer: ReturnType<typeof setInterval> | null = null;
+  private learning_ = false;
+  /** The IST date the cycle last ran for, so it runs once per session. */
+  private lastLearnedDate: string | null = null;
   private evaluating = false;
   private reconciling = false;
   private managing = false;
@@ -110,6 +129,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     private readonly lifecycle: ExecutionLifecycleService,
     private readonly positions: PositionManagerService,
     private readonly leader: LeaderElectionService,
+    private readonly learning: ExecutionLearningService,
   ) {}
 
   private get enabled(): boolean {
@@ -124,6 +144,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     this.leader.register(EVALUATE_JOB);
     this.leader.register(RECONCILE_JOB);
     this.leader.register(MANAGE_JOB);
+    this.leader.register(LEARN_JOB);
 
     const evaluateMs = Number(process.env.PAPER_EXECUTION_INTERVAL_MS ?? 30_000);
     const reconcileMs = Number(process.env.PAPER_EXECUTION_RECONCILE_MS ?? 15_000);
@@ -131,6 +152,12 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     this.evaluateTimer = setInterval(() => void this.evaluateTick(), evaluateMs);
     this.reconcileTimer = setInterval(() => void this.reconcileTick(), reconcileMs);
     this.manageTimer = setInterval(() => void this.manageTick(), manageMs);
+    // The learning cycle is checked every five minutes and RUNS once per
+    // trading day, after the close. A five-minute poll rather than a cron
+    // because the loop already owns a timer discipline and a second scheduling
+    // mechanism is a second thing to reason about; the once-per-day guard is
+    // `lastLearnedDate`, not the interval.
+    this.learnTimer = setInterval(() => void this.learnTick(), 5 * 60_000);
     this.startedAt = new Date();
     this.logger.log(
       `paper execution loop started — evaluate every ${evaluateMs}ms, manage every ${manageMs}ms, reconcile every ${reconcileMs}ms.`,
@@ -141,6 +168,49 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
     if (this.evaluateTimer) clearInterval(this.evaluateTimer);
     if (this.reconcileTimer) clearInterval(this.reconcileTimer);
     if (this.manageTimer) clearInterval(this.manageTimer);
+    if (this.learnTimer) clearInterval(this.learnTimer);
+  }
+
+  /**
+   * The end-of-session learning cycle: once per trading day, after the close.
+   *
+   * ## It can only ever propose
+   *
+   * `runDailyCycle` writes a review and may create candidate improvements;
+   * `validatePending` judges them out-of-sample. Neither can promote anything —
+   * promotion is an operator act on `POST /admin/execution/learning/
+   * improvements/:id/promote` and has no scheduled caller anywhere. That is
+   * deliberate: a loop that could promote its own proposals is exactly the
+   * uncontrolled self-modification the staged pipeline exists to prevent.
+   */
+  private async learnTick(): Promise<void> {
+    if (!this.leader.isLeader(LEARN_JOB)) return;
+    if (this.learning_) return;
+
+    const now = new Date();
+    const { dayKey, minuteOfDay } = istParts(now);
+    // Once per session, after the close, on trading days only.
+    if (this.lastLearnedDate === dayKey) return;
+    if (!isTradingDay(now)) return;
+    if (minuteOfDay < LEARN_AFTER_MINUTE) return;
+
+    this.learning_ = true;
+    try {
+      const cycle = await this.learning.runDailyCycle({ sessionDate: dayKey, now });
+      const validation = await this.learning.validatePending();
+      // Stamped only on success, so a failed run is retried on the next poll
+      // rather than silently skipping the day.
+      this.lastLearnedDate = dayKey;
+      this.logger.log(
+        `daily learning cycle ${dayKey}: ${cycle.cycles.length} profile(s) reviewed; ` +
+          `validation ${validation.validated} supported / ${validation.rejected} refuted / ${validation.inconclusive} inconclusive. ` +
+          'Nothing was promoted — promotion is an operator act.',
+      );
+    } catch (err) {
+      this.logger.error('daily learning cycle failed', err as Error);
+    } finally {
+      this.learning_ = false;
+    }
   }
 
   private async evaluateTick(): Promise<void> {
@@ -212,6 +282,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
         held: summary.held,
         trailed: summary.trailed,
         exited: summary.exited,
+        reduced: summary.reduced,
         errors: summary.errors,
       };
       // Only the events worth a line. A held position logging every two
@@ -266,6 +337,7 @@ export class ExecutionSchedulerService implements OnModuleInit, OnModuleDestroy 
       lastReconcileAt: this.lastReconcileAt?.toISOString() ?? null,
       lastManageAt: this.lastManageAt?.toISOString() ?? null,
       lastManage: this.lastManage,
+      lastLearnedDate: this.lastLearnedDate,
     };
   }
 }

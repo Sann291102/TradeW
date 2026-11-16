@@ -6,7 +6,10 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "//build": "Prisma Client (node_modules/.prisma/client) is a build artifact separate from this package's own dist/, generated only by `prisma generate` — tsc never touches it. Before 2026-09-06 nothing tied the two together: schema.prisma could gain a model (e.g. UniverseInstrument) and dist/ could gain a new src/ export (e.g. listShippedMigrations) while the last-generated Prisma Client and the last tsc build silently kept neither, because `build` here only ran tsc. services/api then compiled against a stale client missing the new model AND a stale dist/index.js missing the new export — 37 TS errors, API exits before binding :4000. `generate` now always runs first so a plain `npm run build -w @tradew/database` (or the root postinstall, or predev:api) can never produce a dist/ that is out of sync with either schema.prisma or src/.",
+    "build": "npm run generate && tsc -p tsconfig.json",
+    "//build:if-stale": "Same outcome as `build`, but a no-op when schema.prisma/src haven't changed since the last build. Used by predev:api instead of `build` because `npm run start:all` boots several services concurrently that all load the generated Prisma Client into their own process — an unconditional `prisma generate` there collides with a sibling service already holding query_engine-windows.dll.node open (Windows EPERM on rename). See scripts/build-if-stale.mjs.",
+    "build:if-stale": "node scripts/build-if-stale.mjs",
     "test": "vitest run",
     "generate": "prisma generate --schema prisma/schema.prisma",
     "migrate": "prisma migrate dev --schema prisma/schema.prisma",

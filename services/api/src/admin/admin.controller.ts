@@ -6,8 +6,12 @@ import { AdminService } from './admin.service';
 import { CognitionService } from '../cognition/cognition.service';
 import { ExecutionAccountService } from '../paper-execution/execution-account.service';
 import { ExecutionCalibrationService } from '../paper-execution/execution-calibration.service';
+import { ExecutionControlService } from '../paper-execution/execution-control.service';
+import { ExecutionLearningService } from '../paper-execution/execution-learning.service';
 import { ExecutionJournalService } from '../paper-execution/execution-journal.service';
 import { ExecutionProfileService } from '../paper-execution/execution-profile.service';
+import { ChartAnnotationsService } from '../paper-execution/chart-annotations.service';
+import { CrossMarketPerformanceService } from '../paper-execution/cross-market-performance.service';
 import { ExecutionQueryService } from '../paper-execution/execution-query.service';
 import { ExecutionSchedulerService } from '../paper-execution/execution-scheduler.service';
 import { ExecutionTraceService } from '../paper-execution/execution-trace.service';
@@ -62,6 +66,60 @@ class SetProfileEnabledDto {
   @ApiProperty({ description: 'True lets this execution profile trade on the next pass, false stops it.' })
   @IsBoolean()
   enabled!: boolean;
+}
+
+/**
+ * The kill switch. Declared here, above the controller, because a DTO below it
+ * is still in its temporal dead zone when `emitDecoratorMetadata` evaluates
+ * `design:paramtypes` — see the 2026-08-12 gotcha; `tsc` and every unit test
+ * pass and only starting the process catches it.
+ */
+class SetExecutionHaltDto {
+  @ApiProperty({
+    description:
+      'True stops every profile opening NEW positions on the next pass, globally and durably. ' +
+      'It does NOT close open positions — those keep their stop, target and trail. Use the flatten ' +
+      'endpoint for that; a panic stop is halt, then flatten.',
+  })
+  @IsBoolean()
+  halted!: boolean;
+
+  @ApiPropertyOptional({ description: 'Why, for the audit trail and the console banner.' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+class FlattenPositionsDto {
+  @ApiPropertyOptional({
+    description: 'Limit the flatten to one execution profile. Omitted, every open position of every profile is closed.',
+  })
+  @IsOptional()
+  @IsString()
+  profileId?: string;
+
+  @ApiPropertyOptional({ description: 'Why, recorded on every position closed by this call.' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+class RunLearningCycleDto {
+  @ApiPropertyOptional({ description: 'IST session date, YYYY-MM-DD. Defaults to today.' })
+  @IsOptional()
+  @IsString()
+  sessionDate?: string;
+
+  @ApiPropertyOptional({ description: 'Limit the cycle to one execution profile.' })
+  @IsOptional()
+  @IsString()
+  profileId?: string;
+}
+
+class RejectImprovementDto {
+  @ApiProperty({ description: 'Why this candidate is being refused. Recorded with the operator.' })
+  @IsString()
+  reason!: string;
 }
 
 class SetAgentPaperTradingDto {
@@ -277,6 +335,8 @@ export class AdminController {
     private readonly telemetry: TelemetryService,
     private readonly cognition: CognitionService,
     private readonly executionQuery: ExecutionQueryService,
+    private readonly chartAnnotations: ChartAnnotationsService,
+    private readonly crossMarket: CrossMarketPerformanceService,
     private readonly executionScheduler: ExecutionSchedulerService,
     private readonly executionTrace: ExecutionTraceService,
     private readonly paperExecution: PaperExecutionService,
@@ -285,6 +345,8 @@ export class AdminController {
     private readonly positions: PositionManagerService,
     private readonly journal: ExecutionJournalService,
     private readonly calibration: ExecutionCalibrationService,
+    private readonly executionControl: ExecutionControlService,
+    private readonly learning: ExecutionLearningService,
   ) {}
 
   // -------------------------------------------------------------- overview
@@ -544,6 +606,194 @@ export class AdminController {
   @Post('execution/profiles/:id/enabled')
   setExecutionProfileEnabled(@Param('id') id: string, @Body() body: SetProfileEnabledDto) {
     return this.admin.setExecutionProfileEnabled(id, body.enabled);
+  }
+
+  // ---- The evaluation ledger ----------------------------------------------
+  //
+  // Every pass the loop makes, including the ones that decided nothing. This is
+  // what makes WAIT distinguishable from REJECTED and from a dead loop — see
+  // `ExecutionEvaluationLog`. Read-only.
+
+  /** Every evaluation, newest first. Filter by `outcome` for just the refusals. */
+  @Get('execution/evaluations')
+  executionEvaluations(
+    @Query('profileId') profileId?: string,
+    @Query('outcome') outcome?: string,
+    @Query('hours') hours?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.executionQuery.evaluations({
+      profileId,
+      outcome,
+      hours: Number(hours) || 24,
+      limit: Number(limit) || 100,
+    });
+  }
+
+  /**
+   * The session at a glance — pass counts by outcome, the refusal breakdown,
+   * and the highest confidence reached.
+   *
+   * That last number is the one that answers "was it nearly there, or nowhere
+   * near?" on a day that produced no trade.
+   */
+  @Get('execution/evaluations/summary')
+  executionEvaluationSummary(@Query('hours') hours?: string) {
+    return this.executionQuery.evaluationSummary({ hours: Number(hours) || 24 });
+  }
+
+  /**
+   * The bot's reasoning, ready to draw on a price chart.
+   *
+   * Answers both halves of the question the chart exists for — "why did it
+   * trade here" (signal/entry/exit markers with the evidence behind each) and
+   * "why did it NOT trade here" (refusal spans, collapsed by `checkId` so the
+   * moment a reason CHANGED is visible instead of buried under one pin per
+   * 30-second pass).
+   *
+   * Market-neutral by construction: it keys on `symbol` and reads the same
+   * records for NIFTY, BTCUSDT and GOLD, so the same chart component serves
+   * every market.
+   */
+  @Get('execution/chart-annotations')
+  executionChartAnnotations(@Query('symbol') symbol: string, @Query('hours') hours?: string) {
+    return this.chartAnnotations.forSymbol(symbol ?? '', Number(hours) || 24);
+  }
+
+  /**
+   * Which strategies work in which markets — the experiment's actual output.
+   *
+   * Built only from closed `ExecutionJournal` trades. Ranked on mean R, the
+   * one measure that can order a rupee option against a dollar coin; absolute
+   * P&L is per-row and per-currency, with NO total field anywhere in the
+   * response, because there is no FX conversion in the paper-wallet path and a
+   * combined total would be fabricated.
+   */
+  @Get('execution/cross-market')
+  executionCrossMarket(@Query('days') days?: string) {
+    return this.crossMarket.report(Number(days) || 30);
+  }
+
+  // ---- The staged learning pipeline ---------------------------------------
+  //
+  // experience → learning → candidate → validation → promotion.
+  //
+  // The first four steps change NOTHING. `promote` is the only endpoint in the
+  // application that can alter an agent's behaviour from learned evidence, it
+  // is an operator act recorded with the operator, and it refuses anything that
+  // has not survived out-of-sample validation. There is deliberately no
+  // "auto-promote" route and no scheduler that calls promotion.
+
+  /** The end-of-session reviews, newest first. */
+  @Get('execution/learning/cycles')
+  learningCycles(@Query('profileId') profileId?: string, @Query('limit') limit?: string) {
+    return this.learning.cycles({ profileId, limit: Number(limit) || 30 });
+  }
+
+  /** Candidate improvements and where each has got to. */
+  @Get('execution/learning/improvements')
+  learningImprovements(
+    @Query('status') status?: string,
+    @Query('profileId') profileId?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.learning.improvements({ status, profileId, limit: Number(limit) || 50 });
+  }
+
+  /**
+   * Run the daily learning cycle by hand.
+   *
+   * Writes a cycle and may create candidates. Applies nothing.
+   */
+  @Post('execution/learning/run')
+  runLearningCycle(@Body() body: RunLearningCycleDto) {
+    return this.learning.runDailyCycle({ sessionDate: body.sessionDate, profileId: body.profileId });
+  }
+
+  /**
+   * Validate every PROPOSED candidate against out-of-sample history.
+   *
+   * Moves candidates to VALIDATED or REJECTED, or leaves them PROPOSED when the
+   * journal cannot settle the question. It cannot reach PROMOTED.
+   */
+  @Post('execution/learning/validate')
+  validateImprovements() {
+    return this.learning.validatePending();
+  }
+
+  /**
+   * Apply a VALIDATED improvement — the only way learned evidence ever changes
+   * what an agent does, and an explicitly human act.
+   */
+  @Post('execution/learning/improvements/:id/promote')
+  promoteImprovement(@Param('id') id: string, @Req() req: { user?: { sub?: string } }) {
+    return this.learning.promote(id, req.user?.sub ?? 'unknown');
+  }
+
+  /** Refuse a candidate, with a reason, recorded against the operator. */
+  @Post('execution/learning/improvements/:id/reject')
+  rejectImprovement(
+    @Param('id') id: string,
+    @Body() body: RejectImprovementDto,
+    @Req() req: { user?: { sub?: string } },
+  ) {
+    return this.learning.reject(id, req.user?.sub ?? 'unknown', body.reason);
+  }
+
+  // ---- The kill switch ----------------------------------------------------
+  //
+  // Two endpoints, never one. `halt` stops new entries; `flatten` closes what
+  // is open. A single control that did both would be the most destructive
+  // button in the console while looking like the safe one — the same trap the
+  // old disarm had, where `enabled: false` stranded open positions with no
+  // stop. A panic stop is halt, then flatten, and the operator performs both
+  // deliberately.
+
+  /** Is execution halted, and since when, and by whom. */
+  @Get('execution/control')
+  executionControlState() {
+    return this.executionControl.state();
+  }
+
+  /**
+   * Halt or resume NEW entries, globally and durably.
+   *
+   * Durable on purpose: a halt that evaporated on restart would let a crash,
+   * a deploy or a leader failover silently resume trading a human had stopped.
+   * It does not touch open positions — those keep their stop, target and trail
+   * while halted, because abandoning a live position is strictly worse than
+   * holding one that is being managed.
+   */
+  @Post('execution/halt')
+  setExecutionHalt(@Body() body: SetExecutionHaltDto, @Req() req: { user?: { sub?: string } }) {
+    return this.executionControl.setHalt({
+      halted: body.halted,
+      reason: body.reason ?? null,
+      operator: req.user?.sub ?? 'unknown',
+    });
+  }
+
+  /**
+   * Close open positions now, on instruction rather than on a market condition.
+   *
+   * Scoped to one profile with `profileId`, or every profile without it. Each
+   * position is closed through the SAME atomic-claim exit path the manager
+   * uses, so a flatten racing the manager cannot double-exit, and every closed
+   * position is stamped `KILL_SWITCH` — a reason `decidePosition` structurally
+   * cannot produce, so an operator flatten is never confusable with a
+   * market-driven exit in the journal.
+   *
+   * Note this does NOT halt entries. Flatten without halting and an armed
+   * profile may open again on its next pass; that is why the halt endpoint
+   * exists and why the console should offer them together.
+   */
+  @Post('execution/flatten')
+  flattenExecutionPositions(@Body() body: FlattenPositionsDto, @Req() req: { user?: { sub?: string } }) {
+    return this.positions.flatten({
+      profileId: body.profileId,
+      reason: body.reason ?? null,
+      operator: req.user?.sub ?? 'unknown',
+    });
   }
 
   /**

@@ -219,37 +219,19 @@ export interface SideInFocus {
 // ---------------------------------------------------------------- Module 1
 // Market Intelligence Engine — today's regime and structural profile.
 
-export type MarketProfileType =
-  | 'Bullish Trend Day'
-  | 'Bearish Trend Day'
-  | 'High Volatility Range'
-  | 'Low Volatility Compression'
-  | 'Gap & Go'
-  | 'Gap Fill / Mean Reversion'
-  | 'Inside Day'
-  | 'Outside Day / Expansion'
-  | 'Rally Continuation'
-  | 'Descent Continuation';
+// Moved to `@tradew/strategy-core` and re-exported here.
+//
+// The regime types are read by the strategy rules, so they belong with the
+// decision core rather than in a Sentinel domain file. Re-exported unchanged so
+// that every `from '../domain'` import in the service keeps working and there
+// is still ONE declaration of each: a second structurally-identical copy would
+// satisfy the type checker while being free to drift away from the one the
+// rules actually compile against.
+// Imported as well as re-exported: `export … from` creates no local binding,
+// and `SentinelObservation` below refers to `MarketProfile` directly.
+import type { MarketProfile } from '@tradew/strategy-core';
 
-export interface MarketProfile {
-  type: MarketProfileType;
-  description: string;
-  trend: 'bullish' | 'bearish' | 'neutral' | 'choppy';
-  volatility: 'high' | 'low' | 'normal';
-  structure: 'trending' | 'ranging' | 'consolidating' | 'breaking-out';
-  /** the observations that led to this classification */
-  evidence: string[];
-}
-
-export interface TrendAnalysis {
-  /** session change from the first bar in view, in percent */
-  sessionChangePct: number;
-  /** 0..1 — how one-directional the recent bars are */
-  momentumScore: number;
-  /** last bar volume / 20-bar average */
-  volumeStrength: number;
-  direction: 'bullish' | 'bearish' | 'neutral';
-}
+export type { MarketProfile, MarketProfileType, TrendAnalysis } from '@tradew/strategy-core';
 
 // ---------------------------------------------------------------- Module 2
 // Strategy Engine — the trader's own strategy handbook, evaluated live.

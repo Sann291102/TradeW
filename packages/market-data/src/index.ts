@@ -17,6 +17,11 @@
 // discipline + settlement paths and by services/sentinel's clock, so both
 // runtimes answer "is today a trading day" from ONE list.
 export * from './calendar/nse-calendar';
+// venue sessions — WHEN each venue trades, which `nse-calendar` deliberately
+// does not own. Added when MCX and Binance made "the session" stop being one
+// fact: the bridge was stamping MCX commodities with the NSE 15:30 close, and
+// a 24/7 venue needs a day boundary that is not an Indian session edge.
+export * from './calendar/venue-session';
 
 // contracts
 export * from './contracts/cache';
