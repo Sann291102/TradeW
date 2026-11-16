@@ -16,7 +16,8 @@
     "prisma:migrate": "prisma migrate dev --schema ../../packages/database/prisma/schema.prisma",
     "verify:agent-lab": "ts-node --transpile-only -P tsconfig.json scripts/verify-agent-lab.ts",
     "verify:backtest": "ts-node --transpile-only -P tsconfig.json scripts/verify-backtest.ts",
-    "verify:admin-routes": "ts-node --transpile-only -P tsconfig.json scripts/verify-admin-routes.ts"
+    "verify:admin-routes": "ts-node --transpile-only -P tsconfig.json scripts/verify-admin-routes.ts",
+    "billing:sync": "ts-node --transpile-only -P tsconfig.json scripts/stripe-sync-catalog.ts"
   },
   "prisma": {
     "schema": "../../packages/database/prisma/schema.prisma"
