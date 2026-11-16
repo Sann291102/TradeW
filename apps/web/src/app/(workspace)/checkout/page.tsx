@@ -1,10 +1,15 @@
+import { Suspense } from 'react';
 import { CheckoutClient } from './CheckoutClient';
 
 export const metadata = {
-  title: 'Upgrade · TradeW',
-  description: 'Go premium with Sentinel Pro.',
+  title: 'Checkout · TradeW',
+  description: 'Subscribe to Learning Pro or Sentinel Pro.',
 };
 
 export default function CheckoutPage() {
-  return <CheckoutClient />;
+  return (
+    <Suspense fallback={null}>
+      <CheckoutClient />
+    </Suspense>
+  );
 }

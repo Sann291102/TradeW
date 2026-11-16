@@ -115,9 +115,11 @@ class ResetPasswordDto {
   @IsString()
   code!: string;
 
-  @ApiProperty({ minLength: 6, format: 'password' })
+  @ApiProperty({ minLength: 8, format: 'password' })
   @IsString()
-  @MinLength(6)
+  @MinLength(8)
+  @MaxLength(128)
+  @Matches(/(?=.*[A-Za-z])(?=.*\d)/, { message: 'password must contain at least one letter and one number' })
   newPassword!: string;
 }
 
@@ -155,9 +157,11 @@ class ChangePasswordDto {
   @IsString()
   currentPassword!: string;
 
-  @ApiProperty({ minLength: 6, format: 'password' })
+  @ApiProperty({ minLength: 8, format: 'password' })
   @IsString()
-  @MinLength(6)
+  @MinLength(8)
+  @MaxLength(128)
+  @Matches(/(?=.*[A-Za-z])(?=.*\d)/, { message: 'password must contain at least one letter and one number' })
   newPassword!: string;
 }
 

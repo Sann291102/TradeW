@@ -68,7 +68,7 @@ export function TrialOffer({
         <div className="shrink-0 sm:text-right">
           <div className="flex items-baseline gap-1.5 sm:justify-end">
             <span className="text-[32px] font-extrabold tracking-tightTrack text-text">{trial.amountLabel}</span>
-            <span className="text-[12px] font-medium text-muted">+ GST</span>
+            <span className="text-[12px] font-medium text-muted">+ tax</span>
           </div>
           <p className="mt-0.5 text-[11.5px] text-muted">one time, per account</p>
 

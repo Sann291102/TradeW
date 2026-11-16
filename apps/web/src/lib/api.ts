@@ -172,6 +172,15 @@ export class ApiError extends Error {
    * real fault (the API is not running) instead of blaming the endpoint.
    */
   readonly upstreamUnreachable: boolean;
+  /**
+   * A stable machine-readable reason some API errors carry beside the
+   * message (e.g. `EMAIL_NOT_VERIFIED`, `billing_address_required`,
+   * `card_error`), so a screen can react without parsing prose. Null when the
+   * body has none.
+   */
+  code: string | null = null;
+  /** Per-field validation messages, when the API sent them (address forms). */
+  fields: Record<string, string> | null = null;
   constructor(
     message: string,
     status: number,
@@ -259,14 +268,17 @@ export function describeApiFailure(
 }
 
 function apiError(res: Response, path: string, data: unknown): ApiError {
-  const requestId = (data as { requestId?: string } | null)?.requestId;
-  return new ApiError(
+  const body = (data ?? {}) as { requestId?: string; code?: unknown; fields?: unknown };
+  const err = new ApiError(
     describeApiFailure(res.status, res.statusText, path, data),
     res.status,
     parseRetryAfter(res.headers?.get?.('Retry-After') ?? null),
-    requestId || res.headers?.get?.('X-Request-Id') || null,
+    body.requestId || res.headers?.get?.('X-Request-Id') || null,
     isUpstreamUnreachable(res.status, data),
   );
+  if (typeof body.code === 'string') err.code = body.code;
+  if (body.fields && typeof body.fields === 'object') err.fields = body.fields as Record<string, string>;
+  return err;
 }
 
 export async function api(path: string, options: RequestInit = {}) {

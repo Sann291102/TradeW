@@ -79,15 +79,15 @@ const connectSources = [
  *
  * Tightening `script-src` to nonces is worth doing and is not done here.
  */
-// Razorpay Checkout (services/api/src/payments). The widget is an external
-// script that opens payment frames and phones home to *.razorpay.com. These
-// origins are only ever contacted once a signed-in user opens checkout with
-// billing enabled; listing them here does not weaken the default-deny posture
-// for every other route. Kept as a named constant so the payment surface's CSP
-// footprint is auditable in one place rather than smeared across directives.
-const RAZORPAY_SCRIPT = 'https://checkout.razorpay.com';
-const RAZORPAY_FRAME = 'https://api.razorpay.com https://checkout.razorpay.com';
-const RAZORPAY_CONNECT = 'https://*.razorpay.com https://lumberjack.razorpay.com';
+// Stripe.js + the Payment Element (apps/web/src/components/billing). Card
+// fields render inside Stripe-hosted iframes and talk to api.stripe.com; 3-D
+// Secure challenges load from hooks.stripe.com. These are the origins Stripe
+// documents for its CSP. They are only exercised on checkout and billing pages,
+// so listing them does not weaken the default-deny posture elsewhere. Kept as
+// named constants so the payment surface's CSP footprint is auditable here.
+const STRIPE_SCRIPT = 'https://js.stripe.com https://*.js.stripe.com';
+const STRIPE_FRAME = 'https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com';
+const STRIPE_CONNECT = 'https://api.stripe.com';
 
 // TradingView Advanced Chart widget (components/charts/TradingViewWidget.tsx),
 // used by the Markets workspace for the crypto and FX venues. The loader script
@@ -101,21 +101,21 @@ const RAZORPAY_CONNECT = 'https://*.razorpay.com https://lumberjack.razorpay.com
 // which is that frame's origin, not this one. Nothing on our side fetches from
 // TradingView, and no TradingView script may open a connection from our page.
 //
-// Same named-constant treatment as Razorpay above, for the same reason: the
+// Same named-constant treatment as Stripe above, for the same reason: the
 // external-origin footprint stays auditable in one place.
 const TRADINGVIEW_SCRIPT = 'https://s3.tradingview.com';
 const TRADINGVIEW_FRAME = 'https://www.tradingview-widget.com https://s.tradingview.com https://www.tradingview.com';
 
 const csp = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline' ${RAZORPAY_SCRIPT} ${TRADINGVIEW_SCRIPT}${isProd ? '' : " 'unsafe-eval'"}`,
+  `script-src 'self' 'unsafe-inline' ${STRIPE_SCRIPT} ${TRADINGVIEW_SCRIPT}${isProd ? '' : " 'unsafe-eval'"}`,
   // Tailwind and the design system inject style tags; inline styles are not a
   // script-execution vector.
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
-  `connect-src ${connectSources} ${RAZORPAY_CONNECT}`,
-  `frame-src 'self' ${RAZORPAY_FRAME} ${TRADINGVIEW_FRAME}`,
+  `connect-src ${connectSources} ${STRIPE_CONNECT}`,
+  `frame-src 'self' ${STRIPE_FRAME} ${TRADINGVIEW_FRAME}`,
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",

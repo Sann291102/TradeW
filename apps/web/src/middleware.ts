@@ -35,6 +35,8 @@ const PUBLIC_PATHS = new Set<string>([
   // Password reset is reached from an email link by someone who by definition
   // cannot sign in. Gating it would lock out exactly the people it exists for.
   '/reset',
+  // The verification link is opened from email, often signed out or on another device.
+  '/verify-email',
   // Where the Google round-trip lands to deposit its tokens. It runs before a
   // session exists, so it cannot require one.
   '/auth/callback',
