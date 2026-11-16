@@ -26,6 +26,10 @@ import { api, ApiError, getToken, getRefreshToken, clearToken, syncAuthHint } fr
 export interface SessionUser {
   id: string;
   email: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  /** False until the verification link is used. Billing is gated on it. */
+  emailVerified?: boolean;
   country: string;
   experienceLevel: string | null;
   optionsFamiliarity: string | null;

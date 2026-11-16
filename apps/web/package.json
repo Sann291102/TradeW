@@ -11,6 +11,8 @@
     "test:sentinel": "vitest run --config vitest.sentinel.config.mjs"
   },
   "dependencies": {
+    "@stripe/react-stripe-js": "^7.1.0",
+    "@stripe/stripe-js": "^10.3.0",
     "@tanstack/react-query": "^5.101.4",
     "@tradew/types": "*",
     "@tradew/ui": "*",

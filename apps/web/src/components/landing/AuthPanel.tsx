@@ -133,6 +133,11 @@ export function AuthPanel({ mode: controlledMode, onModeChange }: AuthPanelProps
   };
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // Registration-only fields. Login never sends them.
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [acceptTerms, setAcceptTerms] = useState(false);
 
   // Phone tab
   const [phone, setPhone] = useState('+91');
@@ -218,6 +223,21 @@ export function AuthPanel({ mode: controlledMode, onModeChange }: AuthPanelProps
   async function submitEmail(e: React.FormEvent) {
     e.preventDefault();
     setError('');
+    if (mode === 'signup') {
+      // Checked here for a fast answer; the API checks all of it again.
+      if (password !== confirmPassword) {
+        setError('The two passwords do not match.');
+        return;
+      }
+      if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+        setError('Use at least 8 characters, including a letter and a number.');
+        return;
+      }
+      if (!acceptTerms) {
+        setError('Please accept the Terms of Service and Privacy Policy to continue.');
+        return;
+      }
+    }
     setBusy(true);
     try {
       const res = await api(`/auth/${mode}`, {
@@ -225,14 +245,39 @@ export function AuthPanel({ mode: controlledMode, onModeChange }: AuthPanelProps
         // Carry the name the user gave their assistant before signing up
         // (AI-PERSONA.md §2). Ignored by `login`, re-validated server-side, and
         // a rejected name never fails the signup.
-        body: JSON.stringify({
-          email,
-          password,
-          ...(mode === 'signup' && readLocalPersonaName()
-            ? { aiPersonaName: readLocalPersonaName() }
-            : {}),
-        }),
+        body: JSON.stringify(
+          mode === 'signup'
+            ? {
+                email,
+                password,
+                confirmPassword,
+                firstName,
+                lastName,
+                acceptTerms,
+                ...(readLocalPersonaName() ? { aiPersonaName: readLocalPersonaName() } : {}),
+              }
+            : { email, password },
+        ),
       });
+      if (mode === 'signup') {
+        // Signed in, but billing stays locked until the address is verified.
+        // Send them to the "check your inbox" page rather than the workspace.
+        setSession(res.accessToken, res.refreshToken);
+        await useSessionStore.getState().init();
+        // The address and (dev only, when no mail provider is configured) the
+        // verification link travel in sessionStorage, never in the URL: a
+        // query string lands in history, logs and Referer headers.
+        try {
+          sessionStorage.setItem(
+            'tw_verify_pending',
+            JSON.stringify({ email, devVerifyUrl: res.devVerifyUrl ?? null }),
+          );
+        } catch {
+          /* storage blocked: the page still works, just without the prefill */
+        }
+        router.push('/verify-email?sent=1');
+        return;
+      }
       await enter(res.accessToken, res.refreshToken);
     } catch (err) {
       setError(friendlyError(err, mode));
@@ -315,7 +360,35 @@ export function AuthPanel({ mode: controlledMode, onModeChange }: AuthPanelProps
 
       {/* ------------------------------------------------------------- Email */}
       {tab === 'email' && (
-        <form onSubmit={submitEmail} className="mt-5 space-y-4">
+        <form onSubmit={submitEmail} className="mt-5 space-y-4" noValidate={false}>
+          {mode === 'signup' && (
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-fs2xs">
+                <span className="text-faint">First name</span>
+                <input
+                  type="text"
+                  required
+                  maxLength={60}
+                  autoComplete="given-name"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  className={inputClass}
+                />
+              </label>
+              <label className="block text-fs2xs">
+                <span className="text-faint">Last name</span>
+                <input
+                  type="text"
+                  required
+                  maxLength={60}
+                  autoComplete="family-name"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  className={inputClass}
+                />
+              </label>
+            </div>
+          )}
           <label className="block text-fs2xs">
             <span className="text-faint">Email address</span>
             <input
@@ -338,10 +411,49 @@ export function AuthPanel({ mode: controlledMode, onModeChange }: AuthPanelProps
               autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder={mode === 'signup' ? 'At least 8 characters' : 'Your password'}
+              placeholder={mode === 'signup' ? 'At least 8 characters, a letter and a number' : 'Your password'}
               className={inputClass}
             />
           </label>
+
+          {mode === 'signup' && (
+            <>
+              <label className="block text-fs2xs">
+                <span className="text-faint">Confirm password</span>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Type it again"
+                  aria-invalid={confirmPassword.length > 0 && confirmPassword !== password}
+                  className={inputClass}
+                />
+              </label>
+              <label className="flex items-start gap-2.5 text-fs2xs text-muted">
+                <input
+                  type="checkbox"
+                  required
+                  checked={acceptTerms}
+                  onChange={(e) => setAcceptTerms(e.target.checked)}
+                  className="mt-0.5 size-4 accent-teal"
+                />
+                <span>
+                  I agree to the{' '}
+                  <Link href="/legal/terms" target="_blank" className="text-teal hover:underline">
+                    Terms of Service
+                  </Link>{' '}
+                  and{' '}
+                  <Link href="/legal/privacy" target="_blank" className="text-teal hover:underline">
+                    Privacy Policy
+                  </Link>
+                  .
+                </span>
+              </label>
+            </>
+          )}
 
           <button
             type="submit"

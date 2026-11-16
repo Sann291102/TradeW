@@ -85,8 +85,8 @@ export function AccountSection() {
   async function changePassword(e: React.FormEvent) {
     e.preventDefault();
     setPasswordState(null);
-    if (newPassword.length < 6) {
-      setPasswordState({ ok: false, text: 'Your new password must be at least 6 characters.' });
+    if (newPassword.length < 8 || !/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      setPasswordState({ ok: false, text: 'Use at least 8 characters, including a letter and a number.' });
       return;
     }
     if (newPassword !== confirmPassword) {

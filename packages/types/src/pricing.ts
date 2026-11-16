@@ -33,7 +33,19 @@
  * nobody re-adds one.
  */
 
-export const CURRENCY = 'INR' as const;
+/**
+ * ── BILLING CURRENCY: USD, IN CENTS (2026-11-16) ──────────────────────────
+ *
+ * Subscriptions are billed by Stripe (a US account) in US dollars. Every
+ * subscription amount in this file is an INTEGER NUMBER OF CENTS, the unit
+ * Stripe charges in, so what is displayed and what is charged can be compared
+ * with `===` and never drift by a rounding step. Format for display with
+ * `usd()`.
+ *
+ * Trading values elsewhere in the app (Indian-market prices, P&L) are still
+ * rupees and still use `inr()`. Only what TradeW sells is in dollars.
+ */
+export const CURRENCY = 'USD' as const;
 
 /** A Sentinel subscription term. `monthly` is the per-month equivalent. */
 export interface SentinelTerm {
@@ -43,24 +55,26 @@ export interface SentinelTerm {
   term: string;
   /** Billed term length in months. */
   months: 1 | 3 | 6;
-  /** Per-month equivalent, in whole rupees. */
+  /** Per-month equivalent, in US cents. */
   monthly: number;
-  /** Total payable up front for the whole term, in whole rupees. */
+  /** Total billed up front for each term, in US cents. */
   total: number;
 }
 
 /**
- * Sentinel terms, 2026-08-11.
+ * Sentinel terms, 2026-11-16 (USD, recurring through Stripe Billing).
  *
- * The quoted figures (₹2,399 / ₹2,199 / ₹1,999) are PER-MONTH equivalents, not
- * totals — a longer commitment costs less per month, which is the only reading
- * under which the ladder descends. `total` is derived below rather than typed
- * by hand so the two can never disagree.
+ * $49.00/month is the Price the owner created in the Stripe Dashboard. The 3-
+ * and 6-month per-month rates keep the old INR ladder's discount ratios
+ * (2199/2399 and 1999/2399), rounded up to the next .99: $44.99 and $40.99.
+ * Each term renews automatically every 1, 3 or 6 months and is billed up front
+ * for the whole term. `total` is derived so it can never disagree with
+ * `monthly`.
  */
 const SENTINEL_MONTHLY: ReadonlyArray<Omit<SentinelTerm, 'total'>> = [
-  { id: 'sentinel_1m', term: '1 Month', months: 1, monthly: 2399 },
-  { id: 'sentinel_3m', term: '3 Months', months: 3, monthly: 2199 },
-  { id: 'sentinel_6m', term: '6 Months', months: 6, monthly: 1999 },
+  { id: 'sentinel_1m', term: '1 Month', months: 1, monthly: 4900 },
+  { id: 'sentinel_3m', term: '3 Months', months: 3, monthly: 4499 },
+  { id: 'sentinel_6m', term: '6 Months', months: 6, monthly: 4099 },
 ];
 
 export const SENTINEL_TERMS: ReadonlyArray<SentinelTerm> = SENTINEL_MONTHLY.map((t) => ({
@@ -72,7 +86,7 @@ export const SENTINEL_TERMS: ReadonlyArray<SentinelTerm> = SENTINEL_MONTHLY.map(
 export const SENTINEL_BASE_MONTHLY = SENTINEL_TERMS[0]!.monthly;
 
 /**
- * What a term saves against paying monthly, in whole rupees. Zero for 1 month.
+ * What a term saves against paying monthly, in US cents. Zero for 1 month.
  *
  * SUBSCRIPTIONS.md §3 makes showing this a requirement on the pricing
  * component rather than a nicety, so it is computed here — a UI that has to
@@ -85,18 +99,19 @@ export function sentinelSaving(term: SentinelTerm): number {
 /**
  * The paid 7-day Sentinel trial, 2026-08-15.
  *
- * A short paid taste of Sentinel for the pre-payment landing page, priced off
- * the one-month term rather than picked: take the daily rate the ₹2,399 month
- * implies, discount it, and charge seven of those days.
+ * A short paid taste of Sentinel, priced off the one-month term rather than
+ * picked, by the same formula used since 2026-08-15: one-seventh of the month
+ * price, discounted 20%, rounded to a 5-cent step. It is a ONE-TIME payment,
+ * not a subscription, and does not renew.
  *
- *   2399 / 7 = 342.71/day  →  −20%  =  274.17  →  ₹275
+ *   4900 / 7 = 700  →  −20%  =  560  →  $5.60
  *
  * DERIVED, NOT TYPED. Every figure below falls out of `SENTINEL_BASE_MONTHLY`,
  * so a change to the one-month price re-prices the trial with it. Hand-typing
- * ₹275 here is how the trial survives a price rise and quietly becomes a
+ * 560 cents here is how the trial survives a price rise and quietly becomes a
  * discount nobody approved — the same failure `total` is derived to avoid.
  *
- * The ₹5 rounding step is presentation, not slack: it keeps the charged figure
+ * The 5-cent rounding step is presentation, not slack: it keeps the charged figure
  * clean without ever landing below the discounted rate by more than rounding.
  */
 export const SENTINEL_TRIAL_DAYS = 7;
@@ -108,10 +123,10 @@ export interface SentinelTrial {
   term: string;
   /** Access granted, in days. */
   days: number;
-  /** Undiscounted daily rate implied by the one-month term, for display. */
+  /** Undiscounted daily rate implied by the one-month term, in cents, for display. */
   dailyRate: number;
   discountPct: number;
-  /** Whole rupees actually charged. */
+  /** US cents actually charged. */
   price: number;
 }
 
@@ -127,15 +142,26 @@ export const SENTINEL_TRIAL: SentinelTrial = {
 };
 
 /**
- * Learning Hub, 2026-08-11: a monthly subscription.
- *
- * This REPLACES the previous ₹299 one-time lifetime purchase. Lifetime access
- * still exists but is now earned rather than bought — see the Lifetime Free
- * entitlement, whose eligibility is calculated and enforced server-side.
+ * Learning Hub: a monthly subscription, $4.99 (Stripe Price, 2026-11-16), in
+ * US cents. Lifetime access still exists but is earned rather than bought; see
+ * the Lifetime Free entitlement, whose eligibility is enforced server-side.
  */
-export const LEARNING_MONTHLY = 299;
+export const LEARNING_MONTHLY = 499;
 
-/** Paper-trading passes. Unchanged. */
+/**
+ * Learning Hub for billing addresses in India: ₹499/month, in PAISE (the
+ * minor unit Stripe charges INR in). Owner decision 2026-11-16: "499 rupees in
+ * India and in USD it will be 4.99$". Same Stripe Price as the USD amount,
+ * carried as a `currency_options.inr` entry, so one subscription product
+ * serves both.
+ */
+export const LEARNING_MONTHLY_INR = 49900;
+
+/**
+ * Paper-trading passes. Still whole RUPEES and NOT sold through checkout:
+ * they are display-only until the owner prices them in USD. Kept unchanged so
+ * nothing that shows them silently changes meaning.
+ */
 export const DEMO_PASSES = [
   { id: 'demo_week', term: '7 days', days: 7, price: 99 },
   { id: 'demo_month', term: '30 days', days: 30, price: 199 },
@@ -144,7 +170,12 @@ export const DEMO_PASSES = [
 /** Free-tier paper order allowance per day (SUBSCRIPTIONS.md §1). */
 export const FREE_PAPER_ORDERS_PER_DAY = 2;
 
-/** Format whole rupees the Indian way: ₹11,994. */
+/** Format US cents for display: 4900 → "$49.00". */
+export function usd(cents: number): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(cents / 100);
+}
+
+/** Format whole rupees the Indian way: ₹11,994. Used for trading values, not subscriptions. */
 export function inr(amount: number): string {
   return `₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(amount)}`;
 }

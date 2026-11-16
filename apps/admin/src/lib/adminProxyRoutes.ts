@@ -181,6 +181,13 @@ export const ADMIN_PROXY_ROUTES: RouteRule[] = [
   { method: 'GET', segments: ['knowledge', 'search'] },
   { method: 'GET', segments: ['knowledge', 'graph'] },
   { method: 'GET', segments: ['knowledge', 'activity'] },
+
+  // Email templates: catalogue, rendered preview, delivery log, and a test
+  // send that the API only ever addresses to the signed-in operator.
+  { method: 'GET', segments: ['email-templates'] },
+  { method: 'GET', segments: ['email-templates', 'deliveries', 'recent'] },
+  { method: 'POST', segments: ['email-templates', '*', 'preview'] },
+  { method: 'POST', segments: ['email-templates', '*', 'test-send'] },
 ];
 
 /**

@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { SmsService } from '../sms/sms.service';
 import { otpCode as buildOtpEmail } from '../mail/templates';
+import { EmailService } from '../mail/email.service';
 
 /**
  * One-time codes, over email or SMS.
@@ -51,6 +52,7 @@ export class OtpService {
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
     private readonly sms: SmsService,
+    private readonly templates: EmailService,
   ) {}
 
   /**
@@ -113,6 +115,20 @@ export class OtpService {
         `Your TradeW code is ${code}. It expires in ${minutes} minutes.`,
       );
       return result.preview ? { devCode: code } : {};
+    }
+
+    // Password reset goes through the centralized template registry (with
+    // delivery logging and retry). The disclosure rule is unchanged: the code
+    // is returned only when `preview` proves it never left this process.
+    if (purpose === OtpPurpose.password_reset) {
+      const base = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+      const sent = await this.templates.sendTemplate('forgot_password', destination, {
+        Email: destination,
+        ResetCode: code,
+        ExpiresInMinutes: String(minutes),
+        ResetUrl: `${base}/reset`,
+      });
+      return sent.preview !== undefined ? { devCode: code } : {};
     }
 
     // `phone_verify` is handled above; everything reaching here is an

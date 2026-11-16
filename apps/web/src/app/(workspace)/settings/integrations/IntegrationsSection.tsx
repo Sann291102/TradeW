@@ -55,7 +55,7 @@ const PLATFORM_PROVIDERS = [
   { name: 'Twelve Data', purpose: 'Foreign-exchange rates on the Forex workspace.' },
   { name: 'Newswires', purpose: 'Market news on the News Feed, with symbol association.' },
   { name: 'Model providers', purpose: 'The language and reasoning models behind AI Sentinel and the assistant.' },
-  { name: 'Razorpay', purpose: 'Subscription checkout and payment verification.' },
+  { name: 'Stripe', purpose: 'Subscriptions, saved cards, sales tax and payment confirmation.' },
 ];
 
 export function IntegrationsSection() {

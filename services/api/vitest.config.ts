@@ -170,10 +170,17 @@ export default defineConfig({
       // Redemption must create a real subscription. It used to happen entirely
       // in the browser, so the UI unlocked and every premium call still 403'd.
       'src/entitlements/coupon-redeem.spec.ts',
-      // The paid 7-day trial: derived (never hand-typed) pricing, a claim that
-      // is durable rather than "is there a live subscription", and a day-length
-      // grant that must not quietly become a month.
-      'src/payments/trial.spec.ts',
+      // Email templates: all 15 render, values are escaped, a missing
+      // placeholder or a non-http CTA refuses to render. Mail config keeps the
+      // legacy SMTP_* keys working. The template sender retries only transient
+      // failures and logs every delivery.
+      'src/mail/email-templates.spec.ts',
+      'src/mail/email.service.spec.ts',
+      // Email auth + Stripe billing against a REAL Postgres (TEST_DATABASE_URL)
+      // and, with STRIPE_TEST_SECRET_KEY, the real Stripe test-mode API.
+      // Skipped, not simulated, when either is absent.
+      'src/billing/billing-catalog.spec.ts',
+      'src/billing/billing-integration.spec.ts',
       // Bearer-token parsing: the gate in front of every authenticated route.
       'src/auth/auth.guard.spec.ts',
       // When an OTP may appear in its own HTTP response. The rule was "only

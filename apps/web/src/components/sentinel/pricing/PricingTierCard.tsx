@@ -21,8 +21,8 @@ export interface PricingTier {
 /**
  * One pricing tier.
  *
- * GST is stated as "+ GST" rather than folded into the figure, because the
- * amount Razorpay actually charges is `amountInr` — the number on this card.
+ * Tax is stated as "+ tax" rather than folded into the figure: Stripe Tax
+ * adds it at checkout from the billing address, on top of this number.
  * Displaying a tax-inclusive total the checkout would not match is the precise
  * way a pricing page becomes a billing complaint.
  */
@@ -72,7 +72,7 @@ export function PricingTierCard({
 
       <div className="mt-3 flex items-baseline gap-1.5">
         <span className="text-[26px] font-extrabold tracking-tightTrack text-text">{tier.totalLabel}</span>
-        <span className="text-[12px] font-medium text-muted">+ GST</span>
+        <span className="text-[12px] font-medium text-muted">+ tax</span>
       </div>
 
       {tier.monthlyLabel && (

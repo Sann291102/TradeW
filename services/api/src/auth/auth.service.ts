@@ -6,11 +6,39 @@ import { OtpPurpose } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PersonaService } from '../ai/persona/persona.service';
 import { OtpService } from './otp.service';
-import { MailService } from '../mail/mail.service';
-import { loginAlert, passwordChanged } from '../mail/templates';
+import { EmailService } from '../mail/email.service';
+import { EmailVerificationService } from './email-verification.service';
+import { StripeCustomerService } from '../billing/stripe-customer.service';
 import { isAllowedPreferenceKey, MAX_PREFERENCE_BYTES } from './preference-keys';
 
 type RequestMeta = { ip?: string; userAgent?: string };
+
+/** Consecutive wrong passwords before the account is locked. */
+export const MAX_FAILED_LOGINS = 5;
+/** How long a lockout lasts. */
+export const LOCKOUT_MINUTES = 15;
+
+export interface SignupInput {
+  email: string;
+  password: string;
+  firstName: string;
+  lastName: string;
+  acceptTerms: boolean;
+}
+
+/** The profile shape `/auth/me` returns. One place, so every route agrees. */
+const PROFILE_SELECT = {
+  id: true,
+  email: true,
+  firstName: true,
+  lastName: true,
+  phone: true,
+  country: true,
+  experienceLevel: true,
+  optionsFamiliarity: true,
+  emailVerifiedAt: true,
+  createdAt: true,
+} as const;
 
 @Injectable()
 export class AuthService {
@@ -20,8 +48,10 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly otp: OtpService,
-    private readonly mail: MailService,
+    private readonly email: EmailService,
     private readonly persona: PersonaService,
+    private readonly verification: EmailVerificationService,
+    private readonly customers: StripeCustomerService,
   ) {}
 
   /** Human-readable IST timestamp for security emails — the audience is Indian
@@ -38,10 +68,32 @@ export class AuthService {
    * caller and swallows its own errors. A synthetic phone placeholder address
    * (`…@phone.tradew.local`) is skipped — nobody reads that mailbox.
    */
-  private notifyLogin(email: string, method: 'password' | 'google' | 'phone', meta: RequestMeta): void {
-    if (!email || email.endsWith('@phone.tradew.local')) return;
-    const mail = loginAlert({ email, method, when: this.nowLabel(), ip: meta.ip, userAgent: meta.userAgent });
-    void this.mail.send(email, mail.subject, mail.text, mail.html).catch(() => undefined);
+  private notifyLogin(email: string, method: 'password' | 'google' | 'phone', meta: RequestMeta, userId?: string): void {
+    const methodLabel = { password: 'Email and password', google: 'Google', phone: 'Phone code' }[method];
+    this.email.dispatch(
+      'login_security_notification',
+      email,
+      {
+        Email: email,
+        EventTitle: 'New sign-in',
+        EventDetail: `There was a new sign-in to your account ${email}. If this was you, no action is needed.`,
+        When: this.nowLabel(),
+        Method: methodLabel,
+        Ip: meta.ip,
+        Device: meta.userAgent,
+      },
+      { userId },
+    );
+  }
+
+  /** Security email for a password change or reset. Fire-and-forget. */
+  private notifyPasswordChanged(user: { id: string; email: string }, meta: RequestMeta): void {
+    this.email.dispatch(
+      'password_reset_confirmation',
+      user.email,
+      { Email: user.email, When: this.nowLabel(), Ip: meta.ip },
+      { userId: user.id },
+    );
   }
 
   /**
@@ -82,8 +134,10 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { email: normalized } });
     if (!user) throw new BadRequestException('That code is invalid or has expired.');
 
-    const passwordHash = await bcrypt.hash(newPassword, 10);
-    await this.prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    // A successful reset also clears any lockout: proving control of the
+    // mailbox is a stronger signal than the failed guesses that caused it.
+    await this.prisma.user.update({ where: { id: user.id }, data: { passwordHash, failedLoginCount: 0, lockedUntil: null } });
     await this.prisma.refreshToken.updateMany({
       where: { userId: user.id, revokedAt: null },
       data: { revokedAt: new Date() },
@@ -92,8 +146,7 @@ export class AuthService {
     // Security email, fire-and-forget (same discipline as notifyLogin): the
     // password change has already been committed; email delivery must not be
     // able to roll it back or slow it down.
-    const changed = passwordChanged({ email: user.email, when: this.nowLabel(), ip: meta.ip });
-    void this.mail.send(user.email, changed.subject, changed.text, changed.html).catch(() => undefined);
+    this.notifyPasswordChanged(user, meta);
     return { ok: true };
   }
 
@@ -106,15 +159,61 @@ export class AuthService {
    * than failing the signup. Losing an account over a bad assistant name would
    * be an absurd trade, and the name is the least important thing in this call.
    */
-  async signup(email: string, password: string, meta: RequestMeta = {}, aiPersonaName?: unknown) {
-    const normalizedEmail = email.trim().toLowerCase();
+  async signup(input: SignupInput, meta: RequestMeta = {}, aiPersonaName?: unknown) {
+    if (input.acceptTerms !== true) {
+      throw new BadRequestException('You must accept the Terms of Service and Privacy Policy to create an account.');
+    }
+    const normalizedEmail = input.email.trim().toLowerCase();
+    const firstName = input.firstName.trim();
+    const lastName = input.lastName.trim();
+    if (!firstName || !lastName) throw new BadRequestException('First and last name are required.');
+
     const existing = await this.prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (existing) throw new BadRequestException('Email already registered');
-    const passwordHash = await bcrypt.hash(password, 10);
-    const user = await this.prisma.user.create({ data: { email: normalizedEmail, passwordHash } });
+    const passwordHash = await bcrypt.hash(input.password, 12);
+    let user;
+    try {
+      user = await this.prisma.user.create({
+        data: { email: normalizedEmail, passwordHash, firstName, lastName, termsAcceptedAt: new Date() },
+      });
+    } catch (err) {
+      // Two concurrent signups for one address both pass the findUnique above;
+      // the unique index decides, and the loser gets the same answer.
+      if ((err as { code?: string })?.code === 'P2002') throw new BadRequestException('Email already registered');
+      throw err;
+    }
     await this.persona.applyAtSignup(user.id, aiPersonaName);
     await this.audit('user.signup.success', user.id, meta);
-    return this.issue(user.id, user.email);
+
+    // The verification email is awaited (so a dev deployment can hand back the
+    // console-mode link), but it never fails the signup: the account exists,
+    // and "resend verification" recovers a lost email.
+    const { devVerifyUrl } = await this.verification.issue(user).catch(() => ({ devVerifyUrl: undefined }));
+    // One Stripe Customer per user, created in the background. A Stripe outage
+    // must never fail registration; the error is recorded on the user row and
+    // provisioning is retried (sweep + lazily before any billing call).
+    this.customers.provisionInBackground(user.id);
+
+    const tokens = await this.issue(user.id, user.email);
+    const result = { ...tokens, user: { ...tokens.user, emailVerified: false } };
+    return devVerifyUrl ? { ...result, devVerifyUrl } : result;
+  }
+
+  /** Redeem a verification link. Sends the welcome email the first time only. */
+  async verifyEmail(token: string, meta: RequestMeta = {}) {
+    const result = await this.verification.verify(token);
+    if (result.outcome === 'verified') {
+      await this.audit('user.email.verified', result.userId, meta);
+      this.email.dispatch('welcome', result.email, { FirstName: result.firstName || 'there' }, { userId: result.userId });
+    }
+    return { status: result.outcome, email: result.email };
+  }
+
+  /** Ask for a new verification link. Enumeration-safe. */
+  async resendVerification(email: string, meta: RequestMeta = {}) {
+    const result = await this.verification.resend(email);
+    await this.audit('user.email.verification_resent', null, meta);
+    return result;
   }
 
   async login(email: string, password: string, meta: RequestMeta = {}) {
@@ -131,14 +230,61 @@ export class AuthService {
       await this.audit('user.login.failure', user.id, meta, { reason: 'no_password_credential' });
       throw new UnauthorizedException('Invalid credentials');
     }
-    const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) {
-      await this.audit('user.login.failure', user.id, meta);
+    // Lockout. A locked account answers exactly like a wrong password, and the
+    // password is not even checked: a distinct "locked" message would tell an
+    // attacker which addresses are registered, and checking the password while
+    // locked would let guessing continue during the lock.
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      await this.audit('user.login.failure', user.id, meta, { reason: 'locked' });
       throw new UnauthorizedException('Invalid credentials');
     }
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok) {
+      await this.recordFailedLogin(user, meta);
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    if (user.failedLoginCount > 0 || user.lockedUntil) {
+      await this.prisma.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null } });
+    }
     await this.audit('user.login.success', user.id, meta);
-    this.notifyLogin(user.email, 'password', meta);
-    return this.issue(user.id, user.email);
+    this.notifyLogin(user.email, 'password', meta, user.id);
+    const tokens = await this.issue(user.id, user.email);
+    return { ...tokens, user: { ...tokens.user, emailVerified: Boolean(user.emailVerifiedAt) } };
+  }
+
+  /**
+   * Count a wrong password. The increment is atomic (`increment`), so parallel
+   * guesses cannot all read the same count. Crossing the threshold locks the
+   * account for LOCKOUT_MINUTES and tells its owner by email.
+   */
+  private async recordFailedLogin(user: { id: string; email: string }, meta: RequestMeta) {
+    const updated = await this.prisma.user.update({
+      where: { id: user.id },
+      data: { failedLoginCount: { increment: 1 } },
+      select: { failedLoginCount: true },
+    });
+    await this.audit('user.login.failure', user.id, meta);
+    if (updated.failedLoginCount >= MAX_FAILED_LOGINS) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { failedLoginCount: 0, lockedUntil: new Date(Date.now() + LOCKOUT_MINUTES * 60_000) },
+      });
+      await this.audit('user.login.locked', user.id, meta, { minutes: LOCKOUT_MINUTES });
+      this.email.dispatch(
+        'login_security_notification',
+        user.email,
+        {
+          Email: user.email,
+          EventTitle: 'Sign-in temporarily locked',
+          EventDetail: `After ${MAX_FAILED_LOGINS} wrong passwords in a row, sign-in to ${user.email} is paused for ${LOCKOUT_MINUTES} minutes. If this was you, wait and try again, or reset your password.`,
+          When: this.nowLabel(),
+          Method: 'Email and password',
+          Ip: meta.ip,
+          Device: meta.userAgent,
+        },
+        { userId: user.id },
+      );
+    }
   }
 
   /**
@@ -167,7 +313,7 @@ export class AuthService {
     const linked = await this.prisma.user.findUnique({ where: { googleId: profile.googleId } });
     if (linked) {
       await this.audit('user.login.success', linked.id, meta, { method: 'google' });
-      this.notifyLogin(linked.email, 'google', meta);
+      this.notifyLogin(linked.email, 'google', meta, linked.id);
       return this.issue(linked.id, linked.email);
     }
 
@@ -179,7 +325,9 @@ export class AuthService {
     if (byEmail) {
       const updated = await this.prisma.user.update({
         where: { id: byEmail.id },
-        data: { googleId: profile.googleId },
+        // Google has verified this address, so the account's email is now
+        // proven too (if it was not already).
+        data: { googleId: profile.googleId, emailVerifiedAt: byEmail.emailVerifiedAt ?? new Date() },
       });
       await this.audit('user.google.linked', updated.id, meta);
       return this.issue(updated.id, updated.email);
@@ -188,9 +336,11 @@ export class AuthService {
     // New account with no passwordHash — Google is the only credential until
     // the user sets a password.
     const created = await this.prisma.user.create({
-      data: { email, googleId: profile.googleId },
+      data: { email, googleId: profile.googleId, emailVerifiedAt: new Date() },
     });
     await this.audit('user.signup.success', created.id, meta, { method: 'google' });
+    this.customers.provisionInBackground(created.id);
+    this.email.dispatch('welcome', created.email, { FirstName: 'there' }, { userId: created.id });
     return this.issue(created.id, created.email);
   }
 
@@ -228,7 +378,7 @@ export class AuthService {
         data: { phoneVerifiedAt: new Date() },
       });
       await this.audit('user.login.success', existing.id, meta, { method: 'phone' });
-      this.notifyLogin(existing.email, 'phone', meta);
+      this.notifyLogin(existing.email, 'phone', meta, existing.id);
       return this.issue(existing.id, existing.email);
     }
 
@@ -269,26 +419,57 @@ export class AuthService {
   }
 
   async me(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, email: true, country: true, experienceLevel: true, optionsFamiliarity: true, createdAt: true },
-    });
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: PROFILE_SELECT });
     if (!user) throw new UnauthorizedException('User not found');
-    return user;
+    return toProfile(user);
   }
 
-  async updateMe(userId: string, data: { country?: string; experienceLevel?: string | null; optionsFamiliarity?: string | null }, meta: RequestMeta = {}) {
+  async updateMe(
+    userId: string,
+    data: {
+      country?: string;
+      experienceLevel?: string | null;
+      optionsFamiliarity?: string | null;
+      firstName?: string;
+      lastName?: string;
+    },
+    meta: RequestMeta = {},
+  ) {
+    const before = await this.prisma.user.findUnique({ where: { id: userId }, select: PROFILE_SELECT });
+    if (!before) throw new UnauthorizedException('User not found');
+    const firstName = data.firstName?.trim();
+    const lastName = data.lastName?.trim();
+    if (data.firstName !== undefined && !firstName) throw new BadRequestException('First name cannot be empty.');
+    if (data.lastName !== undefined && !lastName) throw new BadRequestException('Last name cannot be empty.');
+
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: {
         country: data.country || undefined,
         experienceLevel: data.experienceLevel,
         optionsFamiliarity: data.optionsFamiliarity,
+        firstName: firstName || undefined,
+        lastName: lastName || undefined,
       },
-      select: { id: true, email: true, country: true, experienceLevel: true, optionsFamiliarity: true, createdAt: true },
+      select: PROFILE_SELECT,
     });
     await this.audit('user.profile.update', userId, meta, { fields: Object.keys(data) });
-    return user;
+
+    const changed: string[] = [];
+    if (firstName && firstName !== before.firstName) changed.push('first name');
+    if (lastName && lastName !== before.lastName) changed.push('last name');
+    if (data.country && data.country !== before.country) changed.push('country');
+    if (changed.length) {
+      this.email.dispatch(
+        'account_info_updated',
+        user.email,
+        { Email: user.email, When: this.nowLabel(), ChangedFields: changed.join(', ') },
+        { userId },
+      );
+      // Keep the Stripe Customer's name in step with the profile.
+      if (changed.includes('first name') || changed.includes('last name')) this.customers.syncInBackground(userId);
+    }
+    return toProfile(user);
   }
 
   async listPreferences(userId: string) {
@@ -367,15 +548,14 @@ export class AuthService {
       throw new BadRequestException('The new password must be different from the current one.');
     }
 
-    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const passwordHash = await bcrypt.hash(newPassword, 12);
     await this.prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
     await this.prisma.refreshToken.updateMany({
       where: { userId: user.id, revokedAt: null },
       data: { revokedAt: new Date() },
     });
     await this.audit('user.password_change.success', userId, meta);
-    const changed = passwordChanged({ email: user.email, when: this.nowLabel(), ip: meta.ip });
-    void this.mail.send(user.email, changed.subject, changed.text, changed.html).catch(() => undefined);
+    this.notifyPasswordChanged(user, meta);
     return { ok: true };
   }
 
@@ -449,4 +629,20 @@ export class AuthService {
       data: { eventType, userId: userId || undefined, ip: meta.ip, userAgent: meta.userAgent, metadata: metadata as any },
     }).catch(() => undefined);
   }
+}
+
+function toProfile(user: {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  phone: string | null;
+  country: string;
+  experienceLevel: string | null;
+  optionsFamiliarity: string | null;
+  emailVerifiedAt: Date | null;
+  createdAt: Date;
+}) {
+  const { emailVerifiedAt, ...rest } = user;
+  return { ...rest, emailVerified: Boolean(emailVerifiedAt), emailVerifiedAt };
 }

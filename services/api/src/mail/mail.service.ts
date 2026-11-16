@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { resolveMailConfig, type MailProvider } from './mail-config';
 
 /**
  * Outbound email — the whole application's only sender.
@@ -30,9 +31,8 @@ import * as nodemailer from 'nodemailer';
  *
  * ── AND WHY NO SDK ────────────────────────────────────────────────────────
  *
- * The surface needed is a single POST with a JSON body, exactly as with
- * `RazorpayClient` (see its header for the same reasoning at more length).
- * `fetch` does it in one method, versus adding and tracking `@sendgrid/mail`
+ * The surface needed is a single POST with a JSON body. One request does not
+ * justify a vendor SDK: `fetch` does it in one method, versus adding and tracking `@sendgrid/mail`
  * and its dependency tree for the same request.
  *
  * ── UNCONFIGURED IS A FIRST-CLASS STATE, AND `preview` IS HOW YOU TELL ────
@@ -58,9 +58,17 @@ export interface SendResult {
    * content never left this process — never infer that from `!delivered`.
    */
   preview?: string;
+  /** Sanitised failure reason when a configured provider refused or errored. */
+  error?: string;
+  /**
+   * True when the failure is worth retrying: a network error, a timeout, an
+   * SMTP 4xx, or an HTTP 429/5xx. Permanent refusals (bad address, bad key,
+   * unverified sender) are false; retrying them only burns sender reputation.
+   */
+  transient?: boolean;
 }
 
-type Mode = 'sendgrid' | 'smtp' | 'console';
+type Mode = MailProvider;
 
 const SENDGRID_ENDPOINT = 'https://api.sendgrid.com/v3/mail/send';
 
@@ -89,32 +97,35 @@ export function parseMailFrom(raw: string): { email: string; name?: string } {
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private readonly mode: Mode;
-  private readonly from = process.env.MAIL_FROM || 'TradeW <no-reply@tradew.local>';
-  private readonly sendgridKey = process.env.SENDGRID_API_KEY;
+  private readonly from: string;
+  private readonly sendgridKey?: string;
   private transport: nodemailer.Transporter | null = null;
 
   constructor() {
-    if (this.sendgridKey) {
+    // EMAIL_* keys first, legacy SMTP_*/MAIL_FROM/SENDGRID_API_KEY as fallback.
+    const cfg = resolveMailConfig();
+    this.from = cfg.from;
+    if (cfg.warning) this.logger.warn(cfg.warning);
+
+    if (cfg.provider === 'sendgrid') {
       // SendGrid wins when both are set. An operator who has added an API key
       // has chosen the HTTPS path; silently preferring leftover SMTP variables
       // would send mail over the transport they were trying to move off.
       this.mode = 'sendgrid';
+      this.sendgridKey = cfg.sendgridKey;
       this.logger.log(`SendGrid ready: sending as ${this.from}`);
       return;
     }
 
-    const host = process.env.SMTP_HOST;
-    const user = process.env.SMTP_USER;
-    const pass = process.env.SMTP_PASS;
-    if (!host || !user || !pass) {
+    if (cfg.provider === 'console' || !cfg.smtp) {
       this.mode = 'console';
       this.logger.warn(
-        'No mail provider configured (set SENDGRID_API_KEY, or SMTP_HOST/SMTP_USER/SMTP_PASS) — emails will be logged, not sent',
+        'No mail provider configured (set EMAIL_PROVIDER + EMAIL_HOST/EMAIL_USERNAME/EMAIL_PASSWORD, or the legacy SENDGRID_API_KEY / SMTP_*). Emails will be logged, not sent',
       );
       return;
     }
 
-    const port = Number(process.env.SMTP_PORT || 587);
+    const { host, port, user, pass } = cfg.smtp;
     this.mode = 'smtp';
     this.transport = nodemailer.createTransport({
       host,
@@ -146,9 +157,15 @@ export class MailService {
       // Note the absent `preview`. A provider was configured and the message
       // was handed to it, so the content may well have gone out — this process
       // cannot prove otherwise, and must not imply it did not.
-      this.logger.error(`send to ${to} failed: ${err instanceof Error ? err.message : String(err)}`);
-      return { delivered: false };
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`send to ${to} failed: ${message}`);
+      return { delivered: false, error: message.slice(0, 300), transient: isTransientMailError(err) };
     }
+  }
+
+  /** Which transport this process resolved to, for the delivery log. */
+  get provider(): Mode {
+    return this.mode;
   }
 
   private async sendViaSendgrid(to: string, subject: string, text: string, html?: string): Promise<void> {
@@ -178,7 +195,27 @@ export class MailService {
     // 403, and those are indistinguishable from "mail is broken" without it.
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
-      throw new Error(`SendGrid responded ${res.status}${detail ? `: ${detail.slice(0, 300)}` : ''}`);
+      const error = new Error(`SendGrid responded ${res.status}${detail ? `: ${detail.slice(0, 300)}` : ''}`);
+      (error as Error & { status?: number }).status = res.status;
+      throw error;
     }
   }
+}
+
+/**
+ * Is this send failure worth another attempt?
+ *
+ * Transient: connection and timeout errors, SMTP 4xx replies (greylisting,
+ * rate limits), HTTP 429 and 5xx from SendGrid. Everything else (a rejected
+ * address, a wrong key, an unverified sender) fails the same way every time.
+ */
+export function isTransientMailError(err: unknown): boolean {
+  const e = err as { code?: string; responseCode?: number; status?: number; name?: string } | null;
+  if (!e || typeof e !== 'object') return false;
+  if (typeof e.status === 'number') return e.status === 429 || e.status >= 500;
+  if (typeof e.responseCode === 'number') return e.responseCode >= 400 && e.responseCode < 500;
+  if (e.name === 'TimeoutError' || e.name === 'AbortError') return true;
+  return ['ECONNECTION', 'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ESOCKET', 'EDNS', 'ENOTFOUND', 'EAI_AGAIN'].includes(
+    e.code ?? '',
+  );
 }

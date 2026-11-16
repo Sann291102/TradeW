@@ -32,7 +32,8 @@
     "verify:trade-lifecycle": "ts-node --transpile-only -P tsconfig.json scripts/verify-trade-lifecycle.ts",
     "session": "ts-node --transpile-only -P tsconfig.json scripts/session-view.ts",
     "verify:trade": "ts-node --transpile-only -P tsconfig.json scripts/verify-trade-provenance.ts",
-    "watch:trades": "ts-node --transpile-only -P tsconfig.json scripts/watch-trades.ts"
+    "watch:trades": "ts-node --transpile-only -P tsconfig.json scripts/watch-trades.ts",
+    "billing:sync": "ts-node --transpile-only -P tsconfig.json scripts/stripe-sync-catalog.ts"
   },
   "prisma": {
     "schema": "../../packages/database/prisma/schema.prisma"
@@ -56,6 +57,7 @@
     "nodemailer": "^9.0.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "stripe": "^23.1.0",
     "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {

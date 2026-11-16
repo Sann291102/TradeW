@@ -287,7 +287,44 @@ function qs(params: Record<string, string | number | undefined>): string {
   return search.toString();
 }
 
+export interface EmailTemplateRow {
+  key: string;
+  version: number;
+  name: string;
+  description: string;
+  placeholders: string[];
+  last7Days: Record<string, number>;
+}
+export interface EmailPreview {
+  key: string;
+  version: number;
+  subject: string;
+  html: string;
+  text: string;
+}
+export interface EmailDeliveryRow {
+  id: string;
+  templateKey: string;
+  templateVersion: number;
+  status: string;
+  provider: string;
+  attempts: number;
+  lastError: string | null;
+  isTest: boolean;
+  createdAt: string;
+  toAddress: string;
+}
+
 export const admin = {
+  emailTemplates: () => adminApi<{ templates: EmailTemplateRow[] }>('/email-templates'),
+  emailPreview: (key: string, vars?: Record<string, string>) =>
+    adminApi<EmailPreview>(`/email-templates/${encodeURIComponent(key)}/preview`, { method: 'POST', body: JSON.stringify({ vars }) }),
+  emailTestSend: (key: string) =>
+    adminApi<{ to: string; status: string; attempts: number; error: string | null }>(
+      `/email-templates/${encodeURIComponent(key)}/test-send`,
+      { method: 'POST', body: '{}' },
+    ),
+  emailDeliveries: () => adminApi<{ deliveries: EmailDeliveryRow[] }>('/email-templates/deliveries/recent'),
   overview: (hours = 24) => adminApi<Overview>(`/overview?hours=${hours}`),
   health: () => adminApi<HealthReport>('/health'),
   apiCalls: (q: Record<string, string | number | undefined> = {}) => adminApi<ApiCallRow[]>(`/api-calls?${qs(q)}`),

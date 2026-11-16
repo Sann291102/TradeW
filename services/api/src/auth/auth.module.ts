@@ -5,6 +5,8 @@ import { AuthGuard } from './auth.guard';
 import { OtpService } from './otp.service';
 import { GoogleOauthService } from './google-oauth.service';
 import { AiModule } from '../ai/ai.module';
+import { BillingModule } from '../billing/billing.module';
+import { EmailVerificationService } from './email-verification.service';
 
 /**
  * `AiModule` is imported for `PersonaService` only: signup carries the name
@@ -14,9 +16,9 @@ import { AiModule } from '../ai/ai.module';
  * import, not a module one.
  */
 @Module({
-  imports: [AiModule],
+  imports: [AiModule, BillingModule],
   controllers: [AuthController],
-  providers: [AuthService, AuthGuard, OtpService, GoogleOauthService],
+  providers: [AuthService, AuthGuard, OtpService, GoogleOauthService, EmailVerificationService],
   exports: [AuthGuard, AuthService],
 })
 export class AuthModule {}

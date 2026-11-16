@@ -1,11 +1,11 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { SENTINEL_TERMS, SENTINEL_TRIAL, sentinelSaving, inr } from '@tradew/types';
+import { useRouter } from 'next/navigation';
+import { SENTINEL_TERMS, SENTINEL_TRIAL, sentinelSaving, usd } from '@tradew/types';
 import { buttonClasses, cn } from '@tradew/ui';
 import { Reveal } from '@/components/common/Reveal';
 import { useSessionStore } from '@/lib/store/sessionStore';
-import { startCheckout, verifyPayment, loadRazorpay, openRazorpay } from '@/lib/payments';
 import { useCatalog, useTrialStatus } from '@/lib/query/useBilling';
 import { PricingTierCard, type PricingTier } from './pricing/PricingTierCard';
 import { TrialOffer } from './pricing/TrialOffer';
@@ -32,7 +32,7 @@ import { FeatureList } from './pricing/FeatureList';
  * must never show a priceless card while waiting for it.
  */
 export function SentinelPricingView({ onActivated }: { onActivated: () => void }) {
-  const user = useSessionStore((s) => s.user);
+  const router = useRouter();
   const refreshSession = useSessionStore((s) => s.init);
   const redeemCoupon = useSessionStore((s) => s.redeemCoupon);
 
@@ -57,41 +57,19 @@ export function SentinelPricingView({ onActivated }: { onActivated: () => void }
     onActivated();
   }, [refreshSession, onActivated]);
 
+  /**
+   * Buying happens on /checkout (Stripe): billing address, tax, saved cards
+   * and 3-D Secure all live there, in one place. The order page refreshes the
+   * session once the webhook confirms payment, which flips this view.
+   */
   const buy = useCallback(
-    async (itemId: string) => {
+    (itemId: string) => {
       if (!catalog?.billingEnabled) return;
       setBusyItem(itemId);
       setMessage(null);
-      try {
-        const ready = await loadRazorpay();
-        if (!ready) throw new Error('Could not load the payment widget. Check your connection and retry.');
-
-        const order = await startCheckout(itemId);
-        const success = await openRazorpay(order, { email: user?.email });
-        if (!success) {
-          setBusyItem(null); // modal dismissed; nothing charged
-          return;
-        }
-
-        const result = await verifyPayment({
-          itemId,
-          razorpayOrderId: success.razorpay_order_id,
-          razorpayPaymentId: success.razorpay_payment_id,
-          razorpaySignature: success.razorpay_signature,
-        });
-        if (!result.ok) throw new Error('Payment could not be verified.');
-
-        await activate();
-      } catch (e) {
-        setMessage({
-          tone: 'bad',
-          text: e instanceof Error ? e.message : 'Something went wrong. Nothing was charged.',
-        });
-      } finally {
-        setBusyItem((cur) => (cur === itemId ? null : cur));
-      }
+      router.push(`/checkout?item=${encodeURIComponent(itemId)}`);
     },
-    [catalog, user, activate],
+    [catalog, router],
   );
 
   const handleRedeem = useCallback(
@@ -122,10 +100,10 @@ export function SentinelPricingView({ onActivated }: { onActivated: () => void }
     return {
       id: t.id,
       term: t.term,
-      totalLabel: fromServer?.amountLabel ?? inr(t.total),
-      monthlyLabel: inr(t.monthly),
+      totalLabel: fromServer?.amountLabel ?? usd(t.total),
+      monthlyLabel: usd(t.monthly),
       months: t.months,
-      savingLabel: saving > 0 ? inr(saving) : undefined,
+      savingLabel: saving > 0 ? usd(saving) : undefined,
       highlight: t.months === 6,
     };
   });
@@ -135,9 +113,9 @@ export function SentinelPricingView({ onActivated }: { onActivated: () => void }
     id: SENTINEL_TRIAL.id,
     label: `Sentinel Pro — ${SENTINEL_TRIAL.term}`,
     days: SENTINEL_TRIAL.days,
-    amountInr: SENTINEL_TRIAL.price,
-    amountLabel: inr(SENTINEL_TRIAL.price),
-    dailyRateLabel: inr(SENTINEL_TRIAL.dailyRate),
+    amountMinor: SENTINEL_TRIAL.price,
+    amountLabel: usd(SENTINEL_TRIAL.price),
+    dailyRateLabel: usd(SENTINEL_TRIAL.dailyRate),
     discountPct: SENTINEL_TRIAL.discountPct,
   };
 
@@ -204,7 +182,7 @@ export function SentinelPricingView({ onActivated }: { onActivated: () => void }
       <Reveal className="mt-12">
         <h2 className="text-[19px] font-extrabold tracking-tightTrack text-text">Or pick a term</h2>
         <p className="mt-1.5 text-[12.5px] text-muted">
-          Billed once, up front. Access ends when the term does — nothing auto-renews.
+          Billed up front for each term and renewed automatically. Cancel renewal any time in Billing.
         </p>
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -221,8 +199,8 @@ export function SentinelPricingView({ onActivated }: { onActivated: () => void }
         </div>
 
         <p className="mt-5 text-[11.5px] leading-relaxed text-faint">
-          Prices are exclusive of GST. Payments are processed securely by Razorpay — TradeW never sees your card
-          details. Sentinel is observation and education only: it does not place orders, and paying for it does
+          Prices are in US dollars, before sales tax, which is calculated from your billing address at checkout.
+          Payments are processed securely by Stripe. TradeW never sees your card details. Sentinel is observation and education only: it does not place orders, and paying for it does
           not change how or whether your orders execute.
         </p>
       </Reveal>

@@ -21,8 +21,10 @@ import {
   DEMO_PASSES,
   FREE_PAPER_ORDERS_PER_DAY,
   LEARNING_MONTHLY,
+  LEARNING_MONTHLY_INR,
   SENTINEL_TERMS,
   inr,
+  usd,
 } from '@tradew/types';
 
 /**
@@ -312,7 +314,7 @@ const SENTINEL_CHEAPEST = SENTINEL_TERMS.reduce((a, b) => (b.monthly < a.monthly
 const PLANS = [
   {
     name: 'Free',
-    price: '₹0',
+    price: '$0',
     note: 'No card required',
     points: [
       'The full workspace, watchlists and research',
@@ -332,8 +334,8 @@ const PLANS = [
   },
   {
     name: 'Learning Hub',
-    price: inr(LEARNING_MONTHLY),
-    note: 'per month',
+    price: usd(LEARNING_MONTHLY),
+    note: `per month · ${inr(LEARNING_MONTHLY_INR / 100)}/month in India`,
     points: [
       'Every lesson body unlocked',
       'The full curriculum, updated as it grows',
@@ -342,8 +344,8 @@ const PLANS = [
   },
   {
     name: 'Sentinel',
-    price: inr(SENTINEL_CHEAPEST.monthly),
-    note: `per month on the ${SENTINEL_CHEAPEST.term.toLowerCase()} term · ${inr(
+    price: usd(SENTINEL_CHEAPEST.monthly),
+    note: `per month on the ${SENTINEL_CHEAPEST.term.toLowerCase()} term · ${usd(
       SENTINEL_TERMS[0]!.monthly,
     )} monthly`,
     highlight: true,
@@ -959,16 +961,16 @@ export function LandingPage() {
               <div className="mx-auto mt-10 max-w-3xl space-y-3 text-center">
                 {/* Both of these are load-bearing honesty, not fine print. The
                     first is the §7 non-goal in SUBSCRIPTIONS.md; the second is
-                    simply true — checkout is not built, and a pricing table that
-                    let a reader assume otherwise would be misleading them. */}
+                    says plainly how paid plans are billed, and which one is not sold. */}
                 <p className="text-fs2xs leading-normal2 text-muted">
                   Placing an order is never gated by a plan. Paying unlocks intelligence
                   surfaces and content — never the ability to trade, which is the same at
                   every tier including free.
                 </p>
                 <p className="text-fs2xs leading-normal2 text-faint">
-                  Payments are not switched on yet. Prices are published so you know what you
-                  are walking towards; no account can be charged today.
+                  Learning and Sentinel are billed in US dollars by Stripe, before sales tax,
+                  and renew until you cancel. The Demo Pass is shown in rupees and is not sold
+                  online yet.
                 </p>
               </div>
             </Reveal>

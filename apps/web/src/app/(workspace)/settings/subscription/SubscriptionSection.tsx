@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Badge, Card, buttonClasses, cn } from '@tradew/ui';
-import { SENTINEL_TERMS, sentinelSaving, inr } from '@tradew/types';
+import { SENTINEL_TERMS, sentinelSaving, usd } from '@tradew/types';
 import { useSessionStore } from '@/lib/store/sessionStore';
 import { SettingsSection } from '@/components/settings/SettingsSection';
 import { SignInRequired } from '@/components/settings/controls';
@@ -143,12 +143,12 @@ export function SubscriptionSection() {
                 )}
                 <div className="text-sm font-semibold text-text">{t.term}</div>
                 <div className="mt-2 font-mono text-2xl font-bold tabular-nums text-text">
-                  {inr(t.monthly)}
+                  {usd(t.monthly)}
                   <span className="text-xs font-normal text-faint">/mo</span>
                 </div>
-                <div className="text-[11px] text-faint">Total {inr(t.total)}</div>
+                <div className="text-[11px] text-faint">Total {usd(t.total)}</div>
                 <div className="mt-1 h-4 text-[11px] font-semibold text-up">
-                  {t.save > 0 ? `Save ${inr(t.save)}` : ''}
+                  {t.save > 0 ? `Save ${usd(t.save)}` : ''}
                 </div>
                 <Link
                   href="/checkout"

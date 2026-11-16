@@ -4,6 +4,7 @@ import { OtpService } from './otp.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { MailService, SendResult } from '../mail/mail.service';
 import type { SmsService } from '../sms/sms.service';
+import { EmailService } from '../mail/email.service';
 
 /**
  * When `POST /auth/otp/request` may put the code in its own response.
@@ -31,11 +32,12 @@ function stubPrisma(): PrismaService {
       updateMany: async () => ({ count: 0 }),
       create: async () => ({}),
     },
+    emailDeliveryLog: { create: async () => ({ id: 'log-1' }) },
   } as unknown as PrismaService;
 }
 
 function stubMail(result: SendResult): MailService {
-  return { send: async () => result } as unknown as MailService;
+  return { send: async () => result, provider: 'console' } as unknown as MailService;
 }
 
 function stubSms(result: SendResult): SmsService {
@@ -43,7 +45,11 @@ function stubSms(result: SendResult): SmsService {
 }
 
 function serviceWith(mail: SendResult, sms: SendResult): OtpService {
-  return new OtpService(stubPrisma(), stubMail(mail), stubSms(sms));
+  const prisma = stubPrisma();
+  const mailer = stubMail(mail);
+  // password_reset goes through the template service; it shares the mailer, so
+  // the disclosure contract is tested end to end through both paths.
+  return new OtpService(prisma, mailer, stubSms(sms), new EmailService(prisma, mailer));
 }
 
 const NEVER_SENT: SendResult = { delivered: false, preview: 'Your TradeW code is 123456.' };

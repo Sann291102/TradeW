@@ -1,12 +1,11 @@
 import { Module } from '@nestjs/common';
 import { PricingController } from './pricing.controller';
-import { PaymentModule } from '../payments/payment.module';
+import { BillingModule } from '../billing/billing.module';
 
 /**
- * Imports PaymentModule only to reach `RazorpayClient`, which is the single
- * owner of whether billing is configured — see the controller for why this
- * route may not decide that for itself. No cycle: PaymentModule imports
- * NotificationModule and knows nothing about pricing.
+ * Imports BillingModule only to reach `StripeGateway`, the single owner of
+ * "is billing configured on this server", so `/pricing` and
+ * `/payments/catalog` can never disagree about it.
  */
-@Module({ imports: [PaymentModule], controllers: [PricingController] })
+@Module({ imports: [BillingModule], controllers: [PricingController] })
 export class PricingModule {}

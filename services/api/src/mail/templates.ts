@@ -328,3 +328,10 @@ export function paymentFailed(opts: {
 }
 
 export const MailTemplates = { otpCode, loginAlert, passwordChanged, eodSummary, paymentProcessing, paymentReceipt, paymentFailed };
+
+/**
+ * The shared shell and helpers, exported for the template registry in
+ * `email-templates.ts` so every email — old builder or new registry template —
+ * shares one look, one footer and one escaping function.
+ */
+export { BRAND, esc, layout, p as paragraph, codeBlock, factRow };

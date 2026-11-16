@@ -7,6 +7,7 @@ import {
   SENTINEL_TERMS,
   WITHDRAWN_SENTINEL_MONTHS,
   inr,
+  usd,
   sentinelSaving,
 } from '@tradew/types';
 
@@ -30,22 +31,23 @@ describe('Sentinel pricing', () => {
     expect(SENTINEL_TERMS.map((t) => t.months)).toEqual([1, 3, 6]);
   });
 
-  it('is ₹2,399 for one month', () => {
+  // US cents since the move to Stripe billing (2026-11-16).
+  it('is $49.00 for one month', () => {
     const t = SENTINEL_TERMS.find((x) => x.months === 1)!;
-    expect(t.monthly).toBe(2399);
-    expect(t.total).toBe(2399);
+    expect(t.monthly).toBe(4900);
+    expect(t.total).toBe(4900);
   });
 
-  it('is ₹2,199 a month on the three-month term', () => {
+  it('is $44.99 a month on the three-month term', () => {
     const t = SENTINEL_TERMS.find((x) => x.months === 3)!;
-    expect(t.monthly).toBe(2199);
-    expect(t.total).toBe(6597);
+    expect(t.monthly).toBe(4499);
+    expect(t.total).toBe(13497);
   });
 
-  it('is ₹1,999 a month on the six-month term', () => {
+  it('is $40.99 a month on the six-month term', () => {
     const t = SENTINEL_TERMS.find((x) => x.months === 6)!;
-    expect(t.monthly).toBe(1999);
-    expect(t.total).toBe(11994);
+    expect(t.monthly).toBe(4099);
+    expect(t.total).toBe(24594);
   });
 
   it('derives total from monthly × months, so the two cannot disagree', () => {
@@ -58,10 +60,10 @@ describe('Sentinel pricing', () => {
   });
 
   it('computes the saving against the one-month rate', () => {
-    expect(SENTINEL_BASE_MONTHLY).toBe(2399);
+    expect(SENTINEL_BASE_MONTHLY).toBe(4900);
     expect(sentinelSaving(SENTINEL_TERMS.find((t) => t.months === 1)!)).toBe(0);
-    expect(sentinelSaving(SENTINEL_TERMS.find((t) => t.months === 3)!)).toBe(600);
-    expect(sentinelSaving(SENTINEL_TERMS.find((t) => t.months === 6)!)).toBe(2400);
+    expect(sentinelSaving(SENTINEL_TERMS.find((t) => t.months === 3)!)).toBe(1203);
+    expect(sentinelSaving(SENTINEL_TERMS.find((t) => t.months === 6)!)).toBe(4806);
   });
 });
 
@@ -90,8 +92,8 @@ describe('the annual Sentinel plan does not exist', () => {
 });
 
 describe('Learning pricing', () => {
-  it('is ₹299 a month', () => {
-    expect(LEARNING_MONTHLY).toBe(299);
+  it('is $4.99 a month', () => {
+    expect(LEARNING_MONTHLY).toBe(499);
   });
 });
 
@@ -102,6 +104,14 @@ describe('unchanged tiers', () => {
 
   it('keeps the free allowance at two paper orders a day', () => {
     expect(FREE_PAPER_ORDERS_PER_DAY).toBe(2);
+  });
+});
+
+describe('usd formatting', () => {
+  it('formats cents as dollars', () => {
+    expect(usd(4900)).toBe('$49.00');
+    expect(usd(499)).toBe('$4.99');
+    expect(usd(24594)).toBe('$245.94');
   });
 });
 

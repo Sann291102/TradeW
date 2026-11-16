@@ -148,6 +148,28 @@ model User {
   // identity space from `User`, and an FK across the two would imply they are
   // the same kind of principal.
   agentPaperTradingGrantedBy String?
+  // ---- Email-auth + billing identity (2026-11-16) -----------------------
+  // Names are nullable: accounts created before registration collected them,
+  // and Google/phone sign-ups, have none until the billing profile asks.
+  firstName                  String?
+  lastName                   String?
+  // When the address was proven reachable (verification link, or Google's
+  // verified-email claim). A TIMESTAMP for the same reason phoneVerifiedAt is.
+  // Every account that existed before this column was backfilled to its
+  // createdAt by the migration so nobody was locked out by its arrival.
+  emailVerifiedAt            DateTime?
+  termsAcceptedAt            DateTime?
+  // The ONE Stripe Customer for this user. Unique so two users can never share
+  // a customer, and never re-derived by searching Stripe by email: once set it
+  // is the only key used to reach the customer.
+  stripeCustomerId           String?               @unique
+  stripeCustomerSyncedAt     DateTime?
+  // Last provisioning/sync failure, sanitised. Non-null means "retry pending";
+  // cleared on the next successful create/update.
+  stripeCustomerError        String?
+  // Password lockout. Counted on wrong passwords only; reset on success.
+  failedLoginCount           Int                   @default(0)
+  lockedUntil                DateTime?
   createdAt                  DateTime              @default(now())
   updatedAt                  DateTime              @updatedAt
   orders                     Order[]
@@ -179,6 +201,10 @@ model User {
   // is never bound to a profile. See ExecutionProfile.
   executionProfiles          ExecutionProfile[]    @relation("ExecutionProfileAccount")
   backtests                  Backtest[]
+  addresses                  CustomerAddress[]
+  savedPaymentMethods        SavedPaymentMethod[]
+  billingOrders              BillingOrder[]
+  emailDeliveries            EmailDeliveryLog[]
 }
 
 model RefreshToken {
@@ -575,24 +601,24 @@ model PortfolioSnapshot {
 // order (see PortfolioService) rather than at signup, so accounts that never
 // trade never accumulate wallet rows.
 model PaperWallet {
-  id              String   @id @default(uuid())
-  userId          String   @unique
+  id              String    @id @default(uuid())
+  userId          String    @unique
   // Paper capital granted once, at wallet creation — never changes after.
-  startingBalance Decimal  @default(1000000) @db.Decimal(14, 2)
+  startingBalance Decimal   @default(1000000) @db.Decimal(14, 2)
   // Cash not currently blocked as margin: startingBalance + realizedPnl -
   // marginUsed - lifetime charges. Maintained incrementally, not derived
   // per-request, so it stays correct even if trade history is pruned later.
-  cashBalance     Decimal  @default(1000000) @db.Decimal(14, 2)
-  marginUsed      Decimal  @default(0) @db.Decimal(14, 2)
-  realizedPnl     Decimal  @default(0) @db.Decimal(14, 2)
+  cashBalance     Decimal   @default(1000000) @db.Decimal(14, 2)
+  marginUsed      Decimal   @default(0) @db.Decimal(14, 2)
+  realizedPnl     Decimal   @default(0) @db.Decimal(14, 2)
   // When the account was last reset to the starting balance, null if never.
   // Performance figures count only from here on: a reset restores the capital
   // but keeps the trade rows, and without this marker the old losses would
   // keep being subtracted from the new balance in every chart and return.
   resetAt         DateTime?
-  updatedAt       DateTime @updatedAt
-  createdAt       DateTime @default(now())
-  user            User     @relation(fields: [userId], references: [id])
+  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime  @default(now())
+  user            User      @relation(fields: [userId], references: [id])
 }
 
 // ============================================================================
@@ -836,21 +862,25 @@ model PlanGrant {
 }
 
 model Subscription {
-  id               String             @id @default(uuid())
-  userId           String
-  organizationId   String? // future org/team subscriptions
-  planId           String
-  status           SubscriptionStatus @default(ACTIVE)
-  startedAt        DateTime           @default(now())
-  expiresAt        DateTime?
-  trialEndsAt      DateTime?
-  canceledAt       DateTime?
-  billingProvider  String             @default("none")
-  billingReference String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  user             User               @relation(fields: [userId], references: [id])
-  plan             Plan               @relation(fields: [planId], references: [id])
+  id                String             @id @default(uuid())
+  userId            String
+  organizationId    String? // future org/team subscriptions
+  planId            String
+  status            SubscriptionStatus @default(ACTIVE)
+  startedAt         DateTime           @default(now())
+  expiresAt         DateTime?
+  trialEndsAt       DateTime?
+  canceledAt        DateTime?
+  billingProvider   String             @default("none")
+  billingReference  String?
+  // Stripe Billing state, mirrored from webhooks. `billingReference` holds the
+  // Stripe subscription id (recurring) or PaymentIntent id (one-time pass).
+  stripePriceId     String?
+  cancelAtPeriodEnd Boolean            @default(false)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  user              User               @relation(fields: [userId], references: [id])
+  plan              Plan               @relation(fields: [planId], references: [id])
 
   @@index([userId, status])
   @@index([status, expiresAt])
@@ -1390,6 +1420,7 @@ model Otp {
   createdAt   DateTime   @default(now())
 
   @@index([destination, purpose, consumedAt])
+  @@index([codeHash])
   @@index([expiresAt])
 }
 
@@ -5274,4 +5305,183 @@ model AutonomousTrade {
   @@index([market, createdAt])
   @@index([symbol, createdAt])
   @@index([brainVersion, createdAt])
+}
+
+// ============================================================================
+// Email delivery + Stripe billing (2026-11-16)
+//
+// Stripe is the payment processor of record; these tables are TradeW's own
+// ledger of what it asked Stripe to do and what Stripe reported back. Card
+// data never appears here: only Stripe ids, brand, last4 and expiry, which
+// Stripe itself returns to any holder of the customer's secret key.
+// ============================================================================
+
+enum AddressKind {
+  billing
+  shipping
+}
+
+// One billing and (optionally) one shipping address per user. The billing
+// address drives Stripe Tax and is synced to `customer.address`; shipping, when
+// given, to `customer.shipping`. `stripeSyncError` non-null means the local
+// row is AHEAD of Stripe and a retry is pending — surfaced in the UI, never
+// silently dropped.
+model CustomerAddress {
+  id              String      @id @default(uuid())
+  userId          String
+  kind            AddressKind
+  name            String
+  phone           String?
+  line1           String
+  line2           String?
+  city            String
+  state           String?
+  postalCode      String
+  // ISO 3166-1 alpha-2, upper case.
+  country         String
+  stripeSyncedAt  DateTime?
+  stripeSyncError String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind])
+}
+
+// Local mirror of a card attached to the user's Stripe Customer. Stripe stays
+// the source of truth (the list endpoint re-reads it); the mirror exists for
+// ownership checks, audit and the webhook trail. NEVER a PAN or CVC.
+model SavedPaymentMethod {
+  id                    String    @id @default(uuid())
+  userId                String
+  stripePaymentMethodId String    @unique
+  brand                 String
+  last4                 String
+  expMonth              Int
+  expYear               Int
+  isDefault             Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  detachedAt            DateTime?
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, detachedAt])
+}
+
+enum BillingOrderKind {
+  subscription
+  renewal
+  one_time
+}
+
+enum BillingOrderStatus {
+  pending
+  processing
+  paid
+  failed
+  canceled
+  refunded
+  partially_refunded
+}
+
+// One charge TradeW asked for: the first invoice of a subscription, a renewal
+// invoice, or the one-time trial pass. Amounts are integer MINOR units (cents)
+// and are always computed server-side from the catalog — the client never
+// supplies a price. An order becomes `paid` ONLY from a verified webhook.
+model BillingOrder {
+  id                    String               @id @default(uuid())
+  userId                String
+  itemId                String
+  kind                  BillingOrderKind
+  status                BillingOrderStatus   @default(pending)
+  // Raw Stripe status of the PaymentIntent / invoice, for diagnosis.
+  paymentStatus         String?
+  currency              String
+  subtotalMinor         Int
+  taxMinor              Int                  @default(0)
+  totalMinor            Int
+  refundedMinor         Int                  @default(0)
+  // Unique per logical checkout attempt; reused as the Stripe idempotency key
+  // so a double-submit can never create a second charge.
+  idempotencyKey        String               @unique
+  stripePaymentIntentId String?              @unique
+  stripeInvoiceId       String?              @unique
+  stripeSubscriptionId  String?
+  stripePriceId         String?
+  // Stripe Tax references: the calculation quoted at checkout (one-time) and
+  // the tax transaction recorded after payment.
+  taxCalculationId      String?
+  taxTransactionId      String?
+  taxBreakdown          Json?
+  savePaymentMethod     Boolean              @default(false)
+  failureReason         String?
+  paidAt                DateTime?
+  // The entitlement row this payment activated or extended.
+  subscriptionId        String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  user                  User                 @relation(fields: [userId], references: [id])
+  transactions          BillingTransaction[]
+
+  @@index([userId, createdAt])
+  @@index([stripeSubscriptionId])
+}
+
+// Money movements against an order: the charge and any refunds. Keyed by the
+// Stripe object id so a replayed webhook can never double-count.
+model BillingTransaction {
+  id             String       @id @default(uuid())
+  orderId        String
+  type           String // 'charge' | 'refund'
+  stripeObjectId String       @unique
+  amountMinor    Int
+  currency       String
+  status         String
+  createdAt      DateTime     @default(now())
+  order          BillingOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+// Every Stripe event the webhook accepted, by Stripe's event id. The unique
+// id is the idempotency lock: a redelivered event finds its row and is not
+// processed twice. Failed handlers keep the row in `failed` with the error so
+// Stripe's retry (or an operator) can re-run it.
+model StripeWebhookEvent {
+  id          String    @id @default(uuid())
+  eventId     String    @unique
+  type        String
+  livemode    Boolean   @default(false)
+  status      String    @default("received") // received | processed | failed | ignored
+  attempts    Int       @default(0)
+  lastError   String?
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  @@index([type, receivedAt])
+  @@index([status])
+}
+
+// One row per email the platform tried to send through the template service.
+// The body is NOT stored (it can carry links that act as credentials); the
+// template key + version are enough to reproduce what was sent.
+model EmailDeliveryLog {
+  id              String    @id @default(uuid())
+  templateKey     String
+  templateVersion Int
+  toAddress       String
+  subject         String
+  status          String // sent | failed | console
+  provider        String
+  attempts        Int       @default(0)
+  lastError       String?
+  isTest          Boolean   @default(false)
+  userId          String?
+  createdAt       DateTime  @default(now())
+  sentAt          DateTime?
+  user            User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([templateKey, createdAt])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
 }

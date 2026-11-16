@@ -105,7 +105,7 @@ export default function ResetPage() {
               <input
                 type="password"
                 autoComplete="new-password"
-                minLength={6}
+                minLength={8}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 className={inputClass}

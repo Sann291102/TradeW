@@ -1,11 +1,15 @@
 import { Global, Module } from '@nestjs/common';
 import { MailService } from './mail.service';
+import { EmailService } from './email.service';
 
-/** Global: auth, notifications and billing all need to send mail, and none of
- *  them should have to import a module to do it. */
+/**
+ * Outbound mail. Global so any module can send without importing this one.
+ * `MailService` is the transport; `EmailService` is the template-driven
+ * sender (render, retry, delivery log) that new code should use.
+ */
 @Global()
 @Module({
-  providers: [MailService],
-  exports: [MailService],
+  providers: [MailService, EmailService],
+  exports: [MailService, EmailService],
 })
 export class MailModule {}

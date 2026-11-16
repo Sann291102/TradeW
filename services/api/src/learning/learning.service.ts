@@ -58,8 +58,13 @@ export class LearningApiService {
   /** Whether the user has the premium learning capability. */
   async hasPro(userId: string): Promise<boolean> {
     try {
-      const decision = await this.entitlements.check(userId, this.proCapability);
-      return decision.allowed;
+      // Learning Pro (the $4.99/month Stripe subscription) grants
+      // `learning_pro`; the configured capability (Sentinel by default) keeps
+      // unlocking Learning as it always has.
+      for (const capability of new Set([this.proCapability, 'learning_pro'])) {
+        if ((await this.entitlements.check(userId, capability)).allowed) return true;
+      }
+      return false;
     } catch {
       return false;
     }
