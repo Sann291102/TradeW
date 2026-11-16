@@ -284,6 +284,9 @@ export default defineConfig({
       //    configured — entry through stop/target/trail/invalidation to a
       //    journal and a calibration the NEXT decision consumes.
       'src/paper-execution/paper-lifecycle.spec.ts',
+      // Restart recovery (ported from PR #24): a decision orphaned between
+      // claim and submit is failed, never re-claimed into a second order.
+      'src/paper-execution/execution-lifecycle-recovery.spec.ts',
       // ---- Give-back and concentration bounds (2026-09-07) ---------------
       //  · drawdown/exposure — the two bounds `maxLossPerDay` and
       //    `capitalAllocationPct` structurally cannot express. A day that peaks
