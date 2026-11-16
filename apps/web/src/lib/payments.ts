@@ -24,6 +24,8 @@ export interface CatalogItem {
   priceLabel: string;
   intervalCount: number | null;
   days: number | null;
+  /** Local-currency prices chosen by billing-address country (e.g. ₹499/month for IN). */
+  localPrices: Array<{ country: string; currency: string; amountMinor: number; label: string }>;
 }
 
 /** The one-time 7-day pass. Rides beside `items` for the pricing screens. */
@@ -263,7 +265,12 @@ export function getStripe(publishableKey: string): Promise<Stripe | null> {
 
 /** Cents → "$12.34". */
 export function money(amountMinor: number, currency = 'usd'): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase() }).format(amountMinor / 100);
+  const inrWhole = currency.toLowerCase() === 'inr' && amountMinor % 100 === 0;
+  return new Intl.NumberFormat(currency.toLowerCase() === 'inr' ? 'en-IN' : 'en-US', {
+    style: 'currency',
+    currency: currency.toUpperCase(),
+    ...(inrWhole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {}),
+  }).format(amountMinor / 100);
 }
 
 /** One UUID per checkout attempt, so a double-click cannot create two charges. */

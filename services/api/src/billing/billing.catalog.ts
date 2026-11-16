@@ -1,4 +1,4 @@
-import { LEARNING_MONTHLY, SENTINEL_TERMS, SENTINEL_TRIAL, usd } from '@tradew/types';
+import { LEARNING_MONTHLY, LEARNING_MONTHLY_INR, SENTINEL_TERMS, SENTINEL_TRIAL, usd } from '@tradew/types';
 
 /**
  * What TradeW sells through Stripe, and what each purchase grants.
@@ -54,6 +54,12 @@ export interface BillingItem {
   days?: number;
   /** Stripe Price lookup key (recurring items). */
   lookupKey?: string;
+  /**
+   * Extra presentment currencies on the same Stripe Price, in that currency's
+   * minor unit, keyed by the billing-address country that selects them.
+   * Everything not listed is charged in `currency` (USD).
+   */
+  localPrices?: ReadonlyArray<{ country: string; currency: 'inr'; amountMinor: number }>;
   /** Claimable once per account, ever (recorded in UsageCounter). */
   oncePerUser?: boolean;
   claimMetric?: string;
@@ -77,6 +83,7 @@ export const LEARNING_ITEM: BillingItem = {
   currency: BILLING_CURRENCY,
   intervalCount: 1,
   lookupKey: 'tradew_learning_monthly_usd',
+  localPrices: [{ country: 'IN', currency: 'inr', amountMinor: LEARNING_MONTHLY_INR }],
   accessPath: '/learning',
 };
 
@@ -111,6 +118,17 @@ export const TRIAL_ITEM: BillingItem = {
 export const BILLING_ITEMS: ReadonlyArray<BillingItem> = [LEARNING_ITEM, ...SENTINEL_ITEMS, TRIAL_ITEM];
 export const RECURRING_ITEMS = BILLING_ITEMS.filter((i) => i.kind === 'recurring');
 
+/**
+ * Which currency and amount to charge for `item`, given the customer's
+ * billing-address country. A Stripe customer can only hold subscriptions in
+ * one currency, so this is decided once, from the billing address, on the
+ * server.
+ */
+export function chargeFor(item: BillingItem, billingCountry: string | null | undefined): { currency: string; amountMinor: number } {
+  const local = item.localPrices?.find((p) => p.country === (billingCountry ?? '').toUpperCase());
+  return local ? { currency: local.currency, amountMinor: local.amountMinor } : { currency: item.currency, amountMinor: item.amountMinor };
+}
+
 export function billingItem(id: string): BillingItem | undefined {
   return BILLING_ITEMS.find((i) => i.id === id);
 }
@@ -122,5 +140,12 @@ export function priceLabel(item: BillingItem): string {
 }
 
 export function formatMinor(amountMinor: number, currency: string = BILLING_CURRENCY): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase() }).format(amountMinor / 100);
+  // Whole-rupee amounts read as "₹499", the way Indian prices are written;
+  // dollars always keep their cents.
+  const whole = currency.toLowerCase() === 'inr' && amountMinor % 100 === 0;
+  return new Intl.NumberFormat(currency.toLowerCase() === 'inr' ? 'en-IN' : 'en-US', {
+    style: 'currency',
+    currency: currency.toUpperCase(),
+    ...(whole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {}),
+  }).format(amountMinor / 100);
 }

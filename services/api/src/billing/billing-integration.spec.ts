@@ -533,6 +533,29 @@ online('Stripe test mode: customer, cards, checkout, tax, refunds', () => {
     expect((await checkout.getOrder(other.res.user.id, b.orderId)).status).toBe('pending');
   }, T);
 
+  it('Learning bills ₹499 to an Indian billing address and $4.99 elsewhere, from one Price', async () => {
+    const india = await verifiedUser('inr');
+    await customerSvc.putAddress(india.res.user.id, 'billing', {
+      name: 'Test Buyer',
+      line1: '1 MG Road',
+      city: 'Bengaluru',
+      state: 'KA',
+      postalCode: '560001',
+      country: 'IN',
+    });
+    const q = await checkout.quote(india.res.user.id, 'learning_monthly');
+    expect(q.currency).toBe('inr');
+    expect(q.subtotalMinor).toBe(49900);
+    const created = await checkout.create(india.res.user.id, { itemId: 'learning_monthly', idempotencyKey: randomUUID() });
+    expect(created.currency).toBe('inr');
+
+    const us = await verifiedUser('usd');
+    await customerSvc.putAddress(us.res.user.id, 'billing', US_ADDRESS);
+    const qUs = await checkout.quote(us.res.user.id, 'learning_monthly');
+    expect(qUs.currency).toBe('usd');
+    expect(qUs.subtotalMinor).toBe(499);
+  }, T);
+
   it('subscription: first invoice paid by webhook activates the plan until the period end; refund ends it', async () => {
     const { res } = await verifiedUser('sub');
     await customerSvc.putAddress(res.user.id, 'billing', US_ADDRESS);

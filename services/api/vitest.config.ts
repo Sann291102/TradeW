@@ -133,6 +133,7 @@ export default defineConfig({
       // Email auth + Stripe billing against a REAL Postgres (TEST_DATABASE_URL)
       // and, with STRIPE_TEST_SECRET_KEY, the real Stripe test-mode API.
       // Skipped, not simulated, when either is absent.
+      'src/billing/billing-catalog.spec.ts',
       'src/billing/billing-integration.spec.ts',
       // Bearer-token parsing: the gate in front of every authenticated route.
       'src/auth/auth.guard.spec.ts',

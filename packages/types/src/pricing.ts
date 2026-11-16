@@ -149,6 +149,15 @@ export const SENTINEL_TRIAL: SentinelTrial = {
 export const LEARNING_MONTHLY = 499;
 
 /**
+ * Learning Hub for billing addresses in India: ₹499/month, in PAISE (the
+ * minor unit Stripe charges INR in). Owner decision 2026-11-16: "499 rupees in
+ * India and in USD it will be 4.99$". Same Stripe Price as the USD amount,
+ * carried as a `currency_options.inr` entry, so one subscription product
+ * serves both.
+ */
+export const LEARNING_MONTHLY_INR = 49900;
+
+/**
  * Paper-trading passes. Still whole RUPEES and NOT sold through checkout:
  * they are display-only until the owner prices them in USD. Kept unchanged so
  * nothing that shows them silently changes meaning.

@@ -53,7 +53,30 @@ export class StripePriceService {
    * "+ tax". `unspecified` is fixable in place (sync sets it to exclusive).
    */
   private matches(price: Stripe.Price, item: BillingItem): boolean {
-    return this.sameTerms(price, item) && price.tax_behavior === 'exclusive';
+    return this.sameTerms(price, item) && price.tax_behavior === 'exclusive' && this.localPricesMatch(price, item);
+  }
+
+  /**
+   * Every local-currency amount in the catalog (e.g. Learning ₹499) is present
+   * on the Price as a `currency_options` entry with the same amount. Needs the
+   * Price retrieved with `currency_options` expanded.
+   */
+  private localPricesMatch(price: Stripe.Price, item: BillingItem): boolean {
+    return (item.localPrices ?? []).every((lp) => price.currency_options?.[lp.currency]?.unit_amount === lp.amountMinor);
+  }
+
+  private currencyOptionsFor(item: BillingItem): Stripe.PriceCreateParams['currency_options'] | undefined {
+    if (!item.localPrices?.length) return undefined;
+    return Object.fromEntries(item.localPrices.map((lp) => [lp.currency, { unit_amount: lp.amountMinor, tax_behavior: 'exclusive' as const }]));
+  }
+
+  /** Add or correct the local-currency amounts on an adopted Price. */
+  private async ensureLocalPrices(price: Stripe.Price, item: BillingItem) {
+    const options = this.currencyOptionsFor(item);
+    if (!options || this.localPricesMatch(price, item)) return;
+    await this.gateway.stripe.prices
+      .update(price.id, { currency_options: options })
+      .catch((e) => this.logger.error(`could not set currency_options on ${price.id}: ${describeStripeError(e)}`));
   }
 
   /** The Stripe Price to bill `item` with. Fails closed on any mismatch. */
@@ -63,18 +86,18 @@ export class StripePriceService {
     if (cached) return cached;
 
     const stripe = this.gateway.stripe;
-    const found = await stripe.prices.list({ lookup_keys: [item.lookupKey], active: true, limit: 1 });
+    const found = await stripe.prices.list({ lookup_keys: [item.lookupKey], active: true, limit: 1, expand: ['data.currency_options'] });
     let price = found.data[0];
     if (!price && this.gateway.mode === 'test') {
       await this.syncCatalog();
-      price = (await stripe.prices.list({ lookup_keys: [item.lookupKey], active: true, limit: 1 })).data[0];
+      price = (await stripe.prices.list({ lookup_keys: [item.lookupKey], active: true, limit: 1, expand: ['data.currency_options'] })).data[0];
     }
     if (!price) {
       throw new ServiceUnavailableException(`Billing is not set up for ${item.label} yet. Nothing was charged.`);
     }
     if (!this.matches(price, item)) {
       this.logger.error(
-        `PRICE MISMATCH for ${item.id}: Stripe ${price.id} is ${price.unit_amount} ${price.currency} every ${price.recurring?.interval_count} ${price.recurring?.interval}; catalog says ${item.amountMinor} ${item.currency} every ${item.intervalCount} month. Run billing:sync.`,
+        `PRICE MISMATCH for ${item.id}: Stripe ${price.id} is ${price.unit_amount} ${price.currency} every ${price.recurring?.interval_count} ${price.recurring?.interval} (tax ${price.tax_behavior}, options ${Object.keys(price.currency_options ?? {}).join('/')}); catalog says ${item.amountMinor} ${item.currency} every ${item.intervalCount} month${item.localPrices?.length ? ` + ${item.localPrices.map((l) => `${l.amountMinor} ${l.currency}`).join(', ')}` : ''}. Run billing:sync.`,
       );
       throw new ServiceUnavailableException(`The price for ${item.label} is being updated. Nothing was charged; please try again later.`);
     }
@@ -125,13 +148,14 @@ export class StripePriceService {
 
     for (const item of RECURRING_ITEMS) {
       const product = products.get(item.product)!;
-      const byKey = (await stripe.prices.list({ lookup_keys: [item.lookupKey!], active: true, limit: 1 })).data[0];
+      const byKey = (await stripe.prices.list({ lookup_keys: [item.lookupKey!], active: true, limit: 1, expand: ['data.currency_options'] })).data[0];
       if (byKey && this.sameTerms(byKey, item) && byKey.tax_behavior !== 'inclusive') {
         await this.ensureTaxBehavior(byKey);
+        await this.ensureLocalPrices(byKey, item);
         report.prices.push({ itemId: item.id, id: byKey.id, lookupKey: item.lookupKey!, action: 'found' });
         continue;
       }
-      const onProduct = await stripe.prices.list({ product: product.id, active: true, type: 'recurring', limit: 100 });
+      const onProduct = await stripe.prices.list({ product: product.id, active: true, type: 'recurring', limit: 100, expand: ['data.currency_options'] });
       // An `inclusive` Price cannot be switched; a new exclusive one is created instead.
       const reusable = onProduct.data.find((p) => this.sameTerms(p, item) && p.tax_behavior !== 'inclusive' && !p.lookup_key);
       if (reusable && !byKey) {
@@ -140,6 +164,7 @@ export class StripePriceService {
           ...(reusable.tax_behavior === 'unspecified' || !reusable.tax_behavior ? { tax_behavior: 'exclusive' as const } : {}),
           metadata: { ...reusable.metadata, tradew_item: item.id },
         });
+        await this.ensureLocalPrices(reusable, item);
         report.prices.push({ itemId: item.id, id: reusable.id, lookupKey: item.lookupKey!, action: 'adopted' });
         continue;
       }
@@ -150,12 +175,13 @@ export class StripePriceService {
           unit_amount: item.amountMinor,
           recurring: { interval: 'month', interval_count: item.intervalCount! },
           tax_behavior: 'exclusive',
+          ...(this.currencyOptionsFor(item) ? { currency_options: this.currencyOptionsFor(item) } : {}),
           lookup_key: item.lookupKey!,
           transfer_lookup_key: Boolean(byKey),
           nickname: item.label,
           metadata: { tradew_item: item.id },
         },
-        { idempotencyKey: `tradew-price-${item.lookupKey}-${item.amountMinor}-${this.gateway.mode}` },
+        { idempotencyKey: `tradew-price-${item.lookupKey}-${item.amountMinor}${(item.localPrices ?? []).map((l) => `-${l.currency}${l.amountMinor}`).join('')}-${this.gateway.mode}` },
       );
       report.prices.push({ itemId: item.id, id: created.id, lookupKey: item.lookupKey!, action: byKey ? 'replaced' : 'created' });
     }

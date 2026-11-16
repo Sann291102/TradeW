@@ -17,6 +17,7 @@ import {
   TRIAL_ITEM,
   TRIAL_PERIOD_KEY,
   billingItem,
+  chargeFor,
   formatMinor,
   priceLabel,
   type BillingItem,
@@ -103,6 +104,14 @@ export class CheckoutService {
         priceLabel: priceLabel(i),
         intervalCount: i.intervalCount ?? null,
         days: i.days ?? null,
+        // Local-currency prices (e.g. Learning ₹499 for Indian billing
+        // addresses). Which one applies is decided server-side at checkout.
+        localPrices: (i.localPrices ?? []).map((l) => ({
+          country: l.country,
+          currency: l.currency.toUpperCase(),
+          amountMinor: l.amountMinor,
+          label: `${formatMinor(l.amountMinor, l.currency)}${i.kind === 'recurring' && i.intervalCount === 1 ? '/month' : ''}`,
+        })),
       })),
       trial: {
         id: TRIAL_ITEM.id,
@@ -234,8 +243,12 @@ export class CheckoutService {
         };
       }
       const price = await this.prices.resolve(item);
+      const charge = chargeFor(item, address.country);
       const preview = await this.gateway.stripe.invoices.createPreview({
         customer: customerId,
+        // Learning bills ₹499 to an Indian billing address, $4.99 elsewhere,
+        // from the same Price's currency_options.
+        currency: charge.currency,
         automatic_tax: { enabled: true },
         subscription_details: { items: [{ price: price.id, quantity: 1 }] },
       });
@@ -273,7 +286,8 @@ export class CheckoutService {
       return this.resume(prior);
     }
 
-    await this.billingAddress(userId);
+    const address = await this.billingAddress(userId);
+    const charge = chargeFor(item, address.country);
     if (item.oncePerUser && (await this.hasClaimed(userId, item))) {
       throw new BadRequestException('You have already used your one-time trial.');
     }
@@ -287,9 +301,9 @@ export class CheckoutService {
         userId,
         itemId: item.id,
         kind: item.kind === 'recurring' ? 'subscription' : 'one_time',
-        currency: item.currency,
-        subtotalMinor: item.amountMinor,
-        totalMinor: item.amountMinor,
+        currency: charge.currency,
+        subtotalMinor: charge.amountMinor,
+        totalMinor: charge.amountMinor,
         idempotencyKey: key,
         savePaymentMethod: item.kind === 'one_time' ? Boolean(input.savePaymentMethod) : true,
       },
@@ -298,7 +312,7 @@ export class CheckoutService {
 
     try {
       return item.kind === 'recurring'
-        ? await this.createSubscription(order, item, customerId, input.paymentMethodId)
+        ? await this.createSubscription(order, item, customerId, input.paymentMethodId, charge.currency)
         : await this.createOneTime(order, item, customerId, input);
     } catch (err) {
       await this.prisma.billingOrder.update({
@@ -343,13 +357,14 @@ export class CheckoutService {
     return this.checkoutResponse(updated, pi.client_secret, taxLines);
   }
 
-  private async createSubscription(order: BillingOrder, item: BillingItem, customerId: string, paymentMethodId?: string) {
+  private async createSubscription(order: BillingOrder, item: BillingItem, customerId: string, paymentMethodId: string | undefined, currency: string) {
     const stripe = this.gateway.stripe;
     const price = await this.prices.resolve(item);
     const sub = await stripe.subscriptions.create(
       {
         customer: customerId,
         items: [{ price: price.id, quantity: 1 }],
+        currency,
         payment_behavior: 'default_incomplete',
         payment_settings: { save_default_payment_method: 'on_subscription', payment_method_types: ['card'] },
         automatic_tax: { enabled: true },
@@ -372,6 +387,7 @@ export class CheckoutService {
         stripePriceId: price.id,
         stripePaymentIntentId: piId,
         paymentStatus: invoice.status ?? null,
+        currency: invoice.currency,
         subtotalMinor: invoice.subtotal,
         taxMinor,
         totalMinor: invoice.total,

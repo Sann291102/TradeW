@@ -200,7 +200,14 @@ export function CheckoutClient() {
                       <span className="block text-xs text-faint">{i.kind === 'recurring' ? 'Renews automatically. Cancel any time.' : `One-time ${i.days}-day pass. Does not renew.`}</span>
                     </span>
                   </span>
-                  <span className="whitespace-nowrap font-semibold text-text">{i.priceLabel}</span>
+                  <span className="whitespace-nowrap text-right font-semibold text-text">
+                    {i.priceLabel}
+                    {i.localPrices.map((l) => (
+                      <span key={l.country} className="block text-[11px] font-normal text-faint">
+                        {l.label} in {l.country === 'IN' ? 'India' : l.country}
+                      </span>
+                    ))}
+                  </span>
                 </label>
               ))}
               <p className="pt-1 text-xs text-faint">{catalog.taxNote}</p>

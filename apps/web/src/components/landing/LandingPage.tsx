@@ -21,6 +21,7 @@ import {
   DEMO_PASSES,
   FREE_PAPER_ORDERS_PER_DAY,
   LEARNING_MONTHLY,
+  LEARNING_MONTHLY_INR,
   SENTINEL_TERMS,
   inr,
   usd,
@@ -334,7 +335,7 @@ const PLANS = [
   {
     name: 'Learning Hub',
     price: usd(LEARNING_MONTHLY),
-    note: 'per month',
+    note: `per month · ${inr(LEARNING_MONTHLY_INR / 100)}/month in India`,
     points: [
       'Every lesson body unlocked',
       'The full curriculum, updated as it grows',
