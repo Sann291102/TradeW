@@ -45,6 +45,7 @@ export const WORKING_NAV: AdminNavItem[] = [
   { href: '/orders', label: 'Orders / OMS', description: 'Order flow, fills, rejects and trade stats across all users.' },
   { href: '/system', label: 'Users / System', description: 'Users, admin grants, audit trail, API health and route latency.' },
   { href: '/audit', label: 'Audit & Compliance', description: 'Every authentication event and every privileged operator action.' },
+  { href: '/email-templates', label: 'Email Templates', description: 'Preview the 15 branded emails, test-send to yourself, and see delivery health.' },
 ];
 
 /**
