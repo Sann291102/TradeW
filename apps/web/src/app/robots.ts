@@ -5,7 +5,7 @@ import { siteUrl } from '@/lib/site';
 /**
  * Crawl policy.
  *
- * The workspace is already unreachable to a signed-out crawler — middleware.ts
+ * The workspace is already unreachable to a signed-out crawler — proxy.ts
  * redirects every gated route to `/`. This file states the intent anyway, so
  * that "search engines cannot see the workspace" stops being an accident of the
  * auth wall's shape and becomes something a reader of this repository can find.

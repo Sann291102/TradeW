@@ -16,7 +16,7 @@ import { SentinelActivatedToast } from '@/components/sentinel/SentinelActivatedT
  * by the workspace in place, with the sidebar untouched.
  *
  * This replaced a standalone public `/sentinel/pricing` route (archived
- * 2026-08-15). Auth is handled where it already was — `middleware.ts` bounces a
+ * 2026-08-15). Auth is handled where it already was — `proxy.ts` bounces a
  * signed-out visitor to `/?next=%2Fsentinel#auth`, the repo's sign-in path
  * (`/login` is itself only a redirect to `/#auth`).
  *

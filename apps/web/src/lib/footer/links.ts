@@ -27,7 +27,7 @@
  *
  * ── WHY THE LINKS POINT AT ANCHORS, NOT ROUTES ─────────────────────────────
  *
- * `middleware.ts` is a default-deny auth wall: `/`, `/reset` and the two OAuth
+ * `proxy.ts` is a default-deny auth wall: `/`, `/reset` and the two OAuth
  * paths are the entire public surface. This footer's only reader is a
  * SIGNED-OUT reader, so a link to `/sentinel` does not open Sentinel — it
  * bounces them back to the page they are standing on, which reads as a broken
@@ -109,7 +109,7 @@ export const FOOTER_GROUPS: FooterGroup[] = [
     links: [
       { label: 'Sign in', href: '/#auth', verifiedOn: V },
       { label: 'Create account', href: '/#auth', verifiedOn: V },
-      // Public by design in middleware.ts — it is reached from an email link by
+      // Public by design in proxy.ts — it is reached from an email link by
       // someone who by definition cannot sign in.
       { label: 'Reset password', href: '/reset', verifiedOn: V },
     ],

@@ -21,7 +21,7 @@ export const metadata = {
  *
  * 2. The comment that used to live here also said there was "no login wall in
  *    front of the Phase-1 workspace, which runs on mock data". There is one
- *    now — see `middleware.ts`. The workspace is no longer reachable without
+ *    now — see `proxy.ts`. The workspace is no longer reachable without
  *    an account, so the landing page is where everyone starts and sign-in
  *    happens in its `#auth` section rather than on a separate page.
  *
@@ -37,7 +37,7 @@ export const metadata = {
  * ── THE REDIRECT LOOP THIS SCRIPT USED TO CAUSE (fixed 2026-08-11) ─────────
  *
  * This previously read `if (localStorage.getItem('tradew_token')) redirect`.
- * `middleware.ts` gates the workspace on the `tw_auth` COOKIE. Two components,
+ * `proxy.ts` gates the workspace on the `tw_auth` COOKIE. Two components,
  * two different definitions of "signed in", and they can disagree — the
  * localStorage token outlives the cookie whenever the cookie is cleared,
  * expires, or is dropped by the browser while localStorage survives.

@@ -4,7 +4,7 @@ import { SiteFooter } from '@/components/footer/SiteFooter';
  * The public legal surface.
  *
  * Bare, like the landing page: no workspace chrome. `/legal/*` is reachable
- * signed out — it is added to `PUBLIC_PATHS` in middleware.ts, because a legal
+ * signed out — it is added to `PUBLIC_PATHS` in proxy.ts, because a legal
  * page behind an auth wall is not a legal page — and a signed-out reader has no
  * sidebar to render.
  *

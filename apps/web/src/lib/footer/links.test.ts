@@ -20,7 +20,7 @@
  *  · A dead landing anchor. `/#pricing` stops resolving the moment someone
  *    renames a section, and nothing about the page looks broken afterwards.
  *
- * The last two are checked by READING SOURCE FILES at test time — middleware.ts
+ * The last two are checked by READING SOURCE FILES at test time — proxy.ts
  * and LandingPage.tsx — rather than by duplicating their contents here. A
  * duplicate is a second thing to keep in sync; reading the real file means the
  * assertion cannot pass while the real file disagrees.
@@ -39,7 +39,7 @@ const read = (relative: string) =>
   readFileSync(fileURLToPath(new URL(relative, import.meta.url)), 'utf8');
 
 const LANDING_SOURCE = read('../../components/landing/LandingPage.tsx');
-const MIDDLEWARE_SOURCE = read('../../middleware.ts');
+const MIDDLEWARE_SOURCE = read('../../proxy.ts');
 
 const ALL_LINKS: FooterLink[] = FOOTER_GROUPS.flatMap((g) => g.links);
 
@@ -141,7 +141,7 @@ describe('internal link integrity', () => {
     expect(MIDDLEWARE_SOURCE).toContain("'/legal/'");
 
     const prefixLine = MIDDLEWARE_SOURCE.match(/const PUBLIC_PREFIXES\s*=\s*\[[^\]]*\]/);
-    expect(prefixLine, 'middleware.ts no longer declares PUBLIC_PREFIXES').not.toBeNull();
+    expect(prefixLine, 'proxy.ts no longer declares PUBLIC_PREFIXES').not.toBeNull();
     expect(prefixLine![0]).toContain("'/legal/'");
 
     for (const slug of LEGAL_SLUGS) {
@@ -162,7 +162,7 @@ describe('internal link integrity', () => {
     for (const path of Array.from(new Set(plainPaths))) {
       const covered =
         path.startsWith('/legal/') || MIDDLEWARE_SOURCE.includes(`'${path}',`);
-      expect(covered, `${path} is not public in middleware.ts — it would bounce a signed-out reader`).toBe(true);
+      expect(covered, `${path} is not public in proxy.ts — it would bounce a signed-out reader`).toBe(true);
     }
   });
 });

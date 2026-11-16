@@ -35,7 +35,7 @@
  *
  * WHY WEB CRYPTO (`crypto.subtle`)
  *
- * `middleware.ts` runs in Next's Edge runtime and cannot load Node's `crypto`.
+ * `proxy.ts` runs in Next's Edge runtime and cannot load Node's `crypto`.
  * `crypto.subtle` (AES-GCM, SHA-256) is available in BOTH the Edge runtime and
  * Node, so the same sealing code serves the middleware gate and the Node-side
  * Route Handlers. This is why the original file used Web Crypto too.
@@ -143,7 +143,7 @@ export async function readSessionValue(value: string | undefined | null): Promis
   }
 }
 
-/** Edge-safe boolean gate for `middleware.ts` — is this cookie value a live
+/** Edge-safe boolean gate for `proxy.ts` — is this cookie value a live
  *  session? Does NOT expose the assertion. */
 export async function isValidSessionValue(value: string | undefined | null): Promise<boolean> {
   return (await readSessionValue(value)) !== null;
@@ -156,7 +156,7 @@ export async function isValidSessionValue(value: string | undefined | null): Pro
  */
 export async function hasValidSession(): Promise<boolean> {
   const { cookies } = await import('next/headers');
-  return isValidSessionValue(cookies().get(SESSION_COOKIE)?.value);
+  return isValidSessionValue((await cookies()).get(SESSION_COOKIE)?.value);
 }
 
 /**
@@ -167,7 +167,7 @@ export async function hasValidSession(): Promise<boolean> {
  */
 export async function currentOperatorAssertion(): Promise<string | null> {
   const { cookies } = await import('next/headers');
-  const payload = await readSessionValue(cookies().get(SESSION_COOKIE)?.value);
+  const payload = await readSessionValue((await cookies()).get(SESSION_COOKIE)?.value);
   return payload?.assertion ?? null;
 }
 
@@ -175,7 +175,7 @@ export async function currentOperatorAssertion(): Promise<string | null> {
  *  send to the client — it is an id/email/name, not a credential. */
 export async function currentOperator(): Promise<OperatorIdentity | null> {
   const { cookies } = await import('next/headers');
-  const payload = await readSessionValue(cookies().get(SESSION_COOKIE)?.value);
+  const payload = await readSessionValue((await cookies()).get(SESSION_COOKIE)?.value);
   return payload?.operator ?? null;
 }
 

@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { decideSessionRedirect } from './session-redirect';
 
 /**
- * Regression cover for the infinite redirect loop between `middleware.ts` and
+ * Regression cover for the infinite redirect loop between `proxy.ts` and
  * the landing page's pre-paint script (fixed 2026-08-11).
  *
  * Symptom: a blank page with the tab title set and a spinner that never stops,

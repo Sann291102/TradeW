@@ -8,12 +8,16 @@ export function generateStaticParams() {
   return LEGAL_DOCUMENTS.map((doc) => ({ slug: doc.slug }));
 }
 
-export function generateMetadata({ params }: { params: { slug: string } }) {
+export async function generateMetadata({ params: paramsPromise }: { params: Promise<{ slug: string }> }) {
+  // Next 15+ passes route params as a Promise.
+  const params = await paramsPromise;
   const doc = findLegalDocument(params.slug);
   return { title: doc ? `${doc.title} — TradeW` : 'Legal — TradeW' };
 }
 
-export default function LegalDocumentPage({ params }: { params: { slug: string } }) {
+export default async function LegalDocumentPage({ params: paramsPromise }: { params: Promise<{ slug: string }> }) {
+  // Next 15+ passes route params as a Promise.
+  const params = await paramsPromise;
   const doc = findLegalDocument(params.slug);
   if (!doc) notFound();
 
