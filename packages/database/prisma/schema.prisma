@@ -148,6 +148,28 @@ model User {
   // identity space from `User`, and an FK across the two would imply they are
   // the same kind of principal.
   agentPaperTradingGrantedBy String?
+  // ---- Email-auth + billing identity (2026-11-16) -----------------------
+  // Names are nullable: accounts created before registration collected them,
+  // and Google/phone sign-ups, have none until the billing profile asks.
+  firstName                  String?
+  lastName                   String?
+  // When the address was proven reachable (verification link, or Google's
+  // verified-email claim). A TIMESTAMP for the same reason phoneVerifiedAt is.
+  // Every account that existed before this column was backfilled to its
+  // createdAt by the migration so nobody was locked out by its arrival.
+  emailVerifiedAt            DateTime?
+  termsAcceptedAt            DateTime?
+  // The ONE Stripe Customer for this user. Unique so two users can never share
+  // a customer, and never re-derived by searching Stripe by email: once set it
+  // is the only key used to reach the customer.
+  stripeCustomerId           String?               @unique
+  stripeCustomerSyncedAt     DateTime?
+  // Last provisioning/sync failure, sanitised. Non-null means "retry pending";
+  // cleared on the next successful create/update.
+  stripeCustomerError        String?
+  // Password lockout. Counted on wrong passwords only; reset on success.
+  failedLoginCount           Int                   @default(0)
+  lockedUntil                DateTime?
   createdAt                  DateTime              @default(now())
   updatedAt                  DateTime              @updatedAt
   orders                     Order[]
@@ -179,6 +201,10 @@ model User {
   // is never bound to a profile. See ExecutionProfile.
   executionProfiles          ExecutionProfile[]    @relation("ExecutionProfileAccount")
   backtests                  Backtest[]
+  addresses                  CustomerAddress[]
+  savedPaymentMethods        SavedPaymentMethod[]
+  billingOrders              BillingOrder[]
+  emailDeliveries            EmailDeliveryLog[]
 }
 
 model RefreshToken {
@@ -400,8 +426,8 @@ model Order {
   // that side is a true 1:1; but a position can be flattened in more than one
   // order (an exit that fails and is retried on a later reconcile tick), and a
   // unique constraint there would turn an ordinary retry into a crash.
-  exitOfIntentId    String?
-  exitOfIntent      ExecutionIntent? @relation("IntentExit", fields: [exitOfIntentId], references: [id])
+  exitOfIntentId String?
+  exitOfIntent   ExecutionIntent? @relation("IntentExit", fields: [exitOfIntentId], references: [id])
 
   user       User       @relation(fields: [userId], references: [id])
   instrument Instrument @relation(fields: [instrumentId], references: [id])
@@ -836,21 +862,25 @@ model PlanGrant {
 }
 
 model Subscription {
-  id               String             @id @default(uuid())
-  userId           String
-  organizationId   String? // future org/team subscriptions
-  planId           String
-  status           SubscriptionStatus @default(ACTIVE)
-  startedAt        DateTime           @default(now())
-  expiresAt        DateTime?
-  trialEndsAt      DateTime?
-  canceledAt       DateTime?
-  billingProvider  String             @default("none")
-  billingReference String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  user             User               @relation(fields: [userId], references: [id])
-  plan             Plan               @relation(fields: [planId], references: [id])
+  id                String             @id @default(uuid())
+  userId            String
+  organizationId    String? // future org/team subscriptions
+  planId            String
+  status            SubscriptionStatus @default(ACTIVE)
+  startedAt         DateTime           @default(now())
+  expiresAt         DateTime?
+  trialEndsAt       DateTime?
+  canceledAt        DateTime?
+  billingProvider   String             @default("none")
+  billingReference  String?
+  // Stripe Billing state, mirrored from webhooks. `billingReference` holds the
+  // Stripe subscription id (recurring) or PaymentIntent id (one-time pass).
+  stripePriceId     String?
+  cancelAtPeriodEnd Boolean            @default(false)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  user              User               @relation(fields: [userId], references: [id])
+  plan              Plan               @relation(fields: [planId], references: [id])
 
   @@index([userId, status])
   @@index([status, expiresAt])
@@ -1390,6 +1420,7 @@ model Otp {
   createdAt   DateTime   @default(now())
 
   @@index([destination, purpose, consumedAt])
+  @@index([codeHash])
   @@index([expiresAt])
 }
 
@@ -2217,8 +2248,8 @@ model ExecutionProfile {
   // Stored per profile so the NIFTY and SENSEX agents can differ, and so a
   // change is an audited operator act rather than a redeploy.
   capitalAllocationPct Decimal @default(20) @db.Decimal(6, 3)
-  riskPerTradePct      Decimal @default(3)  @db.Decimal(6, 3)
-  rewardPerTradePct    Decimal @default(9)  @db.Decimal(6, 3)
+  riskPerTradePct      Decimal @default(3) @db.Decimal(6, 3)
+  rewardPerTradePct    Decimal @default(9) @db.Decimal(6, 3)
 
   // Favourable movement, in PREMIUM POINTS of the traded option contract, that
   // ratchets the trailing stop one step. Deliberately not index points: the
@@ -2351,7 +2382,7 @@ model ExecutionIntent {
   // The evidence the STRATEGY declared material, not every signal that
   // existed. See `evidence.ts` — this is the "important information only"
   // record, each item carrying the knowledge-base concept it comes from.
-  evidence Json?
+  evidence      Json?
   // Which required confirmations passed, and which did not.
   confirmations Json?
 
@@ -2372,7 +2403,7 @@ model ExecutionIntent {
   // only if the levels' DIRECTION of travel was recorded at the time. It
   // cannot be reconstructed later: the previous close's OI is overwritten
   // every session.
-  positioning Json?
+  positioning          Json?
   // Whether that book agreed with the side in focus, with the weighted signals
   // behind the answer. The gate's own record: a refusal is auditable and a
   // pass is measurable against the outcome.
@@ -2393,11 +2424,11 @@ model ExecutionIntent {
   targetPrice       Decimal? @db.Decimal(12, 2)
   // The full arithmetic, including every intermediate the two above are
   // derived from, so the numbers are checkable rather than merely present.
-  riskPlan Json?
+  riskPlan          Json?
   // How the simulated entry price was arrived at: quoted bid/ask, the spread,
   // the slippage assumption applied and why. Stored because a paper fill with
   // no stated model is a number nobody can argue with.
-  fillModel Json?
+  fillModel         Json?
 
   // The calibration row consumed by this decision, by version. Null when no
   // calibrated bucket existed yet. This is what makes "trade #2 consumed what
@@ -2429,10 +2460,10 @@ model ExecutionIntent {
 
   // The order this intent produced. One intent, at most one order — enforced by
   // Order.executionIntentId being @unique on the other side.
-  order      Order?  @relation("IntentSubmission")
+  order      Order?                     @relation("IntentSubmission")
   // The order(s) that closed it. Plural because a retried square-off is
   // ordinary — see Order.exitOfIntentId.
-  exitOrders Order[] @relation("IntentExit")
+  exitOrders Order[]                    @relation("IntentExit")
   candidates ExecutionStrikeCandidate[]
   outcome    ExecutionOutcome?
   position   ExecutionPosition?
@@ -2564,11 +2595,11 @@ model ExecutionPosition {
   // manager runs every couple of seconds against every open position; a join
   // per tick per position is the difference between a cheap loop and a loop
   // that shows up in the database's slow log.
-  profileId String
-  profile   ExecutionProfile @relation(fields: [profileId], references: [id])
+  profileId      String
+  profile        ExecutionProfile @relation(fields: [profileId], references: [id])
   // The account the position lives on — the same `userId` the OMS rows carry.
-  userId       String
-  instrumentId String
+  userId         String
+  instrumentId   String
   // UNDERLYING:YYYYMMDD:STRIKE:CE|PE, for logs and the console.
   contractSymbol String
   productType    ProductType
@@ -2586,18 +2617,18 @@ model ExecutionPosition {
   // `stopPrice` is the original, never rewritten — a trail moves `trailPrice`,
   // and keeping the initial stop lets the journal state what was risked at
   // entry rather than what was risked at the end.
-  stopPrice   Decimal @db.Decimal(12, 2)
-  targetPrice Decimal @db.Decimal(12, 2)
+  stopPrice      Decimal  @db.Decimal(12, 2)
+  targetPrice    Decimal  @db.Decimal(12, 2)
   // Null until the first ratchet. Once set it may only ever move in the
   // position's favour — enforced in `position-decision.ts` and asserted.
-  trailPrice  Decimal? @db.Decimal(12, 2)
+  trailPrice     Decimal? @db.Decimal(12, 2)
   // How many whole `trailStepPoints` of favourable movement have been booked
   // into `trailPrice`. Stored rather than recomputed so a change to the step
   // size cannot retroactively move an existing position's protection.
-  trailSteps  Int      @default(0)
+  trailSteps     Int      @default(0)
   // Best premium seen since entry. The trail is computed from this, not from
   // the current price, so a retrace can never loosen protection.
-  highWaterPrice Decimal @db.Decimal(12, 2)
+  highWaterPrice Decimal  @db.Decimal(12, 2)
 
   // ---- Live state, refreshed by the manager ------------------------------
   lastPrice       Decimal?  @db.Decimal(12, 2)
@@ -2608,9 +2639,9 @@ model ExecutionPosition {
   // 'EMERGENCY' | 'STOP' | 'TARGET' | 'TRAIL' | 'INVALIDATED' | 'REVERSAL' |
   // 'SQUARE_OFF'. Written before the exit order is placed, so an exit order
   // that fails still leaves the reason on the record.
-  exitReason     String?
-  exitDetail     String?
-  exitDecidedAt  DateTime?
+  exitReason      String?
+  exitDetail      String?
+  exitDecidedAt   DateTime?
 
   // Optimistic-concurrency guard. Every manager write bumps it and matches on
   // it, so two replicas that both somehow reach the same position cannot both
@@ -2641,17 +2672,17 @@ model ExecutionTrailAdjustment {
   position   ExecutionPosition @relation(fields: [positionId], references: [id], onDelete: Cascade)
 
   // Null on the first ratchet — there was no previous trail to move.
-  fromPrice Decimal? @db.Decimal(12, 2)
-  toPrice   Decimal  @db.Decimal(12, 2)
+  fromPrice      Decimal? @db.Decimal(12, 2)
+  toPrice        Decimal  @db.Decimal(12, 2)
   // The premium that triggered this ratchet, and the high-water mark it
   // established. Both stored so the arithmetic is checkable after the fact.
-  triggerPrice   Decimal @db.Decimal(12, 2)
-  highWaterPrice Decimal @db.Decimal(12, 2)
+  triggerPrice   Decimal  @db.Decimal(12, 2)
+  highWaterPrice Decimal  @db.Decimal(12, 2)
   // Steps advanced by THIS adjustment (a gap can advance several at once),
   // and the running total after it.
-  stepsAdvanced Int
-  totalSteps    Int
-  reason        String
+  stepsAdvanced  Int
+  totalSteps     Int
+  reason         String
 
   at DateTime @default(now())
 
@@ -2693,29 +2724,29 @@ model ExecutionJournal {
   // ---- The contract ------------------------------------------------------
   underlying     String
   expiry         DateTime
-  strike         Decimal @db.Decimal(12, 2)
+  strike         Decimal  @db.Decimal(12, 2)
   optionType     String
   contractSymbol String
   // Dhan's own token for the contract, from the scrip master. Recorded so a
   // journal entry names a contract the exchange would recognise rather than a
   // string this application composed.
-  securityId String?
-  lots       Int
-  quantity   Int
+  securityId     String?
+  lots           Int
+  quantity       Int
 
   // ---- The decision ------------------------------------------------------
-  indexDirection String?
-  indexStrength  Float?
-  confidence     Int
+  indexDirection       String?
+  indexStrength        Float?
+  confidence           Int
   // The strategy's own material evidence, its confirmations, and the
   // data-quality read — the three answers to "why did it enter?".
-  evidence      Json?
-  confirmations Json?
-  dataQuality   Json?
-  rationale     String[] @default([])
-  publication   Json?
-  optionContext Json?
-  policyChecks  Json?
+  evidence             Json?
+  confirmations        Json?
+  dataQuality          Json?
+  rationale            String[] @default([])
+  publication          Json?
+  optionContext        Json?
+  policyChecks         Json?
   // The option BOOK at decision time — defended levels, the previous close's
   // open interest beside today's, and whether that book agreed with the side
   // taken. Copied from the intent for the same reason everything else here is:
@@ -2740,25 +2771,25 @@ model ExecutionJournal {
   fillModel        Json?
 
   // ---- What happened -----------------------------------------------------
-  entryAt    DateTime
-  exitAt     DateTime?
-  entryPrice Decimal   @db.Decimal(12, 2)
-  exitPrice  Decimal?  @db.Decimal(12, 2)
+  entryAt      DateTime
+  exitAt       DateTime?
+  entryPrice   Decimal   @db.Decimal(12, 2)
+  exitPrice    Decimal?  @db.Decimal(12, 2)
   // Every ratchet, oldest first, as recorded on ExecutionTrailAdjustment.
   trailHistory Json?
-  finalTrail   Decimal? @db.Decimal(12, 2)
+  finalTrail   Decimal?  @db.Decimal(12, 2)
 
   exitReason         String
   exitDetail         String?
   invalidationReason String?
   holdingSeconds     Int?
 
-  realizedPnl Decimal @db.Decimal(14, 2)
-  charges     Decimal @default(0) @db.Decimal(14, 2)
+  realizedPnl Decimal  @db.Decimal(14, 2)
+  charges     Decimal  @default(0) @db.Decimal(14, 2)
   // realizedPnl / riskBudget — the trade in R. Null when the risk budget was
   // not recorded (a pre-2026-08-30 intent).
-  rMultiple Decimal? @db.Decimal(10, 3)
-  result    String
+  rMultiple   Decimal? @db.Decimal(10, 3)
+  result      String
 
   // ---- What it taught ----------------------------------------------------
   // The calibration bucket this trade was folded into, and the version that
@@ -2822,12 +2853,12 @@ model StrategyCalibration {
   strategyVersion String
   regime          String
 
-  trades   Int @default(0)
-  wins     Int @default(0)
-  losses   Int @default(0)
+  trades    Int @default(0)
+  wins      Int @default(0)
+  losses    Int @default(0)
   scratches Int @default(0)
 
-  grossPnl Decimal @default(0) @db.Decimal(16, 2)
+  grossPnl     Decimal  @default(0) @db.Decimal(16, 2)
   // Mean R across completed trades in this bucket. The number the adjustment
   // is actually derived from — win rate alone rewards a strategy that wins
   // often and loses more than it makes.
@@ -4325,7 +4356,7 @@ model UniverseInstrument {
   /// Fully-qualified, globally unique address: `USA:NASDAQ:AAPL`. Denormalised
   /// so the API can hand the UI one opaque id and look a row up by it without
   /// the client having to reassemble three fields.
-  ref      String  @unique
+  ref      String         @unique
 
   displayName String
   assetClass  UniverseAssetClass
@@ -4459,4 +4490,183 @@ model UniverseSyncRun {
 
   @@index([source, startedAt])
   @@index([market, startedAt])
+}
+
+// ============================================================================
+// Email delivery + Stripe billing (2026-11-16)
+//
+// Stripe is the payment processor of record; these tables are TradeW's own
+// ledger of what it asked Stripe to do and what Stripe reported back. Card
+// data never appears here: only Stripe ids, brand, last4 and expiry, which
+// Stripe itself returns to any holder of the customer's secret key.
+// ============================================================================
+
+enum AddressKind {
+  billing
+  shipping
+}
+
+// One billing and (optionally) one shipping address per user. The billing
+// address drives Stripe Tax and is synced to `customer.address`; shipping, when
+// given, to `customer.shipping`. `stripeSyncError` non-null means the local
+// row is AHEAD of Stripe and a retry is pending — surfaced in the UI, never
+// silently dropped.
+model CustomerAddress {
+  id              String      @id @default(uuid())
+  userId          String
+  kind            AddressKind
+  name            String
+  phone           String?
+  line1           String
+  line2           String?
+  city            String
+  state           String?
+  postalCode      String
+  // ISO 3166-1 alpha-2, upper case.
+  country         String
+  stripeSyncedAt  DateTime?
+  stripeSyncError String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind])
+}
+
+// Local mirror of a card attached to the user's Stripe Customer. Stripe stays
+// the source of truth (the list endpoint re-reads it); the mirror exists for
+// ownership checks, audit and the webhook trail. NEVER a PAN or CVC.
+model SavedPaymentMethod {
+  id                    String    @id @default(uuid())
+  userId                String
+  stripePaymentMethodId String    @unique
+  brand                 String
+  last4                 String
+  expMonth              Int
+  expYear               Int
+  isDefault             Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  detachedAt            DateTime?
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, detachedAt])
+}
+
+enum BillingOrderKind {
+  subscription
+  renewal
+  one_time
+}
+
+enum BillingOrderStatus {
+  pending
+  processing
+  paid
+  failed
+  canceled
+  refunded
+  partially_refunded
+}
+
+// One charge TradeW asked for: the first invoice of a subscription, a renewal
+// invoice, or the one-time trial pass. Amounts are integer MINOR units (cents)
+// and are always computed server-side from the catalog — the client never
+// supplies a price. An order becomes `paid` ONLY from a verified webhook.
+model BillingOrder {
+  id                    String               @id @default(uuid())
+  userId                String
+  itemId                String
+  kind                  BillingOrderKind
+  status                BillingOrderStatus   @default(pending)
+  // Raw Stripe status of the PaymentIntent / invoice, for diagnosis.
+  paymentStatus         String?
+  currency              String
+  subtotalMinor         Int
+  taxMinor              Int                  @default(0)
+  totalMinor            Int
+  refundedMinor         Int                  @default(0)
+  // Unique per logical checkout attempt; reused as the Stripe idempotency key
+  // so a double-submit can never create a second charge.
+  idempotencyKey        String               @unique
+  stripePaymentIntentId String?              @unique
+  stripeInvoiceId       String?              @unique
+  stripeSubscriptionId  String?
+  stripePriceId         String?
+  // Stripe Tax references: the calculation quoted at checkout (one-time) and
+  // the tax transaction recorded after payment.
+  taxCalculationId      String?
+  taxTransactionId      String?
+  taxBreakdown          Json?
+  savePaymentMethod     Boolean              @default(false)
+  failureReason         String?
+  paidAt                DateTime?
+  // The entitlement row this payment activated or extended.
+  subscriptionId        String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  user                  User                 @relation(fields: [userId], references: [id])
+  transactions          BillingTransaction[]
+
+  @@index([userId, createdAt])
+  @@index([stripeSubscriptionId])
+}
+
+// Money movements against an order: the charge and any refunds. Keyed by the
+// Stripe object id so a replayed webhook can never double-count.
+model BillingTransaction {
+  id             String       @id @default(uuid())
+  orderId        String
+  type           String // 'charge' | 'refund'
+  stripeObjectId String       @unique
+  amountMinor    Int
+  currency       String
+  status         String
+  createdAt      DateTime     @default(now())
+  order          BillingOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+// Every Stripe event the webhook accepted, by Stripe's event id. The unique
+// id is the idempotency lock: a redelivered event finds its row and is not
+// processed twice. Failed handlers keep the row in `failed` with the error so
+// Stripe's retry (or an operator) can re-run it.
+model StripeWebhookEvent {
+  id          String    @id @default(uuid())
+  eventId     String    @unique
+  type        String
+  livemode    Boolean   @default(false)
+  status      String    @default("received") // received | processed | failed | ignored
+  attempts    Int       @default(0)
+  lastError   String?
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  @@index([type, receivedAt])
+  @@index([status])
+}
+
+// One row per email the platform tried to send through the template service.
+// The body is NOT stored (it can carry links that act as credentials); the
+// template key + version are enough to reproduce what was sent.
+model EmailDeliveryLog {
+  id              String    @id @default(uuid())
+  templateKey     String
+  templateVersion Int
+  toAddress       String
+  subject         String
+  status          String // sent | failed | console
+  provider        String
+  attempts        Int       @default(0)
+  lastError       String?
+  isTest          Boolean   @default(false)
+  userId          String?
+  createdAt       DateTime  @default(now())
+  sentAt          DateTime?
+  user            User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([templateKey, createdAt])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
 }

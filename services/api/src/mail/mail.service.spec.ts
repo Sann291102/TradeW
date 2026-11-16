@@ -13,7 +13,10 @@ import { MailService, parseMailFrom } from './mail.service';
  * turn `POST /auth/otp/request` into an OTP oracle.
  */
 
-const MAIL_ENV = ['SENDGRID_API_KEY', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'MAIL_FROM'] as const;
+const MAIL_ENV = [
+  'SENDGRID_API_KEY', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'MAIL_FROM',
+  'EMAIL_PROVIDER', 'EMAIL_HOST', 'EMAIL_PORT', 'EMAIL_USERNAME', 'EMAIL_PASSWORD', 'EMAIL_FROM_ADDRESS', 'EMAIL_FROM_NAME',
+] as const;
 
 describe('MailService', () => {
   const saved: Record<string, string | undefined> = {};

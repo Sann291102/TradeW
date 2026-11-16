@@ -92,6 +92,17 @@ async function seedPlans() {
       grants: [{ capability: 'paper_trading' }],
     },
     {
+      // Sold as a monthly Stripe subscription. Also inserted by migration
+      // 20261116000000_email_auth_stripe_billing, because the seed does not
+      // run in production.
+      code: 'learning_pro',
+      name: 'Learning Pro',
+      description: 'Every Learning Hub course, billed monthly.',
+      trialDays: 0,
+      graceDays: 3,
+      grants: [{ capability: 'learning_pro' }],
+    },
+    {
       code: 'tradew_pro',
       name: 'TradeW Pro',
       description: 'AI Research and the Neural Brain on top of paper trading.',

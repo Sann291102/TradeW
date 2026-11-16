@@ -8,7 +8,7 @@ import {
   SENTINEL_TERMS,
   sentinelSaving,
 } from '@tradew/types';
-import { RazorpayClient } from '../payments/razorpay.client';
+import { StripeGateway } from '../billing/stripe.gateway';
 
 /**
  * The product's own price list, served from one place.
@@ -32,23 +32,14 @@ import { RazorpayClient } from '../payments/razorpay.client';
  * ── WHY `billingEnabled` IS ASKED, NOT ASSERTED ────────────────────────────
  *
  * It used to be the literal `false`, written when no payment provider was
- * wired. One is wired now, and a constant cannot notice that: the moment
- * `RAZORPAY_KEY_ID`/`_SECRET` are set, `/payments/catalog` reports billing on
- * (`payment.service.ts` reads `RazorpayClient.configured`) while this route
- * would still tell every landing-page visitor "Payments are not enabled yet.
- * No account can be charged." — on a server that is charging accounts. Two
- * endpoints, one question, opposite answers, and the wrong one is the one
- * signed-out visitors see.
- *
- * So both routes now ask the same object. `RazorpayClient` owns what
- * "configured" means, and this controller does not get its own opinion about
- * it. The honesty this payload commits to is only worth anything if it tracks
- * the server's actual state.
+ * wired. A constant cannot notice a provider being configured, so it is asked.
+ * Billing is on when Stripe is configured (`StripeGateway.enabled`), the
+ * same object `/payments/catalog` asks, so the two routes cannot disagree.
  */
 @ApiTags('pricing')
 @Controller('pricing')
 export class PricingController {
-  constructor(private readonly razorpay: RazorpayClient) {}
+  constructor(private readonly stripe: StripeGateway) {}
 
   @ApiResponse({
     status: 200,
@@ -57,7 +48,7 @@ export class PricingController {
   })
   @Get()
   get() {
-    const billingEnabled = this.razorpay.configured;
+    const billingEnabled = this.stripe.enabled;
     return {
       currency: CURRENCY,
       sentinel: SENTINEL_TERMS.map((t) => ({ ...t, saving: sentinelSaving(t) })),

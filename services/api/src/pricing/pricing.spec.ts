@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { PricingController } from './pricing.controller';
-import { RazorpayClient } from '../payments/razorpay.client';
+import { StripeGateway } from '../billing/stripe.gateway';
 
 /**
  * The server's view of pricing.
@@ -8,32 +8,42 @@ import { RazorpayClient } from '../payments/razorpay.client';
  * The client-side pinning lives in `apps/web/src/lib/pricing.test.ts`; this
  * asserts the same properties across the API boundary, because the product
  * requirement is that *no route* can hand a caller an annual Sentinel term.
- * A frontend that no longer renders one is not the same thing as an endpoint
- * that can no longer produce one, and the spec asked for the latter.
+ *
+ * Amounts are US cents (Stripe billing, 2026-11-16).
  */
 
-/**
- * `RazorpayClient` reads its credentials once, at construction, so a test
- * controls `configured` by setting the environment BEFORE building one.
- */
+const STRIPE_ENV = ['STRIPE_MODE', 'STRIPE_SECRET_KEY', 'STRIPE_PUBLISHABLE_KEY', 'STRIPE_WEBHOOK_SECRET'] as const;
+const saved = Object.fromEntries(STRIPE_ENV.map((k) => [k, process.env[k]]));
+
+/** `StripeGateway` reads its configuration once, at construction. */
 function controllerWithBilling(enabled: boolean): PricingController {
+  delete process.env.STRIPE_MODE;
   if (enabled) {
-    process.env.RAZORPAY_KEY_ID = 'rzp_test_pricing_spec';
-    process.env.RAZORPAY_KEY_SECRET = 'secret_pricing_spec';
+    // Syntactically valid test-mode keys; nothing here calls Stripe.
+    process.env.STRIPE_SECRET_KEY = 'sk_test_pricing_spec';
+    process.env.STRIPE_PUBLISHABLE_KEY = 'pk_test_pricing_spec';
   } else {
-    delete process.env.RAZORPAY_KEY_ID;
-    delete process.env.RAZORPAY_KEY_SECRET;
+    delete process.env.STRIPE_SECRET_KEY;
+    delete process.env.STRIPE_PUBLISHABLE_KEY;
   }
-  return new PricingController(new RazorpayClient());
+  return new PricingController(new StripeGateway());
 }
+
+afterEach(() => {
+  for (const k of STRIPE_ENV) {
+    if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+  }
+});
 
 describe('GET /pricing', () => {
   const body = controllerWithBilling(false).get();
 
-  it('serves exactly the three active Sentinel terms', () => {
+  it('serves exactly the three active Sentinel terms, in USD cents', () => {
+    expect(body.currency).toBe('USD');
     expect(body.sentinel).toHaveLength(3);
     expect(body.sentinel.map((t) => t.months)).toEqual([1, 3, 6]);
-    expect(body.sentinel.map((t) => t.monthly)).toEqual([2399, 2199, 1999]);
+    expect(body.sentinel.map((t) => t.monthly)).toEqual([4900, 4499, 4099]);
   });
 
   it('never returns an annual or nine-month term', () => {
@@ -49,11 +59,11 @@ describe('GET /pricing', () => {
 
   it('includes the saving so a client cannot compute it wrongly', () => {
     const six = body.sentinel.find((t) => t.months === 6)!;
-    expect(six.saving).toBe(2400);
+    expect(six.saving).toBe((4900 - 4099) * 6);
   });
 
-  it('prices Learning at ₹299 a month', () => {
-    expect(body.learning.monthly).toBe(299);
+  it('prices Learning at $4.99 a month', () => {
+    expect(body.learning.monthly).toBe(499);
   });
 
   it('states plainly that billing is off, in the payload not just the UI', () => {
@@ -67,32 +77,12 @@ describe('GET /pricing', () => {
   });
 });
 
-/**
- * `billingEnabled` used to be the constant `false`, which meant this route kept
- * telling signed-out visitors that no account could be charged on a server that
- * had Razorpay credentials and was charging them. These tests exist so that the
- * payload cannot drift from the server's real state again — the earlier suite
- * above passes just as happily against a hardcoded `false`, so it could never
- * have caught it.
- */
 describe('GET /pricing — billing state tracks the server, not a constant', () => {
-  const savedId = process.env.RAZORPAY_KEY_ID;
-  const savedSecret = process.env.RAZORPAY_KEY_SECRET;
-
-  afterEach(() => {
-    // Restore, rather than delete: this process's env is shared with every
-    // other spec in the run.
-    if (savedId === undefined) delete process.env.RAZORPAY_KEY_ID;
-    else process.env.RAZORPAY_KEY_ID = savedId;
-    if (savedSecret === undefined) delete process.env.RAZORPAY_KEY_SECRET;
-    else process.env.RAZORPAY_KEY_SECRET = savedSecret;
-  });
-
-  it('reports billing ON once Razorpay is configured', () => {
+  it('reports billing ON once Stripe is configured with matching test keys', () => {
     expect(controllerWithBilling(true).get().billingEnabled).toBe(true);
   });
 
-  it('drops the "not enabled" notice once billing is on, rather than contradicting itself', () => {
+  it('drops the "not enabled" notice once billing is on', () => {
     expect(controllerWithBilling(true).get().notice).toBeUndefined();
   });
 
@@ -102,12 +92,10 @@ describe('GET /pricing — billing state tracks the server, not a constant', () 
     expect(off.notice).toMatch(/not enabled/i);
   });
 
-  it('agrees with the payments surface, which reads the same RazorpayClient', () => {
-    // The defect was these two disagreeing. Assert the shared source directly:
-    // whatever `RazorpayClient.configured` says is what /pricing must publish.
-    process.env.RAZORPAY_KEY_ID = 'rzp_test_agreement';
-    process.env.RAZORPAY_KEY_SECRET = 'secret_agreement';
-    const razorpay = new RazorpayClient();
-    expect(new PricingController(razorpay).get().billingEnabled).toBe(razorpay.configured);
+  it('reports billing OFF when a live key is set on a test-mode server', () => {
+    delete process.env.STRIPE_MODE;
+    process.env.STRIPE_SECRET_KEY = 'sk_live_wrong_mode';
+    process.env.STRIPE_PUBLISHABLE_KEY = 'pk_live_wrong_mode';
+    expect(new PricingController(new StripeGateway()).get().billingEnabled).toBe(false);
   });
 });

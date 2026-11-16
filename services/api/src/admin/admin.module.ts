@@ -1,3 +1,4 @@
+import { AdminEmailTemplatesController } from './email-templates.controller';
 import { Module } from '@nestjs/common';
 import { AdminController } from './admin.controller';
 import { AdminGuard } from './admin.guard';
@@ -43,7 +44,7 @@ import { PaperExecutionModule } from '../paper-execution/paper-execution.module'
   // configures it, the loop never reads the console. Nothing in
   // paper-execution imports anything from here.
   imports: [CognitionModule, PaperExecutionModule],
-  controllers: [AdminController, OperatorController],
+  controllers: [AdminController, OperatorController, AdminEmailTemplatesController],
   providers: [AdminService, AdminGuard, AdminAccessGuard, OperatorService],
 })
 export class AdminModule {}

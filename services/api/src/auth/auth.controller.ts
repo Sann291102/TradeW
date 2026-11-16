@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiProperty, ApiTags } from '@nestjs/swagger';
-import { IsEmail, IsObject, IsOptional, IsString, Matches, MinLength } from 'class-validator';
+import { Equals, IsBoolean, IsEmail, IsObject, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { AUTH_LIMIT, OTP_LIMIT } from '../common/throttling';
 import { SECURITY } from '../swagger/swagger.setup';
 import { AuthService } from './auth.service';
@@ -33,6 +33,65 @@ class AuthDto {
   @IsOptional()
   @IsString()
   aiPersonaName?: string;
+}
+
+/**
+ * Registration. Separate from the login DTO because it asks for more: names,
+ * a confirmed password and an explicit terms acceptance. The password policy is
+ * at least 8 characters with a letter and a digit; login keeps accepting the
+ * 6-character passwords older accounts were created with.
+ */
+class SignupDto {
+  @ApiProperty({ format: 'email', example: 'trader@example.com' })
+  @IsEmail()
+  @MaxLength(254)
+  email!: string;
+
+  @ApiProperty({ example: 'Asha' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(60)
+  firstName!: string;
+
+  @ApiProperty({ example: 'Rao' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(60)
+  lastName!: string;
+
+  @ApiProperty({ minLength: 8, format: 'password' })
+  @IsString()
+  @MinLength(8)
+  @MaxLength(128)
+  @Matches(/(?=.*[A-Za-z])(?=.*\d)/, { message: 'password must contain at least one letter and one number' })
+  password!: string;
+
+  @ApiProperty({ format: 'password', description: 'Must equal `password`.' })
+  @IsString()
+  confirmPassword!: string;
+
+  @ApiProperty({ description: 'Must be true: the user accepted the Terms of Service and Privacy Policy.' })
+  @IsBoolean()
+  @Equals(true, { message: 'You must accept the Terms of Service and Privacy Policy.' })
+  acceptTerms!: boolean;
+
+  @ApiProperty({ required: false, maxLength: 24, example: 'Nova' })
+  @IsOptional()
+  @IsString()
+  aiPersonaName?: string;
+}
+
+class VerifyEmailDto {
+  @ApiProperty({ description: 'The token from the verification link.' })
+  @IsString()
+  @MaxLength(200)
+  token!: string;
+}
+
+class ResendVerificationDto {
+  @ApiProperty({ format: 'email' })
+  @IsEmail()
+  email!: string;
 }
 
 class RefreshDto {
@@ -77,6 +136,18 @@ class UpdateProfileDto {
   @IsOptional()
   @IsString()
   optionsFamiliarity?: string;
+
+  @ApiProperty({ required: false, example: 'Asha' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  firstName?: string;
+
+  @ApiProperty({ required: false, example: 'Rao' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  lastName?: string;
 }
 
 class ChangePasswordDto {
@@ -243,7 +314,34 @@ export class AuthController {
   // Unmetered signup is free unlimited row creation by any anonymous caller.
   @Throttle(AUTH_LIMIT)
   @Post('signup')
-  signup(@Req() req: any, @Body() dto: AuthDto) { return this.auth.signup(dto.email, dto.password, meta(req), dto.aiPersonaName); }
+  signup(@Req() req: any, @Body() dto: SignupDto) {
+    if (dto.password !== dto.confirmPassword) {
+      throw new BadRequestException('Passwords do not match.');
+    }
+    return this.auth.signup(
+      { email: dto.email, password: dto.password, firstName: dto.firstName, lastName: dto.lastName, acceptTerms: dto.acceptTerms },
+      meta(req),
+      dto.aiPersonaName,
+    );
+  }
+
+  /**
+   * Redeem an email-verification link. Returns `{ status: 'verified' }` the
+   * first time and `{ status: 'already_verified' }` on a repeat click; an
+   * expired link is 410 and an unknown or replaced one is 400.
+   */
+  @Throttle(AUTH_LIMIT)
+  @Post('verify-email')
+  verifyEmail(@Req() req: any, @Body() dto: VerifyEmailDto) {
+    return this.auth.verifyEmail(dto.token, meta(req));
+  }
+
+  /** Email a new verification link. Same response whether or not the address exists. */
+  @Throttle(OTP_LIMIT)
+  @Post('resend-verification')
+  resendVerification(@Req() req: any, @Body() dto: ResendVerificationDto) {
+    return this.auth.resendVerification(dto.email, meta(req));
+  }
 
   /**
    * Exchange credentials for a token pair.
