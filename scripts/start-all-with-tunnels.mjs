@@ -1,4 +1,4 @@
-import { spawn, execSync } from 'node:child_process';
+import { spawn, execSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, createWriteStream, writeFileSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import * as http from 'node:http';
@@ -174,6 +174,15 @@ async function main() {
   console.log('====================================================');
   console.log('       TradeW Full Stack & Cloudflare Launcher      ');
   console.log('====================================================\n');
+
+  // The API and Sentinel Python both need Postgres at boot and exit if it is
+  // down. Start the Docker container (if needed) and wait for it BEFORE
+  // spawning anything — see scripts/ensure-postgres.mjs.
+  const db = spawnSync('node', ['scripts/ensure-postgres.mjs'], { cwd: ROOT, stdio: 'inherit' });
+  if (db.status !== 0) {
+    console.error('[STARTUP FAILED] Postgres is not available. Fix the message above and re-run.');
+    process.exit(1);
+  }
 
   killExistingProcesses();
 
